@@ -1,6 +1,7 @@
 package kraken
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -98,19 +99,43 @@ type TradeVolume struct {
 }
 
 func NewTradeVolume(buf []byte) *TradeVolumeResult {
-	tradeVolume := &TradeVolume{}
-
-	if err := sonic.Unmarshal(buf, tradeVolume); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid trade volume",
-			err,
-		))
-
+	result, err := ParseTradeVolume(buf)
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err))
 		return nil
 	}
 
-	return &tradeVolume.Result
+	return result
+}
+
+func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
+	tradeVolume := &TradeVolume{}
+
+	if err := sonic.Unmarshal(buf, tradeVolume); err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"invalid trade volume response",
+			err,
+		)
+	}
+
+	if !tradeVolume.IsSuccess() {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken trade volume rejected",
+			fmt.Errorf("%v", tradeVolume.Error),
+		)
+	}
+
+	if len(tradeVolume.Result.Fees) == 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"kraken trade volume returned no pair fees (pair must be requested)",
+			nil,
+		)
+	}
+
+	return &tradeVolume.Result, nil
 }
 
 func (tradeVolume *TradeVolume) Action() string {

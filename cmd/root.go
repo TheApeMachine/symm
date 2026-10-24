@@ -44,7 +44,7 @@ var (
 			)
 
 			defer cancel()
-			return NewBooter(ctx, "symm", true).WithDashboard().Run()
+			return NewBooter(ctx, "symm").Run()
 		},
 	}
 )

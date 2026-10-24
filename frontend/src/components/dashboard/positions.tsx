@@ -7,6 +7,7 @@ import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "@/lib/utils";
+import { formatExitTrigger } from "#/lib/trigger-labels";
 
 const formatValue = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {
@@ -60,13 +61,6 @@ type PositionCardData = {
 	sells: SellMarker[];
 };
 
-const TRIGGER_LABEL: Record<string, string> = {
-	learned_exit: "EXIT",
-	capacity_trim: "TRIM",
-	capacity_exit: "CAP-EXIT",
-	manual: "MANUAL",
-};
-
 const sellMarkers = (
 	sells: Record<string, unknown>[] | undefined,
 ): SellMarker[] =>
@@ -78,7 +72,7 @@ const sellMarkers = (
 
 		return {
 			trigger,
-			label: `${TRIGGER_LABEL[trigger] ?? trigger}${qty ? ` ${formatValue(qty, 4)} qty` : ""}`,
+			label: `${formatExitTrigger(trigger)}${qty ? ` ${formatValue(qty, 4)} qty` : ""}`,
 			title: [
 				trigger,
 				time,
@@ -110,7 +104,7 @@ const selectPositions = (
 		if (readout.closedAt) continue;
 
 		const positionStatus = currentPosition.virtual ? "virtual" : "open";
-		const pnlNum = readout.netPnl ?? 0;
+		const pnlFrac = readout.returnPct ?? 0;
 
 		result.push({
 			capacity: "—",
@@ -118,16 +112,16 @@ const selectPositions = (
 			capacityRatioNum: undefined,
 			budget: currentPosition.path ? String(currentPosition.path) : "—",
 			venuePnl: "—",
-			shadowPnl: formatValue(pnlNum, 4),
-			shadowValue: pnlNum,
+			shadowPnl: formatValue(pnlFrac, "pct"),
+			shadowValue: pnlFrac,
 			sells: sellMarkers(undefined),
 			symbol: currentSymbol,
 			status: positionStatus,
-			pnl: `${formatValue(pnlNum, 4)} USD`,
-			pnlValue: pnlNum,
+			pnl: formatValue(pnlFrac, "pct"),
+			pnlValue: pnlFrac,
 			entryPrice: formatValue(readout.entryPrice, 6),
 			mark: formatValue(readout.mark, 6),
-			returnPct: `${formatValue(readout.returnPct, 2)}%`,
+			returnPct: formatValue(pnlFrac, "pct"),
 		});
 	}
 
@@ -150,14 +144,14 @@ const selectClosed = (rows: Record<string, unknown>[]): ClosedCardData[] =>
 		.map((row) => ({ row, readout: positionReadout(row) }))
 		.filter(({ readout }) => readout.closedAt !== null)
 		.map(({ row, readout }, index) => {
-			const realized = readout.netPnl ?? 0;
+			const pnlFrac = readout.returnPct ?? 0;
 
 			return {
 				key: String(row.id ?? row.symbol ?? index),
 				symbol: String(row.symbol ?? ""),
 				venuePnl: "—",
-				shadowPnl: formatValue(realized, 4),
-				shadowValue: realized,
+				shadowPnl: formatValue(pnlFrac, "pct"),
+				shadowValue: pnlFrac,
 				sells: sellMarkers(undefined),
 			};
 		})

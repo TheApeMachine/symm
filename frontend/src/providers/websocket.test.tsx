@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { atoms, routeAtom } from "#/collections/app";
+import { atoms, routeAtom, signals } from "#/collections/app";
 import { cognitionStore } from "#/collections/cognition";
 import { sequiturStore } from "#/collections/sequitur";
-import { sequiturFrame } from "#/collections/sequitur-fixture";
 import { Value } from "#/types/value";
 import { ingest, WsFeed } from "./websocket";
 
@@ -57,22 +56,66 @@ describe("WsFeed", () => {
 });
 
 describe("ingest", () => {
-	it("ingests sequitur frames even though the origin has no signals store", () => {
-		const layer = new TextEncoder().encode(JSON.stringify(sequiturFrame()));
+	it("ingests training step values into the sequitur store", () => {
+		const prefix = "training/step/BTC/USD/1/41";
+		const enc = (payload: unknown) =>
+			new TextEncoder().encode(JSON.stringify(payload));
 
 		ingest([
 			new Value({
-				origin: "sequitur",
-				role: "grammar",
+				origin: "training",
+				role: "step",
 				scope: "BTC/USD",
-				prefix: "sequitur",
-				index: ["sequitur/grammar/BTC-USD"],
-				layers: [layer],
+				prefix,
+				index: [
+					`${prefix}/reported`,
+					`${prefix}/blocked`,
+					`${prefix}/gate`,
+					`${prefix}/fired`,
+					`${prefix}/active`,
+					`${prefix}/midpoint`,
+					`${prefix}/grammar/events`,
+					`${prefix}/grammar/rules`,
+					`${prefix}/grammar/start`,
+					`${prefix}/grammar/rawLength`,
+					`${prefix}/grammar/grammarSymbols`,
+					`${prefix}/grammar/completed`,
+				],
+				layers: [
+					enc("enter"),
+					enc(false),
+					enc({ surprise: 0.42, z: null, warm: true, passed: true }),
+					enc(["R02", "R04"]),
+					enc([
+						{ key: 2, brightness: 0.8 },
+						{ key: 4, brightness: 0.6 },
+					]),
+					enc(0.45),
+					enc([
+						{
+							kind: "append",
+							token: "R02",
+							rule: 0,
+							into: 0,
+							from: 0,
+							digram: ["", ""],
+						},
+					]),
+					enc([]),
+					enc([]),
+					enc(5),
+					enc(5),
+					enc(""),
+				],
 				tick: 41n,
+				epoch: 1n,
 			}),
 		]);
 
 		expect(sequiturStore.state["BTC/USD"]?.latest.tick).toBe(41);
+		expect(sequiturStore.state["BTC/USD"]?.latest.policy.action).toBe(
+			"enter",
+		);
 		expect(atoms.tickCount.get()).toBe(0);
 	});
 
@@ -121,6 +164,31 @@ describe("ingest", () => {
 		expect(atoms.tickCount.get()).toBe(100);
 	});
 
+	it("uses each frame tick header, not one step per ingest call", () => {
+		ingest([
+			new Value({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				prefix: "workspace/tick/aggregate",
+				index: [],
+				layers: [],
+				tick: 40n,
+			}),
+			new Value({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				prefix: "workspace/tick/aggregate",
+				index: [],
+				layers: [],
+				tick: 512n,
+			}),
+		]);
+
+		expect(atoms.tickCount.get()).toBe(512);
+	});
+
 	it("ingests cognition match frames", () => {
 		const match = {
 			symbol: "BTC/USD",
@@ -147,7 +215,7 @@ describe("ingest", () => {
 		expect(cognitionStore.state.matches["BTC/USD"]?.action).toBe("noop");
 	});
 
-	it("still drops unbound origins rather than routing them into nothing", () => {
+	it("ignores origins that are not in valueAtoms or signals", () => {
 		ingest([
 			new Value({
 				origin: "kraken",
@@ -159,9 +227,6 @@ describe("ingest", () => {
 			}),
 		]);
 
-		const probe = window.__kilo_probe;
-		expect(probe.missed).toContainEqual(
-			expect.objectContaining({ origin: "kraken" }),
-		);
+		expect(signals.kraken).toBeUndefined();
 	});
 });

@@ -11,14 +11,21 @@ import (
 Size returns the exact total byte count of the serialized Value.
 */
 func (value *Value) Size() int {
-	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2 + 2 + len(value.Prefix) + len(value.Index)
+	value.mu.Lock()
+	defer value.mu.Unlock()
+
+	return value.sizeLocked()
+}
+
+func (value *Value) sizeLocked() int {
+	total := headerSize + 1 + len(value.Origin) + 1 + len(value.Role) + 1 + len(value.Scope) + 2 + 2 + len(value.Prefix)
 
 	for i := range value.Index {
-		if i >= len(value.Layers) {
-			break
-		}
+		total += 2 + len(value.Index[i]) + 4
 
-		total += 2 + len(value.Index[i]) + 4 + len(value.Layers[i])
+		if i < len(value.Layers) {
+			total += len(value.Layers[i])
+		}
 	}
 
 	return total
@@ -35,7 +42,14 @@ Returns (n, io.EOF) on success, or io.ErrShortBuffer if len(p) < Size().
 Implements io.Reader.
 */
 func (value *Value) Read(p []byte) (n int, err error) {
-	needed := value.Size()
+	value.mu.Lock()
+	defer value.mu.Unlock()
+
+	return value.readLocked(p)
+}
+
+func (value *Value) readLocked(p []byte) (n int, err error) {
+	needed := value.sizeLocked()
 
 	if len(p) < needed {
 		return 0, io.ErrShortBuffer
@@ -70,8 +84,8 @@ func (value *Value) Read(p []byte) (n int, err error) {
 	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Index)))
 	offset += 2
 
-	// 3b. Prefix length (uint16) and bytes. Layers address themselves
-	// below the prefix, exactly like data.NewValue + Append build it.
+	// 3b. Prefix length (uint16) and bytes. The dashboard decoder keys layers
+	// as prefix/key; layer Index entries carry the same path prefix.
 	binary.LittleEndian.PutUint16(p[offset:offset+2], uint16(len(value.Prefix)))
 	offset += 2
 	copy(p[offset:offset+len(value.Prefix)], value.Prefix)
@@ -85,7 +99,11 @@ func (value *Value) Read(p []byte) (n int, err error) {
 		copy(p[offset:offset+len(idx)], idx)
 		offset += len(idx)
 
-		layer := value.Layers[i]
+		var layer []byte
+		if i < len(value.Layers) {
+			layer = value.Layers[i]
+		}
+
 		lLen := len(layer)
 		binary.LittleEndian.PutUint32(p[offset:offset+4], uint32(lLen))
 		offset += 4
@@ -101,16 +119,24 @@ Write unserializes a Value from p.
 Implements io.Writer.
 */
 func (value *Value) Write(p []byte) (n int, err error) {
-	if value.Prefix != "" {
+	if value.Prefix != "" && len(p) > 0 && len(p) < headerSize+5 {
 		layer := make([]byte, len(p))
 		copy(layer, p)
-		value.Append(layer, value.Prefix)
+
+		value.mu.Lock()
+		value.Layers = append(value.Layers, layer)
+		value.Index = append(value.Index, value.Prefix)
+		value.mu.Unlock()
+
 		return len(p), nil
 	}
 
 	if len(p) < headerSize+5 {
 		return 0, io.ErrUnexpectedEOF
 	}
+
+	value.mu.Lock()
+	defer value.mu.Unlock()
 
 	copy(value.ID[:], p[0:16])
 	value.Tick = binary.LittleEndian.Uint64(p[16:24])
@@ -353,10 +379,13 @@ func (value *Value) ReadFrom(r io.Reader) (int64, error) {
 Bytes returns a newly allocated slice containing the serialized Value.
 */
 func (value *Value) Bytes() []byte {
-	buf := make([]byte, value.Size())
+	value.mu.Lock()
+	defer value.mu.Unlock()
 
-	// Read reports a complete serialization as io.EOF.
-	if _, err := value.Read(buf); err != nil && err != io.EOF {
+	buf := make([]byte, value.sizeLocked())
+
+	// readLocked reports a complete serialization as io.EOF.
+	if _, err := value.readLocked(buf); err != nil && err != io.EOF {
 		errnie.Error(errnie.Err(errnie.IO, "data: value serialization failed", err))
 		return nil
 	}

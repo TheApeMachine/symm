@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 type Signal struct {
@@ -40,20 +41,24 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
-		signal.step(value, trade)
+	symbols := parent.DistinctSymbols(trades)
+
+	if err := parent.RunSymbols(signal.Context(), symbols, func(symbol string) {
+		signal.step(value, symbol)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
+func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
 
 	var bookAvailable bool
-	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+	signal.books.Book(symbol, func(b *spotbook.Book) {
 		bookAvailable = true
 
 		bestBid := b.BestBid()
@@ -79,7 +84,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 		keys := []string{
 			signal.Name(),
-			trade.Symbol,
+			symbol,
 		}
 
 		value.Append([]float64{

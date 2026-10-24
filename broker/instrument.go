@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/data"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
@@ -32,26 +33,13 @@ type Instrument struct {
 	cache        *sync.Map
 	quote        string
 	symbols      []string
-	auth         *kraken.Auth
-	level3Stale  func([]string)
-	level3Reader func(*network.WebsocketClient)
+	auth *kraken.Auth
 }
 
-/*
-SetLevel3Reader connects each Level3 socket to its ingress reader. It is
-required before Subscribe.
-*/
-func (instrument *Instrument) SetLevel3Reader(read func(*network.WebsocketClient)) {
-	instrument.level3Reader = read
-}
-
-/*
-SetLevel3Stale connects Level3 disconnects to the book (Book.Stale). It is
-required before Subscribe: without it a dropped Level3 socket would leave the
-book serving frozen depth until the resubscribe snapshot arrives.
-*/
-func (instrument *Instrument) SetLevel3Stale(stale func([]string)) {
-	instrument.level3Stale = stale
+// Level3 wires book stale marking and per-socket ingress for SubscribeBooks.
+type Level3 struct {
+	Stale  func([]string)
+	Reader func(*network.WebsocketClient)
 }
 
 /*
@@ -127,7 +115,12 @@ func NewInstrument(
 		}
 
 		if snapshot = kraken.NewInstrument(buf); snapshot == nil {
-			instrument.Error(errnie.Err(errnie.UnprocessableContent, "[instrument] instrument snapshot did not decode", nil))
+			instrument.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[instrument] instrument snapshot did not decode",
+				nil,
+			))
+
 			return instrument
 		}
 
@@ -190,6 +183,38 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	})
 
 	return pairs
+}
+
+// NormalizerFor builds a spot normalizer from the instrument snapshot.
+func NormalizerFor(instrument *Instrument) *spot.Normalizer {
+	normalizer := spot.NewNormalizer()
+
+	if instrument == nil {
+		return normalizer
+	}
+
+	update := &spot.AssetsManagerUpdate{
+		NewAssets: make(map[string]spot.AssetInfo),
+		NewPairs:  make(map[string]spot.AssetPair),
+	}
+
+	for _, pair := range instrument.Pairs() {
+		update.NewAssets[pair.Base] = spot.AssetInfo{AltName: pair.Base}
+		update.NewAssets[pair.Quote] = spot.AssetInfo{AltName: pair.Quote}
+
+		update.NewPairs[pair.Base+pair.Quote] = spot.AssetPair{
+			WSName:        pair.Symbol,
+			Base:          pair.Base,
+			Quote:         pair.Quote,
+			PairDecimals:  pair.PricePrecision,
+			LotDecimals:   pair.QtyPrecision,
+			LotMultiplier: 1,
+			TickSize:      pair.TickSize,
+		}
+	}
+
+	normalizer.Update(update)
+	return normalizer
 }
 
 /*
@@ -318,12 +343,10 @@ returned to the socket, which drops the connection and redials with backoff
 until a resubscribe succeeds; the batch's books stay stale meanwhile. It never
 halts the instrument.
 */
-func (instrument *Instrument) SubscribeBooks() error {
+func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 	errnie.Info("[instrument] subscribing to level3 books")
 
-	stale := instrument.level3Stale
-
-	if instrument.level3Reader == nil {
+	if level3.Reader == nil {
 		return instrument.Error(errnie.Err(
 			errnie.Validation,
 			"[instrument] level3 reader is required before subscribe",
@@ -331,13 +354,15 @@ func (instrument *Instrument) SubscribeBooks() error {
 		))
 	}
 
-	if stale == nil {
+	if level3.Stale == nil {
 		return instrument.Error(errnie.Err(
 			errnie.Validation,
 			"[instrument] level3 stale hook is required before subscribe",
 			nil,
 		))
 	}
+
+	stale := level3.Stale
 	for chunk := range slices.Chunk(instrument.symbols, 200) {
 		connSymbols := slices.Clone(chunk)
 		batchKey := strings.Join(connSymbols, "|")
@@ -357,7 +382,7 @@ func (instrument *Instrument) SubscribeBooks() error {
 		// Read before subscribing: unread snapshots make the venue reject
 		// later snapshot requests (measured: 120 of 621 rejected with readers
 		// started after all subscribes, 0 of 621 with readers running).
-		instrument.level3Reader(l3Client)
+		level3.Reader(l3Client)
 
 		if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
 			return instrument.Error(errnie.Err(

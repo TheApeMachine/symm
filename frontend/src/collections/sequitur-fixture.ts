@@ -49,9 +49,12 @@ export const sequiturFrame = (
 		trading: true,
 		stored: true,
 		match: "R02/R04",
+		livePath: "R02/R04",
 		depth: 2,
 		action: "enter",
 		outcome: "enter submitted",
+		similarity: 1,
+		exactMatch: true,
 	},
 	rules: [
 		{

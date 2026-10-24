@@ -4,12 +4,9 @@ import (
 	"context"
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/types"
 )
 
 type Prior struct {
@@ -20,8 +17,8 @@ type Prior struct {
 }
 
 /*
-Grid is not a grid at all, it is a "group by" over Measurement
-and Metric pins into 15 multi-signal confluence regions.
+Grid maps pinned metrics for one symbol into 15 confluence regions and
+maintains per-source priors for SNM and energy surprise.
 */
 type Grid struct {
 	*runtime.System
@@ -41,10 +38,10 @@ func NewGrid(ctx context.Context) *Grid {
 }
 
 /*
-Region is one confluence region's evidence in a frame: Deformation is the sum
-of its self-normalized metric magnitudes |SNM| scaled by one plus the energy
-surprise, Counts how many metrics it holds, and Brightness that average.
-Brightness is not capped: the scale factor can push it above 1. The JSON
+Region is one confluence region's evidence in a frame. Deformation is the
+sum of |SNM| scaled by excitation (one plus that source's energy surprise).
+Counts is how many pinned metrics landed here. Brightness is that average,
+deformation divided by counts. Excitation can push it above 1. The JSON
 tags are the dashboard contract: the Impulse Map renders the grid's own
 accepted regions from the training frame's grid/regions layer.
 */
@@ -64,14 +61,18 @@ type Signal struct {
 }
 
 /*
-Observe applies every signal layer for symbol on this tick, then returns the
-lit regions at or above the brightness midpoint.
+Observe applies this tick's metrics for one pair, updates priors, and returns
+the regions those metrics landed in.
 */
-func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
-	if value == nil {
+func (grid *Grid) Observe(
+	symbol string,
+	sources map[string]map[string]float64,
+	enter bool,
+) ([]*Region, error) {
+	if symbol == "" {
 		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[grid.Observe] nil value",
+			errnie.Validation,
+			"[grid.Observe] empty symbol",
 			nil,
 		))
 	}
@@ -84,116 +85,135 @@ func (grid *Grid) Observe(value *data.Value) ([]*Region, error) {
 		))
 	}
 
-	var byKey [RegionCount]*Region
+	if len(sources) == 0 {
+		return nil, nil
+	}
+
+	var slots [RegionCount]*Region
 	regions := make([]*Region, 0, RegionCount)
 
-	signals := map[string]map[string]Signal{}
+	for source, labels := range sources {
+		if len(labels) == 0 {
+			continue
+		}
 
-	for _, source := range types.SignalSourceStrings {
-		layers := value.LookupPrefix(source)
-
-		for _, layer := range layers {
-			parts := strings.Split(layer.Key, "/")
-			if len(parts) < 3 {
-				continue
-			}
-
-			var values []float64
-
-			if err := layer.Decode(&values); err != nil {
-				return nil, errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"[grid.Observe] "+layer.Key+" does not decode",
-					err,
-				))
-			}
-
-			symbol := parts[1] + "/" + parts[2]
-
-			if signals[source] == nil {
-				signals[source] = make(map[string]Signal)
-			}
-
-			signals[source][symbol] = Signal{
-				Source: source,
-				Symbol: symbol,
-				Labels: parts[3:],
-				Values: values,
-			}
+		if err := grid.ingestSignal(&slots, &regions, source, symbol, labels); err != nil {
+			return nil, err
 		}
 	}
 
-	for source, bySource := range signals {
-		for symbol, signal := range bySource {
-			if err := pinned(symbol, signal); err != nil {
-				return nil, err
-			}
+	for _, region := range regions {
+		if region == nil || region.Counts == 0 {
+			continue
+		}
 
-			if grid.Priors[source] == nil {
-				grid.Priors[source] = make(map[string]*Prior)
-			}
+		region.Brightness = region.Deformation / float64(region.Counts)
+	}
 
-			prior := grid.Priors[source][symbol]
+	return regions, nil
+}
 
-			if prior == nil {
-				grid.Priors[source][symbol] = &Prior{Signal: signal}
+func (grid *Grid) ensurePrior(source, symbol string) *Prior {
+	if grid.Priors[source] == nil {
+		grid.Priors[source] = make(map[string]*Prior)
+	}
+
+	prior := grid.Priors[source][symbol]
+	if prior == nil {
+		prior = &Prior{}
+		grid.Priors[source][symbol] = prior
+	}
+
+	return prior
+}
+
+func (grid *Grid) ingestSignal(
+	slots *[RegionCount]*Region,
+	regions *[]*Region,
+	source, symbol string,
+	labels map[string]float64,
+) error {
+	names := make([]string, 0, len(labels))
+
+	for label := range labels {
+		names = append(names, label)
+	}
+
+	slices.Sort(names)
+
+	values := make([]float64, len(names))
+	for i, label := range names {
+		values[i] = labels[label]
+	}
+
+	signal := Signal{
+		Source: source,
+		Symbol: symbol,
+		Labels: names,
+		Values: values,
+	}
+
+	if err := pinned(symbol, signal); err != nil {
+		return err
+	}
+
+	prior := grid.ensurePrior(source, symbol)
+
+	if prior.Samples == 0 && len(prior.Signal.Labels) == 0 {
+		prior.Signal = signal
+	}
+
+	if prior.Samples > 0 {
+		prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
+	}
+
+	energy := 0.0
+
+	for idx := range signal.Values {
+		snm := grid.SNM(&signal, idx)
+		energy += snm * snm
+	}
+
+	excitation := 1 + grid.Surprise(prior.Prediction, energy)
+	sourcePins, ok := regionMetricPins[source]
+
+	if !ok {
+		prior.Signal = signal
+		prior.Energy = energy
+		prior.Samples++
+		return nil
+	}
+
+	for idx, label := range signal.Labels {
+		targets := sourcePins[label]
+
+		if len(targets) == 0 {
+			continue
+		}
+
+		for _, key := range targets {
+			if key >= RegionCount {
 				continue
 			}
 
-			if prior.Samples > 0 {
-				prior.Prediction += (prior.Energy - prior.Prediction) / float64(prior.Samples)
+			region := slots[key]
+
+			if region == nil {
+				region = &Region{Symbol: symbol, Key: key}
+				slots[key] = region
+				*regions = append(*regions, region)
 			}
 
-			energy := 0.0
-
-			for idx := range signal.Values {
-				snm := grid.SNM(&signal, idx)
-				energy += snm * snm
-			}
-
-			excitation := 1 + grid.Surprise(prior.Prediction, energy)
-			sourcePins, ok := regionMetricPins[source]
-
-			if !ok {
-				prior.Signal = signal
-				prior.Energy = energy
-				prior.Samples++
-				continue
-			}
-
-			for idx, label := range signal.Labels {
-				targets := sourcePins[label]
-
-				if len(targets) == 0 {
-					continue
-				}
-
-				for _, key := range targets {
-					if key >= RegionCount {
-						continue
-					}
-
-					region := byKey[key]
-
-					if region == nil {
-						region = &Region{Symbol: symbol, Key: key}
-						byKey[key] = region
-						regions = append(regions, region)
-					}
-
-					region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
-					region.Counts++
-					region.Brightness = region.Deformation / float64(region.Counts)
-				}
-			}
-
-			prior.Signal = signal
-			prior.Energy = energy
-			prior.Samples++
+			region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
+			region.Counts++
 		}
 	}
 
-	return grid.finalizeRegions(regions), nil
+	prior.Signal = signal
+	prior.Energy = energy
+	prior.Samples++
+
+	return nil
 }
 
 /*
@@ -223,118 +243,15 @@ func pinned(symbol string, signal Signal) error {
 	return nil
 }
 
-func (grid *Grid) finalizeRegions(regions []*Region) []*Region {
-	if len(regions) == 0 {
-		return nil
-	}
-
-	bySymbol := make(map[string][]*Region)
-	order := make([]string, 0)
-
-	for _, region := range regions {
-		if _, seen := bySymbol[region.Symbol]; !seen {
-			order = append(order, region.Symbol)
-		}
-
-		bySymbol[region.Symbol] = append(bySymbol[region.Symbol], region)
-	}
-
-	slices.Sort(order)
-
-	kept := make([]*Region, 0, len(regions))
-
-	for _, symbol := range order {
-		kept = append(kept, cutMidpoint(bySymbol[symbol])...)
-	}
-
-	if len(kept) == 0 {
-		return nil
-	}
-
-	return kept
-}
-
-/*
-cutMidpoint keeps the regions at or above this symbol's own brightness
-midpoint. An aggregate tick carries many symbols; a quiet name stays lit
-when another name is louder.
-*/
-func cutMidpoint(regions []*Region) []*Region {
-	if len(regions) == 0 {
-		return nil
-	}
-
-	slices.SortFunc(regions, func(a, b *Region) int {
-		if a.Brightness > b.Brightness {
-			return -1
-		}
-
-		if a.Brightness < b.Brightness {
-			return 1
-		}
-
-		return int(a.Key) - int(b.Key)
-	})
-
-	midB := (regions[0].Brightness + regions[len(regions)-1].Brightness) / 2
-
-	cut, _ := slices.BinarySearchFunc(regions, midB, func(r *Region, mid float64) int {
-		if r.Brightness >= mid {
-			return -1
-		}
-
-		return 1
-	})
-
-	return regions[:cut]
-}
-
-/*
-RegionVote is the side a confluence region speaks for, and whether it
-votes with that side. The groups are the ones in SIGNALS.md.
-
-Detector and support vote for their side: R00 and R01 for enter, R03 and
-R04 for exit. Opposition votes against its side: R02 against enter, R05
-against exit. Regime, history, and risk oracles (R06–R14) are context.
-They return ("", false) and do not open or close a position.
-*/
-func RegionVote(key uint8) (side string, with bool) {
-	switch key {
-	case 0, 1:
-		return "enter", true
-	case 2:
-		return "enter", false
-	case 3, 4:
-		return "exit", true
-	case 5:
-		return "exit", false
-	default:
-		return "", false
-	}
-}
-
-/*
-RegionSide is the side a region votes for. Opposition and oracles return
-"" because they do not cast a vote for that side.
-*/
-func RegionSide(key uint8) string {
-	side, with := RegionVote(key)
-	if !with {
-		return ""
-	}
-
-	return side
-}
-
 /*
 SNM (Self-Normalized Movement) takes the reference from the prior magnitude
 and the movement itself. It measures a transition, not an isolated value.
 The result stays within \([-1,1]\) without statistical calibration.
 */
 func (grid *Grid) SNM(signal *Signal, idx int) float64 {
-	prior := grid.Priors[signal.Source][signal.Symbol]
+	prior := grid.ensurePrior(signal.Source, signal.Symbol)
 
-	if prior == nil || idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
+	if idx >= len(signal.Values) || idx >= len(prior.Signal.Values) {
 		return 0
 	}
 
@@ -360,36 +277,6 @@ func (grid *Grid) Surprise(prediction, energy float64) float64 {
 	}
 
 	return math.Abs(energy - prediction)
-}
-
-/*
-SymbolSurprise is the mean absolute energy error of every source that has
-a prior for symbol. The bool is false when no source has one yet: a missing
-prior is not a surprise of zero.
-*/
-func (grid *Grid) SymbolSurprise(symbol string) (float64, bool) {
-	if grid == nil || symbol == "" {
-		return 0, false
-	}
-
-	var sum float64
-	n := 0
-
-	for _, bySymbol := range grid.Priors {
-		prior := bySymbol[symbol]
-		if prior == nil || prior.Samples <= 0 {
-			continue
-		}
-
-		sum += grid.Surprise(prior.Prediction, prior.Energy)
-		n++
-	}
-
-	if n == 0 {
-		return 0, false
-	}
-
-	return sum / float64(n), true
 }
 
 /*

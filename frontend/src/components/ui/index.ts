@@ -13,6 +13,8 @@ class-variance-authority, motion, and tailwind-merge/clsx.
 export { Alert, type AlertProps, alertVariants } from "./alert";
 export {
 	Badge,
+	BadgeButton,
+	type BadgeButtonProps,
 	type BadgeProps,
 	type BadgeSize,
 	type BadgeVariant,
@@ -41,7 +43,13 @@ export {
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
 export { Funnel, type FunnelProps, type FunnelStage } from "./funnel";
-export { Gauge, type GaugeProps, type GaugeTone, toneColor } from "./gauge";
+export {
+	Gauge,
+	type GaugeMark,
+	type GaugeProps,
+	type GaugeTone,
+	toneColor,
+} from "./gauge";
 export {
 	type GapType,
 	Grid,

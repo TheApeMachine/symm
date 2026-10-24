@@ -1,13 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { cognitionStore } from "./cognition";
 import { CHORD_LOG, ingestSequiturFrame, sequiturStore } from "./sequitur";
 import { sequiturFrame } from "./sequitur-fixture";
 
 afterEach(() => {
 	sequiturStore.setState(() => ({}));
+	cognitionStore.setState(() => ({
+		epoch: "0",
+		policyKeys: [],
+		matches: {},
+		problem: null,
+		tree: null,
+	}));
 	vi.restoreAllMocks();
 });
 
 describe("ingestSequiturFrame", () => {
+	it("keeps the previous rulebook when a live frame omits it", () => {
+		ingestSequiturFrame(sequiturFrame({ tick: 1 }), 1000);
+		const prior = sequiturStore.state["BTC/USD"].latest;
+		const live = sequiturFrame({ tick: 2, path: "R02/R04" });
+		delete (live as { rules?: unknown }).rules;
+		delete (live as { start?: unknown }).start;
+
+		expect(ingestSequiturFrame(live, 2000)).toBe(true);
+
+		const latest = sequiturStore.state["BTC/USD"].latest;
+		expect(latest.tick).toBe(2);
+		expect(latest.path).toBe("R02/R04");
+		expect(latest.rules).toEqual(prior.rules);
+		expect(latest.start).toEqual(prior.start);
+	});
+
 	it("keeps the latest frame and logs its events and chord per symbol", () => {
 		expect(ingestSequiturFrame(sequiturFrame(), 1000)).toBe(true);
 		expect(
@@ -143,5 +167,76 @@ describe("ingestSequiturFrame: surprise gate", () => {
 		const chord = sequiturStore.state["GATE/USD"].chords.at(-1);
 		expect(chord?.blocked).toBe(true);
 		expect(chord?.gate?.z).toBe(2.1);
+	});
+
+	it("syncs cognition policy fields from the grammar frame", () => {
+		ingestSequiturFrame(
+			sequiturFrame({
+				symbol: "SYNC/USD",
+				policy: {
+					epoch: "1",
+					paths: 3,
+					trading: true,
+					stored: true,
+					match: "R00/R07",
+					livePath: "[R00-R08]/R07",
+					depth: 2,
+					action: "enter",
+					outcome: "",
+					similarity: 0.82,
+					exactMatch: false,
+				},
+			}),
+		);
+
+		const match = cognitionStore.state.matches["SYNC/USD"];
+		expect(match.stored).toBe(true);
+		expect(match.match).toBe("R00/R07");
+		expect(match.livePath).toBe("[R00-R08]/R07");
+		expect(match.similarity).toBe(0.82);
+		expect(match.exactMatch).toBe(false);
+	});
+
+	it("replaces the live sentence as the phase path grows", () => {
+		const policy = sequiturFrame().policy;
+
+		ingestSequiturFrame(
+			sequiturFrame({
+				symbol: "GROW/USD",
+				path: "R07.R01",
+				policy: {
+					...policy,
+					stored: false,
+					match: "",
+					livePath: "R07.R01",
+					policyPath: "R07.R01",
+					depth: 1,
+					outcome: "",
+				},
+			}),
+		);
+		ingestSequiturFrame(
+			sequiturFrame({
+				symbol: "GROW/USD",
+				tick: 42,
+				path: "",
+				policy: {
+					...policy,
+					stored: false,
+					match: "R07.R01",
+					livePath: "",
+					triggerPath: "R07.R01/R08.R04",
+					policyPath: "R07.R01/R08.R04",
+					depth: 2,
+					action: "exit",
+					outcome: "",
+				},
+			}),
+		);
+
+		expect(cognitionStore.state.matches["GROW/USD"]?.tokens).toEqual([
+			"R07.R01",
+			"R08.R04",
+		]);
 	});
 });

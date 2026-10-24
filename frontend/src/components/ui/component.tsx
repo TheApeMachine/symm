@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import { decodeText } from "#/lib/json-bytes";
 import type { Value } from "#/types/value";
 import { Alert } from "./alert";
 import {
@@ -13,7 +14,7 @@ import type { ValueStore } from "./types";
 
 export const nameOf = (val: unknown): string => {
 	if (typeof val === "string") return val;
-	if (val instanceof Uint8Array) return new TextDecoder().decode(val);
+	if (val instanceof Uint8Array) return decodeText(val);
 	return "";
 };
 
@@ -24,15 +25,13 @@ const finiteSample = (value: number | undefined): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const sampleMetric = (item: Value, name: string | null): number | null => {
-	// Scalar layers arrive as a metric-keyed map.
-	const metrics = item.metrics();
-	const keys = Object.keys(metrics);
-
 	if (name) {
-		if (!keys.includes(name)) return null;
-		return finiteSample(metrics[name]);
+		const value = item.metric(name);
+		return finiteSample(typeof value === "number" ? value : undefined);
 	}
 
+	const metrics = item.metrics();
+	const keys = Object.keys(metrics);
 	if (keys.length === 0) return null;
 	return finiteSample(metrics[keys[0] ?? ""]);
 };

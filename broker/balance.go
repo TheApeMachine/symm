@@ -50,7 +50,6 @@ const (
 func NewBalance(
 	ctx context.Context,
 	transport Transport,
-	price *Price,
 	bankroll *decimal.Decimal,
 ) *Balance {
 	balance := &Balance{
@@ -60,13 +59,6 @@ func NewBalance(
 		limiter: rate.NewLimiter(rate.Limit(
 			privateDecayPerSecond/privateCallsPerUpdate,
 		), 1),
-	}
-
-	// The configured bankroll is the sizing baseline from boot; the poll
-	// supersedes it once it lands. Price.Ready() is the gate for every
-	// allocation path, so entries cannot size before reference cash exists.
-	if price != nil && bankroll != nil {
-		price.SetReferenceCash(bankroll)
 	}
 
 	if paper, ok := transport.(*Paper); ok {

@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-	clockAtom,
-	signalFor,
-	signals,
-	workspaceFrame,
-} from "#/collections/app";
+import { signalFor, signals, workspaceFrame } from "#/collections/app";
 import type { Value } from "#/types/value";
 import {
 	createCanonicalGridNodes,
@@ -287,19 +282,16 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 		const unsubs: Array<(() => void) | undefined> = [];
 
-		// Clock atom fires on every inbound websocket batch
-		const clockSub = clockAtom.subscribe(() => {
-			updateFromTelemetry();
-		});
-		unsubs.push(() => clockSub.unsubscribe());
-
-		// Training store subscription
+		// Training frames are not on the workspace tick.
 		const trainingSub = signals.training?.subscribe(() => {
 			updateFromTelemetry();
 		});
 		unsubs.push(() => trainingSub?.unsubscribe?.());
 
-		// The aggregate tick carries every kernel's layers.
+		/*
+		The aggregate tick carries every kernel's layers, and the market
+		clock advances with that same frame, so one subscription covers both.
+		*/
 		const workspaceSub = signals.workspace.subscribe(() => {
 			updateFromTelemetry();
 		});

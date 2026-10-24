@@ -6,8 +6,11 @@ import (
 	"strings"
 	"unsafe"
 
+	"sync"
+
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
+	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
@@ -26,6 +29,7 @@ Signal is the asynchronous price-path lead-lag instrument.
 */
 type Signal struct {
 	*runtime.System
+	mu      sync.Mutex
 	paths   map[string][]temporal.Price
 	leadlag core.Primitive
 	keys    []string
@@ -56,7 +60,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	for _, trade := range parent.LastTradePerSymbol(trades) {
 		signal.step(value, trade)
 	}
 
@@ -67,6 +71,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
+
+	signal.mu.Lock()
+	defer signal.mu.Unlock()
 
 	price := trade.Price.Float64()
 	if price <= 0 {

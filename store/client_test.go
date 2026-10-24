@@ -3,13 +3,11 @@ package store
 import (
 	"context"
 	"testing"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestClientRefusesEmptyUploadKey(t *testing.T) {
 	client := &Client{
-		System: runtime.NewSystem(context.Background(), "store.client"),
+		ctx:    context.Background(),
 		bucket: "test-bucket",
 	}
 

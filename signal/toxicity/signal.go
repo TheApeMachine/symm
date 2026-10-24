@@ -3,6 +3,7 @@ package toxicity
 import (
 	"context"
 	"math"
+	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 type symbolState struct {
@@ -23,6 +25,7 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	mu     sync.Mutex
 	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
@@ -50,8 +53,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	if err := parent.RunTrades(signal.Context(), trades, func(trade kraken.TradeData) {
 		signal.step(value, trade)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
@@ -77,12 +82,11 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	atNano := float64(value.Timestamp)
 
-	state, exists := signal.states[trade.Symbol]
-
-	if !exists {
-		state = &symbolState{}
-		signal.states[trade.Symbol] = state
-	}
+	var (
+		retreatFraction  float64
+		withdrawalRate   float64
+		appendMetrics    bool
+	)
 
 	// The `books.Book` callback is synchronous; the book is present only if
 	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
@@ -97,10 +101,18 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		bid := bestBid.Price.Float64()
 		bidQty := bestBid.Quantity.Float64()
 
+		signal.mu.Lock()
+		defer signal.mu.Unlock()
+
+		state, exists := signal.states[trade.Symbol]
+
+		if !exists {
+			state = &symbolState{}
+			signal.states[trade.Symbol] = state
+		}
+
 		if !state.hasPrev {
 			state.observe(bid, bidQty, atNano)
-			// Nothing is computable yet: the tick carries no layer for it
-			// rather than zeros that read as a measured value.
 			return
 		}
 
@@ -111,8 +123,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 
 		if atNano <= state.prevAtNano {
-			// Nothing is computable yet: the tick carries no layer for it
-			// rather than zeros that read as a measured value.
 			return
 		}
 
@@ -121,8 +131,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 		fill := math.Min(state.pendingMatchedBid, state.prevBidQty)
 		unfilled := state.prevBidQty - fill
-
-		var retreatFraction, withdrawalRate float64
 
 		if bid == state.prevBid && rated {
 			withdrawn := math.Max(unfilled-bidQty, 0)
@@ -134,17 +142,22 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 
 		state.observe(bid, bidQty, atNano)
-
-		keys := []string{
-			signal.Name(),
-			trade.Symbol,
-		}
-
-		value.Append([]float64{
-			retreatFraction,
-			withdrawalRate,
-		}, append(keys, signal.keys...)...)
+		appendMetrics = true
 	})
+
+	if !appendMetrics {
+		return value
+	}
+
+	keys := []string{
+		signal.Name(),
+		trade.Symbol,
+	}
+
+	value.Append([]float64{
+		retreatFraction,
+		withdrawalRate,
+	}, append(keys, signal.keys...)...)
 
 	return value
 }

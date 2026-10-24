@@ -1,5 +1,6 @@
-import { type Store, useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
+import { useSelector } from "@tanstack/react-store";
+import { useMemo } from "react";
+import { atoms, kernelMeasurement, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
@@ -12,7 +13,6 @@ import {
 	Typography,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import type { Value } from "#/types/value";
 
 interface MetricProps {
 	name: string;
@@ -22,12 +22,15 @@ interface MetricProps {
 export const Metric = ({ name, compact = false }: MetricProps) => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const headline = sourceHeadline(name) ?? name;
-	const store = signals.workspace as Store<Record<string, Value>>;
+	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
+	const measurement = useMemo(
+		() => kernelMeasurement(name, focusSymbol, aggregate),
+		[name, focusSymbol, aggregate],
+	);
 
 	return (
 		<Component
-			store={store}
-			symbol={focusSymbol}
+			value={measurement}
 			className="flex min-h-0 flex-1 flex-col overflow-hidden"
 		>
 			<Button

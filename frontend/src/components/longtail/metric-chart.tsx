@@ -184,6 +184,11 @@ export const MetricChart = ({
 	});
 
 	const labeled = series.filter((s) => s.label !== undefined);
+	const chartTitle =
+		series
+			.map((item) => item.label)
+			.filter((label): label is string => Boolean(label))
+			.join(" · ") || "training metric";
 
 	return (
 		<div ref={ref} className={cn("relative min-h-0 min-w-0", className)}>
@@ -191,10 +196,10 @@ export const MetricChart = ({
 				width={size.width}
 				height={size.height}
 				role="img"
-				aria-label="metric chart"
+				aria-label={chartTitle}
 				className="block"
 			>
-				<title>metric</title>
+				<title>{chartTitle}</title>
 				<defs>
 					<pattern
 						id={patternId}

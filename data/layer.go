@@ -42,33 +42,55 @@ func (value *Value) Append(layers any, keys ...string) *Value {
 }
 
 /*
-Lookup finds a layer by keyword.
+At
+*/
+func (value *Value) At(projector any, index int) {
+	if err := sonic.Unmarshal(value.Layers[index], projector); err != nil {
+		value.Err = errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.Value.At] layer does not decode",
+			err,
+		))
+	}
+}
+
+/*
+Lookup decodes the first layer addressed by key relative to value.Prefix.
+
+Matching is prefix-safe: index == prefix/key or index begins with prefix/key/
+(so spot:trade/trade resolves Lookup(..., "spot:trade")). Sibling keys such
+as policyPath must not match Lookup(..., "policy"); use LookupPrefix when
+you need every descendant under a path segment.
 */
 func (value *Value) Lookup(projector any, key string) {
 	var buf []byte
 
+	target := strings.Join([]string{value.Prefix, key}, "/")
+
 	for i, index := range value.Index {
-		if strings.Contains(index, value.Prefix+"/"+key) {
-			buf = value.Layers[i]
-			break
+		if index != target && !strings.HasPrefix(index, target+"/") {
+			continue
 		}
+
+		buf = value.Layers[i]
+		break
 	}
 
 	/*
-	An absent layer is not a decode failure: the projector stays as the
-	caller left it and no error is recorded. Only a layer that is present
-	and does not decode is an error.
+		An absent layer is not a decode failure: the projector stays as the
+		caller left it and no error is recorded. Only a layer that is present
+		and does not decode is an error.
 	*/
 	if buf == nil {
 		return
 	}
 
 	/*
-	An empty payload is not JSON: sonic reports it as a syntax error, but
-	reading nothing into a projector is precisely "nothing decoded" — not a
-	corrupt value. An empty object/array decodes to the zero value and
-	leaves the projector untouched, which is the same outcome without the
-	error noise.
+		An empty payload is not JSON: sonic reports it as a syntax error, but
+		reading nothing into a projector is precisely "nothing decoded" — not a
+		corrupt value. An empty object/array decodes to the zero value and
+		leaves the projector untouched, which is the same outcome without the
+		error noise.
 	*/
 	if len(bytes.TrimSpace(buf)) == 0 {
 		return

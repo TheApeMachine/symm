@@ -3,12 +3,14 @@ package depthflow
 import (
 	"context"
 	"sort"
+	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 type symbolState struct {
@@ -23,6 +25,7 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	mu     sync.Mutex
 	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
@@ -54,14 +57,12 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	seen := make(map[string]struct{}, len(trades))
+	symbols := parent.DistinctSymbols(trades)
 
-	for _, trade := range trades {
-		if _, exists := seen[trade.Symbol]; exists {
-			continue
-		}
-		seen[trade.Symbol] = struct{}{}
-		signal.step(value, trade.Symbol)
+	if err := parent.RunSymbols(signal.Context(), symbols, func(symbol string) {
+		signal.step(value, symbol)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
@@ -72,6 +73,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		return value
 	}
 
+	signal.mu.Lock()
 	state, found := signal.states[symbol]
 	if !found {
 		state = &symbolState{
@@ -80,12 +82,16 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		}
 		signal.states[symbol] = state
 	}
+	signal.mu.Unlock()
 
 	// The `books.Book` callback is synchronous; the book is present only if
 	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
 	// invalid (venue checksum mismatch / absent level) symbols skip the
 	// callback and the tick carries book_error/<symbol> instead.
 	signal.books.Book(symbol, func(b *spotbook.Book) {
+		signal.mu.Lock()
+		defer signal.mu.Unlock()
+
 		bids := ladder(b.Bids, true)
 		asks := ladder(b.Asks, false)
 

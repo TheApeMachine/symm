@@ -6,6 +6,12 @@ export type GaugeTone = "up" | "down" | "warn" | "acc" | "info" | "muted";
 export const toneColor = (tone: GaugeTone): string =>
 	tone === "muted" ? "var(--f4)" : `var(--${tone})`;
 
+export type GaugeMark = {
+	at: number;
+	color?: string;
+	title?: string;
+};
+
 export interface GaugeProps {
 	/* Fill in [0, 1]; undefined draws the empty (waiting) track. */
 	value?: number;
@@ -17,6 +23,8 @@ export interface GaugeProps {
 	caption?: ReactNode;
 	/* Optional tick positions in [0, 1], e.g. a danger line. */
 	ticks?: number[];
+	/* Colored threshold marks (profit/stop lines on the P&L dial). */
+	marks?: GaugeMark[];
 	className?: string;
 }
 
@@ -47,6 +55,7 @@ export const Gauge = ({
 	label,
 	caption,
 	ticks = [],
+	marks,
 	className,
 }: GaugeProps) => {
 	const clipId = useId();
@@ -57,72 +66,81 @@ export const Gauge = ({
 	const v = value === undefined ? undefined : Math.max(0, Math.min(1, value));
 	const trackPath = arc(c, c, r, start, start + sweep);
 	const fillColor = toneColor(tone);
+	const dialMarks: GaugeMark[] =
+		marks ??
+		ticks.map((at) => ({
+			at,
+			color: "var(--f3)",
+		}));
 
 	return (
-		<div
-			className={cn("relative inline-flex flex-col items-center", className)}
-		>
-			<svg
-				width={size}
-				height={size}
-				viewBox={`0 0 ${size} ${size}`}
-				role="img"
-				className="overflow-hidden"
-			>
-				<title>Gauge</title>
-				<defs>
-					<clipPath id={clipId}>
-						<circle cx={c} cy={c} r={size / 2 - 1} />
-					</clipPath>
-				</defs>
-				<g clipPath={`url(#${clipId})`}>
-					<path
-						d={trackPath}
-						stroke="var(--line)"
-						strokeWidth={stroke}
-						fill="none"
-						strokeLinecap="butt"
-					/>
-					{v !== undefined && v > 0.001 && (
+		<div className={cn("inline-flex flex-col items-center", className)}>
+			<div className="relative" style={{ width: size, height: size }}>
+				<svg
+					width={size}
+					height={size}
+					viewBox={`0 0 ${size} ${size}`}
+					role="img"
+					className="overflow-hidden"
+				>
+					<title>Gauge</title>
+					<defs>
+						<clipPath id={clipId}>
+							<circle cx={c} cy={c} r={size / 2 - 1} />
+						</clipPath>
+					</defs>
+					<g clipPath={`url(#${clipId})`}>
 						<path
 							d={trackPath}
-							stroke={fillColor}
+							stroke="var(--line)"
 							strokeWidth={stroke}
 							fill="none"
 							strokeLinecap="butt"
-							pathLength={1}
-							strokeDasharray={`${v} ${1 - v}`}
-							style={{
-								transition: "stroke-dasharray 180ms ease-out",
-							}}
 						/>
-					)}
-					{ticks.map((t) => {
-						const [x1, y1] = polar(c, c, r - 5, start + sweep * t);
-						const [x2, y2] = polar(c, c, r + 5, start + sweep * t);
-						return (
-							<line
-								key={t}
-								x1={x1}
-								y1={y1}
-								x2={x2}
-								y2={y2}
-								stroke="var(--f3)"
-								strokeWidth={1.5}
+						{v !== undefined && v > 0.001 && (
+							<path
+								d={trackPath}
+								stroke={fillColor}
+								strokeWidth={stroke}
+								fill="none"
+								strokeLinecap="butt"
+								pathLength={1}
+								strokeDasharray={`${v} ${1 - v}`}
+								style={{
+									transition: "stroke-dasharray 180ms ease-out",
+								}}
 							/>
-						);
-					})}
-				</g>
-			</svg>
-			<div className="absolute inset-0 flex items-center justify-center text-center font-mono text-[12px] text-(--f1) font-bold">
-				{v === undefined ? (
-					<span className="text-(--f4) font-normal">waiting</span>
-				) : (
-					label
-				)}
+						)}
+						{dialMarks.map((mark) => {
+							const t = Math.max(0, Math.min(1, mark.at));
+							const [x1, y1] = polar(c, c, r - 6, start + sweep * t);
+							const [x2, y2] = polar(c, c, r + 6, start + sweep * t);
+							return (
+								<g key={`${t}-${mark.title ?? "tick"}`}>
+									{mark.title ? <title>{mark.title}</title> : null}
+									<line
+										x1={x1}
+										y1={y1}
+										x2={x2}
+										y2={y2}
+										stroke={mark.color ?? "var(--f3)"}
+										strokeWidth={mark.color ? 2.25 : 1.5}
+									/>
+								</g>
+							);
+						})}
+					</g>
+				</svg>
+				<div className="absolute inset-0 flex items-center justify-center text-center font-mono text-[12px] text-(--f1) font-bold pointer-events-none">
+					{v === undefined ? (
+						<span className="text-(--f4) font-normal">waiting</span>
+					) : (
+						label
+					)}
+				</div>
 			</div>
 			{caption && (
-				<div className="-mt-3 text-[10px] text-(--f3) text-center leading-tight">
+				<div className="mt-0.5 text-[10px] text-(--f3) text-center leading-tight">
 					{caption}
 				</div>
 			)}

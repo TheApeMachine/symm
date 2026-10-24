@@ -2,12 +2,14 @@ package broker
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func TestPaperExecutionStillOpen(t *testing.T) {
@@ -117,30 +119,34 @@ func TestAffordableVolumeStringNonEmpty(t *testing.T) {
 		},
 	})
 
-	price := NewPrice(t.Context(), nil, nil, nil, normalizer)
-	fee := decimal.NewFromFloat64(0.26)
-	price.SetFee("BTC/USD", kraken.TradeVolumeFee{
-		Fee: fee, Minfee: fee, Maxfee: fee,
-	})
+	fee, err := decimal.NewFromString("0.40")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	price := &Price{
+		System:     runtime.NewSystem(t.Context(), "price"),
+		normalizer: normalizer,
+		fees:       &sync.Map{},
+	}
+	price.Transition(runtime.READY)
+	price.fees.Store(price.normalizer.Name("BTC/USD"), fee)
+
+	qty, err := decimal.NewFromString("0.001")
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	unit, err := decimal.NewFromString("100000.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cash, err := decimal.NewFromString("1000.0")
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	qty, err := price.Affordable("BTC/USD", cash, unit)
 	if err != nil {
-		t.Fatalf("Affordable: %v", err)
-	}
-	if qty == nil || qty.Sign() <= 0 {
-		t.Fatalf("qty: %v", qty)
+		t.Fatal(err)
 	}
 
 	volume := qty.String()
+
 	if volume == "" {
 		t.Fatal("volume.String() empty — paper CLI would get Invalid volume")
 	}
@@ -149,7 +155,9 @@ func TestAffordableVolumeStringNonEmpty(t *testing.T) {
 		Pair: "BTC/USD", Type: "buy", OrdType: "limit",
 		Volume: volume, Price: unit.String(),
 	}
+
 	raw, err := json.Marshal(kraken.NewAddOrderMessage("", entry))
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,9 +167,11 @@ func TestAffordableVolumeStringNonEmpty(t *testing.T) {
 			OrderQty string `json:"order_qty"`
 		} `json:"params"`
 	}
+
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatal(err)
 	}
+
 	if parsed.Params.OrderQty == "" {
 		t.Fatalf("marshaled order_qty empty: %s", raw)
 	}

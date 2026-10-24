@@ -1,4 +1,5 @@
 import type { Book } from "#/collections/book";
+import type { GaugeMark } from "#/components/ui/gauge";
 
 const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
@@ -23,33 +24,52 @@ const dateText = (value: unknown): string | null => {
 	}
 };
 
-const returnFraction = (row: Record<string, unknown>, closed: boolean) => {
-	if (closed) {
-		const settled = decimal(row.net_return ?? row.return ?? null);
-		return settled === null ? null : settled / 100;
-	}
-
-	const open = decimal(row.book_return);
-	return open === null ? null : open / 100;
-};
-
-/* The desk's settled outcome, when it has priced the close. */
-export const settledOutcome = (row: Record<string, unknown>) => {
-	if (row.cost === undefined || row.proceeds === undefined) return null;
+const returnFraction = (row: Record<string, unknown>) => {
+	const pnlPct = decimal(row.pnl_pct);
+	if (pnlPct !== null) return pnlPct / 100;
 
 	const cost = decimal(row.cost);
-	const proceeds = decimal(row.proceeds);
+	const profit = decimal(row.profit);
+	if (cost !== null && profit !== null && cost > 0) {
+		return profit / cost;
+	}
 
-	if (cost === null || proceeds === null) return null;
+	return null;
+};
+
+const outcomeTriggers = (value: unknown): string[] | null => {
+	if (!Array.isArray(value)) return null;
+	const list = value.filter((item): item is string => typeof item === "string");
+	return list.length > 0 ? list : null;
+};
+
+export type SettledOutcome = {
+	pnl: number | null;
+	pnl_pct: number | null;
+	hold_ns: number | null;
+	triggers: string[] | null;
+};
+
+export const settledOutcome = (
+	row: Record<string, unknown>,
+): SettledOutcome | null => {
+	const pnlPct = decimal(row.pnl_pct);
+	const frac = returnFraction(row);
+	const cost = decimal(row.cost);
+	const profit = decimal(row.profit);
+
+	let pnl = frac;
+	if (pnl === null && profit !== null && cost !== null && cost > 0) {
+		pnl = profit / cost;
+	}
+
+	if (pnl === null && pnlPct === null) return null;
 
 	return {
-		cost,
-		proceeds,
-		fees: null,
-		realized: decimal(row.profit) ?? proceeds - cost,
-		net_return: row.net_return ?? row.return ?? null,
-		hold_ns: row.hold_ns ?? null,
-		triggers: row.outcome_triggers ?? null,
+		pnl,
+		pnl_pct: pnlPct ?? (pnl === null ? null : pnl * 100),
+		hold_ns: decimal(row.hold_ns),
+		triggers: outcomeTriggers(row.outcome_triggers),
 	};
 };
 
@@ -116,7 +136,6 @@ export type PositionReadout = {
 	entryQty: number | null;
 	entryCost: number | null;
 	exitQty: number | null;
-	exitProceeds: number | null;
 	entryPrice: number | null;
 	mark: number | null;
 	entryFee: number | null;
@@ -124,10 +143,8 @@ export type PositionReadout = {
 	fees: number | null;
 	exitVwap: number | null;
 	exitRoom: number | null;
-	grossPnl: number | null;
-	netPnl: number | null;
-	unrealizedPnl: number | null;
 	returnPct: number | null;
+	returnPctDisplay: number | null;
 	openedAt: string | null;
 	closedAt: string | null;
 	holdNs: number | null;
@@ -136,9 +153,76 @@ export type PositionReadout = {
 };
 
 /*
-Position economics come from the desk row (broker/price.go). Fills only
-help detect venue round trips when closed_at is absent.
+Open PnL and exit_vwap come from broker/price book walks; exit_price is the settled fill when closed.
+Fills only help detect venue round trips when closed_at is absent.
 */
+const positionCostQuote = (row: Record<string, unknown>): number | null => {
+	const pnl = decimal(row.pnl);
+	const pnlPct = decimal(row.pnl_pct);
+	if (pnl !== null && pnlPct !== null && pnlPct !== 0) {
+		return pnl / (pnlPct / 100);
+	}
+
+	const qty = decimal(row.qty);
+	const entry = decimal(row.entry_price);
+	if (qty !== null && entry !== null) {
+		return qty * entry;
+	}
+
+	return null;
+};
+
+/*
+Maps close-now return to the P&L gauge fill position (0 = max loss, 0.5 = flat, 1 = max gain).
+*/
+export const pnlGaugeValue = (returnPct: number | undefined): number | undefined => {
+	if (returnPct === undefined) return undefined;
+	return 0.5 + Math.max(-0.5, Math.min(0.5, returnPct * 5));
+};
+
+/*
+Book explore exits: profit at zero close-now P&L; stop at twice the opening underwater gap.
+*/
+export const exploreExitGaugeMarks = (
+	row: Record<string, unknown>,
+): GaugeMark[] => {
+	const marks: GaugeMark[] = [
+		{
+			at: 0.5,
+			color: "var(--up)",
+			title: "Profit exit — close-now P&L above zero",
+		},
+	];
+
+	if (row.virtual !== true) {
+		return marks;
+	}
+
+	const openPnl = decimal(row.open_pnl);
+	if (openPnl === null || openPnl >= 0) {
+		return marks;
+	}
+
+	const cost = positionCostQuote(row);
+	if (cost === null || cost <= 0) {
+		return marks;
+	}
+
+	const stopReturn = (2 * openPnl) / cost;
+	const stopAt = pnlGaugeValue(stopReturn);
+	if (stopAt === undefined) {
+		return marks;
+	}
+
+	marks.push({
+		at: stopAt,
+		color: "var(--down)",
+		title: `Stop exit — symmetric book hurdle (${(stopReturn * 100).toFixed(2)}% close-now)`,
+	});
+
+	return marks;
+};
+
 export const positionReadout = (
 	row: Record<string, unknown>,
 ): PositionReadout => {
@@ -158,7 +242,8 @@ export const positionReadout = (
 	const closed =
 		row.closed_at !== null && row.closed_at !== undefined
 			? row.virtual !== true ||
-				(decimal(row.cost) !== null && decimal(row.proceeds) !== null)
+				decimal(row.pnl_pct) !== null ||
+				(decimal(row.cost) !== null && decimal(row.profit) !== null)
 			: fullySold;
 
 	const closedAt = dateText(row.closed_at) ?? (fullySold ? sells.lastAt : null);
@@ -168,29 +253,14 @@ export const positionReadout = (
 			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
 			: null);
 
-	const settledCost = decimal(row.cost);
-	const settledProceeds = decimal(row.proceeds);
-	const profit = decimal(row.profit);
-	const returnPct = returnFraction(row, closed);
-
-	let netPnl: number | null = null;
-	let grossPnl: number | null = null;
-	let unrealizedPnl: number | null = null;
-
-	if (closed && settledCost !== null && settledProceeds !== null) {
-		grossPnl = settledProceeds - settledCost;
-		netPnl = profit;
-	} else if (!closed && profit !== null) {
-		netPnl = profit;
-		unrealizedPnl = profit;
-	}
+	const returnPct = returnFraction(row);
+	const returnPctDisplay = decimal(row.pnl_pct);
 
 	return {
 		qty,
 		entryQty: buys.qty,
-		entryCost: settledCost,
+		entryCost: buys.cost,
 		exitQty: sells.qty,
-		exitProceeds: settledProceeds,
 		entryPrice,
 		mark,
 		entryFee,
@@ -198,10 +268,8 @@ export const positionReadout = (
 		fees: null,
 		exitVwap,
 		exitRoom,
-		grossPnl,
-		netPnl,
-		unrealizedPnl,
 		returnPct,
+		returnPctDisplay,
 		openedAt,
 		closedAt,
 		holdNs: holdNs as number | null,
@@ -221,13 +289,22 @@ export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
 export const closedOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && positionReadout(row).closed);
 
+const countsTowardBookPerformance = (
+	row: Record<string, unknown>,
+	book: Book,
+): boolean => book !== "virtual" || row.path_found === true;
+
 export const lotReturn = (row: Record<string, unknown>): number | null =>
 	positionReadout(row).returnPct;
 
 /* Closed lots own book performance; open lots stand in until one closes. */
 export const bookReadout = (rows: Record<string, unknown>[], book: Book) => {
-	const held = openOnBook(rows, book);
-	const closed = closedOnBook(rows, book);
+	const held = openOnBook(rows, book).filter((row) =>
+		countsTowardBookPerformance(row, book),
+	);
+	const closed = closedOnBook(rows, book).filter((row) =>
+		countsTowardBookPerformance(row, book),
+	);
 	const sample = closed.length > 0 ? closed : held;
 	const returns = sample
 		.map(lotReturn)

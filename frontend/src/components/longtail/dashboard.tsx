@@ -4,23 +4,15 @@ import { bookAtom } from "#/collections/book";
 import {
 	alertVariant,
 	buildInsights,
-	coverageTone,
-	fixed,
-	frictionPassTone,
-	gatePassTone,
 	type LongtailSample,
-	matchTone,
-	pathStableTone,
 	pct,
 	returnTone,
 	signedPct,
-	surpriseTone,
 	type Tone,
 	toneColor,
 	toneVariant,
 	useLongtailReport,
 	verdict,
-	warmTone,
 	winRateTone,
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
@@ -28,10 +20,9 @@ import { Flex } from "#/components/ui/flex";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
-The training performance surface. It answers one question — is the learning
-system doing well, and is it improving? — from three sources: the desk's
-settled round trips (edge), the live grammar feeds (structure, gate, policy),
-and the trend of each over the session window.
+The training performance surface. It answers one question — is the book
+making money, and is that changing? — from settled round trips and the path
+book: developed paths, the paper floor, prunes, and why lots closed.
 
 Everything fits one screen: a verdict header, an eight-tile KPI strip with
 deltas and sparklines, six measured charts, and a right rail of health
@@ -41,6 +32,43 @@ never paints green.
 */
 
 const rate = (value: number) => `${Math.round(value * 100)}%`;
+const countLabel = (value: number) => `${Math.round(value)}`;
+
+const formatHold = (ns: number) => {
+	const seconds = Math.abs(ns) / 1e9;
+	if (seconds < 90) return `${seconds.toFixed(0)}s`;
+	const minutes = seconds / 60;
+	if (minutes < 90) return `${minutes.toFixed(0)}m`;
+	return `${(minutes / 60).toFixed(1)}h`;
+};
+
+const holdTone = (value: number | null): Tone =>
+	value === null
+		? "neutral"
+		: value >= 180e9
+			? "good"
+			: value >= 30e9
+				? "warn"
+				: "bad";
+
+const levelTone = (_value: number | null): Tone => "neutral";
+
+const branchShare = (sample: LongtailSample): number | null => {
+	const training = sample.training;
+	if (
+		training?.exitProfit === null ||
+		training?.exitProfit === undefined ||
+		training.exitStop === null ||
+		training.exitStop === undefined ||
+		training.exitBranch === null ||
+		training.exitBranch === undefined
+	) {
+		return null;
+	}
+	const total = training.exitProfit + training.exitStop + training.exitBranch;
+	if (total === 0) return null;
+	return training.exitBranch / total;
+};
 
 /* A flat sparkline sits mid-height instead of pinning to the floor. */
 const sparkPath = (
@@ -79,6 +107,8 @@ type Kpi = {
 	formatDelta: (delta: number) => string;
 	tone: (value: number | null) => Tone;
 	higherIsBetter: boolean;
+	/** When false, movement stays grey. Counts are context, not a score. */
+	colorDelta: boolean;
 	epsilon: number;
 };
 
@@ -92,6 +122,7 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
 		tone: returnTone,
 		higherIsBetter: true,
+		colorDelta: true,
 		epsilon: 0.005,
 	},
 	{
@@ -103,73 +134,77 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
 		tone: winRateTone,
 		higherIsBetter: true,
+		colorDelta: true,
 		epsilon: 0.005,
 	},
 	{
-		id: "coverage",
-		label: "action coverage",
-		value: (s) => s.training?.actionCoverage ?? null,
+		id: "hold",
+		label: "avg hold",
+		value: (s) => s[book]?.avgHoldNs ?? null,
+		format: formatHold,
+		formatDelta: (delta) =>
+			`${delta >= 0 ? "+" : "−"}${formatHold(Math.abs(delta))}`,
+		tone: holdTone,
+		higherIsBetter: true,
+		colorDelta: true,
+		epsilon: 5e9,
+	},
+	{
+		id: "letters",
+		label: "new letters",
+		value: (s) => s.training?.tokenEmitRate ?? null,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: coverageTone,
+		tone: levelTone,
 		higherIsBetter: true,
-		epsilon: 0.005,
-	},
-	{
-		id: "stable",
-		label: "path stable",
-		value: (s) => s.training?.pathStableRate ?? null,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: pathStableTone,
-		higherIsBetter: true,
-		epsilon: 0.005,
-	},
-	{
-		id: "gate",
-		label: "gate pass",
-		value: (s) => s.training?.gatePassRate ?? null,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: gatePassTone,
-		higherIsBetter: true,
-		epsilon: 0.005,
-	},
-	{
-		id: "surprise",
-		label: "surprise",
-		value: (s) => s.training?.avgSurprise ?? null,
-		format: (v) => v.toFixed(2),
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${Math.abs(delta).toFixed(2)}`,
-		tone: surpriseTone,
-		higherIsBetter: false,
+		colorDelta: false,
 		epsilon: 0.02,
 	},
 	{
-		id: "match",
-		label: "policy match",
-		value: (s) => s.training?.policyMatchRate ?? null,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: matchTone,
+		id: "developed",
+		label: "paths",
+		value: (s) => s.training?.developedPaths ?? null,
+		format: countLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
+		tone: levelTone,
 		higherIsBetter: true,
-		epsilon: 0.005,
+		colorDelta: false,
+		epsilon: 0.5,
 	},
 	{
-		id: "friction",
-		label: "friction pass",
-		value: (s) => s.training?.frictionPassRate ?? null,
+		id: "promoted",
+		label: "paper paths",
+		value: (s) => s.training?.promotedPaths ?? null,
+		format: countLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
+		tone: (value) => (value !== null && value > 0 ? "good" : "neutral"),
+		higherIsBetter: true,
+		colorDelta: true,
+		epsilon: 0.5,
+	},
+	{
+		id: "pruned",
+		label: "pruned",
+		value: (s) => s.training?.prunedPaths ?? null,
+		format: countLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
+		tone: levelTone,
+		higherIsBetter: false,
+		colorDelta: false,
+		epsilon: 0.5,
+	},
+	{
+		id: "branch",
+		label: "branch exits",
+		value: branchShare,
 		format: (v) => `${(100 * v).toFixed(0)}%`,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: frictionPassTone,
+		tone: (value) => (value !== null && value > 0 ? "good" : "neutral"),
 		higherIsBetter: true,
-		epsilon: 0.005,
+		colorDelta: true,
+		epsilon: 0.02,
 	},
 ];
 
@@ -186,7 +221,7 @@ const KpiTile = ({ kpi, samples }: { kpi: Kpi; samples: LongtailSample[] }) => {
 
 	const tone = kpi.tone(latest);
 	const deltaTone: Tone =
-		delta === null || Math.abs(delta) < kpi.epsilon
+		!kpi.colorDelta || delta === null || Math.abs(delta) < kpi.epsilon
 			? "neutral"
 			: delta > 0 === kpi.higherIsBetter
 				? "good"
@@ -260,13 +295,12 @@ const bookPoint = (
 const trainingPoint = (
 	sample: LongtailSample | undefined,
 	key:
-		| "gatePassRate"
-		| "avgSurprise"
+		| "tokenEmitRate"
+		| "blockedRate"
 		| "reuseRate"
 		| "createRate"
-		| "policyMatchRate"
-		| "pathStableRate"
-		| "frictionPassRate",
+		| "policyStoredRate"
+		| "outcomeRate",
 ): number | null => {
 	const value = sample?.training?.[key];
 	return typeof value === "number" ? value : null;
@@ -276,7 +310,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "win",
 		label: `${book} win rate`,
-		caption: "desk net_return on settled lots (fraction)",
+		caption: "settled lots whose book return is positive",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -295,7 +329,7 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 	{
 		id: "return",
 		label: `${book} mean return`,
-		caption: "mean desk net_return on settled lots (fraction)",
+		caption: "mean desk pnl on settled lots (fraction)",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
@@ -311,81 +345,88 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 		tone: (s) => returnTone(bookPoint(s, book, "meanReturn")),
 	},
 	{
-		id: "gate",
-		label: "Gate pass rate",
-		caption: "enter regimes bright enough for their path",
+		id: "hold",
+		label: "Average hold",
+		caption: "mean time a settled lot stayed open",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
+			const hold = latest?.[book]?.avgHoldNs ?? null;
 			return [
 				{
-					values: samples.map((s) => trainingPoint(s, "gatePassRate")),
-					stroke: toneColor(
-						gatePassTone(trainingPoint(latest, "gatePassRate")),
-					),
+					values: samples.map((s) => {
+						const ns = s[book]?.avgHoldNs;
+						return ns === null || ns === undefined ? null : ns / 1e9;
+					}),
+					stroke: toneColor(holdTone(hold)),
 					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
 				},
 			];
 		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => gatePassTone(trainingPoint(s, "gatePassRate")),
+		formatY: (v) => formatHold(v * 1e9),
+		tone: (s) => holdTone(s?.[book]?.avgHoldNs ?? null),
 	},
 	{
-		id: "surprise",
-		label: "Mean surprise",
-		caption: "absolute energy error versus the running prediction · lower is better",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					values: samples.map((s) => trainingPoint(s, "avgSurprise")),
-					stroke: toneColor(surpriseTone(trainingPoint(latest, "avgSurprise"))),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
-		},
-		formatY: (v) => v.toFixed(2),
-		tone: (s) => surpriseTone(trainingPoint(s, "avgSurprise")),
+		id: "letters",
+		label: "New letters",
+		caption: "symbol steps whose regime.posture letter changed",
+		series: (samples) => [
+			{
+				values: samples.map((s) => trainingPoint(s, "tokenEmitRate")),
+				stroke: "var(--info)",
+				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
+			},
+		],
+		formatY: rate,
+		yDomain: [0, 1] as [number, number],
+		tone: () => "info" as Tone,
 	},
 	{
-		id: "stable",
-		label: "Path stability",
-		caption: "regime terminals inside the chord that closed them",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					values: samples.map((s) => trainingPoint(s, "pathStableRate")),
-					stroke: toneColor(
-						pathStableTone(trainingPoint(latest, "pathStableRate")),
-					),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
-		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => pathStableTone(trainingPoint(s, "pathStableRate")),
+		id: "paths",
+		label: "Path book",
+		caption: "developed paths, and how many have reached the paper floor",
+		series: (samples) => [
+			{
+				label: "developed",
+				values: samples.map((s) => s.training?.developedPaths ?? null),
+				stroke: "var(--info)",
+			},
+			{
+				label: "paper",
+				values: samples.map((s) => s.training?.promotedPaths ?? null),
+				stroke: "var(--up)",
+			},
+		],
+		formatY: countLabel,
+		tone: () => "info" as Tone,
 	},
 	{
-		id: "match",
-		label: "Policy match rate",
-		caption: "live paths ending on a stored policy",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					values: samples.map((s) => trainingPoint(s, "policyMatchRate")),
-					stroke: toneColor(
-						matchTone(trainingPoint(latest, "policyMatchRate")),
-					),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
+		id: "exits",
+		label: "Exit reasons",
+		caption: "profit hurdle, friction stop, and learned exit branch",
+		series: (samples) => [
+			{
+				label: "profit",
+				values: samples.map((s) => s.training?.exitProfit ?? null),
+				stroke: "var(--up)",
+			},
+			{
+				label: "stop",
+				values: samples.map((s) => s.training?.exitStop ?? null),
+				stroke: "var(--down)",
+			},
+			{
+				label: "branch",
+				values: samples.map((s) => s.training?.exitBranch ?? null),
+				stroke: "var(--info)",
+			},
+		],
+		formatY: countLabel,
+		tone: (s) => {
+			const profit = s?.training?.exitProfit ?? 0;
+			const stop = s?.training?.exitStop ?? 0;
+			if (profit + stop + (s?.training?.exitBranch ?? 0) === 0) return "neutral";
+			return profit > stop ? "good" : "warn";
 		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => matchTone(trainingPoint(s, "policyMatchRate")),
 	},
 ];
 
@@ -400,10 +441,17 @@ const ChartPanel = ({
 }) => {
 	const latestSample = samples[samples.length - 1];
 	const series = chart.series(samples);
-	const values = series[0]?.values ?? [];
-	const tail = values[values.length - 1];
-	const latest =
-		tail !== null && tail !== undefined && Number.isFinite(tail) ? tail : null;
+	const latestOf = (values: Array<number | null | undefined>) => {
+		const tail = values[values.length - 1];
+		return tail !== null && tail !== undefined && Number.isFinite(tail)
+			? tail
+			: null;
+	};
+	const heads = series.map((item) => {
+		const value = latestOf(item.values);
+		return value === null ? "—" : chart.formatY(value);
+	});
+	const headline = heads.every((head) => head === "—") ? "—" : heads.join(" · ");
 	const tone = chart.tone(latestSample);
 
 	return (
@@ -422,7 +470,7 @@ const ChartPanel = ({
 					className="shrink-0 text-[11px] font-bold tabular-nums"
 					style={{ color: toneColor(tone) }}
 				>
-					{latest === null ? "—" : chart.formatY(latest)}
+					{headline}
 				</span>
 			</div>
 			<MetricChart
@@ -498,7 +546,10 @@ export const LongtailDashboard = () => {
 	const v = useMemo(() => verdict(samples, book), [samples, book]);
 
 	const latest = samples[samples.length - 1];
-	const windowMinutes = Math.max(1, Math.round((samples.length * 5) / 60));
+	const first = samples[0];
+	const spanMinutes =
+		latest && first ? Math.round((latest.at - first.at) / 60_000) : 0;
+	const windowMinutes = Math.max(1, spanMinutes);
 	const training = latest?.training;
 	const bookStats = latest ? latest[book] : undefined;
 
@@ -569,118 +620,114 @@ export const LongtailDashboard = () => {
 				</div>
 
 				<Flex.Column className="min-h-0 w-72 shrink-0 border-l border-(--line) bg-(--bg)">
-					<RailBlock title="Grammar">
+					<RailBlock title="Paths">
 						<RailRow
-							label="rules"
+							label="developed"
 							value={
-								training?.rules === null || training?.rules === undefined
+								training?.developedPaths === null ||
+								training?.developedPaths === undefined
 									? "—"
-									: String(training.rules)
+									: String(training.developedPaths)
 							}
 							tone="info"
 						/>
 						<RailRow
-							label="compression"
+							label="paper floor"
 							value={
-								training?.rawLength && training.grammarSymbols !== null
-									? `${((training.grammarSymbols / training.rawLength) * 100).toFixed(0)}% of raw`
-									: "—"
+								training?.promotedPaths === null ||
+								training?.promotedPaths === undefined
+									? "—"
+									: String(training.promotedPaths)
+							}
+							tone={
+								(training?.promotedPaths ?? 0) > 0 ? "good" : "neutral"
+							}
+						/>
+						<RailRow
+							label="pruned"
+							value={
+								training?.prunedPaths === null ||
+								training?.prunedPaths === undefined
+									? "—"
+									: String(training.prunedPaths)
 							}
 							tone="info"
 						/>
 						<RailRow
-							label="avg rule depth"
+							label="mean threshold"
 							value={
-								training?.avgRuleDepth === null ||
-								training?.avgRuleDepth === undefined
+								training?.meanThreshold === null ||
+								training?.meanThreshold === undefined
 									? "—"
-									: fixed(training.avgRuleDepth, 1)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="max rule depth"
-							value={
-								training?.maxRuleDepth === null ||
-								training?.maxRuleDepth === undefined
-									? "—"
-									: String(training.maxRuleDepth)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="action coverage"
-							value={
-								training?.actionCoverage === null ||
-								training?.actionCoverage === undefined
-									? "—"
-									: pct(training.actionCoverage)
-							}
-							meter={training?.actionCoverage ?? null}
-							tone={coverageTone(training?.actionCoverage ?? null)}
-						/>
-					</RailBlock>
-
-					<RailBlock title="Entry gate">
-						<RailRow
-							label="coders warm"
-							value={
-								training?.warmRate === null || training?.warmRate === undefined
-									? "—"
-									: pct(training.warmRate)
-							}
-							meter={training?.warmRate ?? null}
-							tone={warmTone(training?.warmRate ?? null)}
-						/>
-						<RailRow
-							label="pass rate"
-							value={
-								training?.gatePassRate === null ||
-								training?.gatePassRate === undefined
-									? "—"
-									: pct(training.gatePassRate)
-							}
-							meter={training?.gatePassRate ?? null}
-							tone={gatePassTone(training?.gatePassRate ?? null)}
-						/>
-						<RailRow
-							label="friction pass"
-							value={
-								training?.frictionPassRate === null ||
-								training?.frictionPassRate === undefined
-									? "—"
-									: pct(training.frictionPassRate)
-							}
-							meter={training?.frictionPassRate ?? null}
-							tone={frictionPassTone(training?.frictionPassRate ?? null)}
-						/>
-					</RailBlock>
-
-					<RailBlock title="Surprise">
-						<RailRow
-							label="mean surprise"
-							value={
-								training?.avgSurprise === null ||
-								training?.avgSurprise === undefined
-									? "—"
-									: fixed(training.avgSurprise)
-							}
-							tone={surpriseTone(training?.avgSurprise ?? null)}
-						/>
-						<RailRow
-							label="mean z"
-							value={
-								training?.avgZ === null || training?.avgZ === undefined
-									? "—"
-									: fixed(training.avgZ)
+									: training.meanThreshold.toFixed(2)
 							}
 							tone="info"
 						/>
 					</RailBlock>
 
-					<RailBlock title="Ledger">
+					<RailBlock title="Letters">
 						<RailRow
-							label="explored enter"
+							label="new letter"
+							value={
+								training?.tokenEmitRate === null ||
+								training?.tokenEmitRate === undefined
+									? "—"
+									: pct(training.tokenEmitRate)
+							}
+							meter={training?.tokenEmitRate ?? null}
+							tone="info"
+						/>
+						<RailRow
+							label="same letter"
+							value={
+								training?.blockedDuplicateRate === null ||
+								training?.blockedDuplicateRate === undefined
+									? "—"
+									: pct(training.blockedDuplicateRate)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="risk veto"
+							value={
+								training?.vetoRate === null || training?.vetoRate === undefined
+									? "—"
+									: pct(training.vetoRate)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="dark role"
+							value={
+								training?.emptyRate === null || training?.emptyRate === undefined
+									? "—"
+									: pct(training.emptyRate)
+							}
+							tone="info"
+						/>
+					</RailBlock>
+
+					<RailBlock title="Desk">
+						<RailRow
+							label="virtual open"
+							value={
+								latest?.virtual.open === undefined
+									? "—"
+									: String(latest.virtual.open)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="paper open"
+							value={
+								latest?.paper.open === undefined
+									? "—"
+									: String(latest.paper.open)
+							}
+							tone="info"
+						/>
+						<RailRow
+							label="enters last tick"
 							value={
 								training?.exploredEnter === null ||
 								training?.exploredEnter === undefined
@@ -689,92 +736,47 @@ export const LongtailDashboard = () => {
 							}
 							tone="info"
 						/>
-						<RailRow
-							label="confirmed enter"
-							value={
-								training?.confirmedEnter === null ||
-								training?.confirmedEnter === undefined
-									? "—"
-									: String(training.confirmedEnter)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="venue open"
-							value={
-								training?.venueOpen === null ||
-								training?.venueOpen === undefined
-									? "—"
-									: String(training.venueOpen)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="virtual excursions"
-							value={
-								training?.virtualExcursion === null ||
-								training?.virtualExcursion === undefined
-									? "—"
-									: String(training.virtualExcursion)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="grid maturity"
-							value={
-								training?.meanMaturity === null ||
-								training?.meanMaturity === undefined
-									? "—"
-									: pct(training.meanMaturity)
-							}
-							meter={training?.meanMaturity ?? null}
-							tone={warmTone(training?.meanMaturity ?? null)}
-						/>
 					</RailBlock>
 
-					<RailBlock title="Policy">
+					<RailBlock title="Exits">
 						<RailRow
-							label="stored paths"
+							label="profit hurdle"
 							value={
-								training?.policyStoredRate === null ||
-								training?.policyStoredRate === undefined
+								training?.exitProfit === null ||
+								training?.exitProfit === undefined
 									? "—"
-									: pct(training.policyStoredRate)
+									: String(training.exitProfit)
 							}
-							meter={training?.policyStoredRate ?? null}
+							tone={(training?.exitProfit ?? 0) > 0 ? "good" : "neutral"}
+						/>
+						<RailRow
+							label="friction stop"
+							value={
+								training?.exitStop === null || training?.exitStop === undefined
+									? "—"
+									: String(training.exitStop)
+							}
+							tone={(training?.exitStop ?? 0) > 0 ? "warn" : "neutral"}
+						/>
+						<RailRow
+							label="exit branch"
+							value={
+								training?.exitBranch === null ||
+								training?.exitBranch === undefined
+									? "—"
+									: String(training.exitBranch)
+							}
 							tone="info"
 						/>
 						<RailRow
-							label="match rate"
+							label="settled hold"
 							value={
-								training?.policyMatchRate === null ||
-								training?.policyMatchRate === undefined
+								bookStats?.avgHoldNs === null ||
+								bookStats?.avgHoldNs === undefined
 									? "—"
-									: pct(training.policyMatchRate)
+									: formatHold(bookStats.avgHoldNs)
 							}
-							meter={training?.policyMatchRate ?? null}
-							tone={matchTone(training?.policyMatchRate ?? null)}
-						/>
-						<RailRow
-							label="avg match depth"
-							value={
-								training?.avgMatchDepth === null ||
-								training?.avgMatchDepth === undefined
-									? "—"
-									: fixed(training.avgMatchDepth, 1)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="desk acted"
-							value={
-								training?.outcomeRate === null ||
-								training?.outcomeRate === undefined
-									? "—"
-									: pct(training.outcomeRate)
-							}
-							meter={training?.outcomeRate ?? null}
-							tone="info"
+							tone={holdTone(bookStats?.avgHoldNs ?? null)}
 						/>
 					</RailBlock>
 

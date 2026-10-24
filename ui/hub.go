@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,7 +13,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/lf"
@@ -28,18 +28,18 @@ func init() {
 }
 
 type Hub struct {
-	*runtime.System
 	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
 	app        *fiber.App
 	listenAddr string
 	routes     *Routes
-	clients    map[*websocket.Conn]struct{}
 	queue      *lf.Queue[[]byte]
-	writeMu    sync.Mutex
+	conn       atomic.Pointer[websocket.Conn]
 	connected  atomic.Bool
 	callbacks  []func()
-	list       atomic.Value
 	commit     atomic.Value
+	store      *store.Client
 }
 
 /*
@@ -62,19 +62,16 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		clients:   make(map[*websocket.Conn]struct{}),
 		queue:     lf.NewQueue[[]byte](),
 		callbacks: make([]func(), 0),
+		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
-	hub.list.Store(func(string) {})
 	hub.commit.Store(CommitFunc(func([]byte) ([]byte, error) {
 		return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
 	}))
-	go hub.writeLoop()
 
 	hub.routes = NewRoutes(hub)
-	hub.System = runtime.NewSystem(ctx, "hub")
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). Permit loopback origins on any port
@@ -117,24 +114,63 @@ func (hub *Hub) wsHandler() fiber.Handler {
 		defer func() {
 			conn.Close()
 
-			hub.writeMu.Lock()
-			delete(hub.clients, conn)
-			if len(hub.clients) == 0 {
+			if hub.conn.CompareAndSwap(conn, (*websocket.Conn)(nil)) {
 				hub.connected.Store(false)
 			}
-			hub.writeMu.Unlock()
 		}()
 
-		hub.writeMu.Lock()
-		hub.clients[conn] = struct{}{}
+		old := hub.conn.Swap(conn)
+
+		if old != nil {
+			old.Close()
+		}
+
+		// A fresh connection starts from an empty queue: stale frames for
+		// the previous connection would carry wire sequence numbers the new
+		// dashboard reads as duplicates and drop.
+		for {
+			if _, ok := hub.queue.Dequeue(); !ok {
+				break
+			}
+		}
+
 		// Attached: publishers may produce again, and the replay below
-		// (Hello) flows through Write to every attached dashboard.
+		// (Hello) flows through Write.
 		hub.connected.Store(true)
-		hub.writeMu.Unlock()
 
 		for _, callback := range hub.callbacks {
 			callback()
 		}
+
+		// This drain is the connection's writer: it lives on the handler
+		// goroutine, so it is retired the instant the handler returns and no
+		// drained frame can outlive its socket. It exits quietly once the
+		// handler swaps in a replacement connection.
+		go func() {
+			for {
+				if hub.ctx.Err() != nil {
+					return
+				}
+
+				if hub.conn.Load() != conn {
+					return
+				}
+
+				p, ok := hub.queue.Dequeue()
+
+				if !ok {
+					time.Sleep(5 * time.Millisecond)
+					continue
+				}
+
+				err := conn.WriteMessage(websocket.BinaryMessage, p)
+
+				if err != nil {
+					conn.Close()
+					return
+				}
+			}
+		}()
 
 		for {
 			select {
@@ -147,7 +183,7 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 			if err != nil {
 				// The dashboard is gone; the deferred teardown above
-				// drops this socket. The others keep their frames.
+				// retires this connection and the drain with it.
 				return
 			}
 
@@ -158,46 +194,6 @@ func (hub *Hub) wsHandler() fiber.Handler {
 	}, websocket.Config{
 		Origins: []string{"*"},
 	})
-}
-
-/*
-writeLoop is the one writer for every dashboard socket. A frame dequeued
-from the hub queue is written to each attached client. A client whose write
-fails is closed and dropped; the rest stay up, so a second dashboard cannot
-kick the first one off and start the reconnect fight.
-*/
-func (hub *Hub) writeLoop() {
-	for {
-		if hub.ctx.Err() != nil {
-			return
-		}
-
-		hub.writeMu.Lock()
-		payload, ok := hub.queue.Dequeue()
-		if !ok {
-			hub.writeMu.Unlock()
-			time.Sleep(5 * time.Millisecond)
-			continue
-		}
-
-		conns := make([]*websocket.Conn, 0, len(hub.clients))
-		for conn := range hub.clients {
-			conns = append(conns, conn)
-		}
-		hub.writeMu.Unlock()
-
-		var failed []*websocket.Conn
-		for _, conn := range conns {
-			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-				failed = append(failed, conn)
-			}
-		}
-
-		for _, conn := range failed {
-			conn.Close()
-		}
-	}
 }
 
 /*
@@ -229,10 +225,6 @@ func (hub *Hub) RegisterCallback(callback func()) {
 }
 
 /*
-HandleList registers the function that answers a dashboard "s3" command.
-The cognitive tree asks for policy/current when it opens.
-*/
-/*
 HandleCommit registers the function that stores a labelled training sample.
 */
 func (hub *Hub) HandleCommit(fn CommitFunc) {
@@ -245,12 +237,28 @@ func (hub *Hub) HandleCommit(fn CommitFunc) {
 	hub.commit.Store(fn)
 }
 
-func (hub *Hub) HandleList(fn func(string)) {
-	if fn == nil {
-		fn = func(string) {}
+/*
+ListPrefix lists object keys under prefix in the hub store and writes one s3
+frame. Each layer is the downloaded object; the index suffix after the frame
+prefix is the S3 key (see data.Value.Append).
+*/
+func (hub *Hub) ListPrefix(prefix string) {
+	if hub.store == nil || prefix == "" {
+		return
 	}
 
-	hub.list.Store(fn)
+	value := data.NewValue("s3", "prefix", prefix)
+
+	for key := range hub.store.ListKeys(prefix) {
+		out := hub.store.Download(hub.ctx, key)
+		if out == nil {
+			continue
+		}
+
+		value.Append(out, key)
+	}
+
+	hub.Write(value.Bytes())
 }
 
 /*
@@ -287,9 +295,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 	case "position.exit":
 	case "hindsight":
 	case "s3":
-		if fn, ok := hub.list.Load().(func(string)); ok {
-			fn(request.Prefix)
-		}
+		hub.ListPrefix(request.Prefix)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -328,7 +334,7 @@ func (hub *Hub) Run() error {
 
 	go func() {
 		if err := hub.app.Listener(listener); err != nil {
-			hub.Error(errnie.Err(
+			errnie.Error(errnie.Err(
 				errnie.IO,
 				fmt.Sprintf("[hub] serve on %s failed", hub.listenAddr),
 				err,
@@ -336,6 +342,5 @@ func (hub *Hub) Run() error {
 		}
 	}()
 
-	hub.Transition(runtime.READY)
 	return nil
 }

@@ -47,11 +47,8 @@ describe("lifecycle store", () => {
 			frame("1", "closed", {
 				closed_at: "2026-10-10T08:05:00Z",
 				outcome: {
-					realized: 2,
-					net_return: 0.02,
-					cost: 100,
-					proceeds: 102,
-					fees: 0.2,
+					pnl: 0.02,
+					pnl_pct: 2,
 					hold_ns: 1,
 					expected_hold_ns: null,
 					triggers: [],
@@ -68,7 +65,7 @@ describe("lifecycle store", () => {
 			wins: 1,
 			win_rate: 1,
 			mean_return: 0.02,
-			pnl: 2,
+			pnl: 0.02,
 		});
 	});
 
@@ -84,11 +81,8 @@ describe("lifecycle store", () => {
 				{ at: "2026-10-17T12:10:00Z", kind: "fill", detail: "sell fill" },
 			],
 			outcome: {
-				cost: 20,
-				proceeds: 22,
-				fees: 0.1,
-				realized: 1.9,
-				net_return: 0.095,
+				pnl: 0.095,
+				pnl_pct: 9.5,
 				hold_ns: 600e9,
 				expected_hold_ns: null,
 				triggers: ["sell"],
@@ -100,7 +94,7 @@ describe("lifecycle store", () => {
 		expect(report.lifecycles[0].symbol).toBe("TEL/USD");
 		expect(report.lifecycles[0].events).toHaveLength(2);
 		expect(report.performance.closed).toBe(1);
-		expect(report.performance.pnl).toBe(1.9);
+		expect(report.performance.pnl).toBe(0.095);
 		expect(report.open_count).toBe(0);
 	});
 
@@ -160,11 +154,8 @@ describe("lifecycle store", () => {
 				opened_at: `2026-10-02T00:00:${String(index).padStart(2, "0")}Z`,
 				events: [],
 				outcome: {
-					cost: 1,
-					proceeds: 1,
-					fees: 0,
-					realized: 1,
-					net_return: 1,
+					pnl: 1,
+					pnl_pct: 100,
 					hold_ns: 1,
 					expected_hold_ns: null,
 					triggers: [],
@@ -185,10 +176,8 @@ describe("lifecycle store", () => {
 				virtual: true,
 				opened_at: "2026-10-18T08:00:00Z",
 				closed_at: "2026-10-18T08:01:00Z",
-				cost: 10,
-				proceeds: 11,
-				profit: 1,
-				net_return: 10,
+				pnl: 0.1,
+				pnl_pct: 10,
 			},
 			{
 				id: "b",
@@ -196,10 +185,8 @@ describe("lifecycle store", () => {
 				virtual: true,
 				opened_at: "2026-10-18T09:00:00Z",
 				closed_at: "2026-10-18T09:01:00Z",
-				cost: 10,
-				proceeds: 9,
-				profit: -1,
-				net_return: -10,
+				pnl: -0.1,
+				pnl_pct: -10,
 			},
 		];
 		ingestDeskClosedLots(rows);
@@ -216,10 +203,8 @@ describe("lifecycle store", () => {
 			virtual: true,
 			opened_at: "2026-10-18T08:00:00Z",
 			closed_at: "2026-10-18T09:00:00Z",
-			cost: 200,
-			proceeds: 200.03,
-			profit: 0.03,
-			net_return: 0.2,
+			pnl: 0.002,
+			pnl_pct: 0.2,
 		} as DeskPosition;
 		const value = new Value({
 			origin: "positions",

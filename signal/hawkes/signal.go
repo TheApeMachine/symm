@@ -2,11 +2,13 @@ package hawkes
 
 import (
 	"context"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
+	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 )
@@ -20,6 +22,7 @@ type symbolModel struct {
 
 type Signal struct {
 	*runtime.System
+	mu     sync.Mutex
 	models map[string]*symbolModel
 	keys   []string
 }
@@ -48,8 +51,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	if err := parent.RunTrades(signal.Context(), trades, func(trade kraken.TradeData) {
 		signal.step(value, trade)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
@@ -85,6 +90,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
+	signal.mu.Lock()
 	state, exists := signal.models[trade.Symbol]
 
 	if !exists {
@@ -97,6 +103,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	res, _, err := state.estimator.Step(mark, atSec)
 
 	if err != nil {
+		signal.mu.Unlock()
 		errnie.Error(errnie.Err(errnie.Internal, "[hawkes] estimator step failed for "+trade.Symbol, err))
 		return value
 	}
@@ -121,6 +128,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		state.prevAtSec = atSec
 		state.hasPrev = true
 	}
+
+	signal.mu.Unlock()
 
 	keys := []string{
 		signal.Name(),

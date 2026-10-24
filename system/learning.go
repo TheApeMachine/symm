@@ -1,6 +1,8 @@
 package system
 
 import (
+	"time"
+
 	"github.com/spf13/viper"
 )
 
@@ -14,18 +16,43 @@ region of the same fragment tape (deliberate noise, as dropout does). It is
 off unless enabled: the perturbed contexts never occurred in the market.
 */
 type Learning struct {
-	PolicyPrefix          string
-	EnterSuffix           string
-	ExitSuffix            string
-	MinimumPathConfidence int
-	ThresholdStart        float64
-	ThresholdStep         float64
-	ThresholdFloor        float64
-	ThresholdCeil         float64
-	VirtualPromote        int
-	VocabSize             int
-	DefaultWindowSize     int
-	ShannonCapacity       float64
+	PolicyPrefix            string
+	EnterSuffix             string
+	ExitSuffix              string
+	MinimumPathConfidence   int
+	ThresholdStart          float64
+	ThresholdStep           float64
+	ThresholdFloor          float64
+	ThresholdCeil           float64
+	VirtualPromote          int
+	VocabSize               int
+	DefaultWindowSize       int
+	ShannonCapacity         float64
+	MaxPathLength           int
+	MinPathLength           int
+	FreezeAfter             int
+	ConfirmAfter            int
+	DemotionLosses          int
+	PriorSamples            float64
+	MinMeanReturn           float64
+	MaxVenuePositions       int
+	RequireFrictionGate     bool
+	FrictionMinBrightness   float64
+	MinTokenBrightness      float64
+	MinGridMaturity         float64
+	RequireIgnitionRegime   bool
+	IgnitionMinBrightness   float64
+	FuzzyMatchEnabled       bool
+	FuzzyMatchThreshold     float64
+	SalienceRatio           float64
+	ExcursionTimeout        time.Duration
+	MaxExcursionBars        int
+	TimeoutLossPenalty      float64
+	EmergencyExitBrightness float64
+	PositionTracePath       string
+	HistoryEvery            time.Duration
+	HistoryCap              int
+	HistoryBatch            int
 }
 
 func NewLearning() *Learning {
@@ -41,19 +68,69 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.vocab_size", 15)
 	viper.SetDefault("learning.default_window_size", 15)
 	viper.SetDefault("learning.shannon_capacity", 0.45)
+	viper.SetDefault("learning.max_path_length", 8)
+	viper.SetDefault("learning.min_path_length", 3)
+	viper.SetDefault("learning.freeze_after", 5)
+	viper.SetDefault("learning.confirm_after", 3)
+	viper.SetDefault("learning.demotion_losses", 3)
+	viper.SetDefault("learning.prior_samples", 2.0)
+	viper.SetDefault("learning.min_mean_return", 0.0)
+	viper.SetDefault("learning.max_venue_positions", 5)
+	viper.SetDefault("learning.require_friction_gate", false)
+	viper.SetDefault("learning.friction_min_brightness", 0.35)
+	viper.SetDefault("learning.min_token_brightness", 0.25)
+	viper.SetDefault("learning.min_grid_maturity", 0.35)
+	viper.SetDefault("learning.require_ignition_regime", false)
+	viper.SetDefault("learning.ignition_min_brightness", 0.35)
+	viper.SetDefault("learning.fuzzy_match_enabled", true)
+	viper.SetDefault("learning.fuzzy_match_threshold", 0.75)
+	viper.SetDefault("learning.salience_ratio", 0.40)
+	viper.SetDefault("learning.excursion_timeout", 45*time.Minute)
+	viper.SetDefault("learning.max_excursion_bars", 8)
+	viper.SetDefault("learning.timeout_loss_penalty", 0.02)
+	viper.SetDefault("learning.emergency_exit_brightness", 0.75)
+	viper.SetDefault("learning.position_trace_path", "")
+	viper.SetDefault("learning.history_every", 5*time.Second)
+	viper.SetDefault("learning.history_cap", 20000)
+	viper.SetDefault("learning.history_batch", 200)
 
 	return &Learning{
-		PolicyPrefix:          viper.GetString("learning.policy_prefix"),
-		EnterSuffix:           viper.GetString("learning.enter_suffix"),
-		ExitSuffix:            viper.GetString("learning.exit_suffix"),
-		MinimumPathConfidence: viper.GetInt("learning.minimum_path_confidence"),
-		ThresholdStart:        viper.GetFloat64("learning.threshold_start"),
-		ThresholdStep:         viper.GetFloat64("learning.threshold_step"),
-		ThresholdFloor:        viper.GetFloat64("learning.threshold_floor"),
-		ThresholdCeil:         viper.GetFloat64("learning.threshold_ceil"),
-		VirtualPromote:        viper.GetInt("learning.virtual_promote"),
-		VocabSize:             viper.GetInt("learning.vocab_size"),
-		DefaultWindowSize:     viper.GetInt("learning.default_window_size"),
-		ShannonCapacity:       viper.GetFloat64("learning.shannon_capacity"),
+		PolicyPrefix:            viper.GetString("learning.policy_prefix"),
+		EnterSuffix:             viper.GetString("learning.enter_suffix"),
+		ExitSuffix:              viper.GetString("learning.exit_suffix"),
+		MinimumPathConfidence:   viper.GetInt("learning.minimum_path_confidence"),
+		ThresholdStart:          viper.GetFloat64("learning.threshold_start"),
+		ThresholdStep:           viper.GetFloat64("learning.threshold_step"),
+		ThresholdFloor:          viper.GetFloat64("learning.threshold_floor"),
+		ThresholdCeil:           viper.GetFloat64("learning.threshold_ceil"),
+		VirtualPromote:          viper.GetInt("learning.virtual_promote"),
+		VocabSize:               viper.GetInt("learning.vocab_size"),
+		DefaultWindowSize:       viper.GetInt("learning.default_window_size"),
+		ShannonCapacity:         viper.GetFloat64("learning.shannon_capacity"),
+		MaxPathLength:           viper.GetInt("learning.max_path_length"),
+		MinPathLength:           viper.GetInt("learning.min_path_length"),
+		FreezeAfter:             viper.GetInt("learning.freeze_after"),
+		ConfirmAfter:            viper.GetInt("learning.confirm_after"),
+		DemotionLosses:          viper.GetInt("learning.demotion_losses"),
+		PriorSamples:            viper.GetFloat64("learning.prior_samples"),
+		MinMeanReturn:           viper.GetFloat64("learning.min_mean_return"),
+		MaxVenuePositions:       viper.GetInt("learning.max_venue_positions"),
+		RequireFrictionGate:     viper.GetBool("learning.require_friction_gate"),
+		FrictionMinBrightness:   viper.GetFloat64("learning.friction_min_brightness"),
+		MinTokenBrightness:      viper.GetFloat64("learning.min_token_brightness"),
+		MinGridMaturity:         viper.GetFloat64("learning.min_grid_maturity"),
+		RequireIgnitionRegime:   viper.GetBool("learning.require_ignition_regime"),
+		IgnitionMinBrightness:   viper.GetFloat64("learning.ignition_min_brightness"),
+		FuzzyMatchEnabled:       viper.GetBool("learning.fuzzy_match_enabled"),
+		FuzzyMatchThreshold:     viper.GetFloat64("learning.fuzzy_match_threshold"),
+		SalienceRatio:           viper.GetFloat64("learning.salience_ratio"),
+		ExcursionTimeout:        viper.GetDuration("learning.excursion_timeout"),
+		MaxExcursionBars:        viper.GetInt("learning.max_excursion_bars"),
+		TimeoutLossPenalty:      viper.GetFloat64("learning.timeout_loss_penalty"),
+		EmergencyExitBrightness: viper.GetFloat64("learning.emergency_exit_brightness"),
+		PositionTracePath:       viper.GetString("learning.position_trace_path"),
+		HistoryEvery:            viper.GetDuration("learning.history_every"),
+		HistoryCap:              viper.GetInt("learning.history_cap"),
+		HistoryBatch:            viper.GetInt("learning.history_batch"),
 	}
 }

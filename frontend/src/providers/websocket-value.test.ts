@@ -211,6 +211,8 @@ describe("ingest routing (decoded frames into stores)", () => {
 			...prev,
 			[parsed.scope]: parsed,
 		}));
+		// Production ingest only copies tick from workspace/aggregate (see advanceMarketTick).
+		// Here we set from the training frame header to assert decode/routing only.
 		atoms.tickCount.set(Number(parsed.tick));
 
 		const frame = signals.training.state["BTC-USD"];

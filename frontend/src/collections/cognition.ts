@@ -1,4 +1,6 @@
 import { createStore } from "@tanstack/store";
+import { trySendCommand } from "#/lib/hub-socket";
+import type { Value } from "#/types/value";
 
 /*
 The live symbol set, as known to the app (it also seeds the symbol
@@ -97,6 +99,12 @@ export type CognitionMatch = {
 	match: string;
 	depth: number;
 	action: string;
+	livePath?: string;
+	triggerPath?: string;
+	policyPath?: string;
+	similarity?: number;
+	exactMatch?: boolean;
+	blockedReason?: string;
 	/* Tokens the energy gate refused at this sentence's frontier. */
 	rejected?: string[];
 };
@@ -211,41 +219,31 @@ export const parseTrainRegionsIndex = (
 	return { symbol: split.symbol, tokens: [...parts, leaf] };
 };
 
-const policyKeyFromIndex = (index: string): string | null => {
-	const match = index.match(/policy\/current\/(.+\/(?:enter|exit))\.bin/);
-	if (match) return `policy/current/${match[1]}.bin`;
-
-	const explored = index.match(/policy\/explored\/(enter|exit)\/(.+)\.bin/);
-	if (!explored) return null;
-	return `policy/explored/${explored[1]}/${explored[2]}.bin`;
+/** S3 object key from a layer index (suffix after the frame prefix). */
+export const s3KeyFromIndex = (
+	framePrefix: string,
+	index: string,
+): string | null => {
+	const root = `${framePrefix}/`;
+	if (!index.startsWith(root)) return null;
+	const key = index.slice(root.length);
+	return key === "" ? null : key;
 };
 
-const normalizePolicyKey = (key: string): string => {
-	if (key.includes("policy/current/") || key.includes("policy/explored/")) {
-		return key;
+const policyKeyFromIndex = (
+	index: string,
+	framePrefix?: string,
+): string | null => {
+	if (framePrefix) {
+		const key = s3KeyFromIndex(framePrefix, index);
+		if (key) return key;
 	}
-	return `policy/current/${key.replace(/^\//, "")}`;
-};
-
-export const ingestPolicyKey = (key: string, epoch?: string) => {
-	const normalized = normalizePolicyKey(key);
-
-	cognitionStore.setState((state) => {
-		const nextEpoch = epoch ?? state.epoch;
-		const epochChanged = epoch !== undefined && epoch !== state.epoch;
-		const policyKeys = epochChanged
-			? [normalized]
-			: state.policyKeys.includes(normalized)
-				? state.policyKeys
-				: [...state.policyKeys, normalized];
-
-		return {
-			...state,
-			epoch: nextEpoch,
-			policyKeys,
-			tree: epochChanged ? null : state.tree,
-		};
-	});
+	if (index.startsWith("model/explore/")) {
+		return index;
+	}
+	const match = index.match(/model\/current\/(.+\/(?:enter|exit))\.bin/);
+	if (match) return `model/current/${match[1]}.bin`;
+	return null;
 };
 
 export const ingestTrainRegions = (
@@ -337,6 +335,7 @@ export const branchesFromPolicyKeys = (keys: string[]): CognitionBranch[] => {
 		if (!raw.includes("enter.bin")) continue;
 
 		const trimmed = raw
+			.replace(/^model\/explore\//, "")
 			.replace(/^policy\/current\//, "")
 			.replace(/\/enter\.bin$/, "");
 		const depth = trimmed.split("/").filter(Boolean).length;
@@ -422,24 +421,112 @@ const isMatch = (value: unknown): value is CognitionMatch => {
 };
 
 /*
-ingestPolicyKeys replaces the stored policy list. The model publishes it
-when a dashboard connects and again whenever the current tree changes.
-An empty list is a real answer: nothing is trained yet.
+ingestS3Prefix applies a hub ListPrefix frame. Scope is the listed prefix;
+each layer is the stored object (a data.Value on S3). Keys and fields come
+from Value.readings() — no extra backend publish path.
 */
+export const ingestS3Prefix = (value: Value) => {
+	if (value.origin !== "s3" || value.role !== "prefix") {
+		return false;
+	}
+
+	if (value.scope !== "model/explore") {
+		return true;
+	}
+
+	const policyKeys = value.index
+		.map((index) => s3KeyFromIndex(value.prefix, index))
+		.filter((key): key is string => key != null)
+		.sort();
+
+	cognitionStore.setState((state) => ({
+		...state,
+		epoch:
+			value.epoch != null && value.epoch !== 0n
+				? String(value.epoch)
+				: state.epoch,
+		policyKeys,
+	}));
+	return true;
+};
+
 export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
 	if (!Array.isArray(keys)) return false;
 
-	const normalized: string[] = [];
+	const policyKeys: string[] = [];
 	for (const key of keys) {
 		if (typeof key !== "string" || key === "") continue;
-		normalized.push(normalizePolicyKey(key));
+		policyKeys.push(key);
 	}
 
 	cognitionStore.setState((state) => ({
 		...state,
 		epoch: epoch && epoch !== "" ? epoch : state.epoch,
-		policyKeys: normalized,
+		policyKeys,
 	}));
+	return true;
+};
+
+type PathWalk = {
+	symbol?: string;
+	phase?: string;
+	live?: string;
+	trigger?: string;
+	policy?: string;
+	enter?: boolean;
+	outcome?: string;
+};
+
+/*
+ingestPathWalks applies one tick's changed sentences. Symbols whose letter
+did not change are absent. An exit in the batch refreshes the stored trie.
+*/
+export const ingestPathWalks = (tick: number, payload: unknown): boolean => {
+	if (!Array.isArray(payload)) return false;
+
+	const rows = payload.filter(
+		(row): row is PathWalk =>
+			!!row &&
+			typeof row === "object" &&
+			typeof (row as PathWalk).symbol === "string" &&
+			(row as PathWalk).symbol !== "",
+	);
+
+	if (rows.length === 0) return false;
+
+	const exited = rows.some((row) => row.outcome === "exit submitted");
+
+	cognitionStore.setState((state) => {
+		const matches = { ...state.matches };
+
+		for (const row of rows) {
+			const symbol = row.symbol as string;
+			const phase = row.phase || row.policy || row.trigger || row.live || "";
+			const tokens = phase.split("/").filter(Boolean);
+			const prior = matches[symbol];
+
+			matches[symbol] = {
+				symbol,
+				tick,
+				tokens,
+				stored: prior?.stored ?? false,
+				match: prior?.match ?? "",
+				depth: tokens.length,
+				action: row.enter ? "enter" : "exit",
+				livePath: row.live,
+				triggerPath: row.trigger,
+				policyPath: row.policy || phase,
+				rejected: prior?.tick === tick ? prior.rejected : (prior?.rejected ?? []),
+			};
+		}
+
+		return { ...state, matches };
+	});
+
+	if (exited) {
+		trySendCommand({ type: "s3", prefix: "model/explore" });
+	}
+
 	return true;
 };
 

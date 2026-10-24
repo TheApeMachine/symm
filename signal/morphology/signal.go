@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 type point struct {
@@ -25,6 +27,7 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	mu     sync.Mutex
 	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
@@ -57,14 +60,18 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
-		signal.step(value, trade)
+	symbols := parent.DistinctSymbols(trades)
+
+	if err := parent.RunSymbols(signal.Context(), symbols, func(symbol string) {
+		signal.step(value, symbol)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
+func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
 		return value
 	}
@@ -74,7 +81,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	var bids []float64
 	var asks []float64
 
-	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
+	signal.books.Book(symbol, func(b *spotbook.Book) {
 		bookAvailable = true
 
 		bestBid = b.BestBid()
@@ -103,7 +110,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	bids = append(bids, bestBidPrice, bestBid.Quantity.Float64())
 	asks = append(asks, bestAskPrice, bestAsk.Quantity.Float64())
 
-	res, err := signal.Calculate(trade.Symbol, bids, asks)
+	res, err := signal.Calculate(symbol, bids, asks)
 	if err != nil || len(res) == 0 {
 		return value
 	}
@@ -114,7 +121,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	keys := []string{
 		signal.Name(),
-		trade.Symbol,
+		symbol,
 	}
 
 	value.Append(res, append(keys, signal.keys...)...)
@@ -219,6 +226,7 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 		currentBook = append(currentBook, point{pos: pt.pos, weight: pt.weight * 0.5})
 	}
 
+	signal.mu.Lock()
 	state, exists := signal.states[stateKey]
 	if !exists {
 		state = &symbolState{}
@@ -233,6 +241,7 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 
 	state.hasPrev = true
 	state.prevBook = currentBook
+	signal.mu.Unlock()
 
 	res := []float64{shapeDist, ks, concBid, concAsk, entropyBid, entropyAsk}
 	if hasMorphChange {

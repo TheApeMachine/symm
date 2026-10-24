@@ -62,7 +62,9 @@ export type BadgeProps = Omit<ComponentProps<"span">, "children"> &
 	};
 
 /*
-Badge is a compact status pill with semantic color variants and optional dot.
+Badge is a compact status label (2px corner radius) with semantic variants and
+an optional dot. Prefer this over ad-hoc bordered spans so radius and tone stay
+aligned with the rest of the chrome.
 */
 export const Badge = ({
 	ref,
@@ -119,9 +121,39 @@ export const setBadge = (
 			}
 		} else {
 			el.textContent = label;
-			el.innerText = label;
 		}
 	}
 
 	el.className = badgeVariants({ variant, size });
 };
+
+export type BadgeButtonProps = Omit<ComponentProps<"button">, "children"> &
+	BadgeVariantProps & {
+		label: ReactNode;
+	};
+
+/*
+BadgeButton is the same shell as Badge on a button for toggles and commits.
+*/
+export const BadgeButton = ({
+	ref,
+	label,
+	variant,
+	size,
+	className,
+	type = "button",
+	...props
+}: BadgeButtonProps) => (
+	<button
+		ref={ref}
+		type={type}
+		className={cn(
+			badgeVariants({ variant, size }),
+			"cursor-pointer transition-colors",
+			className,
+		)}
+		{...props}
+	>
+		{label}
+	</button>
+);

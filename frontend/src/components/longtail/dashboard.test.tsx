@@ -62,23 +62,27 @@ const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 	createRate: null,
 	reuseRate: null,
 	inlineRate: null,
-	gatePassRate: null,
+	tokenEmitRate: null,
 	blockedRate: null,
-	warmRate: null,
-	avgSurprise: null,
-	avgZ: null,
+	blockedBrightnessRate: null,
+	blockedDuplicateRate: null,
+	vetoRate: null,
+	emptyRate: null,
 	policyStoredRate: null,
-	policyMatchRate: null,
-	avgMatchDepth: null,
 	outcomeRate: null,
+	outcomeEnterRate: null,
+	outcomeExitRate: null,
 	violations: null,
-	pathStableRate: null,
-	frictionPassRate: null,
 	exploredEnter: null,
-	confirmedEnter: null,
 	venueOpen: null,
 	virtualExcursion: null,
-	meanMaturity: null,
+	developedPaths: null,
+	promotedPaths: null,
+	prunedPaths: null,
+	meanThreshold: null,
+	exitProfit: null,
+	exitStop: null,
+	exitBranch: null,
 	...overrides,
 });
 
@@ -121,27 +125,18 @@ describe("LongtailDashboard", () => {
 						wins: 3,
 						winRate: 0.6,
 						meanReturn: 0.01,
+						avgHoldNs: 120e9,
 					}),
 					training: training({
 						feeds: 2,
-						rules: 10,
-						grammarSymbols: 40,
-						rawLength: 100,
-						avgRuleDepth: 2,
-						maxRuleDepth: 4,
-						actionCoverage: 0.6,
-						reuseRate: 0.6,
-						createRate: 0.3,
-						gatePassRate: 0.8,
-						warmRate: 0.8,
-						avgSurprise: 0.4,
-						avgZ: 1,
-						policyStoredRate: 0.5,
-						policyMatchRate: 0.6,
-						avgMatchDepth: 3,
-						outcomeRate: 0.2,
-						pathStableRate: 0.9,
-						frictionPassRate: 0.85,
+						tokenEmitRate: 0.08,
+						developedPaths: 6,
+						promotedPaths: 1,
+						prunedPaths: 0,
+						meanThreshold: 0.4,
+						exitProfit: 2,
+						exitStop: 1,
+						exitBranch: 1,
 					}),
 				}),
 				sample(6_000, {
@@ -150,27 +145,18 @@ describe("LongtailDashboard", () => {
 						wins: 4,
 						winRate: 0.65,
 						meanReturn: 0.03,
+						avgHoldNs: 180e9,
 					}),
 					training: training({
 						feeds: 2,
-						rules: 11,
-						grammarSymbols: 44,
-						rawLength: 110,
-						avgRuleDepth: 2,
-						maxRuleDepth: 4,
-						actionCoverage: 0.6,
-						reuseRate: 0.6,
-						createRate: 0.3,
-						gatePassRate: 0.8,
-						warmRate: 0.8,
-						avgSurprise: 0.4,
-						avgZ: 1,
-						policyStoredRate: 0.5,
-						policyMatchRate: 0.6,
-						avgMatchDepth: 3,
-						outcomeRate: 0.2,
-						pathStableRate: 0.92,
-						frictionPassRate: 0.88,
+						tokenEmitRate: 0.1,
+						developedPaths: 8,
+						promotedPaths: 2,
+						prunedPaths: 0,
+						meanThreshold: 0.35,
+						exitProfit: 3,
+						exitStop: 1,
+						exitBranch: 1,
 					}),
 				}),
 			],
@@ -184,26 +170,22 @@ describe("LongtailDashboard", () => {
 		for (const id of [
 			"edge",
 			"win",
-			"coverage",
-			"stable",
-			"gate",
-			"surprise",
-			"match",
-			"friction",
+			"hold",
+			"letters",
+			"developed",
+			"promoted",
+			"pruned",
+			"branch",
 		]) {
 			expect(container.querySelector(`[data-kpi="${id}"]`)).not.toBeNull();
 		}
 
-		// Six measured charts.
-		for (const id of ["win", "return", "gate", "surprise", "stable", "match"]) {
+		for (const id of ["win", "return", "hold", "letters", "paths", "exits"]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(
-			container.querySelectorAll("svg[aria-label='metric chart']"),
-		).toHaveLength(6);
+		expect(container.querySelectorAll("svg[role='img']")).toHaveLength(6);
 
-		// Right rail blocks.
-		for (const title of ["Grammar", "Entry gate", "Surprise", "Ledger", "Policy"]) {
+		for (const title of ["Paths", "Letters", "Desk", "Exits"]) {
 			expect(getByText(title, { selector: "div" })).toBeTruthy();
 		}
 		expect(getByText("Plain-language readings")).toBeTruthy();
@@ -222,9 +204,8 @@ describe("LongtailDashboard", () => {
 					rules: 3,
 					reuseRate: 0.1,
 					createRate: 0.8,
-					gatePassRate: 0.3,
-					policyStoredRate: 0.5,
-					policyMatchRate: 0.1,
+					tokenEmitRate: 0.03,
+					policyStoredRate: 0.01,
 				}),
 			}),
 			sample(6_000, {
@@ -238,9 +219,8 @@ describe("LongtailDashboard", () => {
 					rules: 3,
 					reuseRate: 0.1,
 					createRate: 0.8,
-					gatePassRate: 0.3,
-					policyStoredRate: 0.5,
-					policyMatchRate: 0.1,
+					tokenEmitRate: 0.03,
+					policyStoredRate: 0.01,
 				}),
 			}),
 		];
@@ -269,9 +249,8 @@ describe("LongtailDashboard", () => {
 					rules: 10,
 					reuseRate: 0.6,
 					createRate: 0.3,
-					gatePassRate: 0.8,
-					policyStoredRate: 0.5,
-					policyMatchRate: 0.6,
+					tokenEmitRate: 0.08,
+					policyStoredRate: 0.05,
 				}),
 			}),
 			sample(6_000, {
@@ -285,9 +264,8 @@ describe("LongtailDashboard", () => {
 					rules: 11,
 					reuseRate: 0.6,
 					createRate: 0.3,
-					gatePassRate: 0.8,
-					policyStoredRate: 0.5,
-					policyMatchRate: 0.6,
+					tokenEmitRate: 0.08,
+					policyStoredRate: 0.05,
 				}),
 			}),
 		];
@@ -302,40 +280,37 @@ describe("LongtailDashboard", () => {
 		expect(goodView.getByText("Improving")).toBeTruthy();
 	});
 
-	it("paints the surprise chart by its inverted scale: low surprise is green, high surprise is red", () => {
+	it("paints a short hold red and a long hold green", () => {
 		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
 					virtual: bookStats({
-						closed: 1,
+						closed: 2,
 						wins: 1,
-						winRate: 1,
+						winRate: 0.5,
 						meanReturn: 0.01,
+						avgHoldNs: 10e9,
 					}),
-					training: training({ avgSurprise: 0.4, gatePassRate: 0.5 }),
 				}),
 				sample(6_000, {
 					virtual: bookStats({
-						closed: 1,
+						closed: 2,
 						wins: 1,
-						winRate: 1,
+						winRate: 0.5,
 						meanReturn: 0.01,
+						avgHoldNs: 10e9,
 					}),
-					training: training({ avgSurprise: 0.4, gatePassRate: 0.5 }),
 				}),
 			],
 			lastSampleAt: 6_000,
 		}));
-		const lowView = render(<LongtailDashboard />);
-		const lowPaths = lowView.container.querySelectorAll(
-			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
-		);
-		const lowChart = [...lowPaths].find(
-			(node) =>
-				node.getAttribute("stroke") === "var(--up)" ||
-				node.getAttribute("stroke") === "var(--down)",
-		) as SVGPathElement | undefined;
-		expect(lowChart?.getAttribute("stroke")).toBe("var(--up)");
+		bookAtom.set("virtual");
+		const shortView = render(<LongtailDashboard />);
+		const shortHold = shortView.container.querySelector(
+			'[data-kpi="hold"] > span',
+		) as HTMLElement;
+		expect(shortHold.style.color).toBe("var(--down)");
+		expect(shortHold.textContent).toContain("10s");
 
 		cleanup();
 
@@ -343,35 +318,31 @@ describe("LongtailDashboard", () => {
 			samples: [
 				sample(1_000, {
 					virtual: bookStats({
-						closed: 1,
-						wins: 0,
-						winRate: 0,
-						meanReturn: -0.01,
+						closed: 2,
+						wins: 1,
+						winRate: 0.5,
+						meanReturn: 0.01,
+						avgHoldNs: 600e9,
 					}),
-					training: training({ avgSurprise: 3, gatePassRate: 0.5 }),
 				}),
 				sample(6_000, {
 					virtual: bookStats({
-						closed: 1,
-						wins: 0,
-						winRate: 0,
-						meanReturn: -0.01,
+						closed: 2,
+						wins: 1,
+						winRate: 0.5,
+						meanReturn: 0.01,
+						avgHoldNs: 600e9,
 					}),
-					training: training({ avgSurprise: 3, gatePassRate: 0.5 }),
 				}),
 			],
 			lastSampleAt: 6_000,
 		}));
-		const highView = render(<LongtailDashboard />);
-		const highPaths = highView.container.querySelectorAll(
-			'[data-chart="surprise"] svg[aria-label="metric chart"] path',
-		);
-		const highChart = [...highPaths].find(
-			(node) =>
-				node.getAttribute("stroke") === "var(--up)" ||
-				node.getAttribute("stroke") === "var(--down)",
-		) as SVGPathElement | undefined;
-		expect(highChart?.getAttribute("stroke")).toBe("var(--down)");
+		const longView = render(<LongtailDashboard />);
+		const longHold = longView.container.querySelector(
+			'[data-kpi="hold"] > span',
+		) as HTMLElement;
+		expect(longHold.style.color).toBe("var(--up)");
+		expect(longHold.textContent).toContain("10m");
 	});
 
 	it("reads the selected book's metrics", () => {

@@ -39,11 +39,8 @@ export type LifeMark = {
 };
 
 export type LifeOutcome = {
-	cost: number;
-	proceeds: number;
-	fees: number;
-	realized: number;
-	net_return: number;
+	pnl: number;
+	pnl_pct: number;
 	hold_ns: number;
 	expected_hold_ns: number | null;
 	triggers: string[] | null;
@@ -64,6 +61,7 @@ export type Lifecycle = {
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
 	book?: string;
+	path_found?: boolean;
 	/** Set when this row was copied from a desk lot snapshot. */
 	desk?: boolean;
 	/**
@@ -108,14 +106,18 @@ const LIFECYCLE_LIMIT = 200;
 const lives = new Map<string, Lifecycle>();
 const listeners = new Set<() => void>();
 
+const countsTowardPerformance = (life: Lifecycle): boolean =>
+	(life.book ?? "paper") !== "virtual" || life.path_found === true;
+
 const summarize = (all: Lifecycle[]): LifecycleReport => {
-	const closed = all.filter((life) => life.status === "closed" && life.outcome);
-	const returns = closed.map(
-		(life) => (life.outcome as LifeOutcome).net_return,
+	const closed = all.filter(
+		(life) =>
+			life.status === "closed" &&
+			life.outcome &&
+			countsTowardPerformance(life),
 	);
-	const wins = closed.filter(
-		(life) => (life.outcome as LifeOutcome).realized > 0,
-	);
+	const returns = closed.map((life) => (life.outcome as LifeOutcome).pnl);
+	const wins = closed.filter((life) => (life.outcome as LifeOutcome).pnl > 0);
 
 	return {
 		lifecycles: all,
@@ -130,10 +132,7 @@ const summarize = (all: Lifecycle[]): LifecycleReport => {
 				closed.length > 0
 					? returns.reduce((sum, value) => sum + value, 0) / closed.length
 					: null,
-			pnl: closed.reduce(
-				(sum, life) => sum + (life.outcome as LifeOutcome).realized,
-				0,
-			),
+			pnl: returns.reduce((sum, value) => sum + value, 0),
 		},
 	};
 };
@@ -298,6 +297,7 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			marks_b: life.marks_b ?? existing?.marks_b,
 			marks_c: life.marks_c ?? existing?.marks_c,
 			path: life.path ?? existing?.path,
+			path_found: life.path_found ?? existing?.path_found,
 			events: existing?.events?.length ? existing.events : life.events,
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
@@ -320,13 +320,11 @@ const deskRowFromClosedLife = (life: Lifecycle): Record<string, unknown> | null 
 		id: life.id,
 		symbol: life.symbol,
 		virtual: life.book === "virtual",
+		path_found: life.path_found === true,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at,
-		cost: outcome.cost,
-		proceeds: outcome.proceeds,
-		profit: outcome.realized,
-		/* Desk wire format: percent points; readout divides by 100. */
-		net_return: outcome.net_return * 100,
+		pnl: outcome.pnl,
+		pnl_pct: outcome.pnl_pct,
 		hold_ns: outcome.hold_ns,
 	};
 };

@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -18,13 +19,11 @@ return the shared tick; resonance readings are separate Values.
 type Bridge struct {
 	*runtime.System
 	solver *Solver
-	hub    io.Writer
 }
 
-func NewBridge(ctx context.Context, solver *Solver, hub io.Writer) *Bridge {
+func NewBridge(ctx context.Context, solver *Solver) *Bridge {
 	bridge := &Bridge{
 		solver: solver,
-		hub:    hub,
 	}
 	bridge.System = runtime.NewSystem(ctx, "resonance", solver)
 	bridge.Transition(runtime.READY)
@@ -76,8 +75,8 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 			continue
 		}
 
-		if reading != nil && bridge.hub != nil {
-			io.Copy(bridge.hub, reading)
+		if reading != nil {
+			io.Copy(ui.UI, reading)
 		}
 	}
 

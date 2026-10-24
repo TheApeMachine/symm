@@ -123,7 +123,7 @@ describe("CognitiveTree", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"waiting for policy/current",
+			"waiting for model/explore",
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
@@ -140,7 +140,7 @@ describe("CognitiveTree", () => {
 		});
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"paper trading inactive: no trained paths",
+			"no explore paths yet",
 		);
 	});
 
@@ -203,11 +203,11 @@ describe("CognitiveTree", () => {
 	it("keeps the trie on the stored policy when live tokens move", () => {
 		ingestPolicyLayers(1n, [
 			{
-				index: "policy/current/R01/R02/enter.bin",
+				index: "model/explore/R01/R02/enter.bin",
 				bytes: new Uint8Array([0]),
 			},
 			{
-				index: "policy/current/R01/R02/exit.bin",
+				index: "model/explore/R01/R02/exit.bin",
 				bytes: new Uint8Array([0]),
 			},
 		]);

@@ -40,11 +40,8 @@ const lot = (over: Partial<DeskPosition>): DeskPosition =>
 		qty: over.qty ?? "1",
 		entry_price: over.entry_price ?? "10",
 		mark: over.mark ?? "11",
-		book_return: over.book_return ?? null,
-		net_return: over.net_return ?? null,
-		cost: over.cost ?? null,
-		proceeds: over.proceeds ?? null,
-		profit: over.profit ?? null,
+		pnl: over.pnl ?? null,
+		pnl_pct: over.pnl_pct ?? null,
 	}) as DeskPosition;
 
 afterEach(() => {
@@ -56,7 +53,7 @@ afterEach(() => {
 
 describe("PaperPerformance", () => {
 	it("shows dashes until a priced close is recorded in the lifecycle store", () => {
-		ingest(lot({ symbol: "BTC/USD", book_return: 10, virtual: true }));
+		ingest(lot({ symbol: "BTC/USD", pnl: 0.1, pnl_pct: 10, virtual: true }));
 		const view = render(<PaperPerformance />);
 		expect(view.getAllByText("—").length).toBeGreaterThanOrEqual(2);
 	});
@@ -68,10 +65,8 @@ describe("PaperPerformance", () => {
 				symbol: "UP/USD",
 				virtual: true,
 				closed_at: "2026-10-18T09:00:00Z",
-				cost: "10",
-				proceeds: "12",
-				profit: "2",
-				net_return: 20,
+				pnl: 0.2,
+				pnl_pct: 20,
 			}),
 		);
 		ingestDeskSnapshot();

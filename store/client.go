@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -16,18 +17,21 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
 
 type Client struct {
-	*runtime.System
+	ctx      context.Context
+	cancel   context.CancelFunc
+	err      error
 	S3Client *s3.Client
 	bucket   string
 	transfer *transfermanager.Client
 }
 
 func NewClient(ctx context.Context, bucket string) *Client {
+	ctx, cancel := context.WithCancel(ctx)
+
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:          system.Cfg.Storage.S3.MaxIdleConns,
@@ -44,6 +48,7 @@ func NewClient(ctx context.Context, bucket string) *Client {
 			errnie.IO, "[store.client] error", err,
 		))
 
+		cancel()
 		return nil
 	}
 
@@ -54,9 +59,10 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		options.Credentials = credentials.NewStaticCredentialsProvider(
 			"anonymous", "anonymous", "",
 		)
-		// SeaweedFS does not send a checksum header. The SDK's default
-		// (when supported) logs that skip once per object.
+		// SeaweedFS has no response checksum header; keep validation off and
+		// silence the SDK's per-object debug skip line.
 		options.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		options.DisableLogOutputChecksumValidationSkipped = true
 	})
 
 	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
@@ -68,17 +74,24 @@ func NewClient(ctx context.Context, bucket string) *Client {
 			errnie.IO, "[store.client] create bucket error", err,
 		))
 
+		cancel()
 		return nil
 	}
 
 	return &Client{
-		System:   runtime.NewSystem(ctx, "store.client"),
+		ctx:      ctx,
+		cancel:   cancel,
 		S3Client: client,
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
 	}
 }
 
+/*
+List yields every page of objects under prefix. It follows continuation
+tokens, so a prefix longer than one page is complete. A listing failure
+yields nothing: a partial page is not reported as the complete set.
+*/
 func (client *Client) List(
 	prefix string,
 ) iter.Seq[*s3.ListObjectsV2Output] {
@@ -87,11 +100,7 @@ func (client *Client) List(
 			return
 		}
 
-		page, err := client.S3Client.ListObjectsV2(client.Context(), &s3.ListObjectsV2Input{
-			Bucket: aws.String(client.bucket),
-			Prefix: aws.String(prefix),
-		})
-
+		pages, err := client.listPages(prefix)
 		if err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO, "[store.client] list objects error", err,
@@ -100,9 +109,47 @@ func (client *Client) List(
 			return
 		}
 
-		if !yield(page) {
-			return
+		for i := range pages {
+			if !yield(&pages[i]) {
+				return
+			}
 		}
+	}
+}
+
+/*
+listPages reads every page before the caller sees one. A later page that
+fails discards the earlier pages instead of pretending the prefix ended.
+*/
+func (client *Client) listPages(prefix string) ([]s3.ListObjectsV2Output, error) {
+	var token *string
+	pages := make([]s3.ListObjectsV2Output, 0, 1)
+
+	for {
+		page, err := client.S3Client.ListObjectsV2(client.ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(client.bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: token,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if page == nil {
+			return pages, nil
+		}
+
+		pages = append(pages, *page)
+
+		if page.IsTruncated == nil || !*page.IsTruncated || page.NextContinuationToken == nil {
+			return pages, nil
+		}
+
+		if token != nil && *token == *page.NextContinuationToken {
+			return nil, fmt.Errorf("list continuation for %s did not advance", prefix)
+		}
+
+		token = page.NextContinuationToken
 	}
 }
 
@@ -142,7 +189,7 @@ func (client *Client) Read(p []byte) (n int, err error) {
 
 			writer := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
 
-			_, err := client.transfer.DownloadObject(client.Context(), &transfermanager.DownloadObjectInput{
+			_, err := client.transfer.DownloadObject(client.ctx, &transfermanager.DownloadObjectInput{
 				Bucket:   aws.String(client.bucket),
 				Key:      aws.String(*object.Key),
 				WriterAt: writer,
@@ -157,7 +204,7 @@ func (client *Client) Read(p []byte) (n int, err error) {
 			n, err = value.Write(writer.Bytes())
 
 			if err != nil {
-				return n, client.Error(err)
+				return n, errnie.Error(err)
 			}
 		}
 	}
@@ -236,19 +283,19 @@ WriteAtPrefix uploads p at prefix. An empty prefix is refused.
 */
 func (client *Client) WriteAtPrefix(prefix string, p []byte) (int, error) {
 	if prefix == "" {
-		return 0, client.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "[store.client] upload key is empty", nil,
 		))
 	}
 
-	_, err := client.transfer.UploadObject(client.Context(), &transfermanager.UploadObjectInput{
+	_, err := client.transfer.UploadObject(client.ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(prefix),
 		Body:   bytes.NewReader(p),
 	})
 
 	if err != nil {
-		return 0, client.Error(errnie.Err(
+		return 0, errnie.Error(errnie.Err(
 			errnie.IO, "[store.client] upload error", err,
 		))
 	}
@@ -266,7 +313,7 @@ func (client *Client) DeletePrefix(prefix string) error {
 				continue
 			}
 
-			_, err := client.S3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+			_, err := client.S3Client.DeleteObject(client.ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(client.bucket),
 				Key:    aws.String(*object.Key),
 			})
@@ -300,7 +347,7 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 				continue
 			}
 
-			_, err := client.S3Client.CopyObject(client.Context(), &s3.CopyObjectInput{
+			_, err := client.S3Client.CopyObject(client.ctx, &s3.CopyObjectInput{
 				Bucket:     aws.String(client.bucket),
 				Key:        aws.String(dest),
 				CopySource: aws.String(client.bucket + "/" + *object.Key),
@@ -312,7 +359,7 @@ func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 				))
 			}
 
-			_, err = client.S3Client.DeleteObject(client.Context(), &s3.DeleteObjectInput{
+			_, err = client.S3Client.DeleteObject(client.ctx, &s3.DeleteObjectInput{
 				Bucket: aws.String(client.bucket),
 				Key:    aws.String(*object.Key),
 			})
@@ -340,4 +387,13 @@ func destKey(destPrefix, key, sourcePrefix string) string {
 	}
 
 	return strings.TrimSuffix(destPrefix, "/") + "/" + strings.TrimPrefix(rel, "/")
+}
+
+func (client *Client) Error() error {
+	return client.err
+}
+
+func (client *Client) Close() error {
+	client.cancel()
+	return nil
 }

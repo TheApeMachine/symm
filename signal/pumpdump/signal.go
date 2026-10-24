@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/volumeclock"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 )
@@ -76,8 +77,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	if err := parent.RunTrades(signal.Context(), trades, func(trade kraken.TradeData) {
 		signal.step(value, trade)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value

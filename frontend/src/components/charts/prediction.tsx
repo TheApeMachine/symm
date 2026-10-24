@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useMemo, useRef } from "react";
 import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
+import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import type { Value } from "#/types/value";
 import { Flex } from "../ui";
 
@@ -74,54 +75,54 @@ export const parseResonanceData = (
 		layers: [],
 	};
 
-	const metrics = measurement.metrics();
+	for (const { suffix, payload } of measurement.readings()) {
+		if (suffix === "") continue;
+		const first = Array.isArray(payload) ? payload[0] : payload;
 
-	for (const [lbl, value] of Object.entries(metrics)) {
-		const raw = Number.isFinite(value) ? value : undefined;
-		if (raw === undefined) continue;
-
-		if (lbl === "task_relative_precision") data.taskRelativePrecision = raw;
-		if (lbl === "task_skill") data.taskSkill = raw;
-		if (lbl === "surprise") data.surprise = raw;
-		if (lbl === "energy") data.energy = raw;
-		if (lbl.startsWith("forward_curve_")) {
-			const idx = Number.parseInt(lbl.slice("forward_curve_".length), 10);
-			if (!Number.isNaN(idx)) data.forwardCurve[idx] = raw;
-		}
-		if (lbl.startsWith("dynamics_")) {
-			const prop = lbl.slice("dynamics_".length);
-			if (data.dynamics) data.dynamics[prop] = raw;
-		}
-		if (lbl.startsWith("latent_")) {
-			const idx = Number.parseInt(lbl.slice("latent_".length), 10);
-			if (!Number.isNaN(idx) && data.latent) data.latent[idx] = raw;
-		}
-		if (lbl.startsWith("layer_")) {
-			const parts = lbl.split("_");
-			const layerId = Number.parseInt(parts[1] ?? "", 10);
-			const prop = parts[2];
-			const idx = Number.parseInt(parts[3] ?? "", 10);
-
-			if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
-				if (!data.layers[layerId]) {
-					data.layers[layerId] = { state: [], prediction: [] };
-				}
-				const layer = data.layers[layerId];
-				if (prop === "state" && layer.state) layer.state[idx] = raw;
-				else if (prop === "prediction" && layer.prediction)
-					layer.prediction[idx] = raw;
+		if (typeof first === "number" && Number.isFinite(first)) {
+			if (suffix === "task_relative_precision")
+				data.taskRelativePrecision = first;
+			if (suffix === "task_skill") data.taskSkill = first;
+			if (suffix === "surprise") data.surprise = first;
+			if (suffix === "energy") data.energy = first;
+			if (suffix.startsWith("forward_curve_")) {
+				const idx = Number.parseInt(suffix.slice("forward_curve_".length), 10);
+				if (!Number.isNaN(idx)) data.forwardCurve[idx] = first;
 			}
+			if (suffix.startsWith("dynamics_")) {
+				const prop = suffix.slice("dynamics_".length);
+				if (data.dynamics) data.dynamics[prop] = first;
+			}
+			if (suffix.startsWith("latent_")) {
+				const idx = Number.parseInt(suffix.slice("latent_".length), 10);
+				if (!Number.isNaN(idx) && data.latent) data.latent[idx] = first;
+			}
+			if (suffix.startsWith("layer_")) {
+				const parts = suffix.split("_");
+				const layerId = Number.parseInt(parts[1] ?? "", 10);
+				const prop = parts[2];
+				const idx = Number.parseInt(parts[3] ?? "", 10);
+
+				if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
+					if (!data.layers[layerId]) {
+						data.layers[layerId] = { state: [], prediction: [] };
+					}
+					const layer = data.layers[layerId];
+					if (prop === "state" && layer.state) layer.state[idx] = first;
+					else if (prop === "prediction" && layer.prediction)
+						layer.prediction[idx] = first;
+				}
+			}
+			continue;
 		}
-	}
 
-	const provenance = measurement.provenance();
-
-	for (const [k, v] of Object.entries(provenance)) {
-		if (k === "supported_horizon")
-			data.supportedHorizon = Number.parseInt(v, 10);
-		if (k === "resolved_steps") data.resolvedSteps = Number.parseInt(v, 10);
-		if (k === "confidence") data.confidence = Number.parseFloat(v);
-		if (k === "calibrated") data.calibrated = v === "true";
+		if (typeof first !== "string") continue;
+		if (suffix === "supported_horizon")
+			data.supportedHorizon = Number.parseInt(first, 10);
+		if (suffix === "resolved_steps")
+			data.resolvedSteps = Number.parseInt(first, 10);
+		if (suffix === "confidence") data.confidence = Number.parseFloat(first);
+		if (suffix === "calibrated") data.calibrated = first === "true";
 	}
 
 	// Indexed metrics arrive sparse; densify so VectorLane has contiguous bars.
@@ -180,12 +181,8 @@ export function* resonanceLayers(
 		const at = index.indexOf(`/${address}`, frame.prefix.length - 1);
 		if (at < 0) continue;
 
-		let payload: unknown;
-		try {
-			payload = JSON.parse(new TextDecoder().decode(frame.layers[i]));
-		} catch {
-			continue;
-		}
+		const payload = tryDecodeJsonBytes(frame.layers[i]);
+		if (payload === undefined) continue;
 
 		yield [index.slice(at + address.length + 1), payload];
 	}

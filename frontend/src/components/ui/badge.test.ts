@@ -8,6 +8,7 @@ describe("badgeVariants", () => {
 		expect(classes).toContain("[--badge-tone:var(--success)]");
 		expect(classes).toContain("text-[11px]");
 		expect(classes).toContain("uppercase");
+		expect(classes).toContain("rounded-[2px]");
 	});
 
 	it("defaults to info at size s", () => {

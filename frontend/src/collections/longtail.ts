@@ -82,14 +82,28 @@ export const returnTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
-export const gatePassTone = (value: number | null): Tone =>
+/** Token emit rate: how often lit ticks become path edges. */
+export const tokenEmitTone = (value: number | null): Tone =>
 	value === null
 		? "neutral"
-		: value >= 0.7
+		: value >= 0.15
 			? "good"
-			: value >= 0.4
+			: value >= 0.05
 				? "warn"
 				: "bad";
+
+/** Blocked rate: high means grid lit but tokenizer/path stayed quiet. */
+export const blockedTone = (value: number | null): Tone =>
+	value === null
+		? "neutral"
+		: value <= 0.7
+			? "good"
+			: value <= 0.9
+				? "warn"
+				: "bad";
+
+/** @deprecated use tokenEmitTone */
+export const gatePassTone = tokenEmitTone;
 
 /*
 Surprise is the absolute energy error against the running prediction.
@@ -176,23 +190,29 @@ append caused, the surprise gate's readings, and how the stored policy met the
 live token path.
 */
 export type BackendTickMetrics = {
-	symbols: number;
-	gatePass: number;
-	gateTotal: number;
-	frictionPass: number;
-	frictionTotal: number;
-	pathDrift: number;
-	pathCompared: number;
-	canonicalTicks: number;
-	policyMatches: number;
-	policyChecks: number;
-	exploredEnter: number;
-	confirmedEnter: number;
-	venueOpen: number;
-	virtualExcursion: number;
-	meanMaturity: number;
-	meanSurprise: number;
-	surpriseSamples: number;
+	symbols: number | null;
+	gatePass: number | null;
+	gateTotal: number | null;
+	litTicks: number | null;
+	blocked: number | null;
+	blockedBrightness: number | null;
+	blockedDuplicate: number | null;
+	blockedVeto: number | null;
+	blockedEmpty: number | null;
+	policyChecks: number | null;
+	policyStored: number | null;
+	outcomeEnter: number | null;
+	outcomeExit: number | null;
+	exploredEnter: number | null;
+	venueOpen: number | null;
+	virtualExcursion: number | null;
+	developedPaths: number | null;
+	promotedPaths: number | null;
+	prunedPaths: number | null;
+	meanThreshold: number | null;
+	exitProfit: number | null;
+	exitStop: number | null;
+	exitBranch: number | null;
 };
 
 export type TrainingSample = {
@@ -206,23 +226,32 @@ export type TrainingSample = {
 	createRate: number | null;
 	reuseRate: number | null;
 	inlineRate: number | null;
-	gatePassRate: number | null;
+	/** Share of symbol steps whose regime.posture letter changed. */
+	tokenEmitRate: number | null;
+	/** Lit ticks that did not append a new letter. */
 	blockedRate: number | null;
-	warmRate: number | null;
-	avgSurprise: number | null;
-	avgZ: number | null;
+	blockedBrightnessRate: number | null;
+	/** Same letter as the previous step. The story did not change. */
+	blockedDuplicateRate: number | null;
+	/** Lit ticks where risk brightness beat the posture. */
+	vetoRate: number | null;
+	/** Lit ticks where a role band was dark. */
+	emptyRate: number | null;
 	policyStoredRate: number | null;
-	policyMatchRate: number | null;
-	avgMatchDepth: number | null;
 	outcomeRate: number | null;
+	outcomeEnterRate: number | null;
+	outcomeExitRate: number | null;
 	violations: number | null;
-	pathStableRate: number | null;
-	frictionPassRate: number | null;
 	exploredEnter: number | null;
-	confirmedEnter: number | null;
 	venueOpen: number | null;
 	virtualExcursion: number | null;
-	meanMaturity: number | null;
+	developedPaths: number | null;
+	promotedPaths: number | null;
+	prunedPaths: number | null;
+	meanThreshold: number | null;
+	exitProfit: number | null;
+	exitStop: number | null;
+	exitBranch: number | null;
 };
 
 export type LongtailSample = {
@@ -265,19 +294,18 @@ const mean = (values: number[]): number | null =>
 
 /*
 summarizeBook reads one book's desk rows into round-trip statistics via
-positionReadout (broker net_return / CloseOut economics). Only settled lots
-with a net return participate; open lots never affect edge. Nulls when there
-is nothing priced — never a fabricated zero.
+positionReadout (broker pnl / CloseOut economics). Every settled lot with
+a book return counts, including virtual discovery. Open lots never affect
+edge. Nulls when there is nothing priced — never a fabricated zero.
 */
 export const summarizeBook = (
 	rows: Record<string, unknown>[],
 	book: Book,
 ): BookDeskStats => {
 	const onThisBook = rows.filter((row) => onBook(row, book));
-	const settled = closedOnBook(rows, book).filter((row) => {
-		const readout = positionReadout(row);
-		return readout.returnPct !== null;
-	});
+	const settled = closedOnBook(rows, book).filter(
+		(row) => positionReadout(row).returnPct !== null,
+	);
 	const returns = settled.map(
 		(row) => positionReadout(row).returnPct as number,
 	);
@@ -307,12 +335,14 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 	let feedsWithFrame = 0;
 	let gateTotal = 0;
 	let gatePass = 0;
-	let warm = 0;
 	let blocked = 0;
-	let surpriseSum = 0;
-	let surpriseN = 0;
-	let zSum = 0;
-	let zN = 0;
+	let blockedBrightness = 0;
+	let blockedDuplicate = 0;
+	let blockedVeto = 0;
+	let blockedEmpty = 0;
+	let litTicks = 0;
+	let outcomeEnter = 0;
+	let outcomeExit = 0;
 	let rules = 0;
 	let grammarSymbols = 0;
 	let rawLength = 0;
@@ -326,36 +356,28 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 	let eventInline = 0;
 	let policyTotal = 0;
 	let stored = 0;
-	let matched = 0;
-	let matchDepthSum = 0;
-	let matchDepthN = 0;
 	let outcomes = 0;
 	let violations = 0;
-	let pathCompared = 0;
-	let pathStable = 0;
-	let frictionPass = 0;
-	let frictionTotal = 0;
 
 	for (const feed of feeds) {
 		const frame = feed.latest;
 		if (!frame) continue;
 		feedsWithFrame += 1;
 
+		if (frame.active.length > 0) {
+			litTicks += 1;
+		}
 		if (frame.gate) {
 			gateTotal += 1;
 			if (frame.gate.passed) gatePass += 1;
-			if (frame.gate.warm) warm += 1;
-			const surprise = frame.gate.surprise;
-			if (surprise !== null && Number.isFinite(surprise)) {
-				surpriseSum += surprise;
-				surpriseN += 1;
-			}
-			if (frame.gate.z !== null && Number.isFinite(frame.gate.z)) {
-				zSum += frame.gate.z;
-				zN += 1;
-			}
 		}
-		if (frame.blocked) blocked += 1;
+		if (frame.blocked) {
+			blocked += 1;
+			if (frame.blockedReason === "brightness") blockedBrightness += 1;
+			if (frame.blockedReason === "duplicate") blockedDuplicate += 1;
+			if (frame.blockedReason === "veto") blockedVeto += 1;
+			if (frame.blockedReason === "empty") blockedEmpty += 1;
+		}
 
 		for (const rule of frame.rules) {
 			rules += 1;
@@ -376,29 +398,31 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 
 		policyTotal += 1;
 		if (frame.policy.stored) stored += 1;
-		if (frame.policy.match !== "") {
-			matched += 1;
-			matchDepthSum += frame.policy.depth;
-			matchDepthN += 1;
+		if (frame.policy.outcome !== "") {
+			outcomes += 1;
+			if (frame.policy.outcome.includes("enter")) outcomeEnter += 1;
+			if (frame.policy.outcome.includes("exit")) outcomeExit += 1;
 		}
-		if (frame.policy.outcome !== "") outcomes += 1;
 
 		violations += frame.violations.length;
-
-		if (frame.measurement?.frictionChecked) {
-			frictionTotal += 1;
-			if (frame.measurement.frictionPass) frictionPass += 1;
-		}
-		if (frame.measurement?.pathCompared) {
-			pathCompared += 1;
-			if (!frame.measurement.pathDrift) pathStable += 1;
-		}
 	}
 
 	const rate = (numerator: number, denominator: number): number | null =>
 		denominator > 0 ? numerator / denominator : null;
 
 	const backend = longtailBackendMetrics;
+	const backendRate = (
+		numerator: number | null | undefined,
+		denominator: number | null | undefined,
+		fallbackNumerator: number,
+		fallbackDenominator: number,
+	): number | null => {
+		if (backend) {
+			if (numerator === null || numerator === undefined) return null;
+			return rate(numerator, denominator ?? 0);
+		}
+		return rate(fallbackNumerator, fallbackDenominator);
+	};
 
 	return {
 		feeds: feedsWithFrame,
@@ -411,36 +435,75 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 		createRate: rate(eventCreate, eventTotal),
 		reuseRate: rate(eventReuse, eventTotal),
 		inlineRate: rate(eventInline, eventTotal),
-		gatePassRate: rate(
-			backend?.gateTotal ? backend.gatePass : gatePass,
-			backend?.gateTotal ? backend.gateTotal : gateTotal,
+		tokenEmitRate: backendRate(
+			backend?.gatePass,
+			backend?.gateTotal,
+			gatePass,
+			gateTotal,
 		),
-		blockedRate: rate(blocked, policyTotal),
-		warmRate: rate(warm, gateTotal),
-		avgSurprise:
-			backend && backend.surpriseSamples > 0
-				? backend.meanSurprise
-				: rate(surpriseSum, surpriseN),
-		avgZ: rate(zSum, zN),
-		policyStoredRate: rate(stored, policyTotal),
-		policyMatchRate: rate(
-			backend?.policyChecks ? backend.policyMatches : matched,
-			backend?.policyChecks ? backend.policyChecks : policyTotal,
+		blockedRate: backendRate(
+			backend?.blocked,
+			backend?.litTicks,
+			blocked,
+			litTicks,
 		),
-		avgMatchDepth: rate(matchDepthSum, matchDepthN),
+		blockedBrightnessRate: backendRate(
+			backend?.blockedBrightness,
+			backend?.litTicks,
+			blockedBrightness,
+			litTicks,
+		),
+		blockedDuplicateRate: backendRate(
+			backend?.blockedDuplicate,
+			backend?.gateTotal,
+			blockedDuplicate,
+			gateTotal,
+		),
+		vetoRate: backendRate(
+			backend?.blockedVeto,
+			backend?.litTicks,
+			blockedVeto,
+			litTicks,
+		),
+		emptyRate: backendRate(
+			backend?.blockedEmpty,
+			backend?.litTicks,
+			blockedEmpty,
+			litTicks,
+		),
+		policyStoredRate: backendRate(
+			backend?.policyStored,
+			backend?.policyChecks,
+			stored,
+			policyTotal,
+		),
 		outcomeRate: rate(outcomes, policyTotal),
+		outcomeEnterRate: backendRate(
+			backend?.outcomeEnter,
+			backend?.gateTotal,
+			outcomeEnter,
+			policyTotal,
+		),
+		outcomeExitRate: backendRate(
+			backend?.outcomeExit,
+			backend?.gateTotal,
+			outcomeExit,
+			policyTotal,
+		),
 		violations: feedsWithFrame > 0 ? violations : null,
-		pathStableRate: backend
-			? rate(backend.pathCompared - backend.pathDrift, backend.pathCompared)
-			: rate(pathStable, pathCompared),
-		frictionPassRate: backend
-			? rate(backend.frictionPass, backend.frictionTotal)
-			: rate(frictionPass, frictionTotal),
-		exploredEnter: backend?.exploredEnter ?? null,
-		confirmedEnter: backend?.confirmedEnter ?? null,
-		venueOpen: backend?.venueOpen ?? null,
-		virtualExcursion: backend?.virtualExcursion ?? null,
-		meanMaturity: backend && backend.symbols > 0 ? backend.meanMaturity : null,
+		exploredEnter: backend ? backend.exploredEnter : null,
+		venueOpen: backend ? backend.venueOpen : null,
+		virtualExcursion: backend ? backend.virtualExcursion : null,
+		developedPaths: backend ? backend.developedPaths : null,
+		promotedPaths: backend ? backend.promotedPaths : null,
+		prunedPaths: backend ? backend.prunedPaths : null,
+		meanThreshold:
+			backend && (backend.developedPaths ?? 0) > 0
+				? backend.meanThreshold
+				: null,
+		exitProfit: backend ? backend.exitProfit : null,
+		exitStop: backend ? backend.exitStop : null,
+		exitBranch: backend ? backend.exitBranch : null,
 	};
 };
 
@@ -462,12 +525,10 @@ const trendOf = (current: number | null, prior: number | null): Trend => {
 };
 
 /*
-verdict answers the question the surface exists for — is the learning
-system doing well, and is it improving? A bad book that is not getting
-worse is Stuck. Recovering requires the book and one of reuse, policy
-match, or the entry gate to be rising together. It never reports
-improving from a bad level, and never reports a verdict from data it
-does not have.
+verdict answers whether settled lots are making money, and whether that
+is changing. It reads the book's mean return and win rate only. A rising
+return that is still negative is Recovering. It never calls a losing book
+Improving.
 */
 export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	if (samples.length < 2) {
@@ -476,47 +537,29 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 
 	const latest = samples[samples.length - 1];
 	const prior = samples[Math.max(0, samples.length - 16)];
+	const edge = returnTone(latest[book].meanReturn);
+	const wins = winRateTone(latest[book].winRate);
 
-	const training = latest.training;
-	const levels = [
-		returnTone(latest[book].meanReturn),
-		winRateTone(latest[book].winRate),
-		reuseTone(training?.reuseRate ?? null),
-		matchTone(training?.policyMatchRate ?? null),
-		gatePassTone(training?.gatePassRate ?? null),
-	].filter((tone) => tone !== "neutral");
-
-	if (levels.length < 2) {
+	if (edge === "neutral" || wins === "neutral") {
 		return { label: "Warming up", tone: "neutral" };
 	}
 
-	const good = levels.filter((tone) => tone === "good").length;
-	const bad = levels.filter((tone) => tone === "bad").length;
 	const trend = trendOf(latest[book].meanReturn, prior[book].meanReturn);
-	const learningUp = (
-		["reuseRate", "policyMatchRate", "gatePassRate"] as const
-	).some(
-		(key) =>
-			trendOf(latest.training?.[key] ?? null, prior.training?.[key] ?? null) ===
-			"up",
-	);
+	const losing = edge === "bad" || wins === "bad";
+	const winning = edge === "good" && wins !== "bad";
 
-	if (bad >= 2) {
+	if (losing) {
 		if (trend === "down") return { label: "Degrading", tone: "bad" };
-		if (trend === "up" && learningUp) {
-			return { label: "Recovering", tone: "warn" };
-		}
-		if (trend === "up") return { label: "Mixed", tone: "warn" };
+		if (trend === "up") return { label: "Recovering", tone: "warn" };
 		return { label: "Stuck", tone: "bad" };
 	}
-	if (good >= 3) {
+
+	if (winning) {
 		if (trend === "down") return { label: "Slipping", tone: "warn" };
 		if (trend === "up") return { label: "Improving", tone: "good" };
 		return { label: "Stable", tone: "info" };
 	}
-	if (good >= 2) {
-		return { label: "Stable", tone: "info" };
-	}
+
 	return { label: "Mixed", tone: "warn" };
 };
 
@@ -536,7 +579,7 @@ export const buildInsights = (
 			{
 				id: "warmup",
 				title: "Collecting baseline",
-				body: `Samples arrive from ${book} lots and the live grammar feeds. Nothing to read yet.`,
+				body: `Samples arrive from settled ${book} lots and the path book. Nothing to read yet.`,
 				tone: "neutral",
 			},
 		];
@@ -570,88 +613,89 @@ export const buildInsights = (
 		});
 	}
 
-	if (training.rules === null) {
-		insights.push({
-			id: "grammar",
-			title: "Grammar",
-			body: "No grammar rules yet — the sequitur has not found repeating structure.",
-			tone: "neutral",
-		});
-	} else {
-		const reuse = training.reuseRate;
-		const create = training.createRate;
-		const structureSentence =
-			reuse === null || create === null
-				? ""
-				: reuseTone(reuse) === "good"
-					? " Structure is generalizing."
-					: reuseTone(reuse) === "bad"
-						? " It is still mostly inventing new rules — it has not found repeating structure."
-						: " Reuse and creation are balanced.";
-		insights.push({
-			id: "grammar",
-			title: "Grammar",
-			body: `${training.rules} rules (avg depth ${fixed(training.avgRuleDepth ?? 0, 1)}, max ${training.maxRuleDepth ?? 0}); ${reuse === null ? "—" : pct(reuse)} of the latest frames reused an existing rule, ${create === null ? "—" : pct(create)} created one.${structureSentence}`,
-			tone: reuseTone(reuse),
-		});
-	}
-
-	if (training.gatePassRate === null) {
-		insights.push({
-			id: "gate",
-			title: "Entry gate",
-			body: "No entry-gate readings yet.",
-			tone: "neutral",
-		});
-	} else {
-		insights.push({
-			id: "gate",
-			title: "Entry gate",
-			body: `Brightness cleared the path threshold on ${pct(training.gatePassRate)} of frames; coders warm on ${training.warmRate === null ? "—" : pct(training.warmRate)} of feeds${training.frictionPassRate === null ? "" : `; friction passes ${pct(training.frictionPassRate)}`}.`,
-			tone: gatePassTone(training.gatePassRate),
-		});
-	}
-
-	if (training.avgSurprise !== null) {
-		insights.push({
-			id: "surprise",
-			title: "Surprise",
-			body: `Mean absolute energy error ${fixed(training.avgSurprise)}${training.avgZ === null ? "" : `; mean z ${fixed(training.avgZ)}`}.`,
-			tone: surpriseTone(training.avgSurprise),
-		});
-	}
-
-	if (training.policyStoredRate === null) {
-		insights.push({
-			id: "policy",
-			title: "Policy",
-			body: "No policy snapshots on the wire yet.",
-			tone: "neutral",
-		});
-	} else {
-		insights.push({
-			id: "policy",
-			title: "Policy",
-			body: `Stored paths match on ${training.policyMatchRate === null ? "—" : pct(training.policyMatchRate)} of frames (avg depth ${fixed(training.avgMatchDepth ?? 0, 1)}); the desk acted on ${training.outcomeRate === null ? "—" : pct(training.outcomeRate)}.`,
-			tone: matchTone(training.policyMatchRate),
-		});
-	}
-
-	if (training.pathStableRate !== null) {
+	if (training.developedPaths === null) {
 		insights.push({
 			id: "paths",
-			title: "Path identity",
-			body: `On ticks that closed a regime, its terminals sat inside the chord on ${pct(training.pathStableRate)} of comparisons.`,
-			tone: pathStableTone(training.pathStableRate),
+			title: "Paths",
+			body: "The path book has not reported on this sample. Counts appear once a tick publishes developed, paper, and pruned paths.",
+			tone: "neutral",
+		});
+	} else {
+		const threshold =
+			training.meanThreshold === null
+				? "—"
+				: training.meanThreshold.toFixed(2);
+		insights.push({
+			id: "paths",
+			title: "Paths",
+			body: `${training.developedPaths} developed, ${training.promotedPaths ?? 0} at the paper floor, ${training.prunedPaths ?? 0} pruned. Mean threshold ${threshold} (starts at 0.50; profit lowers it, loss raises it).`,
+			tone: (training.promotedPaths ?? 0) > 0 ? "good" : "info",
 		});
 	}
 
-	if ((training.violations ?? 0) > 0) {
+	if (training.tokenEmitRate === null) {
 		insights.push({
-			id: "violations",
-			title: "Grammar invariants",
-			body: `${training.violations} invariant violation(s) in the latest frames.`,
-			tone: "bad",
+			id: "emit",
+			title: "Path letters",
+			body: "No letter readings yet. A letter is the brightest regime and posture, appended only when it changes.",
+			tone: "neutral",
+		});
+	} else {
+		const parts = [
+			training.blockedDuplicateRate === null
+				? null
+				: `${pct(training.blockedDuplicateRate)} repeated the same letter`,
+			training.vetoRate === null
+				? null
+				: `${pct(training.vetoRate)} of lit ticks vetoed by risk`,
+			training.emptyRate === null
+				? null
+				: `${pct(training.emptyRate)} of lit ticks had a dark role`,
+		].filter(Boolean);
+		insights.push({
+			id: "emit",
+			title: "Path letters",
+			body: `A new letter on ${pct(training.tokenEmitRate)} of symbol steps${parts.length ? `. ${parts.join("; ")}.` : "."}`,
+			tone: "info",
+		});
+	}
+
+	const exits =
+		(training.exitProfit ?? 0) +
+		(training.exitStop ?? 0) +
+		(training.exitBranch ?? 0);
+	if (training.exitProfit === null) {
+		insights.push({
+			id: "exits",
+			title: "Exits",
+			body: "No exit ledger yet. Discovery closes on book profit or the friction stop. A reused path closes on its learned exit branch.",
+			tone: "neutral",
+		});
+	} else if (exits === 0) {
+		insights.push({
+			id: "exits",
+			title: "Exits",
+			body: "No virtuals have closed through profit, the friction stop, or a learned exit branch.",
+			tone: "neutral",
+		});
+	} else {
+		insights.push({
+			id: "exits",
+			title: "Exits",
+			body: `${training.exitProfit} cleared the spread, ${training.exitStop} hit the friction stop, ${training.exitBranch} followed a learned exit branch.`,
+			tone: (training.exitProfit ?? 0) > (training.exitStop ?? 0) ? "good" : "warn",
+		});
+	}
+
+	if (
+		training.virtualExcursion !== null &&
+		training.virtualExcursion > 0
+	) {
+		insights.push({
+			id: "ledger",
+			title: "Desk",
+			body: `${training.virtualExcursion} virtual excursion(s) open; ${training.venueOpen ?? 0} venue lot(s); ${training.exploredEnter ?? 0} explore enter(s) this tick window.`,
+			tone: "info",
 		});
 	}
 
@@ -666,31 +710,38 @@ export const ingestLongtailTick = (payload: unknown) => {
 	}
 
 	const body = payload as Record<string, unknown>;
-	const read = (key: string) => {
+	const read = (key: string): number | null => {
 		const value = body[key];
-		return typeof value === "number" && Number.isFinite(value) ? value : 0;
+		return typeof value === "number" && Number.isFinite(value) ? value : null;
 	};
 
 	longtailBackendMetrics = {
 		symbols: read("symbols"),
 		gatePass: read("gatePass"),
 		gateTotal: read("gateTotal"),
-		frictionPass: read("frictionPass"),
-		frictionTotal: read("frictionTotal"),
-		pathDrift: read("pathDrift"),
-		pathCompared: read("pathCompared"),
-		canonicalTicks: read("canonicalTicks"),
-		policyMatches: read("policyMatches"),
+		litTicks: read("litTicks"),
+		blocked: read("blocked"),
+		blockedBrightness: read("blockedBrightness"),
+		blockedDuplicate: read("blockedDuplicate"),
+		blockedVeto: read("blockedVeto"),
+		blockedEmpty: read("blockedEmpty"),
 		policyChecks: read("policyChecks"),
+		policyStored: read("policyStored"),
+		outcomeEnter: read("outcomeEnter"),
+		outcomeExit: read("outcomeExit"),
 		exploredEnter: read("exploredEnter"),
-		confirmedEnter: read("confirmedEnter"),
 		venueOpen: read("venueOpen"),
 		virtualExcursion: read("virtualExcursion"),
-		meanMaturity: read("meanMaturity"),
-		meanSurprise: read("meanSurprise"),
-		surpriseSamples: read("surpriseSamples"),
+		developedPaths: read("developedPaths"),
+		promotedPaths: read("promotedPaths"),
+		prunedPaths: read("prunedPaths"),
+		meanThreshold: read("meanThreshold"),
+		exitProfit: read("exitProfit"),
+		exitStop: read("exitStop"),
+		exitBranch: read("exitBranch"),
 	};
 
+	maybeRecordLongtailSample();
 	return true;
 };
 
@@ -700,11 +751,11 @@ export const longtailStore = createStore({
 });
 
 /*
-One hour of 5-second samples: long enough to see a trend, small enough to
-keep in memory. The recorder runs for the whole session (started from the
-feed), so the window keeps filling on every surface, not only this one.
+The epoch tape, not the hour since this page opened. The engine keeps one
+sample per five seconds and replays it on connect; this cap is the longest
+series the chart will hold after that replay.
 */
-const MAX_SAMPLES = 720;
+const MAX_SAMPLES = 20_000;
 const SAMPLE_EVERY_MS = 5_000;
 
 const pushSample = (sample: LongtailSample) => {
@@ -719,30 +770,171 @@ const pushSample = (sample: LongtailSample) => {
 
 const readPositions = () => deskRowsForStats();
 
-let recorderStarted = false;
+const recordLongtailSample = () => {
+	const desk = readPositions();
+	ingestDeskClosedLots(desk);
+
+	pushSample({
+		at: Date.now(),
+		paper: summarizeBook(desk, "paper"),
+		virtual: summarizeBook(desk, "virtual"),
+		training: summarizeTraining(Object.values(sequiturStore.state)),
+	});
+};
+
+const maybeRecordLongtailSample = () => {
+	const { lastSampleAt, samples } = longtailStore.state;
+	const now = Date.now();
+	if (
+		samples.length > 0 &&
+		now - lastSampleAt < SAMPLE_EVERY_MS
+	) {
+		return;
+	}
+	recordLongtailSample();
+};
+
 let recorderHandle: number | null = null;
+let historyBuffer: LongtailSample[] | null = null;
+
+const finiteOrNull = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const countOrZero = (value: unknown): number => {
+	const count = finiteOrNull(value);
+	return count === null ? 0 : count;
+};
+
+const bookFromHistory = (value: unknown): BookDeskStats | null => {
+	if (!value || typeof value !== "object") return null;
+
+	const row = value as Record<string, unknown>;
+
+	return {
+		closed: countOrZero(row.closed),
+		open: countOrZero(row.open),
+		wins: countOrZero(row.wins),
+		winRate: finiteOrNull(row.winRate),
+		meanReturn: finiteOrNull(row.meanReturn),
+		medianReturn: finiteOrNull(row.medianReturn),
+		worstReturn: finiteOrNull(row.worstReturn),
+		avgHoldNs: finiteOrNull(row.avgHoldNs),
+	};
+};
+
+const trainingFromHistory = (value: unknown): TrainingSample | null => {
+	if (!value || typeof value !== "object") return null;
+
+	const row = value as Record<string, unknown>;
+
+	return {
+		feeds: countOrZero(row.feeds),
+		rules: finiteOrNull(row.rules),
+		grammarSymbols: finiteOrNull(row.grammarSymbols),
+		rawLength: finiteOrNull(row.rawLength),
+		avgRuleDepth: finiteOrNull(row.avgRuleDepth),
+		maxRuleDepth: finiteOrNull(row.maxRuleDepth),
+		actionCoverage: finiteOrNull(row.actionCoverage),
+		createRate: finiteOrNull(row.createRate),
+		reuseRate: finiteOrNull(row.reuseRate),
+		inlineRate: finiteOrNull(row.inlineRate),
+		tokenEmitRate: finiteOrNull(row.tokenEmitRate ?? row.gatePassRate),
+		blockedRate: finiteOrNull(row.blockedRate),
+		blockedBrightnessRate: finiteOrNull(row.blockedBrightnessRate),
+		blockedDuplicateRate: finiteOrNull(row.blockedDuplicateRate),
+		vetoRate: finiteOrNull(row.vetoRate),
+		emptyRate: finiteOrNull(row.emptyRate),
+		policyStoredRate: finiteOrNull(row.policyStoredRate),
+		outcomeRate: finiteOrNull(row.outcomeRate),
+		outcomeEnterRate: finiteOrNull(row.outcomeEnterRate),
+		outcomeExitRate: finiteOrNull(row.outcomeExitRate),
+		violations: finiteOrNull(row.violations),
+		exploredEnter: finiteOrNull(row.exploredEnter),
+		venueOpen: finiteOrNull(row.venueOpen),
+		virtualExcursion: finiteOrNull(row.virtualExcursion),
+		developedPaths: finiteOrNull(row.developedPaths),
+		promotedPaths: finiteOrNull(row.promotedPaths),
+		prunedPaths: finiteOrNull(row.prunedPaths),
+		meanThreshold: finiteOrNull(row.meanThreshold),
+		exitProfit: finiteOrNull(row.exitProfit),
+		exitStop: finiteOrNull(row.exitStop),
+		exitBranch: finiteOrNull(row.exitBranch),
+	};
+};
+
+const historySample = (value: unknown): LongtailSample | null => {
+	if (!value || typeof value !== "object") return null;
+
+	const row = value as Record<string, unknown>;
+	const at = finiteOrNull(row.at);
+	const paper = bookFromHistory(row.paper);
+	const virtual = bookFromHistory(row.virtual);
+	const training = trainingFromHistory(row.training);
+
+	if (at === null || paper === null || virtual === null || training === null) {
+		return null;
+	}
+
+	return { at, paper, virtual, training };
+};
+
+/*
+beginLongtailHistory opens the buffer for one replay. The samples already
+on the page stay up until the replay ends, then the epoch replaces them.
+*/
+export const beginLongtailHistory = () => {
+	historyBuffer = [];
+};
+
+/* ingestLongtailHistory appends one batch. A batch before begin is ignored. */
+export const ingestLongtailHistory = (payload: unknown): boolean => {
+	if (historyBuffer === null || !Array.isArray(payload)) return false;
+
+	let accepted = 0;
+
+	for (const item of payload) {
+		const sample = historySample(item);
+		if (!sample) continue;
+		historyBuffer.push(sample);
+		accepted += 1;
+	}
+
+	return accepted > 0;
+};
+
+/*
+endLongtailHistory installs the epoch. An empty replay leaves the page's
+own samples alone. A recorder that is already running then takes one live
+reading, so the latest point still carries the grammar feed.
+*/
+export const endLongtailHistory = () => {
+	if (historyBuffer === null) return;
+
+	const seeded = [...historyBuffer].sort((a, b) => a.at - b.at);
+	historyBuffer = null;
+
+	if (seeded.length === 0) return;
+
+	const samples = seeded.slice(-MAX_SAMPLES);
+
+	longtailStore.setState(() => ({
+		samples,
+		lastSampleAt: samples[samples.length - 1]?.at ?? 0,
+	}));
+
+	maybeRecordLongtailSample();
+};
 
 export const ensureLongtailRecorder = () => {
-	if (recorderStarted) {
+	if (recorderHandle !== null) {
 		return;
 	}
 
-	recorderStarted = true;
-
-	const tick = () => {
-		const desk = readPositions();
-		ingestDeskClosedLots(desk);
-
-		pushSample({
-			at: Date.now(),
-			paper: summarizeBook(desk, "paper"),
-			virtual: summarizeBook(desk, "virtual"),
-			training: summarizeTraining(Object.values(sequiturStore.state)),
-		});
-	};
-
-	tick();
-	recorderHandle = window.setInterval(tick, SAMPLE_EVERY_MS);
+	recordLongtailSample();
+	recorderHandle = window.setInterval(
+		maybeRecordLongtailSample,
+		SAMPLE_EVERY_MS,
+	);
 };
 
 /* Tests: stop the interval and empty the window. */
@@ -751,7 +943,8 @@ export const resetLongtailRecorder = () => {
 		window.clearInterval(recorderHandle);
 		recorderHandle = null;
 	}
-	recorderStarted = false;
+	historyBuffer = null;
+	longtailBackendMetrics = null;
 	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
 };
 

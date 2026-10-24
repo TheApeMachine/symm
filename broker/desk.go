@@ -6,17 +6,15 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -42,20 +40,24 @@ type Desk struct {
 	// archive keeps closed lots visible to the dashboard.
 	virtualArchive *sync.Map
 	books          *Book
+	helloMu        sync.Mutex
+	lastHello      time.Time
+	helloArmed     bool
 }
+
+const helloMinGap = 250 * time.Millisecond
 
 func NewDesk(
 	ctx context.Context,
 	transport Transport,
 	price *Price,
 	balance *Balance,
-	store *store.Client,
 ) *Desk {
 	desk := &Desk{
 		transport:      transport,
 		rest:           network.NewREST(),
 		balance:        balance,
-		history:        NewHistory(ctx, store),
+		history:        NewHistory(ctx),
 		price:          price,
 		positions:      NewCache(ctx),
 		virtuals:       NewCache(ctx),
@@ -107,6 +109,10 @@ func NewDesk(
 			if position.Symbol == "" {
 				continue
 			}
+
+			// History JSON does not carry the live price book. Without it,
+			// later marks never reprice and a lot in profit never exits.
+			position.price = desk.price
 
 			switch role {
 			case "open":
@@ -197,11 +203,81 @@ func (desk *Desk) publishLots() []*Position {
 }
 
 /*
+Lots is the desk's round-trip set for the epoch tape: everything Hello
+publishes, plus paper closes still on the desk. Paper closes leave the
+open cache before the venue fills them, and Hello does not publish that
+side.
+*/
+func (desk *Desk) Lots() []*Position {
+	if desk == nil {
+		return nil
+	}
+
+	lots := desk.publishLots()
+	seen := make(map[string]struct{}, len(lots))
+
+	for _, position := range lots {
+		if position != nil && position.ID != "" {
+			seen[position.ID] = struct{}{}
+		}
+	}
+
+	for _, position := range desk.positions.Closed() {
+		if position == nil || position.ID == "" {
+			continue
+		}
+
+		if _, ok := seen[position.ID]; ok {
+			continue
+		}
+
+		lots = append(lots, position)
+	}
+
+	return lots
+}
+
+/*
 Hello is a callback for the ui.Hub that fires when a new WebSocket
 connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
+	if desk == nil {
+		return
+	}
+
+	desk.helloMu.Lock()
+	wait := time.Since(desk.lastHello)
+
+	if wait < helloMinGap {
+		if !desk.helloArmed {
+			desk.helloArmed = true
+			time.AfterFunc(helloMinGap-wait, desk.flushHello)
+		}
+
+		desk.helloMu.Unlock()
+		return
+	}
+
+	desk.lastHello = time.Now()
+	desk.helloMu.Unlock()
+	desk.writeHello()
+}
+
+func (desk *Desk) flushHello() {
+	if desk == nil {
+		return
+	}
+
+	desk.helloMu.Lock()
+	desk.helloArmed = false
+	desk.lastHello = time.Now()
+	desk.helloMu.Unlock()
+	desk.writeHello()
+}
+
+func (desk *Desk) writeHello() {
 	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
 		desk.publishLots(), "positions",
 	))
@@ -223,18 +299,62 @@ func (desk *Desk) Positions(open bool) []*Position {
 }
 
 /*
-Update marks open positions against the trade price. Virtual lots close only
-through the strategy model (regime exit + priced book), not on a desk threshold.
-Called from the workspace tick handler — the desk sits off the trade ingress
-path, so this is where marks become live.
+OpenPositions returns the open positions in the desk.
+*/
+func (desk *Desk) OpenPositions(virtual bool) []*Position {
+	if virtual {
+		return desk.virtuals.All(true)
+	}
+
+	return desk.positions.All(true)
+}
+
+func (desk *Desk) Position(symbol string, virtual bool) *Position {
+	if virtual {
+		return desk.virtuals.Get(symbol, true)
+	}
+
+	return desk.positions.Get(symbol, true)
+}
+
+/*
+ClosedVirtuals returns virtual lots settled this tick and still on the closed
+side of the live cache, awaiting promotion scoring.
+*/
+func (desk *Desk) ClosedVirtuals() []*Position {
+	if desk == nil {
+		return nil
+	}
+
+	return desk.virtuals.Closed()
+}
+
+/*
+Update marks open positions against the trade price. Called from the workspace
+tick handler — the desk sits off the trade ingress path, so this is where
+marks become live.
+
+The trade batch is the changed set. Those lots are the ones published. Every
+other open lot is repriced from the book so an exit still sees a live mark,
+and that reprice stays on the desk.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
-	/*
-		Trade ticks are sparse: one carries a handful of symbols, so the marks
-		of everything else simply do not appear in this frame. Hello reads the
-		whole desk — every position, moved or not — so the frame always carries
-		every card and an unchanged position never blinks out and back.
-	*/
+	changed := make([]*Position, 0, len(trades))
+	seen := make(map[string]struct{}, len(trades))
+
+	note := func(position *Position) {
+		if position == nil || position.ID == "" {
+			return
+		}
+
+		if _, ok := seen[position.ID]; ok {
+			return
+		}
+
+		seen[position.ID] = struct{}{}
+		changed = append(changed, position)
+	}
+
 	traded := make(map[string]struct{}, len(trades))
 	for _, trade := range trades {
 		traded[trade.Symbol] = struct{}{}
@@ -251,6 +371,7 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 			}
 
 			position.Update(&trade.Price)
+			note(position)
 		}
 
 		for _, position := range val.All(true) {
@@ -269,7 +390,27 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 		}
 	}
 
-	desk.Hello()
+	desk.publishChanged(changed)
+}
+
+/*
+publishChanged writes one frame per lot. The page keeps every other lot it
+already has, keyed by id, so a quiet position stays on screen.
+*/
+func (desk *Desk) publishChanged(positions []*Position) {
+	if desk == nil || len(positions) == 0 || ui.UI == nil || !ui.UI.Active() {
+		return
+	}
+
+	for _, position := range positions {
+		if position == nil || position.ID == "" {
+			continue
+		}
+
+		io.Copy(ui.UI, data.NewValue("positions", "update", position.ID).Append(
+			position, "position",
+		))
+	}
 }
 
 /*
@@ -314,12 +455,23 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 }
 
 /*
-Enter a new position.
+Enter opens a lot on one book. The venue book and the virtual book are
+independent: a learning sample does not occupy the venue slot, and a
+venue lot does not occupy the learning slot. A second lot on the same
+book is rejected.
 */
 func (desk *Desk) Enter(
-	symbol string, path string, virtual bool, tick uint64,
+	symbol string, path string, virtual bool, pathFound bool,
 ) error {
-	if desk.positions.Has(symbol) || desk.virtuals.Has(symbol) {
+	if virtual {
+		if desk.virtuals.Has(symbol) {
+			return errnie.Err(
+				errnie.TooManyRequests,
+				"[desk.Enter] virtual already exists",
+				nil,
+			)
+		}
+	} else if desk.positions.Has(symbol) {
 		return errnie.Err(
 			errnie.TooManyRequests,
 			"[desk.Enter] position already exists",
@@ -328,6 +480,7 @@ func (desk *Desk) Enter(
 	}
 
 	position := NewPosition(symbol, path, virtual, desk.price)
+	position.PathFound = pathFound
 
 	if desk.price.Status() != runtime.READY {
 		return errnie.Err(
@@ -337,31 +490,7 @@ func (desk *Desk) Enter(
 		)
 	}
 
-	cash := desk.balance.cash(desk.balance.Quote)
-
-	if cash != nil && cash.Sign() > 0 {
-		cash = cash.Mul(decimal.NewFromFloat64(viper.GetFloat64("trading.allocation.max_fraction")))
-	}
-
-	allocation, err := desk.price.AllocateEntry(symbol, cash)
-
-	if err != nil {
-		return err
-	}
-
-	qty := allocation.Quantity
-
-	if qty == nil {
-		return errnie.Err(
-			errnie.NotFound,
-			"[desk.Enter] no tradable quantity for "+symbol,
-			nil,
-		)
-	}
-
-	position.Qty = qty
-
-	order, err := position.Enter(tick)
+	order, err := position.Enter(path)
 
 	if err != nil {
 		return err
@@ -419,146 +548,19 @@ func (desk *Desk) Enter(
 		))
 	}
 
-	// The entry is live: hand the desk's full snapshot to every client now
-	// instead of waiting for the next trade tick to trigger a publish.
-	desk.Hello()
+	// The entry is live. Publish this lot; the rest of the book is already
+	// on the page from the last snapshot or its own updates.
+	desk.publishChanged([]*Position{position})
 
 	return nil
 }
 
 /*
-Quote sizes an entry the same way Enter does and returns the quantity, the
-entry price, and the entry fee. The book has to be able to take the size.
-A price that is not ready is an error: the ledger must not record an
-excursion it cannot price.
-*/
-func (desk *Desk) Quote(
-	symbol string,
-) (qty, entry, fee *decimal.Decimal, err error) {
-	if desk == nil || desk.price == nil {
-		return nil, nil, nil, errnie.Err(
-			errnie.Validation, "[desk.Quote] price unavailable", nil,
-		)
-	}
-
-	if desk.balance == nil {
-		return nil, nil, nil, errnie.Err(
-			errnie.Validation, "[desk.Quote] balance unavailable", nil,
-		)
-	}
-
-	if desk.price.Status() != runtime.READY {
-		return nil, nil, nil, errnie.Err(
-			errnie.Validation, "[desk.Quote] price is not ready for "+symbol, nil,
-		)
-	}
-
-	cash := desk.balance.cash(desk.balance.Quote)
-
-	if cash != nil && cash.Sign() > 0 {
-		cash = cash.Mul(decimal.NewFromFloat64(viper.GetFloat64("trading.allocation.max_fraction")))
-	}
-
-	allocation, err := desk.price.AllocateEntry(symbol, cash)
-
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	if allocation == nil || allocation.Quantity == nil || allocation.EntryPrice == nil || allocation.EntryFee == nil {
-		return nil, nil, nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[desk.Quote] incomplete allocation for "+symbol,
-			nil,
-		)
-	}
-
-	return allocation.Quantity, allocation.EntryPrice, allocation.EntryFee, nil
-}
-
-/*
-Friction is the round-trip cost of the symbol: the relative spread plus
-both fee legs. The return is a fraction of price, the same units as
-SaleReturn. ok is false when the book or the fee tier is missing.
-*/
-func (desk *Desk) Friction(symbol string) (float64, bool) {
-	if desk == nil || desk.price == nil || symbol == "" {
-		return 0, false
-	}
-
-	bid, ask := desk.price.Touch(symbol)
-	if bid == nil || ask == nil || bid.Sign() <= 0 || ask.Sign() <= 0 || ask.Cmp(bid) <= 0 {
-		return 0, false
-	}
-
-	mid := bid.Add(ask).Div(decimal.NewFromInt64(2))
-	if mid.Sign() <= 0 {
-		return 0, false
-	}
-
-	fee := desk.price.Fee(symbol)
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
-		return 0, false
-	}
-
-	hurdle := ask.Sub(bid).Div(mid).Float64() + 2*fee.Fee.Float64()/100
-	if hurdle <= 0 {
-		return 0, false
-	}
-
-	return hurdle, true
-}
-
-/*
-OpenMark is the fee-net book return at the fill, the baseline a later
-print is measured from.
-*/
-func (desk *Desk) OpenMark(symbol string) (float64, bool) {
-	position := desk.Open(symbol)
-	if position == nil || position.Qty == nil || position.EntryPrice == nil || position.EntryFee == nil {
-		return 0, false
-	}
-
-	return desk.SaleReturn(symbol, position.Qty, position.EntryPrice, position.EntryFee)
-}
-
-/*
-Realize is the fee-net return of selling quantity through the bid book.
-ok is false when the book cannot take the quantity. There is no touch
-substitute: a print the book would not pay is not a sample.
-*/
-func (desk *Desk) Realize(
-	symbol string, quantity, entry, fee *decimal.Decimal,
-) (float64, bool) {
-	if desk == nil || desk.price == nil {
-		return 0, false
-	}
-
-	_, _, ret, ok := desk.price.Exit(symbol, quantity, entry, fee)
-
-	return ret, ok
-}
-
-/*
-SaleReturn is the fee-net round-trip fraction if the lot were closed now
-through the book (Price.Sale), matching virtual CloseOut settlement.
-*/
-func (desk *Desk) SaleReturn(
-	symbol string, quantity, entry, fee *decimal.Decimal,
-) (float64, bool) {
-	if desk == nil || desk.price == nil {
-		return 0, false
-	}
-
-	_, _, ret, ok := desk.price.Sale(symbol, quantity, entry, fee)
-
-	return ret, ok
-}
-
-/*
 Exit a position and report what settled.
 */
-func (desk *Desk) Exit(symbol string, path string, virtual bool, tick uint64, triggers ...string) error {
+func (desk *Desk) Exit(
+	symbol string, path string, virtual bool,
+) error {
 	var position *Position
 
 	if virtual {
@@ -575,52 +577,19 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, tick uint64, tr
 		)
 	}
 
-	order, err := position.Exit(path, tick)
+	order, err := position.Exit(path)
+
 	if err != nil {
 		return err
 	}
 
 	// The outcome is final the moment the exit is recorded: settle it
 	// before the cache move can retire the row.
-	if virtual && position.price != nil {
-		cost, proceeds, profit, sale, ok := position.price.CloseOut(
-			position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
-		)
-
-		if !ok {
-			// No price to close out against: keep the virtual open and
-			// retry on the next settlement pass.
-			position.mu.Lock()
-			position.ClosedAt = nil
-			position.HoldNs = 0
-			position.ExitTick = 0
-			position.mu.Unlock()
-
-			return errnie.Err(
-				errnie.UnprocessableContent,
-				"[desk.Exit] no price to close out "+position.Symbol,
-				nil,
-			)
-		}
-
+	if virtual {
 		position.mu.Lock()
-
-		position.Cost = cost
-		position.Proceeds = proceeds
-		position.Profit = profit
-		if sale != nil {
-			position.ExitPrice = sale
-			position.ExitVWAP = sale
-		}
-
-		position.Return = NetReturnPercentDecimal(cost, profit)
-		position.NetReturn = position.Return
-		if len(triggers) > 0 {
-			position.OutcomeTriggers = append([]string{}, triggers...)
-		} else {
+		if len(position.OutcomeTriggers) == 0 {
 			position.OutcomeTriggers = []string{"desk exit"}
 		}
-
 		position.mu.Unlock()
 	}
 
@@ -671,61 +640,9 @@ func (desk *Desk) Exit(symbol string, path string, virtual bool, tick uint64, tr
 		))
 	}
 
-	desk.Hello()
+	desk.publishChanged([]*Position{position})
 
 	return nil
-}
-
-/*
-Virtual returns the symbol's open virtual, nil when there is none.
-*/
-func (desk *Desk) Virtual(symbol string) *Position {
-	return desk.virtuals.Get(symbol, true)
-}
-
-/*
-Occupied reports whether the symbol's single position slot is taken, by a
-venue lot or a virtual one.
-*/
-func (desk *Desk) Occupied(symbol string) bool {
-	return desk.positions.Has(symbol) || desk.virtuals.Has(symbol)
-}
-
-/*
-Open returns the symbol's open lot, preferring the venue lot.
-*/
-func (desk *Desk) Open(symbol string) *Position {
-	if position := desk.positions.Get(symbol, true); position != nil {
-		return position
-	}
-
-	return desk.virtuals.Get(symbol, true)
-}
-
-/*
-ExitOccupied closes whichever lot is open on the symbol.
-*/
-func (desk *Desk) ExitOccupied(symbol, path string, tick uint64) error {
-	if desk.positions.Has(symbol) {
-		return desk.Exit(symbol, path, false, tick)
-	}
-
-	if desk.virtuals.Has(symbol) {
-		return desk.Exit(symbol, path, true, tick)
-	}
-
-	return errnie.Err(
-		errnie.NotFound, "[desk.ExitOccupied] position not found", nil,
-	)
-}
-
-/*
-ClosedVirtuals returns the virtuals sitting on the closed side of the cache:
-their outcomes are what Train writes into the model. Drop retires them once
-settled.
-*/
-func (desk *Desk) ClosedVirtuals() []*Position {
-	return desk.virtuals.Closed()
 }
 
 /*
@@ -734,27 +651,6 @@ Drop retires a virtual from the desk entirely, open or closed.
 func (desk *Desk) Drop(symbol string) {
 	types.SetVirtualOpen(symbol, false)
 	desk.virtuals.Drop(symbol)
-}
-
-/*
-Profit reports whether the open position for the symbol is currently
-profitable, based on the position's realized return. The second return
-value is false when no open position exists for the symbol.
-*/
-func (desk *Desk) Profit(symbol string, virtual bool) (bool, bool) {
-	var position *Position
-
-	if virtual {
-		position = desk.virtuals.Get(symbol, true)
-	} else {
-		position = desk.positions.Get(symbol, true)
-	}
-
-	if position == nil || position.Return == nil {
-		return false, false
-	}
-
-	return position.Return.Sign() > 0, true
 }
 
 /*

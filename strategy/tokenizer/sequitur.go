@@ -271,6 +271,32 @@ func (sequitur *Sequitur) collectTerminalNames(rule *Rule, names *[]string) {
 	}
 }
 
+// TerminalsForRef expands a root symbol (R01 or M1) into region terminals.
+func (sequitur *Sequitur) TerminalsForRef(ref string) []string {
+	if sequitur == nil || ref == "" {
+		return nil
+	}
+
+	if ref[0] == 'M' {
+		id, err := strconv.Atoi(ref[1:])
+		if err != nil || id <= 0 {
+			return nil
+		}
+
+		sequitur.mu.Lock()
+		rule := sequitur.rules[id]
+		sequitur.mu.Unlock()
+
+		if rule == nil {
+			return nil
+		}
+
+		return sequitur.TerminalNames(rule)
+	}
+
+	return []string{ref}
+}
+
 /*
 Flush reports whether there are tokens since the last boundary and resets
 the pending counter.
@@ -405,8 +431,9 @@ func (sequitur *Sequitur) isSentinel(n *Node) bool {
 }
 
 /*
-check tests whether the digram ending at n forms a repeated pair.
-If a match is found (non-overlapping), reduce fires. Returns the new rule.
+check tests the digram ending at n. A digram that is already a rule is
+replaced by that rule on this single occurrence. Otherwise a second,
+non-overlapping occurrence creates the rule. Returns the rule involved.
 */
 func (sequitur *Sequitur) check(n *Node) *Rule {
 	if sequitur.isSentinel(n) || sequitur.isSentinel(n.Next) {
@@ -414,6 +441,19 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 	}
 
 	digram := [2]Symbol{n.Val, n.Next.Val}
+
+	if id, ok := sequitur.ruleByDigram[digram]; ok {
+		if rule := sequitur.rules[id]; rule != nil {
+			rule.Count++
+			sequitur.substitute(n, id)
+			if sequitur.lastKind != "create" {
+				sequitur.lastKind = "reuse"
+			}
+			sequitur.lastRule = rule
+			sequitur.checkAdjacencies(n, n)
+			return rule
+		}
+	}
 
 	if match, exists := sequitur.digrams[digram]; exists {
 		if match.Next != nil && match.Val == digram[0] && match.Next.Val == digram[1] {
@@ -431,21 +471,6 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 func (sequitur *Sequitur) reduce(
 	newOccur, firstOccur *Node, d [2]Symbol,
 ) *Rule {
-	if id, ok := sequitur.ruleByDigram[d]; ok {
-		if rule := sequitur.rules[id]; rule != nil {
-			rule.Count += 2
-			sequitur.substitute(firstOccur, id)
-			sequitur.substitute(newOccur, id)
-			delete(sequitur.digrams, d)
-			if sequitur.lastKind != "create" {
-				sequitur.lastKind = "reuse"
-			}
-			sequitur.lastRule = rule
-			sequitur.checkAdjacencies(firstOccur, newOccur)
-			return rule
-		}
-	}
-
 	id := sequitur.nextID
 	sequitur.nextID++
 
@@ -482,6 +507,9 @@ func (sequitur *Sequitur) substitute(n *Node, id int) {
 		return
 	}
 
+	sequitur.forgetNode(n)
+	sequitur.forgetNode(n.Next)
+
 	victim := n.Next
 
 	n.Val = ruleSymbol(id)
@@ -490,6 +518,33 @@ func (sequitur *Sequitur) substitute(n *Node, id int) {
 
 	victim.Prev = nil
 	victim.Next = nil
+
+	if sequitur.length > 0 {
+		sequitur.length--
+	}
+}
+
+// forgetNode drops digram-index entries that start at n or at n.Prev.
+// Only an entry that still points at that node is removed, so a digram
+// indexed elsewhere keeps its first occurrence.
+func (sequitur *Sequitur) forgetNode(n *Node) {
+	if sequitur.isSentinel(n) {
+		return
+	}
+
+	if !sequitur.isSentinel(n.Prev) {
+		key := [2]Symbol{n.Prev.Val, n.Val}
+		if sequitur.digrams[key] == n.Prev {
+			delete(sequitur.digrams, key)
+		}
+	}
+
+	if !sequitur.isSentinel(n.Next) {
+		key := [2]Symbol{n.Val, n.Next.Val}
+		if sequitur.digrams[key] == n {
+			delete(sequitur.digrams, key)
+		}
+	}
 }
 
 func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {

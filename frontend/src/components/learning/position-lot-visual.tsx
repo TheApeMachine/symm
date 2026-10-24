@@ -15,9 +15,23 @@ const toneBg: Record<Tone, string> = {
 const closeVerdict = (
 	pnlPct: number | undefined,
 	_room: number | undefined,
+	waitingOnBranch = false,
 ): { text: string; tone: Tone } => {
 	if (pnlPct === undefined) {
 		return { text: "Waiting for desk book price", tone: "muted" };
+	}
+
+	if (waitingOnBranch) {
+		if (pnlPct >= 0.02) {
+			return { text: "Ahead after fees — walking the exit branch", tone: "up" };
+		}
+		if (pnlPct <= -0.02) {
+			return {
+				text: "Behind after fees — walking the exit branch",
+				tone: "down",
+			};
+		}
+		return { text: "Flat after fees — walking the exit branch", tone: "warn" };
 	}
 
 	if (pnlPct >= 0.02) {
@@ -146,6 +160,8 @@ export type PositionLotVisualProps = {
 	entry?: number;
 	mark?: number;
 	exitVwap?: number;
+	/** Entered on a stored path, so a green mark waits for the learned exit. */
+	waitingOnBranch?: boolean;
 	className?: string;
 };
 
@@ -159,9 +175,10 @@ export const PositionLotVisual = ({
 	entry,
 	mark,
 	exitVwap,
+	waitingOnBranch,
 	className,
 }: PositionLotVisualProps) => {
-	const verdict = closeVerdict(pnlPct, exitRoom);
+	const verdict = closeVerdict(pnlPct, exitRoom, waitingOnBranch);
 	const haircut = bookHaircutWords(pnlPct, entry, mark);
 	const exitGap = exitVsMarkWords(mark, exitVwap);
 

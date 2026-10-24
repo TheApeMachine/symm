@@ -34,11 +34,10 @@ describe("dom utilities", () => {
 	});
 
 	describe("setText", () => {
-		it("sets textContent and innerText", () => {
+		it("sets textContent when the text changed", () => {
 			const el = document.createElement("span");
 			setText(el, "test-value");
 			expect(el.textContent).toBe("test-value");
-			expect(el.innerText).toBe("test-value");
 		});
 	});
 

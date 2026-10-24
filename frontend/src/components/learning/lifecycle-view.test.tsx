@@ -82,11 +82,8 @@ const paperClosed = {
 	...event("closed", "closed", "closed: pnl -1.100000"),
 	closed_at: "2026-10-10T08:03:00Z",
 	outcome: {
-		cost: 100.1,
-		proceeds: 99,
-		fees: 0.2,
-		realized: -1.1,
-		net_return: -0.011,
+		pnl: -0.011,
+		pnl_pct: -1.1,
 		hold_ns: 180e9,
 		expected_hold_ns: 120e9,
 		triggers: ["policy exit match R02/R03 (depth 2)"],
@@ -137,7 +134,7 @@ describe("LifecycleView", () => {
 		]);
 
 		const outcome = container.querySelector('[data-l="lifecycle-outcome"]');
-		expect(outcome?.textContent).toContain("-1.10");
+		expect(outcome?.textContent).toContain("-1.1%");
 		expect(outcome?.textContent).toContain("exchange P&Lnot available");
 		expect(outcome?.textContent).toContain("3.0m / 2.0m");
 		expect(outcome?.textContent).toContain(
@@ -221,11 +218,8 @@ describe("LifecycleView", () => {
 				],
 				mark: null,
 				outcome: {
-					cost: 20,
-					proceeds: 30,
-					fees: 0.1,
-					realized: 9.9,
-					net_return: 0.5,
+					pnl: 0.5,
+					pnl_pct: 50,
 					hold_ns: 1,
 					expected_hold_ns: null,
 					triggers: ["virtual"],
@@ -235,7 +229,7 @@ describe("LifecycleView", () => {
 
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
-		).toContain("virtual P&L");
+		).toContain("virtual return");
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
 		).toContain("win");
@@ -266,11 +260,8 @@ describe("LifecycleView", () => {
 				],
 				mark: null,
 				outcome: {
-					cost: 20,
-					proceeds: 0,
-					fees: 0.1,
-					realized: 0,
-					net_return: 0,
+					pnl: 0,
+					pnl_pct: 0,
 					hold_ns: 1,
 					expected_hold_ns: null,
 					triggers: ["scratch"],

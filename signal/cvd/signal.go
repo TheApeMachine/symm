@@ -3,12 +3,14 @@ package cvd
 import (
 	"context"
 	"math"
+	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/volumeclock"
 )
 
@@ -25,6 +27,7 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
+	mu     sync.Mutex
 	books  *broker.Book
 	states map[string]*symbolState
 	keys   []string
@@ -47,15 +50,18 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
+Step processes every trade entry of the tick's frame concurrently by symbol
+print. Per-symbol state and the volume clock are guarded; layer appends are
+already synchronized on the shared value.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	if err := parent.RunTrades(signal.Context(), trades, func(trade kraken.TradeData) {
 		signal.step(value, trade)
+	}); err != nil {
+		signal.Error(err)
 	}
 
 	return value
@@ -79,14 +85,15 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	state, found := signal.states[trade.Symbol]
-
-	if !found {
-		state = &symbolState{}
-		signal.states[trade.Symbol] = state
-	}
-
 	tradeNotional := qty * price
+
+	var (
+		midpointLogReturn float64
+		flowAligned       float64
+		grossNotional     float64
+		signedFraction    float64
+		appendMetrics     bool
+	)
 
 	// The `books.Book` callback is synchronous; the book is present only if
 	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
@@ -100,6 +107,17 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 
 		midpoint := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
+
+		signal.mu.Lock()
+		defer signal.mu.Unlock()
+
+		state, found := signal.states[trade.Symbol]
+
+		if !found {
+			state = &symbolState{}
+			signal.states[trade.Symbol] = state
+		}
+
 		tick := state.clock.Step(price, qty, float64(value.Timestamp), midpoint)
 
 		if tick.Counted {
@@ -111,8 +129,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 			}
 		}
 
-		var grossNotional, signedFraction float64
-
 		if tick.Closed {
 			flow := state.window
 			state.window = window{}
@@ -122,8 +138,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 				signedFraction = netNotional / grossNotional
 			}
 		}
-
-		var midpointLogReturn, flowAligned float64
 
 		if state.prevMidpoint > 0 {
 			midpointLogReturn = math.Log(midpoint / state.prevMidpoint)
@@ -135,19 +149,24 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 
 		state.prevMidpoint = midpoint
-
-		keys := []string{
-			signal.Name(),
-			trade.Symbol,
-		}
-
-		value.Append([]float64{
-			midpointLogReturn,
-			flowAligned,
-			grossNotional,
-			signedFraction,
-		}, append(keys, signal.keys...)...)
+		appendMetrics = true
 	})
+
+	if !appendMetrics {
+		return value
+	}
+
+	keys := []string{
+		signal.Name(),
+		trade.Symbol,
+	}
+
+	value.Append([]float64{
+		midpointLogReturn,
+		flowAligned,
+		grossNotional,
+		signedFraction,
+	}, append(keys, signal.keys...)...)
 
 	return value
 }

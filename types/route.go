@@ -69,6 +69,9 @@ func Filters(value *data.Value) bool {
 		if isStrategy(value, "training") {
 			return true
 		}
+		if kernelSource(value.Origin) == "workspace" {
+			return true
+		}
 		return isFocus(value) && (isSignal(value) || isLogic(value, "resonance"))
 	case "learning":
 		// Forward learning: the aggregate workspace tick (train/regions,

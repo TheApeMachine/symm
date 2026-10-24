@@ -25,13 +25,12 @@ export type DeskPosition = {
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: string | number;
-	book_return?: string | number;
-	return?: string | number;
+	pnl?: string | number;
+	pnl_pct?: string | number;
+	open_pnl?: string | number;
 	hold_ns?: number;
 	virtual?: boolean;
-	cost?: string | number;
-	proceeds?: string | number;
-	profit?: string | number;
-	net_return?: string | number;
+	/** True when virtual enter matched a stored prefix, not a first-time explore step. */
+	path_found?: boolean;
 	outcome_triggers?: string[];
 };

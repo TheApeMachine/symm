@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
+	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
@@ -42,15 +43,17 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
+Step processes one trade per distinct symbol in the tick. The correlation
+pipeline retains cross-symbol peer state, so symbol steps run sequentially;
+deduping by symbol avoids redundant pair work when many prints hit the same
+pair in one frame.
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 
 	value.Lookup(&trades, "spot:trade")
 
-	for _, trade := range trades {
+	for _, trade := range parent.LastTradePerSymbol(trades) {
 		signal.step(value, trade)
 	}
 
@@ -80,10 +83,18 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		frame = (*nmcorrelation.Frame)(ptr)
 	}
 
+	// Same address as every other kernel: <source>/<symbol>/<metric>.
+	// A "signal/" prefix and a trailing "symbol:" tag miss LookupPrefix
+	// and never reach the grid, resonance, or the dashboard.
+	keys := []string{
+		signal.Name(),
+		trade.Symbol,
+	}
+
 	value.Append([]float64{
 		frame.Metrics[signal.keys[0]],
 		frame.Metrics[signal.keys[1]],
 		frame.Metrics[signal.keys[2]],
-	}, append(append([]string{"signal", signal.Name()}, signal.keys...), "symbol:"+trade.Symbol)...)
+	}, append(keys, signal.keys...)...)
 	return value
 }

@@ -63,9 +63,9 @@ describe("position-health components", () => {
 			/>,
 		);
 		expect(markup).toContain("Entry Ignition Pathway");
-		expect(markup).toContain("★ ENTER");
+		expect(markup.toLowerCase()).toContain("★ enter");
 		expect(markup).toContain("Active Exit Targets");
-		expect(markup).toContain("⚡ EXIT");
+		expect(markup.toLowerCase()).toContain("⚡ exit");
 		expect(markup).toContain("R03 (Exit Detector)");
 	});
 

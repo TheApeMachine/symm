@@ -17,12 +17,18 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { bookAtom } from "#/collections/book";
-import { Badge, type BadgeVariant } from "#/components/ui/badge";
+import {
+	Badge,
+	BadgeButton,
+	type BadgeVariant,
+	badgeVariants,
+} from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
+import { formatExitTrigger } from "#/lib/trigger-labels";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -90,7 +96,8 @@ const PathChain = ({ path }: { path: string }) => {
 							align="center"
 							gap={1}
 							className={cn(
-								"px-2 py-0.5 rounded border text-[10px] font-bold tracking-wide shadow-xs",
+								badgeVariants({ size: "xs", variant: "disabled" }),
+								"normal-case font-bold tracking-wide shadow-xs",
 								style,
 							)}
 						>
@@ -232,9 +239,11 @@ const SizingVisualWidget = ({
 					</span>
 				</Flex.Row>
 				{binding ? (
-					<span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border bg-(--warn)/15 text-(--warn) border-(--warn)/30">
-						Bound by {binding.replace("_", " ")}
-					</span>
+					<Badge
+						size="xxs"
+						variant="warning"
+						label={`Bound by ${binding.replace("_", " ")}`}
+					/>
 				) : null}
 			</Flex.Row>
 
@@ -533,22 +542,7 @@ const trialWord = (life: Lifecycle): TrialWord | null => {
 const closedVerdict = (life: Lifecycle): TrialWord => {
 	const word = trialWord(life);
 	if (word) return word;
-	return (life.outcome?.realized ?? 0) > 0 ? "win" : "loss";
-};
-
-const verdictClass = (kind: TrialWord): string => {
-	switch (kind) {
-		case "win":
-			return "bg-(--up)/20 text-(--up) border border-(--up)/30";
-		case "loss":
-			return "bg-(--down)/20 text-(--down) border border-(--down)/30";
-		case "scratch":
-			return "bg-(--sunken) text-(--f2) border border-(--line)";
-		default: {
-			const unreachable: never = kind;
-			return unreachable;
-		}
-	}
+	return (life.outcome?.pnl ?? 0) > 0 ? "win" : "loss";
 };
 
 const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
@@ -594,18 +588,12 @@ const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
 			{stages.map((st, idx) => (
 				<Flex.Row key={st.label} align="center" gap={1} className="shrink-0">
 					{idx > 0 && <span className="text-(--f4) select-none">→</span>}
-					<span
-						className={cn(
-							"px-2 py-0.5 rounded border text-[9.5px] transition-colors",
-							st.done
-								? "border-(--acc)/40 bg-(--acc)/10 text-(--acc) font-bold"
-								: st.active
-									? "border-(--up) bg-(--up)/15 text-(--up) font-bold animate-pulse"
-									: "border-(--line) text-(--f4) bg-(--sunken)",
-						)}
-					>
-						{st.label}
-					</span>
+					<Badge
+						size="xxs"
+						variant={st.done ? "brand" : st.active ? "warning" : "disabled"}
+						className={st.active ? "animate-pulse" : undefined}
+						label={st.label}
+					/>
 				</Flex.Row>
 			))}
 		</Flex.Row>
@@ -699,16 +687,11 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 						<Scale className="w-3.5 h-3.5 text-(--info)" />
 						<span>Liquidity & Sizing</span>
 					</Flex.Row>
-					<span
-						className={cn(
-							"px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border",
-							binding === "exit_capacity"
-								? "bg-(--warn)/15 text-(--warn) border-(--warn)/30"
-								: "bg-(--acc)/15 text-(--acc) border-(--acc)/30",
-						)}
-					>
-						{binding ? `Bound by ${binding}` : "Sized"}
-					</span>
+					<Badge
+						size="xxs"
+						variant={binding === "exit_capacity" ? "warning" : "brand"}
+						label={binding ? `Bound by ${binding}` : "Sized"}
+					/>
 				</Flex.Row>
 
 				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
@@ -741,7 +724,9 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 							className="text-[9px] text-(--up) pt-1.5 border-t border-(--line)/40"
 						>
 							<ShieldCheck className="w-3 h-3 text-(--up) shrink-0" />
-							<span>Order book exit depth verified before entry</span>
+							<span>
+								Bid depth within 1.5% of touch caps entry size (carry divisor)
+							</span>
 						</Flex.Row>
 					) : null}
 				</Flex.Column>
@@ -763,43 +748,36 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 						/>
 						<span>Trie Exit Monitor</span>
 					</Flex.Row>
-					<span
-						className={cn(
-							"px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border",
+					<Badge
+						size="xxs"
+						variant={isClosed ? "success" : isExiting ? "warning" : "brand"}
+						className={isExiting ? "animate-pulse" : undefined}
+						label={
 							isClosed
-								? "bg-(--up)/15 text-(--up) border-(--up)/30"
+								? "Position Closed"
 								: isExiting
-									? "bg-(--warn)/15 text-(--warn) border-(--warn)/30 animate-pulse"
-									: "bg-(--acc)/15 text-(--acc) border-(--acc)/30",
-						)}
-					>
-						{isClosed
-							? "Position Closed"
-							: isExiting
-								? "Exit Triggered"
-								: "Scanning Trie"}
-					</span>
+									? "Exit Triggered"
+									: "Scanning Trie"
+						}
+					/>
 				</Flex.Row>
 
 				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
 					<div className="py-1">
 						{isClosed ? (
 							<Flex.Row align="center" gap={2}>
-								<span
-									className={cn(
-										"px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-										verdictClass(closedVerdict(life)),
-									)}
-								>
-									{closedVerdict(life)}
-								</span>
+								<Badge
+									size="xs"
+									variant={trialVariant(closedVerdict(life))}
+									label={closedVerdict(life)}
+								/>
 								<span
 									className={cn(
 										"font-bold text-[12px]",
-										tone(outcome?.realized ?? 0),
+										tone(outcome?.pnl ?? 0),
 									)}
 								>
-									{signedMoney(outcome?.realized ?? 0)} USD Realized
+									{ratePercent(outcome?.pnl ?? 0)} book return
 								</span>
 							</Flex.Row>
 						) : (
@@ -897,26 +875,30 @@ const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
 
 			<Flex.Row align="center" gap={2} wrap="wrap">
 				{SAMPLE_CLASSES.map((option) => (
-					<button
+					<BadgeButton
 						key={option}
-						type="button"
 						data-l={`sample-class-${option}`}
+						size="xs"
+						variant={class_ === option ? "brand" : "disabled"}
+						className={
+							class_ === option ? undefined : "hover:bg-(--sunken) text-(--f3)"
+						}
 						onClick={() => setClass(option)}
-						className={cn(
-							"px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer",
-							class_ === option
-								? "border-(--acc) bg-(--acc)/15 text-(--acc)"
-								: "border-(--line) text-(--f3) hover:bg-(--sunken)",
-						)}
-					>
-						{option}
-					</button>
+						label={option}
+					/>
 				))}
 
-				<button
-					type="button"
+				<BadgeButton
 					data-l="sample-commit"
 					disabled={marks === null || state === "saving"}
+					size="xs"
+					variant="success"
+					className={cn(
+						"ml-auto",
+						marks === null || state === "saving"
+							? "cursor-wait opacity-60"
+							: "hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)]",
+					)}
 					onClick={async () => {
 						if (marks === null || !life.policy_epoch) return;
 
@@ -948,19 +930,14 @@ const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
 							setError(cause instanceof Error ? cause.message : String(cause));
 						}
 					}}
-					className={cn(
-						"ml-auto px-2.5 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider transition-colors",
-						marks === null || state === "saving"
-							? "border-(--line) text-(--f4) cursor-wait"
-							: "border-(--up)/40 text-(--up) hover:bg-(--up)/10 cursor-pointer",
-					)}
-				>
-					{state === "saving"
-						? "committing"
-						: state === "saved"
-							? "committed"
-							: "commit"}
-				</button>
+					label={
+						state === "saving"
+							? "committing"
+							: state === "saved"
+								? "committed"
+								: "commit"
+					}
+				/>
 			</Flex.Row>
 
 			{marks === null ? (
@@ -988,19 +965,14 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 	if (!outcome || life.status !== "closed") return null;
 
 	const verdict = closedVerdict(life);
-	const pnl = outcome.realized;
+	const pnl = outcome.pnl;
 	const name = life.book === "virtual" ? "virtual" : "paper";
 
 	const rows: Array<[string, string, number?]> = [
-		[`${name} P&L`, signedMoney(outcome.realized), outcome.realized],
+		[`${name} return`, ratePercent(outcome.pnl), outcome.pnl],
+		[`${name} return %`, `${outcome.pnl_pct.toFixed(2)}%`, outcome.pnl_pct],
 		["exchange P&L", NOT_AVAILABLE],
-		["net return", ratePercent(outcome.net_return), outcome.net_return],
 		["exchange fees", NOT_AVAILABLE],
-		[
-			"paper cost / proceeds",
-			`${outcome.cost.toFixed(2)} / ${outcome.proceeds.toFixed(2)}`,
-		],
-		["paper fees", outcome.fees.toFixed(4)],
 		[
 			"hold / policy hold",
 			`${seconds(outcome.hold_ns)} / ${outcome.expected_hold_ns === null ? "—" : seconds(outcome.expected_hold_ns)}`,
@@ -1019,22 +991,15 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 				className="pb-2 mb-2 border-b border-(--line)/40"
 			>
 				<Flex.Row align="center" gap={2}>
-					<span
-						className={cn(
-							"px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
-							verdictClass(verdict),
-						)}
-					>
-						{verdict}
-					</span>
+					<Badge size="xs" variant={trialVariant(verdict)} label={verdict} />
 					<span className={cn("text-[13px] font-bold", tone(pnl))}>
-						{signedMoney(pnl)} USD Realized
+						{ratePercent(pnl)} book return
 					</span>
 				</Flex.Row>
 				<div className="text-[10px] text-(--f4)">
 					Triggers:{" "}
 					<span className="text-(--f2)">
-						{(outcome.triggers ?? []).join(", ") || "—"}
+						{(outcome.triggers ?? []).map(formatExitTrigger).join(", ") || "—"}
 					</span>
 				</div>
 			</Flex.Row>
@@ -1092,10 +1057,13 @@ export const LifecycleView = () => {
 						{name} outcome
 					</span>
 				</div>
-				<span className="px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
-					{perf.closed} closed
-				</span>
-				<div className="flex items-center gap-2 px-2 py-0.5 rounded bg-(--sunken) border border-(--line)">
+				<Badge
+					size="xs"
+					variant="disabled"
+					className="normal-case font-normal"
+					label={`${perf.closed} closed`}
+				/>
+				<div className="flex items-center gap-2 rounded-xs bg-(--sunken) border border-(--line) px-2 py-0.5">
 					<div className="w-12 h-1.5 rounded-full bg-(--bg) overflow-hidden border border-(--line) hidden sm:block">
 						<div
 							style={{
@@ -1106,13 +1074,16 @@ export const LifecycleView = () => {
 					</div>
 					<span>
 						{name} win {ratePercent(perf.win_rate)} · edge{" "}
-						{ratePercent(perf.mean_return)} · P&L{" "}
-						<span className={tone(perf.pnl)}>{signedMoney(perf.pnl)}</span>
+						{ratePercent(perf.mean_return)} · Σ return{" "}
+						<span className={tone(perf.pnl)}>{ratePercent(perf.pnl)}</span>
 					</span>
 				</div>
-				<span className="px-2 py-0.5 rounded bg-(--sunken) border border-(--line) text-(--f4)">
-					exchange win · edge · P&L {NOT_AVAILABLE}
-				</span>
+				<Badge
+					size="xs"
+					variant="disabled"
+					className="normal-case font-normal text-(--f4)"
+					label={`exchange win · edge · P&L ${NOT_AVAILABLE}`}
+				/>
 			</Flex.Row>
 
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
@@ -1124,8 +1095,8 @@ export const LifecycleView = () => {
 					) : (
 						lifecycles.map((life) => {
 							const pnl = life.outcome
-								? life.outcome.realized
-								: life.mark?.unrealized;
+								? life.outcome.pnl
+								: life.mark?.unrealized_return;
 							const isCurrent = active?.id === life.id;
 							const word = trialWord(life);
 							const variant =
@@ -1164,13 +1135,8 @@ export const LifecycleView = () => {
 											events
 										</span>
 										{pnl !== undefined ? (
-											<span
-												className={cn(
-													"font-bold px-1 rounded text-[9px]",
-													tone(pnl),
-												)}
-											>
-												{signedMoney(pnl)}
+											<span className={cn("font-bold text-[9px]", tone(pnl))}>
+												{ratePercent(pnl)}
 											</span>
 										) : null}
 									</Flex.Row>

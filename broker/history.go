@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -19,10 +20,10 @@ type History struct {
 	store *store.Client
 }
 
-func NewHistory(ctx context.Context, store *store.Client) *History {
+func NewHistory(ctx context.Context) *History {
 	history := &History{
 		System: runtime.NewSystem(ctx, "history"),
-		store:  store,
+		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
 	return history

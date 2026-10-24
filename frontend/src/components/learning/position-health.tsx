@@ -99,7 +99,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		role: "regime",
 		tone: "acc",
 		description:
-			"Rapid spread opening, extreme volume burst, high tick velocity.",
+			"Rapid spread opening, extreme volume burst, high tick velocity. Enter votes only with bullish flow or co-fired R00/R01.",
 	},
 	R08: {
 		id: "R08",
@@ -501,17 +501,22 @@ export const RegionTransitionPathway = ({
 									{i > 0 && (
 										<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 									)}
-									<span className="rounded-xs border border-(--line) bg-(--surface) px-1.5 py-0.5 text-[9px] text-(--f2)">
-										<strong className="text-(--f1)">{tok}</strong>{" "}
-										{meta?.title?.split(" ")[0]}
-									</span>
+									<Badge
+										size="xxs"
+										variant="disabled"
+										className="normal-case font-normal text-(--f2)"
+										label={
+											<>
+												<strong className="text-(--f1)">{tok}</strong>{" "}
+												{meta?.title?.split(" ")[0]}
+											</>
+										}
+									/>
 								</React.Fragment>
 							);
 						})}
 						<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-						<span className="rounded-xs border border-(--up)/40 bg-(--up)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--up)">
-							★ ENTER
-						</span>
+						<Badge size="xxs" variant="success" label="★ enter" />
 					</Flex.Row>
 				</Flex.Column>
 
@@ -524,36 +529,56 @@ export const RegionTransitionPathway = ({
 					</span>
 					<Flex.Column gap={1}>
 						<Flex.Row align="center" gap={1}>
-							<span className="rounded-xs bg-(--surface) px-1.5 py-0.5 text-[9px] font-bold text-(--acc) border border-(--line)">
-								{currentActiveToken}
-							</span>
+							<Badge size="xxs" variant="brand" label={currentActiveToken} />
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R03 (Exit Detector)
-							</span>
+							<Badge
+								size="xxs"
+								variant="warning"
+								className="normal-case"
+								label="R03 (Exit Detector)"
+							/>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
-								⚡ EXIT
-							</span>
+							<Badge size="xxs" variant="error" label="⚡ exit" />
 						</Flex.Row>
 						<Flex.Row align="center" gap={1}>
-							<span className="rounded-xs bg-(--surface) px-1.5 py-0.5 text-[9px] font-bold text-(--acc) border border-(--line)">
-								{currentActiveToken}
-							</span>
+							<Badge size="xxs" variant="brand" label={currentActiveToken} />
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R05 (Exit Opposition)
-							</span>
+							<Badge
+								size="xxs"
+								variant="warning"
+								className="normal-case"
+								label="R05 (Exit Opposition)"
+							/>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
-								⚡ EXIT
-							</span>
+							<Badge size="xxs" variant="error" label="⚡ exit" />
 						</Flex.Row>
 					</Flex.Column>
 				</Flex.Column>
 			</Grid>
 		</Flex.Column>
 	);
+};
+
+const useTrainingFrame = (symbol: string): Value | null => {
+	const [latestValue, setLatestValue] = useState<Value | null>(
+		() => signals.training?.state?.[symbol] ?? null,
+	);
+
+	useEffect(() => {
+		const updateFrame = (state: Record<string, Value>) => {
+			const frame = state[symbol];
+			if (frame) setLatestValue(frame);
+		};
+
+		if (signals.training?.state) updateFrame(signals.training.state);
+
+		const unsub = signals.training?.subscribe(updateFrame);
+		return () => {
+			unsub?.unsubscribe?.();
+		};
+	}, [symbol]);
+
+	return latestValue;
 };
 
 export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
@@ -566,29 +591,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 	const decisions: { symbol?: string; cause?: string }[] = [];
 	const activeSymbol = life?.symbol ?? "";
 	const currentDecision = decisions?.find((d) => d?.symbol === activeSymbol);
-
-	// Read the live training frame for this symbol from signals.training.
-	const [latestValue, setLatestValue] = useState<Value | null>(
-		() => signals.training?.state?.[activeSymbol] ?? null,
-	);
-
-	useEffect(() => {
-		const updateFrame = (state: Record<string, Value>) => {
-			const frame = state[activeSymbol];
-			if (frame) {
-				setLatestValue(frame);
-			}
-		};
-
-		if (signals.training?.state) {
-			updateFrame(signals.training.state);
-		}
-
-		const unsub = signals.training?.subscribe(updateFrame);
-		return () => {
-			unsub?.unsubscribe?.();
-		};
-	}, [activeSymbol]);
+	const latestValue = useTrainingFrame(activeSymbol);
 
 	const livePathFromMeasurement = useMemo(() => {
 		const tokenPath = latestValue?.provenance().token_path;
@@ -814,17 +817,22 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 									{i > 0 && (
 										<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
 									)}
-									<span className="rounded-xs border border-(--line) bg-(--surface) px-1.5 py-0.5 text-[9px] text-(--f2)">
-										<strong className="text-(--f1)">{tok}</strong>{" "}
-										{meta?.title?.split(" ")[0]}
-									</span>
+									<Badge
+										size="xxs"
+										variant="disabled"
+										className="normal-case font-normal text-(--f2)"
+										label={
+											<>
+												<strong className="text-(--f1)">{tok}</strong>{" "}
+												{meta?.title?.split(" ")[0]}
+											</>
+										}
+									/>
 								</React.Fragment>
 							);
 						})}
 						<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-						<span className="rounded-xs border border-(--up)/40 bg-(--up)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--up)">
-							★ ENTER
-						</span>
+						<Badge size="xxs" variant="success" label="★ enter" />
 					</Flex.Row>
 				</Flex.Column>
 
@@ -837,30 +845,28 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 					</span>
 					<Flex.Column gap={1}>
 						<Flex.Row align="center" gap={1}>
-							<span className="rounded-xs bg-(--surface) px-1.5 py-0.5 text-[9px] font-bold text-(--acc) border border-(--line)">
-								{activeToken}
-							</span>
+							<Badge size="xxs" variant="brand" label={activeToken} />
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R03 (Exit Detector)
-							</span>
+							<Badge
+								size="xxs"
+								variant="warning"
+								className="normal-case"
+								label="R03 (Exit Detector)"
+							/>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
-								⚡ EXIT
-							</span>
+							<Badge size="xxs" variant="error" label="⚡ exit" />
 						</Flex.Row>
 						<Flex.Row align="center" gap={1}>
-							<span className="rounded-xs bg-(--surface) px-1.5 py-0.5 text-[9px] font-bold text-(--acc) border border-(--line)">
-								{activeToken}
-							</span>
+							<Badge size="xxs" variant="brand" label={activeToken} />
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--warn)/40 bg-(--warn)/15 px-1.5 py-0.5 text-[9px] font-bold text-(--warn)">
-								R05 (Exit Opposition)
-							</span>
+							<Badge
+								size="xxs"
+								variant="warning"
+								className="normal-case"
+								label="R05 (Exit Opposition)"
+							/>
 							<ArrowRight className="h-2.5 w-2.5 text-(--f4) shrink-0" />
-							<span className="rounded-xs border border-(--down)/40 bg-(--down)/20 px-1.5 py-0.5 text-[9px] font-bold text-(--down)">
-								⚡ EXIT
-							</span>
+							<Badge size="xxs" variant="error" label="⚡ exit" />
 						</Flex.Row>
 					</Flex.Column>
 				</Flex.Column>
@@ -875,29 +881,7 @@ showing the active regions, entry confluence, and exit precursor levels for the 
 */
 export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const activeSymbol = life?.symbol ?? "BTC/USD";
-
-	// Subscribe to the live training frame for activeSymbol.
-	const [latestValue, setLatestValue] = useState<Value | null>(
-		() => signals.training?.state?.[activeSymbol] ?? null,
-	);
-
-	useEffect(() => {
-		const updateFrame = (state: Record<string, Value>) => {
-			const frame = state[activeSymbol];
-			if (frame) {
-				setLatestValue(frame);
-			}
-		};
-
-		if (signals.training?.state) {
-			updateFrame(signals.training.state);
-		}
-
-		const unsub = signals.training?.subscribe(updateFrame);
-		return () => {
-			unsub?.unsubscribe?.();
-		};
-	}, [activeSymbol]);
+	const latestValue = useTrainingFrame(activeSymbol);
 
 	const metricMap = useMemo(
 		() => (latestValue ? latestValue.metrics() : {}),

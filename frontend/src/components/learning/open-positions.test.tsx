@@ -5,7 +5,7 @@ import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { DeskPosition } from "#/collections/types";
 import { Value } from "#/types/value";
-import { OpenPositions } from "./open-positions";
+import { OpenPositions, positionRows } from "./open-positions";
 
 const lotFrame = (row: DeskPosition) => {
 	const value = new Value({
@@ -40,8 +40,10 @@ const lot = (over: Partial<DeskPosition>): DeskPosition =>
 		exit_fee: over.exit_fee ?? null,
 		exit_vwap: over.exit_vwap ?? null,
 		exit_room: over.exit_room ?? null,
-		book_return: over.book_return ?? 5,
+		pnl: over.pnl ?? 0.05,
+		pnl_pct: over.pnl_pct ?? 5,
 		hold_ns: over.hold_ns ?? 75_000_000_000,
+		...over,
 	}) as DeskPosition;
 
 afterEach(() => {
@@ -72,6 +74,25 @@ describe("OpenPositions", () => {
 		expect(view.getByText("12.5×")).toBeTruthy();
 	});
 
+	it("draws profit and stop marks on the virtual P&L gauge", () => {
+		ingest(
+			lot({
+				symbol: "AKE/USD",
+				virtual: true,
+				pnl: -0.23,
+				pnl_pct: -2.3,
+				open_pnl: -0.115,
+			}),
+		);
+		bookAtom.set("virtual");
+		const view = render(<OpenPositions />);
+		const gauges = view.container.querySelectorAll('[role="img"]');
+		const pnlGauge = gauges[0];
+		expect(pnlGauge?.querySelectorAll("line").length).toBe(2);
+		expect(pnlGauge?.innerHTML).toContain("Profit exit");
+		expect(pnlGauge?.innerHTML).toContain("Stop exit");
+	});
+
 	it("keeps a virtual lot off the paper book", () => {
 		ingest(
 			lot({ symbol: "BTC/USD" }),
@@ -86,5 +107,40 @@ describe("OpenPositions", () => {
 		const virtual = render(<OpenPositions />);
 		expect(virtual.getByText("ETH/USD")).toBeTruthy();
 		expect(virtual.queryByText("BTC/USD")).toBeNull();
+	});
+});
+
+describe("position rows", () => {
+	afterEach(() => {
+		cleanup();
+		signals.positions.setState(() => ({}));
+	});
+
+	it("keeps the newer mark and the lots the update did not mention", () => {
+		const snap = new Value({
+			origin: "positions",
+			role: "update",
+			scope: "all",
+			tick: 1n,
+		});
+		const held = [
+			lot({ id: "bmt", symbol: "BMT/USD", mark: "1" }),
+			lot({ id: "eth", symbol: "ETH/USD", mark: "3" }),
+		];
+		snap.layers = [new TextEncoder().encode(JSON.stringify(held))];
+		snap.index = [`${snap.prefix}/positions`];
+
+		const moved = lotFrame(lot({ id: "bmt", symbol: "BMT/USD", mark: "2" }));
+		moved.tick = 2n;
+
+		signals.positions.setState(() => ({ all: snap, [moved.scope]: moved }));
+
+		const rows = positionRows(signals.positions.state);
+		const bmt = rows.find((row) => row.id === "bmt");
+		const eth = rows.find((row) => row.id === "eth");
+
+		expect(rows).toHaveLength(2);
+		expect(bmt?.mark).toBe("2");
+		expect(eth?.mark).toBe("3");
 	});
 });

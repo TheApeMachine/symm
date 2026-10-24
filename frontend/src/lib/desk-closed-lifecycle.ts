@@ -1,8 +1,4 @@
-import {
-	decimal,
-	positionReadout,
-	settledOutcome,
-} from "#/components/book-readout";
+import { positionReadout, settledOutcome } from "#/components/book-readout";
 import type { Lifecycle, LifeOutcome } from "#/lib/lifecycle";
 import {
 	policyEpochFromRow,
@@ -33,7 +29,12 @@ export const lifecycleFromDeskOpen = (
 					bid: mark,
 					quantity: readout.qty ?? 0,
 					entry_price: readout.entryPrice ?? 0,
-					unrealized: readout.netPnl ?? 0,
+					unrealized:
+						readout.returnPct !== null &&
+						readout.entryPrice !== null &&
+						readout.qty !== null
+							? readout.entryPrice * readout.qty * readout.returnPct
+							: 0,
 					unrealized_return: readout.returnPct ?? 0,
 				};
 
@@ -45,6 +46,7 @@ export const lifecycleFromDeskOpen = (
 		closed_at: null,
 		book: row.virtual ? "virtual" : "paper",
 		desk: true,
+		path_found: row.path_found === true,
 		path: row.path as string | undefined,
 		mark: live,
 		marks: live ? [live] : [],
@@ -73,28 +75,23 @@ export const lifecycleFromDeskClosed = (
 	}
 
 	const settle = settledOutcome(row);
-	const settledReturn = settle ? decimal(settle.net_return) : null;
-	const netReturn =
-		readout.returnPct ??
-		(settledReturn === null ? null : settledReturn / 100);
+	const pnl = readout.returnPct ?? settle?.pnl ?? null;
+	const pnlPct = readout.returnPctDisplay ?? settle?.pnl_pct ?? null;
 
 	const outcome =
-		settle && netReturn !== null
-			? {
-				cost: settle.cost,
-				proceeds: settle.proceeds,
-				fees: 0,
-				realized: settle.realized,
-				net_return: netReturn,
-				hold_ns:
-					settle.hold_ns ??
-					(readout.closedAt !== null && readout.openedAt !== null
-						? (Date.parse(readout.closedAt) - Date.parse(readout.openedAt)) *
-							1e6
-						: 0),
-				expected_hold_ns: null,
-				triggers: settle.triggers ?? ["desk settle"],
-			}
+		pnl !== null && pnlPct !== null
+			? ({
+					pnl,
+					pnl_pct: pnlPct,
+					hold_ns:
+						settle?.hold_ns ??
+						(readout.closedAt !== null && readout.openedAt !== null
+							? (Date.parse(readout.closedAt) - Date.parse(readout.openedAt)) *
+								1e6
+							: 0),
+					expected_hold_ns: null,
+					triggers: settle?.triggers ?? (["desk settle"] as string[]),
+				} satisfies LifeOutcome)
 			: null;
 
 	const tape = tapeMarksFromDeskRow(row);
@@ -110,9 +107,9 @@ export const lifecycleFromDeskClosed = (
 	const closeDetail =
 		triggers.length > 0
 			? `${triggers.join(", ")}${exitTickText}`
-			: readout.returnPct === null
+			: pnlPct === null
 				? `closed${exitTickText}`
-				: `return ${(readout.returnPct * 100).toFixed(2)}%${exitTickText}`;
+				: `return ${pnlPct.toFixed(2)}%${exitTickText}`;
 
 	return {
 		id: row.id as string,
@@ -122,6 +119,7 @@ export const lifecycleFromDeskClosed = (
 		closed_at: readout.closedAt,
 		book: row.virtual ? "virtual" : "paper",
 		desk: true,
+		path_found: row.path_found === true,
 		policy_epoch: policyEpochFromRow(row),
 		path: entryPath ?? (row.path as string | undefined),
 		marks_a: tape?.a ?? null,
@@ -139,6 +137,6 @@ export const lifecycleFromDeskClosed = (
 				detail: closeDetail,
 			},
 		],
-		outcome: outcome as LifeOutcome | null,
+		outcome,
 	};
 };

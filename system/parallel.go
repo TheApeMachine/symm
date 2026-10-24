@@ -12,7 +12,7 @@ type Parallel struct {
 }
 
 func NewParallel() *Parallel {
-	viper.SetDefault("parallel.enabled", true)
+	viper.SetDefault("parallel.enabled", false)
 	viper.SetDefault("parallel.pace", 0.05)
 
 	return &Parallel{

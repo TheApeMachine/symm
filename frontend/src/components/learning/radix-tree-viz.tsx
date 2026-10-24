@@ -71,11 +71,19 @@ const getPorts = (
 grammarKey drops the store location so the tree is the token path.
 Confirmed paths are policy/current/<path>/<action>.bin. Enter paths end
 precursor A→B; exit paths are a separate holding B→C walk from root.
-Explored paths are policy/explored/<action>/<path>.bin.
+Virtual explore paths are model/explore/<path>/{enter,exit}.bin.
+Legacy explored paths are policy/explored/<action>/<path>.bin.
 */
 export function grammarKey(key: string): string {
-	const current = "policy/current/";
-	if (key.startsWith(current)) return key.slice(current.length);
+	if (key.startsWith("model/explore/")) {
+		return key.slice("model/explore/".length);
+	}
+
+	for (const prefix of ["policy/current/", "model/current/"]) {
+		if (key.startsWith(prefix)) {
+			return key.slice(prefix.length);
+		}
+	}
 
 	const explored = "policy/explored/";
 	if (key.startsWith(explored)) {
@@ -269,8 +277,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		let enter = 0;
 		let exit = 0;
 		for (const key of allKeys) {
-			if (key.endsWith("/enter.bin")) enter++;
-			else if (key.endsWith("/exit.bin")) exit++;
+			const grammar = grammarKey(key);
+			if (grammar.endsWith("/enter.bin")) enter++;
+			else if (grammar.endsWith("/exit.bin")) exit++;
 		}
 		return { enter, exit, total: allKeys.length };
 	}, [allKeys]);
@@ -289,9 +298,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			case "all":
 				return allKeys;
 			case "enter":
-				return allKeys.filter((k) => k.endsWith("/enter.bin"));
+				return allKeys.filter((k) => grammarKey(k).endsWith("/enter.bin"));
 			case "exit":
-				return allKeys.filter((k) => k.endsWith("/exit.bin"));
+				return allKeys.filter((k) => grammarKey(k).endsWith("/exit.bin"));
 			case "matching":
 				return matchingKeys;
 			default: {

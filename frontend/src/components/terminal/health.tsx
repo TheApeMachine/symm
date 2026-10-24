@@ -54,7 +54,7 @@ export const terminalHealthSummary = (
 		const metricName = sourceHeadlineMetric(measurement.origin).slice(
 			"metrics.".length,
 		);
-		const value = measurement.metrics()[metricName];
+		const value = measurement.metric(metricName);
 
 		if (typeof value === "number" && Number.isFinite(value)) {
 			strengths.push(value);
@@ -107,10 +107,7 @@ export const HealthPanel = () => {
 		<Panel size="lg" ref={root}>
 			<Flex.Row align="center" justify="between">
 				<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
-				<Badge
-					label="live"
-					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
-				/>
+				<Badge size="xs" variant="success" dot pulse label="live" />
 			</Flex.Row>
 			<Flex.Row className="mt-3 gap-4.5">
 				<div className="font-mono text-(--f1)">

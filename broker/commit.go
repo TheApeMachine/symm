@@ -116,21 +116,9 @@ func fillOf(position *Position) (ClosedFill, error) {
 }
 
 func exitPrice(position *Position) (float64, bool) {
-	if position.ExitPrice != nil && position.ExitPrice.Sign() > 0 {
-		return position.ExitPrice.Float64(), true
+	if position.ExitPrice == nil || position.ExitPrice.Sign() <= 0 {
+		return 0, false
 	}
 
-	if position.ExitVWAP != nil && position.ExitVWAP.Sign() > 0 {
-		return position.ExitVWAP.Float64(), true
-	}
-
-	if position.Proceeds != nil && position.Qty != nil &&
-		position.Proceeds.Sign() > 0 && position.Qty.Sign() > 0 {
-		sale := position.Proceeds.Div(position.Qty)
-		if sale != nil && sale.Sign() > 0 {
-			return sale.Float64(), true
-		}
-	}
-
-	return 0, false
+	return position.ExitPrice.Float64(), true
 }

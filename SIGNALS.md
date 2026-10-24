@@ -149,10 +149,24 @@ Erratic book shape warping (morphology.morphology_change $> 0$) and extreme cumu
 
 ### Dead / Starved
 
-- [x] pumpdump.trade_rate
+- [x] hold.trade_rate_ratio
 
-Trade arrival frequency near zero.
-Inter-arrival intervals long, trade hurdle not cleared.
+Trade arrival vs the rate at entry ($\ll 1$ while open: hold-relative dead tape).
+Flat-phase coiled compression still uses pumpdump.trade_rate on R06; R09 is hold-only.
+
+## Hold (derived while a lot is open)
+
+Injected by training from desk state and live metrics; not a standalone feed.
+
+### Exit precursors
+
+- [x] hold.trade_rate_ratio → R09
+- [x] hold.giveback_from_peak → R03, R04
+- [x] hold.bars_held → R04
+- [x] hold.evaporation_index → R04
+
+Giveback and stagnation while evaporation_index combines bid withdrawal, sell
+arrival, and spread stress into one R04 confluence input.
 
 ## History Oracle
 

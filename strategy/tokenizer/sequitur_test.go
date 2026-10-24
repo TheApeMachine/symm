@@ -116,6 +116,21 @@ func TestRuleCount(t *testing.T) {
 			})
 		})
 
+		Convey("When one later pair follows the rule", func() {
+			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+			rules := seq.RuleCount()
+			seq.Analyze([]string{"R09", "R01", "R02"})
+
+			Convey("It reuses the rule on that single occurrence", func() {
+				So(seq.LastKind(), ShouldEqual, "reuse")
+				So(seq.RuleCount(), ShouldEqual, rules)
+				root := seq.RootSequence()
+				So(len(root), ShouldBeGreaterThan, 0)
+				So(root[len(root)-1], ShouldEqual, "M1")
+				So(seq.RootLength(), ShouldEqual, len(root))
+			})
+		})
+
 		Convey("When one more pair is separated from the existing rule", func() {
 			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
 			rules := seq.RuleCount()

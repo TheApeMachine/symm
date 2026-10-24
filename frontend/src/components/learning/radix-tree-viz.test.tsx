@@ -23,7 +23,7 @@ const actionsOf = (node: TrieNodeData | null): string[] => {
 describe("buildTreeFromPrefixes", () => {
 	it("lays an explored path on the same terminals as a confirmed one", () => {
 		const tree = buildTreeFromPrefixes([
-			"policy/explored/enter/[R00-R03-R09-R00]/[R03-R05-R09]/[R01-R02-R03].bin",
+			"model/explore/[R00-R03-R09-R00]/[R03-R05-R09]/[R01-R02-R03]/enter.bin",
 		]);
 		expect(tree?.children?.[0]?.token).toBe("[R00-R03-R09-R00]");
 		expect(actionsOf(tree)).toEqual(["ENTER"]);
@@ -41,6 +41,25 @@ describe("buildTreeFromPrefixes", () => {
 		expect(enterLeaf?.action).toBe("ENTER");
 		expect(exitLeaf?.action).toBe("EXIT");
 		expect(enterLeaf?.prefix).not.toBe(exitLeaf?.prefix);
+	});
+
+	it("places explore enter and exit on different path terminals", () => {
+		const tree = buildTreeFromPrefixes([
+			"model/explore/R01/R02/enter.bin",
+			"model/explore/R01/R02/R03/exit.bin",
+		]);
+		expect(actionsOf(tree)).toEqual(["ENTER", "EXIT"]);
+		const enterLeaf = tree?.children
+			?.find((c) => c.token === "R01")
+			?.children?.find((c) => c.token === "R02")
+			?.children?.find((c) => c.action === "ENTER");
+		const exitLeaf = tree?.children
+			?.find((c) => c.token === "R01")
+			?.children?.find((c) => c.token === "R02")
+			?.children?.find((c) => c.token === "R03")
+			?.children?.find((c) => c.action === "EXIT");
+		expect(enterLeaf?.action).toBe("ENTER");
+		expect(exitLeaf?.action).toBe("EXIT");
 	});
 });
 

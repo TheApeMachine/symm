@@ -6,21 +6,33 @@ import { ModelProblem } from "./model-problem";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { SymbolProgress } from "./types";
 
-export const progressOf = (match: CognitionMatch): SymbolProgress => ({
-	symbol: match.symbol,
-	path: match.tokens.join("/"),
-	depth: match.stored ? match.depth : match.tokens.length,
-	tokens: match.tokens,
-	matched:
-		match.stored && match.action ? [`${match.match}/${match.action}.bin`] : [],
-	rejected: match.rejected ?? [],
-});
+export const progressOf = (match: CognitionMatch): SymbolProgress => {
+	const phase =
+		match.policyPath ||
+		match.triggerPath ||
+		match.livePath ||
+		match.tokens.join("/");
+	const tokens =
+		match.tokens.length > 0
+			? match.tokens
+			: phase.split("/").filter(Boolean);
+
+	return {
+		symbol: match.symbol,
+		path: phase,
+		depth: match.depth > 0 ? match.depth : tokens.length,
+		tokens,
+		matched:
+			match.stored && match.action
+				? [`${match.match}/${match.action}.bin`]
+				: [],
+		rejected: match.rejected ?? [],
+	};
+};
 
 export const CognitiveTree = () => {
 	const epoch = useSelector(cognitionStore, (state) => state.epoch);
-	const policyKeys = useSelector(cognitionStore, (state) =>
-		state.policyKeys.length > 0 ? state.policyKeys : (state.tree?.keys ?? []),
-	);
+	const policyKeys = useSelector(cognitionStore, (state) => state.policyKeys);
 	const matches = useSelector(cognitionStore, (state) => state.matches);
 	const trading = useSelector(
 		cognitionStore,
@@ -36,7 +48,7 @@ export const CognitiveTree = () => {
 
 	useEffect(() => {
 		try {
-			sendCommand({ type: "s3", prefix: "policy/current" });
+			sendCommand({ type: "s3", prefix: "model/explore" });
 		} catch (err) {
 			console.error(err);
 		}
@@ -53,8 +65,8 @@ export const CognitiveTree = () => {
 					<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 					<span className="text-sm">
 						{epoch !== "0"
-							? "paper trading inactive: no trained paths"
-							: "waiting for policy/current"}
+							? "no explore paths yet (model/explore/…/enter.bin or exit.bin)"
+							: "waiting for model/explore"}
 					</span>
 				</div>
 			</div>
@@ -78,7 +90,7 @@ export const CognitiveTree = () => {
 				<span>{tradingLabel}</span>
 				<span>
 					{gate === null
-						? "live tokens from train/regions on tick"
+						? "band-local lit · primary cut · exit trigger prefix"
 						: gate.enabled
 							? `gated z≥${gate.surpriseZ} · warm-up ${gate.warmup} · trained on ${gate.tickEpoch}`
 							: `ungated · trained on ${gate.tickEpoch}`}

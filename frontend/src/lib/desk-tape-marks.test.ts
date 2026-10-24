@@ -36,10 +36,8 @@ describe("lifecycleFromDeskClosed", () => {
 			entry_path: "R01/R05",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
-			cost: 200,
-			proceeds: 190.83,
-			profit: -9.17,
-			net_return: -4.6,
+			pnl: -0.046,
+			pnl_pct: -4.6,
 			outcome_triggers: ["cleared friction"],
 		});
 

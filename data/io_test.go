@@ -28,7 +28,7 @@ func TestValue_RoundTrip(t *testing.T) {
 			So(v2.Origin, ShouldEqual, v.Origin)
 			So(v2.Role, ShouldEqual, v.Role)
 			So(v2.Scope, ShouldEqual, v.Scope)
-			So(v2.Prefix, ShouldBeEmpty)
+			So(v2.Prefix, ShouldEqual, v.Prefix)
 			So(len(v2.Layers), ShouldEqual, 3)
 			So(v2.Layers[0], ShouldResemble, v.Layers[0])
 			So(v2.Index, ShouldResemble, v.Index)
@@ -52,7 +52,7 @@ func TestValue_RoundTrip(t *testing.T) {
 			So(v3.ID, ShouldEqual, v.ID)
 			So(v3.Layers[1], ShouldResemble, v.Layers[1])
 			So(v3.Index, ShouldResemble, v.Index)
-			So(v3.Prefix, ShouldBeEmpty)
+			So(v3.Prefix, ShouldEqual, v.Prefix)
 		})
 
 		Convey("WriteTo hands a seeded prefix to a store that keeps keys", func() {

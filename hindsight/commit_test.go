@@ -45,7 +45,7 @@ func TestCommitWritesTheClosedLot(t *testing.T) {
 		EntryTick:   8556,
 		ExitTick:    16288,
 		EntryPrice:  decimal.NewFromInt64(100),
-		Proceeds:    decimal.NewFromInt64(281),
+		ExitPrice:   decimal.NewFromFloat64(140.5),
 		Qty:         decimal.NewFromInt64(2),
 		OpenedAt:    opened,
 		ClosedAt:    &closed,

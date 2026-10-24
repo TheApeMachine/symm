@@ -15,20 +15,14 @@ const frame = (...rows: DeskPosition[]) => {
 
 	for (const key of Object.keys(store.state)) delete store.state[key];
 
-	const value = new Value({
+	store.state.all = new Value({
 		origin: "positions",
 		role: "update",
 		scope: "all",
+		prefix: "positions/update/all",
 		index: ["positions/update/all/positions"],
 		layers: [new TextEncoder().encode(JSON.stringify(rows))],
 	});
-
-	// A one-slot stand-in for the worker's ring buffer.
-	store.state.all = {
-		isEmpty: () => false,
-		getBufferLength: () => 1,
-		get: () => value,
-	} as never;
 };
 
 const lot = (symbol: string, extra: Partial<DeskPosition> = {}): DeskPosition =>

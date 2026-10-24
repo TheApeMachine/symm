@@ -1,3 +1,4 @@
+import { cognitionStore } from "#/collections/cognition";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -5,6 +6,8 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
+import { formatBlockedReason } from "#/lib/trigger-labels";
+import { useSelector } from "@tanstack/react-store";
 
 type DecisionRow = {
 	id: string;
@@ -14,8 +17,86 @@ type DecisionRow = {
 	reason: string;
 };
 
+const decisionConfidence = (
+	depth: number,
+	tokenCount: number,
+	similarity: number | undefined,
+): number => {
+	if (depth <= 0) return 0;
+	const denom = Math.max(tokenCount, depth, 1);
+	const sim = similarity !== undefined && similarity > 0 ? similarity : 1;
+	return Math.min(1, (depth / denom) * sim);
+};
+
+const decisionReason = (match: {
+	match: string;
+	livePath?: string;
+	triggerPath?: string;
+	policyPath?: string;
+	stored: boolean;
+	exactMatch?: boolean;
+	similarity?: number;
+	blockedReason?: string;
+	rejected?: string[];
+}): string => {
+	if (match.blockedReason) {
+		return formatBlockedReason(match.blockedReason);
+	}
+
+	if (match.match) {
+		const fuzzy =
+			match.stored &&
+			match.exactMatch === false &&
+			match.similarity !== undefined &&
+			match.similarity < 1;
+		const prefix = fuzzy
+			? `fuzzy ${(match.similarity ?? 0).toFixed(2)} · `
+			: "";
+		if (match.triggerPath) {
+			return `${prefix}policy ${match.match} · trigger ${match.triggerPath}`;
+		}
+		if (match.livePath && match.livePath !== match.match) {
+			return `${prefix}policy ${match.match} · live ${match.livePath}`;
+		}
+		return `${prefix}${match.match}`;
+	}
+
+	if (match.rejected?.length) {
+		return `rejected: ${match.rejected.join(", ")}`;
+	}
+
+	return "strategy telemetry";
+};
+
 export const Decisions = () => {
-	const decisions: DecisionRow[] = [];
+	const decisions = useSelector(cognitionStore, (state) => {
+		const merged = new Map<string, DecisionRow>();
+
+		for (const match of Object.values(state.matches)) {
+			if (!match.symbol) continue;
+
+			const action =
+				match.action || (match.stored ? "stored" : match.match ? "match" : "");
+			if (!action && !match.blockedReason) continue;
+
+			const tokenCount = match.tokens?.length ?? 0;
+			merged.set(match.symbol, {
+				id: `${match.symbol}-${match.tick}`,
+				symbol: match.symbol,
+				action: action || "blocked",
+				confidence: decisionConfidence(
+					match.depth,
+					tokenCount,
+					match.similarity,
+				),
+				reason: decisionReason(match),
+			});
+		}
+
+		return [...merged.values()].sort((left, right) =>
+			left.symbol.localeCompare(right.symbol),
+		);
+	});
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);

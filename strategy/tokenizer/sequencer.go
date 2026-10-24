@@ -1,39 +1,41 @@
 package tokenizer
 
 import (
-	"sort"
-	"strings"
+	"fmt"
+
+	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
-Sequitur is the per-symbol grammar engine. It receives one tick's region
-tokens as a single chord, feeds that chord to the Sequitur grammar, and
-emits one regime token when a repeated digram is replaced by a rule.
-
-That replacement is the sentence boundary: two occurrences of the same
-regions are a shorter code than spelling them twice. The emitted token is
-one trie edge, the rule's terminals, not a step per region and not a cut
-taken from the bytes of the region label.
-
-The Sequencer is the bridge between the grid's raw observations and the
-model's trie path. It owns the grammar. The byte-level MDL stays available
-for calibration; it is not the regime cut.
+Sequencer turns one tick's region brightness into a single path letter.
+The letter is regime.posture: the brightest role in each band. Brightness
+elects the role and stays out of the spelling. Risk (R12–R14) is a veto,
+not a letter.
 */
 type Sequencer struct {
-	sequitur *Sequitur
-	mdl      *MDL
-	// pending accumulates region terminals since the last rule.
-	pending []string
-	// pendingBrightness is the brightest region seen while pending.
-	pendingBrightness float64
+	sequitur    *Sequitur
+	mdl         *MDL
+	lastEmitted string
 }
 
-// NewSequitur is defined in sequitur.go.
+// StepSilence explains why no path token was emitted this tick.
+type StepSilence string
 
-/*
-NewSequencer creates a Sequencer with a fresh grammar and MDL boundary
-detector. Each symbol in the market gets its own Sequencer instance.
-*/
+const (
+	StepOK                StepSilence = ""
+	StepSilenceEmpty      StepSilence = "empty"
+	StepSilenceBrightness StepSilence = "brightness"
+	StepSilenceDuplicate  StepSilence = "duplicate"
+	StepSilenceVeto       StepSilence = "veto"
+)
+
+// StepResult is one tick's tokenizer outcome for path and telemetry.
+type StepResult struct {
+	Token   Token
+	Silence StepSilence
+	Peak    float64
+}
+
 func NewSequencer() *Sequencer {
 	return &Sequencer{
 		sequitur: NewSequitur(),
@@ -41,138 +43,91 @@ func NewSequencer() *Sequencer {
 	}
 }
 
+var (
+	flatRegime  = []uint8{6, 7, 8}
+	flatPosture = []uint8{0, 1, 2}
+	holdRegime  = []uint8{7, 8, 9}
+	holdPosture = []uint8{3, 4, 5}
+	riskRegions = []uint8{12, 13, 14}
+)
+
 /*
-Analyze processes one tick's region tokens as one chord. The regions are
-the ones the grid kept at or above that symbol's brightness midpoint.
-
-A repeated chord becomes a grammar rule. That rule is one regime token:
-its terminals, in order, as a single trie edge. A chord that has not
-repeated returns a zero Token. Callers treat a zero Token as "this tick
-is inside a regime that has not closed."
+Step emits one regime.posture token. Holding selects the exit bands;
+otherwise the enter bands. The token is zero when either band is dark,
+risk brightness beats the posture, or the label repeats the previous emit.
 */
-func (sequencer *Sequencer) Analyze(regionTokens []Token) Token {
-	if len(regionTokens) == 0 {
-		return Token{}
+func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
+	if len(lit) == 0 {
+		return StepResult{Silence: StepSilenceEmpty}
 	}
 
-	symbols := make([]string, 0, len(regionTokens))
-	var brightness float64
-
-	for _, region := range regionTokens {
-		if region.Brightness > brightness {
-			brightness = region.Brightness
-		}
-
-		for _, sym := range region.Symbols {
-			symbols = append(symbols, sym)
-		}
+	regimeKeys, postureKeys := flatRegime, flatPosture
+	if holding {
+		regimeKeys, postureKeys = holdRegime, holdPosture
 	}
 
-	if len(symbols) == 0 {
-		return Token{}
+	_, regime, regimeOK := brightest(lit, regimeKeys)
+	postureBrightness, posture, postureOK := brightest(lit, postureKeys)
+
+	if !regimeOK || !postureOK {
+		return StepResult{Silence: StepSilenceEmpty, Peak: postureBrightness}
 	}
 
-	sort.Strings(symbols)
-	deduped := symbols[:0]
-
-	for i, sym := range symbols {
-		if i == 0 || sym != symbols[i-1] {
-			deduped = append(deduped, sym)
-		}
+	if risk, _, riskOK := brightest(lit, riskRegions); riskOK && risk > postureBrightness {
+		return StepResult{Silence: StepSilenceVeto, Peak: risk}
 	}
 
-	sequencer.pending = append(sequencer.pending, deduped...)
+	label := fmt.Sprintf("%s.%s", RegionLabel(regime), RegionLabel(posture))
 
-	if brightness > sequencer.pendingBrightness {
-		sequencer.pendingBrightness = brightness
+	if label == sequencer.lastEmitted {
+		return StepResult{Silence: StepSilenceDuplicate, Peak: postureBrightness}
 	}
 
-	rule, boundary := sequencer.sequitur.Analyze(deduped)
+	sequencer.lastEmitted = label
 
-	if !boundary || rule == nil {
-		return Token{}
+	return StepResult{
+		Token: NewToken([]string{label}, postureBrightness, 0),
+		Peak:  postureBrightness,
 	}
-
-	terminals := sequencer.sequitur.TerminalNames(rule)
-
-	if len(terminals) == 0 {
-		return Token{}
-	}
-
-	sequencer.pending = nil
-	sequencer.pendingBrightness = 0
-
-	if brightness < 0 {
-		brightness = 0
-	}
-
-	if brightness > 1 {
-		brightness = 1
-	}
-
-	return NewToken(terminals, brightness, brightness, 0)
 }
 
 /*
-Flush emits region terminals accumulated since the last rule. The model
-calls it when a sentence ends so a trailing chord is not left unnamed.
-A zero Token means nothing was pending.
+brightest returns the highest strictly positive brightness among keys.
+Equal brightness keeps the lower region key.
 */
-func (sequencer *Sequencer) Flush() Token {
-	if len(sequencer.pending) == 0 {
-		return Token{}
+func brightest(lit []*store.Region, keys []uint8) (float64, uint8, bool) {
+	allowed := make(map[uint8]struct{}, len(keys))
+	for _, key := range keys {
+		allowed[key] = struct{}{}
 	}
 
-	symbols := sequencer.pending
-	brightness := sequencer.pendingBrightness
-	sequencer.pending = nil
-	sequencer.pendingBrightness = 0
+	var best float64
+	var bestKey uint8
+	found := false
 
-	return NewToken(symbols, brightness, brightness, 0)
+	for _, region := range lit {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		if _, ok := allowed[region.Key]; !ok {
+			continue
+		}
+
+		if !found || region.Brightness > best || (region.Brightness == best && region.Key < bestKey) {
+			best = region.Brightness
+			bestKey = region.Key
+			found = true
+		}
+	}
+
+	return best, bestKey, found
 }
 
-/*
-Grammar exposes the underlying Sequitur for persistence and the dashboard.
-*/
 func (sequencer *Sequencer) Grammar() *Sequitur {
 	return sequencer.sequitur
 }
 
-/*
-MDL exposes the boundary detector for calibration feedback.
-*/
 func (sequencer *Sequencer) MDL() *MDL {
 	return sequencer.mdl
-}
-
-/*
-Chord is the legacy convenience: the tick's region set as one sorted,
-deduplicated bracketed string. Retained for the dashboard's GatePanel
-and for the "fired" field in the SequiturFrame. Not used for model
-tokens — the model's tokens come from MDL cuts.
-*/
-func Chord(tokens []Token) string {
-	seen := make(map[string]bool, len(tokens))
-	keys := make([]string, 0, len(tokens))
-
-	for _, token := range tokens {
-		for _, s := range token.Symbols {
-			if s == "" || seen[s] {
-				continue
-			}
-			seen[s] = true
-			keys = append(keys, s)
-		}
-	}
-
-	if len(keys) == 0 {
-		return ""
-	}
-
-	sort.Strings(keys)
-
-	if len(keys) == 1 {
-		return keys[0]
-	}
-	return "[" + strings.Join(keys, "-") + "]"
 }

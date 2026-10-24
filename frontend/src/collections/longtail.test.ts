@@ -2,12 +2,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	alertVariant,
 	type BookDeskStats,
+	beginLongtailHistory,
 	buildInsights,
 	coverageTone,
-	gatePassTone,
+	endLongtailHistory,
+	blockedTone,
+	tokenEmitTone,
+	ingestLongtailHistory,
+	ingestLongtailTick,
 	type LongtailSample,
 	longtailStore,
 	matchTone,
+	resetLongtailRecorder,
 	returnTone,
 	reuseTone,
 	summarizeBook,
@@ -24,7 +30,7 @@ import type { SequiturFeed } from "./sequitur";
 import { type SequiturFrame, sequiturFrame } from "./sequitur-fixture";
 
 afterEach(() => {
-	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
+	resetLongtailRecorder();
 });
 
 /* One live grammar feed around a frame, shaped as the store holds it. */
@@ -46,14 +52,15 @@ const closedLot = (
 	virtual: boolean,
 	netReturnPct: number,
 	holdNs = 60_000_000_000,
+	pathFound = virtual,
 ) => ({
 	id: `${symbol}-${virtual}-${netReturnPct}`,
 	symbol,
 	virtual,
+	path_found: virtual ? pathFound : undefined,
 	closed_at: "2026-01-01T00:00:00Z",
-	cost: 100,
-	proceeds: 100 * (1 + netReturnPct / 100),
-	net_return: netReturnPct,
+	pnl: netReturnPct / 100,
+	pnl_pct: netReturnPct,
 	hold_ns: holdNs,
 });
 
@@ -82,10 +89,8 @@ describe("summarizeBook", () => {
 			{
 				id: "pending",
 				symbol: "BTC/USD",
-				virtual: true,
+				virtual: false,
 				closed_at: "2026-01-01T00:00:00Z",
-				cost: 100,
-				proceeds: 105,
 			},
 			openLot("ETH/USD", true),
 		];
@@ -94,6 +99,19 @@ describe("summarizeBook", () => {
 		expect(stats.closed).toBe(0);
 		expect(stats.winRate).toBeNull();
 		expect(stats.open).toBe(1);
+	});
+
+	it("counts virtual discovery closes toward win rate and edge", () => {
+		const rows = [
+			closedLot("BTC/USD", true, 50, 60_000_000_000, false),
+			closedLot("ETH/USD", true, -10, 60_000_000_000, true),
+		];
+
+		const virtual = summarizeBook(rows, "virtual");
+		expect(virtual.closed).toBe(2);
+		expect(virtual.wins).toBe(1);
+		expect(virtual.winRate).toBeCloseTo(0.5);
+		expect(virtual.meanReturn).toBeCloseTo(0.2);
 	});
 
 	it("summarizes settled round trips per book", () => {
@@ -127,9 +145,9 @@ describe("summarizeTraining", () => {
 
 		expect(sample.feeds).toBe(0);
 		expect(sample.rules).toBeNull();
-		expect(sample.gatePassRate).toBeNull();
+		expect(sample.tokenEmitRate).toBeNull();
 		expect(sample.reuseRate).toBeNull();
-		expect(sample.policyMatchRate).toBeNull();
+		expect(sample.policyStoredRate).toBeNull();
 	});
 
 	it("aggregates the live grammar feeds", () => {
@@ -192,16 +210,39 @@ describe("summarizeTraining", () => {
 		// 3 events on the first frame (1 create), 1 on the second (1 reuse).
 		expect(sample.createRate).toBeCloseTo(1 / 4);
 		expect(sample.reuseRate).toBeCloseTo(1 / 4);
-		expect(sample.gatePassRate).toBeCloseTo(0.5);
+		expect(sample.tokenEmitRate).toBeCloseTo(0.5);
 		expect(sample.blockedRate).toBeCloseTo(0.5);
-		expect(sample.warmRate).toBeCloseTo(0.5);
-		expect(sample.avgSurprise).toBeCloseTo((0.42 + 1.2) / 2);
-		expect(sample.avgZ).toBeCloseTo((2.1 + 3) / 2);
 		expect(sample.policyStoredRate).toBeCloseTo(0.5);
-		expect(sample.policyMatchRate).toBeCloseTo(0.5);
-		expect(sample.avgMatchDepth).toBe(2);
 		expect(sample.outcomeRate).toBeCloseTo(0.5);
 		expect(sample.violations).toBe(1);
+	});
+
+	it("keeps a missing path book blank and a reported zero as zero", () => {
+		ingestLongtailTick({ gatePass: 1, gateTotal: 4, litTicks: 4 });
+		const missing = summarizeTraining([]);
+		expect(missing.tokenEmitRate).toBeCloseTo(0.25);
+		expect(missing.developedPaths).toBeNull();
+		expect(missing.exitProfit).toBeNull();
+		expect(missing.vetoRate).toBeNull();
+
+		resetLongtailRecorder();
+
+		ingestLongtailTick({
+			gatePass: 0,
+			gateTotal: 4,
+			developedPaths: 0,
+			promotedPaths: 0,
+			prunedPaths: 1,
+			exitProfit: 0,
+			exitStop: 2,
+			exitBranch: 0,
+		});
+		const reported = summarizeTraining([]);
+		expect(reported.developedPaths).toBe(0);
+		expect(reported.prunedPaths).toBe(1);
+		expect(reported.meanThreshold).toBeNull();
+		expect(reported.exitStop).toBe(2);
+		expect(reported.tokenEmitRate).toBe(0);
 	});
 });
 
@@ -232,8 +273,11 @@ describe("tone thresholds", () => {
 		expect(matchTone(0.6)).toBe("good");
 		expect(matchTone(0.1)).toBe("bad");
 
-		expect(gatePassTone(0.8)).toBe("good");
-		expect(gatePassTone(0.3)).toBe("bad");
+		expect(tokenEmitTone(0.2)).toBe("good");
+		expect(tokenEmitTone(0.08)).toBe("warn");
+		expect(tokenEmitTone(0.02)).toBe("bad");
+		expect(blockedTone(0.5)).toBe("good");
+		expect(blockedTone(0.95)).toBe("bad");
 
 		expect(warmTone(0.8)).toBe("good");
 		expect(warmTone(0.3)).toBe("bad");
@@ -298,23 +342,27 @@ const sample = (
 		createRate: null,
 		reuseRate: null,
 		inlineRate: null,
-		gatePassRate: null,
+		tokenEmitRate: null,
 		blockedRate: null,
-		warmRate: null,
-		avgSurprise: null,
-		avgZ: null,
+		blockedBrightnessRate: null,
+		blockedDuplicateRate: null,
+		vetoRate: null,
+		emptyRate: null,
 		policyStoredRate: null,
-		policyMatchRate: null,
-		avgMatchDepth: null,
 		outcomeRate: null,
+		outcomeEnterRate: null,
+		outcomeExitRate: null,
 		violations: null,
-		pathStableRate: null,
-		frictionPassRate: null,
 		exploredEnter: null,
-		confirmedEnter: null,
 		venueOpen: null,
 		virtualExcursion: null,
-		meanMaturity: null,
+		developedPaths: null,
+		promotedPaths: null,
+		prunedPaths: null,
+		meanThreshold: null,
+		exitProfit: null,
+		exitStop: null,
+		exitBranch: null,
 		...overrides.training,
 	},
 });
@@ -338,8 +386,9 @@ describe("verdict", () => {
 				training: {
 					rules: 10,
 					reuseRate: 0.6,
-					policyMatchRate: 0.6,
-					gatePassRate: 0.8,
+					policyStoredRate: 0.05,
+					tokenEmitRate: 0.08,
+					blockedRate: 0.7,
 				},
 			}),
 			sample({
@@ -347,8 +396,9 @@ describe("verdict", () => {
 				training: {
 					rules: 11,
 					reuseRate: 0.6,
-					policyMatchRate: 0.6,
-					gatePassRate: 0.8,
+					policyStoredRate: 0.05,
+					tokenEmitRate: 0.08,
+					blockedRate: 0.7,
 				},
 			}),
 		];
@@ -366,8 +416,9 @@ describe("verdict", () => {
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.2,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.02,
+					blockedRate: 0.9,
 				},
 			}),
 			sample({
@@ -375,8 +426,9 @@ describe("verdict", () => {
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.2,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.02,
+					blockedRate: 0.9,
 				},
 			}),
 		];
@@ -393,8 +445,9 @@ describe("verdict", () => {
 			training: {
 				rules: 3,
 				reuseRate: 0.1,
-				policyMatchRate: 0.1,
-				gatePassRate: 0.2,
+				policyStoredRate: 0.01,
+				tokenEmitRate: 0.02,
+				blockedRate: 0.9,
 			},
 		});
 
@@ -404,15 +457,16 @@ describe("verdict", () => {
 		});
 	});
 
-	it("does not call a book-only rise a recovery", () => {
+	it("calls a rising but still losing book recovering", () => {
 		const samples = [
 			sample({
 				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.2,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.02,
+					blockedRate: 0.9,
 				},
 			}),
 			sample({
@@ -420,14 +474,15 @@ describe("verdict", () => {
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.2,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.02,
+					blockedRate: 0.9,
 				},
 			}),
 		];
 
 		expect(verdict(samples, "virtual")).toEqual({
-			label: "Mixed",
+			label: "Recovering",
 			tone: "warn",
 		});
 	});
@@ -439,8 +494,9 @@ describe("verdict", () => {
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.2,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.02,
+					blockedRate: 0.9,
 				},
 			}),
 			sample({
@@ -448,8 +504,9 @@ describe("verdict", () => {
 				training: {
 					rules: 3,
 					reuseRate: 0.1,
-					policyMatchRate: 0.1,
-					gatePassRate: 0.5,
+					policyStoredRate: 0.01,
+					tokenEmitRate: 0.05,
+					blockedRate: 0.85,
 				},
 			}),
 		];
@@ -467,8 +524,9 @@ describe("verdict", () => {
 				training: {
 					rules: 10,
 					reuseRate: 0.6,
-					policyMatchRate: 0.6,
-					gatePassRate: 0.8,
+					policyStoredRate: 0.05,
+					tokenEmitRate: 0.08,
+					blockedRate: 0.7,
 				},
 			}),
 			sample({
@@ -476,8 +534,9 @@ describe("verdict", () => {
 				training: {
 					rules: 10,
 					reuseRate: 0.6,
-					policyMatchRate: 0.6,
-					gatePassRate: 0.8,
+					policyStoredRate: 0.05,
+					tokenEmitRate: 0.08,
+					blockedRate: 0.7,
 				},
 			}),
 		];
@@ -509,12 +568,9 @@ describe("buildInsights", () => {
 						maxRuleDepth: 2,
 						reuseRate: 0.1,
 						createRate: 0.8,
-						gatePassRate: 0.3,
-						warmRate: 0.5,
-						avgSurprise: 1.5,
-						policyStoredRate: 0.5,
-						policyMatchRate: 0.1,
-						avgMatchDepth: 2,
+						tokenEmitRate: 0.03,
+						blockedRate: 0.85,
+						policyStoredRate: 0.01,
 						outcomeRate: 0.1,
 					},
 				}),
@@ -526,12 +582,9 @@ describe("buildInsights", () => {
 						maxRuleDepth: 2,
 						reuseRate: 0.1,
 						createRate: 0.8,
-						gatePassRate: 0.3,
-						warmRate: 0.5,
-						avgSurprise: 1.5,
-						policyStoredRate: 0.5,
-						policyMatchRate: 0.1,
-						avgMatchDepth: 2,
+						tokenEmitRate: 0.03,
+						blockedRate: 0.85,
+						policyStoredRate: 0.01,
 						outcomeRate: 0.1,
 					},
 				}),
@@ -543,30 +596,117 @@ describe("buildInsights", () => {
 		expect(byId.edge.tone).toBe("bad");
 		expect(byId.edge.body).toContain("-12.0%");
 		expect(byId.edge.body).toContain("slipping");
-		expect(byId.grammar.tone).toBe("bad");
-		expect(byId.gate.tone).toBe("bad");
-		expect(byId.policy.tone).toBe("bad");
+		expect(byId.paths.tone).toBe("neutral");
+		expect(byId.emit.body).toContain("new letter");
+		expect(byId.exits.tone).toBe("neutral");
 	});
 
-	it("reports invariant violations in red", () => {
+	it("reads developed paths and exit reasons", () => {
 		const insights = buildInsights(
 			[
 				sample({
 					virtual: { closed: 5, wins: 4, winRate: 0.8, meanReturn: 0.05 },
 					training: {
-						rules: 10,
-						reuseRate: 0.6,
-						gatePassRate: 0.8,
-						policyStoredRate: 0.5,
-						policyMatchRate: 0.6,
-						violations: 2,
+						developedPaths: 12,
+						promotedPaths: 2,
+						prunedPaths: 1,
+						meanThreshold: 0.4,
+						exitProfit: 4,
+						exitStop: 1,
+						exitBranch: 2,
+						tokenEmitRate: 0.08,
 					},
 				}),
 			],
 			"virtual",
 		);
 
-		const violations = insights.find((i) => i.id === "violations");
-		expect(violations?.tone).toBe("bad");
+		const paths = insights.find((i) => i.id === "paths");
+		const exits = insights.find((i) => i.id === "exits");
+		expect(paths?.body).toContain("12 developed");
+		expect(paths?.body).toContain("0.40");
+		expect(exits?.body).toContain("4 cleared the spread");
+		expect(exits?.tone).toBe("good");
+	});
+});
+
+const epochSample = (at: number, tokenEmitRate: number | null = 0.5) => ({
+	at,
+	paper: {
+		closed: 1,
+		open: 0,
+		wins: 1,
+		winRate: 1,
+		meanReturn: 0.1,
+		medianReturn: 0.1,
+		worstReturn: 0.1,
+		avgHoldNs: 1_000,
+	},
+	virtual: {
+		closed: 0,
+		open: 0,
+		wins: 0,
+		winRate: null,
+		meanReturn: null,
+		medianReturn: null,
+		worstReturn: null,
+		avgHoldNs: null,
+	},
+	training: {
+		feeds: 1,
+		rules: null,
+		tokenEmitRate,
+		exploredEnter: 18,
+	},
+});
+
+describe("epoch history", () => {
+	it("ignores a batch that arrives before the replay begins", () => {
+		expect(ingestLongtailHistory([epochSample(1_000)])).toBe(false);
+		expect(longtailStore.state.samples).toHaveLength(0);
+	});
+
+	it("replaces samples collected after refresh with the epoch", () => {
+		longtailStore.setState(() => ({
+			samples: [sample({ paper: { closed: 0 } })],
+			lastSampleAt: 1,
+		}));
+
+		beginLongtailHistory();
+		expect(
+			ingestLongtailHistory([epochSample(5_000), { at: "late" }, null]),
+		).toBe(true);
+		expect(ingestLongtailHistory([epochSample(10_000, 0)])).toBe(true);
+		endLongtailHistory();
+
+		const ats = longtailStore.state.samples.map((row) => row.at);
+		expect(ats.slice(0, 2)).toEqual([5_000, 10_000]);
+		expect(longtailStore.state.samples[0]?.training.tokenEmitRate).toBe(0.5);
+		expect(longtailStore.state.samples[0]?.paper.meanReturn).toBe(0.1);
+		expect(longtailStore.state.samples[0]?.training.rules).toBeNull();
+		expect(longtailStore.state.samples[1]?.training.tokenEmitRate).toBe(0);
+	});
+
+	it("keeps an epoch longer than the old one-hour cap", () => {
+		beginLongtailHistory();
+		const batch = Array.from({ length: 800 }, (_, i) =>
+			epochSample(1_000 + i * 5_000),
+		);
+		ingestLongtailHistory(batch);
+		endLongtailHistory();
+
+		expect(longtailStore.state.samples.length).toBeGreaterThanOrEqual(800);
+		expect(longtailStore.state.samples[0]?.at).toBe(1_000);
+		expect(longtailStore.state.samples[799]?.at).toBe(1_000 + 799 * 5_000);
+	});
+
+	it("leaves the page alone when the epoch tape is empty", () => {
+		const kept = sample();
+		longtailStore.setState(() => ({ samples: [kept], lastSampleAt: kept.at }));
+
+		beginLongtailHistory();
+		endLongtailHistory();
+
+		expect(longtailStore.state.samples).toEqual([kept]);
 	});
 });

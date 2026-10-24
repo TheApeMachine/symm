@@ -4,11 +4,15 @@ import (
 	"context"
 	"io"
 	"sync/atomic"
+	"time"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
+	"golang.design/x/lockfree/lf"
 )
 
 func optionList[O any](initial ...O) []O {
@@ -32,12 +36,14 @@ type Ring struct {
 
 type Workspace struct {
 	*System
+	queue    *lf.Queue[*data.Value]
 	channel  disruptor.Disruptor
 	mask     int64
 	capacity int
 	stages   [][]*Consumer
 	buffer   []*data.Value
-	onTrace  atomic.Value // func(*data.Value)
+	onTrace  atomic.Value
+	store    *store.Client
 }
 
 /*
@@ -49,7 +55,6 @@ func NewWorkspace(
 	ctx context.Context,
 	label string,
 	stages []Ring,
-	sinks ...io.Writer,
 ) *Workspace {
 	capacity := 8192
 
@@ -60,10 +65,12 @@ func NewWorkspace(
 	mask := int64(capacity - 1)
 
 	workspace := &Workspace{
+		queue:    lf.NewQueue[*data.Value](),
 		mask:     mask,
 		capacity: capacity,
 		stages:   make([][]*Consumer, len(stages)),
 		buffer:   make([]*data.Value, capacity),
+		store:    store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
 	opts := optionList(
@@ -91,29 +98,6 @@ func NewWorkspace(
 		}
 	}
 
-	sinkGroup := make([]disruptor.Handler, 0, len(sinks))
-
-	for _, sink := range sinks {
-		if sink != nil {
-			sinkGroup = append(sinkGroup, &sinkHandler{
-				sink:      sink,
-				workspace: workspace,
-			})
-		}
-	}
-
-	if len(sinkGroup) > 0 {
-		opts = append(
-			opts, disruptor.Options.NewHandlerGroup(sinkGroup...),
-		)
-	}
-
-	// After every sink has returned, one handler hands the tick to Publish.
-	opts = append(
-		opts,
-		disruptor.Options.NewHandlerGroup(&traceHandler{workspace: workspace}),
-	)
-
 	channel, err := disruptor.New(opts...)
 	workspace.System = NewSystem(ctx, label, channel, workspace)
 
@@ -129,6 +113,7 @@ func NewWorkspace(
 
 	workspace.channel = channel
 	go workspace.channel.Listen()
+	go workspace.drain()
 
 	return workspace
 }
@@ -172,21 +157,8 @@ func (workspace *Workspace) Step(value *data.Value) *data.Value {
 
 	workspace.channel.Commit(seq, seq)
 
+	workspace.queue.Enqueue(value)
 	return value
-}
-
-/*
-Publish registers the function called with each tick once every stage and
-sink has finished. The diagnostics hub uses it to broadcast timings without
-writing them into the stored tick. A nil function clears the hook.
-*/
-func (workspace *Workspace) Publish(fn func(*data.Value)) {
-	if fn == nil {
-		workspace.onTrace.Store(func(*data.Value) {})
-		return
-	}
-
-	workspace.onTrace.Store(fn)
 }
 
 type stageHandler struct {
@@ -206,46 +178,26 @@ func (sh *stageHandler) Handle(lower, upper int64) {
 	}
 }
 
-type sinkHandler struct {
-	sink      io.Writer
-	workspace *Workspace
-}
+func (workspace *Workspace) drain() {
+	for {
+		select {
+		case <-workspace.Context().Done():
+			return
+		default:
+		}
 
-func (sh *sinkHandler) Handle(lower, upper int64) {
-	for seq := lower; seq <= upper; seq++ {
-		value := sh.workspace.buffer[seq&sh.workspace.mask]
-
-		if value == nil {
+		if workspace.queue.Length() == 0 {
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
-		if _, err := io.Copy(sh.sink, value); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[workspace] sink copy failed", err,
-			))
-		}
-	}
-}
+		value, ok := workspace.queue.Dequeue()
 
-type traceHandler struct {
-	workspace *Workspace
-}
-
-func (handler *traceHandler) Handle(lower, upper int64) {
-	stored := handler.workspace.onTrace.Load()
-	fn, _ := stored.(func(*data.Value))
-
-	if fn == nil {
-		return
-	}
-
-	for seq := lower; seq <= upper; seq++ {
-		value := handler.workspace.buffer[seq&handler.workspace.mask]
-
-		if value == nil {
+		if !ok {
 			continue
 		}
 
-		fn(value)
+		io.Copy(ui.UI, value)
+		workspace.store.WriteAtPrefix(value.Prefix, value.Bytes())
 	}
 }

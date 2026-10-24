@@ -1,7 +1,8 @@
 import { createAtom } from "@tanstack/react-store";
 import { type Atom, createStore, type Store } from "@tanstack/store";
 
-import type { Value } from "#/types/value";
+import { encodeJsonBytes, tryDecodeJsonBytes } from "#/lib/json-bytes";
+import { Value } from "#/types/value";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -41,6 +42,7 @@ export const atoms: Record<string, Atom<any>> = {
 	online: createAtom<"ONLINE" | "OFFLINE" | "CONNECTING">("OFFLINE"),
 	symbols: createAtom<string[]>([DEFAULT_FOCUS_SYMBOL]),
 	error: createAtom<Record<string, unknown> | null>(null),
+	/** Canonical market tick index from workspace aggregate frame headers (not message count). */
 	tickCount: createAtom<number>(0),
 	balance: createAtom<Value | null>(null),
 	phase: createAtom<string>("—"),
@@ -80,6 +82,18 @@ export const signals: Record<string, Store<Record<string, Value>>> = {
 	manifold: createStore<Record<string, Value>>({}),
 	training: createStore<Record<string, Value>>({}),
 	positions: createStore<Record<string, Value>>({}),
+	s3: createStore<Record<string, Value>>({}),
+	paper: createStore<Record<string, Value>>({}),
+	parallel: createStore<Record<string, Value>>({}),
+	sequitur: createStore<Record<string, Value>>({}),
+	cognition: createStore<Record<string, Value>>({}),
+};
+
+/*
+valueAtoms are hub origins that map to one atom, not a scope-indexed store.
+*/
+export const valueAtoms: Record<string, Atom<Value | null>> = {
+	balance: atoms.balance,
 };
 
 /*
@@ -101,26 +115,66 @@ prefix (the symbol's own slash arrives escaped to "-", matching the desk's
 per-lot position scopes), so the result maps each metric key to its decoded
 payload — Append wrote one scalar array per key.
 */
-export const signalFor = (
+type KernelReading = {
+	metrics: Record<string, unknown>;
+	bytes: Map<string, Uint8Array>;
+};
+
+type KernelCache = {
+	index: string[];
+	layers: Uint8Array[];
+	size: number;
+	byKey: Map<string, KernelReading>;
+};
+
+const kernelCache = new WeakMap<Value, KernelCache>();
+
+const kernelCacheFor = (frame: Value): Map<string, KernelReading> => {
+	const size = frame.index.length + frame.layers.length;
+	const cached = kernelCache.get(frame);
+	if (
+		cached &&
+		cached.index === frame.index &&
+		cached.layers === frame.layers &&
+		cached.size === size
+	) {
+		return cached.byKey;
+	}
+
+	const byKey = new Map<string, KernelReading>();
+	kernelCache.set(frame, {
+		index: frame.index,
+		layers: frame.layers,
+		size,
+		byKey,
+	});
+	return byKey;
+};
+
+/*
+readKernel scans one kernel's layers for one symbol once per frame. Later
+readers of that pair, including every pin on the same kernel, reuse it.
+*/
+const readKernel = (
 	kernel: string,
 	symbol: string,
-): Record<string, unknown> => {
-	const frame = workspaceFrame();
-	if (!frame) return {};
+	frame: Value,
+): KernelReading => {
+	const byKey = kernelCacheFor(frame);
+	const cacheKey = `${kernel}/${symbol}`;
+	const hit = byKey.get(cacheKey);
+	if (hit) return hit;
 
-	const address = `${kernel}/${symbol}/`;
-	const found: Record<string, unknown> = {};
+	const metrics: Record<string, unknown> = {};
+	const bytes = new Map<string, Uint8Array>();
+	const address = `${frame.prefix}/${kernel}/${symbol}/`;
 
 	for (let i = 0; i < frame.index.length; i++) {
 		const index = frame.index[i];
-		if (!index.startsWith(`${frame.prefix}/${address}`)) continue;
+		if (!index.startsWith(address)) continue;
 
-		let payload: unknown;
-		try {
-			payload = JSON.parse(new TextDecoder().decode(frame.layers[i]));
-		} catch {
-			continue;
-		}
+		const payload = tryDecodeJsonBytes(frame.layers[i]);
+		if (payload === undefined) continue;
 
 		/*
 		A kernel writes its metrics as one float array addressed by every
@@ -128,7 +182,7 @@ export const signalFor = (
 		suffix splits into those names, one scalar array each, which is the
 		shape readers look up by metric.
 		*/
-		const suffix = index.slice(`${frame.prefix}/${address}`.length);
+		const suffix = index.slice(address.length);
 		const names = suffix.split("/").filter(Boolean);
 		if (
 			Array.isArray(payload) &&
@@ -136,13 +190,64 @@ export const signalFor = (
 			names.length === payload.length
 		) {
 			for (let n = 0; n < names.length; n++) {
-				found[names[n]] = [payload[n]];
+				const slice = [payload[n]];
+				metrics[names[n]] = slice;
+				bytes.set(names[n], encodeJsonBytes(slice));
 			}
 			continue;
 		}
 
-		found[suffix] = payload;
+		metrics[suffix] = payload;
+		bytes.set(suffix, frame.layers[i]);
 	}
 
-	return found;
+	const reading = { metrics, bytes };
+	byKey.set(cacheKey, reading);
+	return reading;
+};
+
+export const signalFor = (
+	kernel: string,
+	symbol: string,
+	frame: Value | undefined = workspaceFrame(),
+): Record<string, unknown> => {
+	if (!frame) return {};
+	return readKernel(kernel, symbol, frame).metrics;
+};
+
+/*
+kernelMeasurement folds one kernel's layers for a symbol off the aggregate
+workspace tick into a synthetic Value the Metric Component can bind. The store
+keys the batch under "aggregate", not per symbol.
+*/
+export const kernelMeasurement = (
+	kernel: string,
+	symbol: string,
+	aggregate?: Value,
+): Value | undefined => {
+	const frame = aggregate ?? workspaceFrame();
+	if (!frame) return undefined;
+
+	const { metrics, bytes } = readKernel(kernel, symbol, frame);
+	const keys = Object.keys(metrics);
+	if (keys.length === 0) return undefined;
+
+	const reading = new Value({
+		scope: symbol,
+		prefix: frame.prefix,
+		tick: frame.tick,
+		seqIdx: frame.seqIdx,
+		timestamp: frame.timestamp,
+		origin: kernel,
+		role: frame.role,
+	});
+
+	for (const key of keys) {
+		const layer = bytes.get(key);
+		if (!layer) continue;
+		reading.layers.push(layer);
+		reading.index.push(`${reading.prefix}/${key}`);
+	}
+
+	return reading;
 };

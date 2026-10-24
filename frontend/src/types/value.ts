@@ -1,3 +1,14 @@
+import { decodeJsonBytes, tryDecodeJsonBytes } from "#/lib/json-bytes";
+
+type ReadingsCache = {
+	index: string[];
+	layers: Uint8Array[];
+	size: number;
+	value: Array<{ suffix: string; payload: unknown }>;
+};
+
+const readingsCache = new WeakMap<Value, ReadingsCache>();
+
 export class Value {
 	id: string;
 	epoch: bigint;
@@ -48,40 +59,42 @@ export class Value {
 	lookup(keys: string[]): unknown[] {
 		const layers: unknown[] = [];
 
-		for (const index of this.index) {
-			if (keys.some((key) => index.startsWith(`${this.prefix}/${key}`))) {
-				layers.push(
-					JSON.parse(
-						new TextDecoder().decode(this.layers[this.index.indexOf(index)]),
-					),
-				);
+		for (let i = 0; i < this.index.length; i++) {
+			const index = this.index[i];
+			if (!keys.some((key) => index.startsWith(`${this.prefix}/${key}`))) {
+				continue;
 			}
+
+			layers.push(decodeJsonBytes(this.layers[i]));
 		}
 
 		return layers;
 	}
 
 	/*
-	Metric reads one scalar layer: the layer whose index is exactly
+	reading returns one layer decoded at exactly prefix/key.
+	*/
+	reading(key: string): unknown {
+		const address = `${this.prefix}/${key}`;
+
+		for (let i = 0; i < this.index.length; i++) {
+			if (this.index[i] !== address) continue;
+			return tryDecodeJsonBytes(this.layers[i]);
+		}
+
+		return undefined;
+	}
+
+	/*
+	metric reads one scalar layer: the layer whose index is exactly
 	prefix/key, decoded and returned with its first element. Signal and
 	reading layers arrive as JSON arrays of floats (the Go Append call's
 	[]float64), so a caller that wants one metric names one key.
 	*/
 	metric(key: string): unknown {
-		for (let i = 0; i < this.index.length; i++) {
-			if (this.index[i] !== `${this.prefix}/${key}`) continue;
-
-			let payload: unknown;
-			try {
-				payload = JSON.parse(new TextDecoder().decode(this.layers[i]));
-			} catch {
-				return undefined;
-			}
-
-			return Array.isArray(payload) ? payload[0] : payload;
-		}
-
-		return undefined;
+		const payload = this.reading(key);
+		if (payload === undefined) return undefined;
+		return Array.isArray(payload) ? payload[0] : payload;
 	}
 
 	/*
@@ -92,6 +105,17 @@ export class Value {
 	frontend never reads) are skipped.
 	*/
 	readings(): Array<{ suffix: string; payload: unknown }> {
+		const size = this.index.length + this.layers.length;
+		const cached = readingsCache.get(this);
+		if (
+			cached &&
+			cached.index === this.index &&
+			cached.layers === this.layers &&
+			cached.size === size
+		) {
+			return cached.value;
+		}
+
 		const found: Array<{ suffix: string; payload: unknown }> = [];
 		const root = `${this.prefix}/`;
 
@@ -99,15 +123,18 @@ export class Value {
 			const index = this.index[i];
 			if (!index.startsWith(root)) continue;
 
-			let payload: unknown;
-			try {
-				payload = JSON.parse(new TextDecoder().decode(this.layers[i]));
-			} catch {
-				continue;
-			}
+			const payload = tryDecodeJsonBytes(this.layers[i]);
+			if (payload === undefined) continue;
 
 			found.push({ suffix: index.slice(root.length), payload });
 		}
+
+		readingsCache.set(this, {
+			index: this.index,
+			layers: this.layers,
+			size,
+			value: found,
+		});
 
 		return found;
 	}
@@ -164,12 +191,8 @@ export class Value {
 				continue;
 			}
 
-			let payload: unknown;
-			try {
-				payload = JSON.parse(new TextDecoder().decode(this.layers[i]));
-			} catch {
-				continue;
-			}
+			const payload = tryDecodeJsonBytes(this.layers[i]);
+			if (payload === undefined) continue;
 
 			found.push({
 				suffix: index.slice(at + key.length).replace(/^\/+/, ""),

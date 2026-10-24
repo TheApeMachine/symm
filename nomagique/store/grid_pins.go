@@ -18,7 +18,13 @@ REGIME:
   - R06: Coiled Compression (Quiescent Balance: book balance, uniform depth entropy, tight spread ratio)
   - R07: Explosive Ignition (Supercritical Feedback: branching ratio, covariance score gain)
   - R08: Turbulent Friction (Chop & Warping: book mutation imbalance, shape KS divergence)
-  - R09: Dead / Starved (Dead Tape: trade arrival rate hurdle)
+  - R09: Dead / Starved (Hold-relative tape fade: trade rate vs entry baseline)
+
+HOLD (injected while a lot is open; not a market signal source):
+  - trade_rate_ratio: current trade_rate / trade_rate_at_entry → R09
+  - giveback_from_peak: open PnL giveback fraction from hold peak → R03, R04
+  - bars_held: ticks since entry → R04
+  - evaporation_index: bid withdrawal + sell arrival + spread stress → R04
 
 HISTORY:
   - R10: Macro Trajectory Recurrence (Cross-asset covariance MDL path distance & percentile)
@@ -86,7 +92,7 @@ var regionMetricPins = map[string]map[string][]uint8{
 	"pumpdump": {
 		"volume_rate":              {0, 7, 8},
 		"volume_ratio":             {0, 7},
-		"trade_rate":               {0, 6, 9},
+		"trade_rate":               {0, 6},
 		"positive_midpoint_return": {0},
 		"negative_midpoint_return": {3},
 		"spread_ratio":             {4, 6},
@@ -102,5 +108,11 @@ var regionMetricPins = map[string]map[string][]uint8{
 	"toxicity": {
 		"retreat_fraction:bid":    {2, 5},
 		"net_withdrawal_rate:bid": {4},
+	},
+	"hold": {
+		"trade_rate_ratio":    {9},
+		"giveback_from_peak":  {3, 4},
+		"bars_held":           {4},
+		"evaporation_index":   {4},
 	},
 }

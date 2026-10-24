@@ -53,7 +53,7 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	pumpdump: {
 		volume_rate: [0, 7, 8],
 		volume_ratio: [0, 7],
-		trade_rate: [0, 6, 9],
+		trade_rate: [0, 6],
 		positive_midpoint_return: [0],
 		negative_midpoint_return: [3],
 		spread_ratio: [4, 6],
@@ -69,6 +69,12 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	toxicity: {
 		"retreat_fraction:bid": [2, 5],
 		"net_withdrawal_rate:bid": [4],
+	},
+	hold: {
+		trade_rate_ratio: [9],
+		giveback_from_peak: [3, 4],
+		bars_held: [4],
+		evaporation_index: [4],
 	},
 };
 

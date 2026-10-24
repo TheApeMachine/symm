@@ -24,6 +24,7 @@ import { frameToSnapshot } from "./sequitur-engine";
 import { SequiturLaminarStrata } from "./sequitur-laminar-strata";
 import { SequiturRulebookDeck } from "./sequitur-rulebook-deck";
 import { SequiturTelescopingTape } from "./sequitur-telescoping-tape";
+import { formatBlockedReason } from "#/lib/trigger-labels";
 
 /*
 SequiturGrammarViz is the live view of strategy.Sequitur for the focused
@@ -126,6 +127,9 @@ const SurpriseGate = ({ frame }: { frame: SequiturFrame }) => {
 				{gate.surprise === null ? "undefined" : gate.surprise.toPrecision(3)}
 			</span>
 			<span>· z {gate.z === null ? "undefined" : gate.z.toFixed(2)}</span>
+			{gate.ignition !== undefined ? (
+				<span>· ignition {gate.ignition ? "on" : "off"}</span>
+			) : null}
 		</div>
 	);
 };
@@ -144,6 +148,19 @@ const GatePanel = ({ frame }: { frame: SequiturFrame }) => {
 			/>
 			<Flex.Column gap={1} padding={2} className="bg-(--sunken)">
 				<SurpriseGate frame={frame} />
+				{frame.blocked && frame.blockedReason ? (
+					<div className="text-[10px] text-amber-400/90">
+						{formatBlockedReason(frame.blockedReason)}
+					</div>
+				) : null}
+				{frame.measurement?.flow?.known ? (
+					<div className="text-[9px] text-(--f4)">
+						flow net{" "}
+						{frame.measurement.flow.signedNetFraction?.toFixed(3) ?? "—"} · mid
+						log{" "}
+						{frame.measurement.flow.midpointLogReturn?.toFixed(4) ?? "—"}
+					</div>
+				) : null}
 				{frame.active.map((region) => {
 					const token = `R${String(region.key).padStart(2, "0")}`;
 					const width = peak > 0 ? (region.brightness / peak) * 100 : 0;
@@ -255,11 +272,30 @@ const MatchPanel = ({ frame }: { frame: SequiturFrame }) => {
 					</span>
 				</div>
 				<div className="flex items-center gap-1.5">
-					<span className="text-(--f4)">path</span>
+					<span className="text-(--f4)">live path</span>
 					<span className="text-(--f1) break-all" data-testid="active-path">
-						{frame.path}
+						{policy.livePath ?? frame.path}
 					</span>
 				</div>
+				{policy.triggerPath ? (
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f4)">exit trigger</span>
+						<span
+							className="text-amber-300/90 break-all"
+							data-testid="trigger-path"
+						>
+							{policy.triggerPath}
+						</span>
+					</div>
+				) : null}
+				{policy.policyPath && policy.policyPath !== policy.livePath ? (
+					<div className="flex items-center gap-1.5">
+						<span className="text-(--f4)">policy prefix</span>
+						<span className="text-(--f1) break-all" data-testid="policy-path">
+							{policy.policyPath}
+						</span>
+					</div>
+				) : null}
 				<div className="flex items-center gap-1.5">
 					<span className="text-(--f4)">match</span>
 					{!published ? (
@@ -274,6 +310,18 @@ const MatchPanel = ({ frame }: { frame: SequiturFrame }) => {
 							>
 								{policy.match}
 							</span>
+							{policy.exactMatch === false &&
+							policy.similarity !== undefined &&
+							policy.similarity !== null ? (
+								<Badge
+									size="xs"
+									variant="warning"
+									label={`fuzzy ${policy.similarity.toFixed(2)}`}
+									data-testid="fuzzy-match-badge"
+								/>
+							) : (
+								<Badge size="xs" variant="success" label="exact" />
+							)}
 							<span className="text-(--f4)">depth {policy.depth}</span>
 							{policy.action ? (
 								<Badge

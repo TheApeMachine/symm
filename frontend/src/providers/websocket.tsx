@@ -1,260 +1,59 @@
-import { useEffect } from "react";
-import { atoms, signals, updateClock } from "#/collections/app";
-import {
-	ingestCognitionFrame,
-	ingestTrainRegions,
-} from "#/collections/cognition";
-import {
-	ensureLongtailRecorder,
-	ingestLongtailTick,
-} from "#/collections/longtail";
-import { ingestParallelSummary } from "#/collections/parallel";
-import { ingestSequiturFrame } from "#/collections/sequitur";
+import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
+import "#/collections/hub-projections";
+import { ensureLongtailRecorder } from "#/collections/longtail";
+import { syncEngineTelemetry } from "#/lib/engine-telemetry";
 import { hubWsUrl } from "#/lib/hub";
-import { ingestDeskSnapshot } from "#/lib/lifecycle";
-import { syncOpenPositionCount } from "#/lib/open-position-count";
+import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
+import { batch } from "@tanstack/store";
+import { useEffect } from "react";
 
-type KiloProbeMiss = { origin: string; scope: string };
+export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
-type KiloProbeLast = {
-	origin: string;
-	scope: string;
-	prefix: string;
-	idxLen: number;
-	idx0: string | undefined;
-	idx1: string | undefined;
-};
-
-type KiloProbe = {
-	count: number;
-	origins: Record<string, number>;
-	scopes: Record<string, number>;
-	missed: KiloProbeMiss[];
-	stored: number;
-	last: KiloProbeLast | null;
-};
-
-declare global {
-	interface Window {
-		__kilo_probe?: KiloProbe;
-	}
-}
-
-const ensureKiloProbe = (): KiloProbe => {
-	if (!window.__kilo_probe) {
-		window.__kilo_probe = {
-			count: 0,
-			origins: {},
-			scopes: {},
-			missed: [],
-			stored: 0,
-			last: null,
-		};
-	}
-	return window.__kilo_probe;
-};
-
-/*
-advanceMarketTick moves the UI trade counter only on workspace aggregate
-ticks (spot:trade steps). Manifold, resonance, parallel, balance, desk
-hello, and grammar frames also carry tick headers; applying those blindly
-made the counter jump when a batch ended on a side-channel Value or a
-stale replay.
-*/
 const advanceMarketTick = (value: Value) => {
 	if (value.origin !== "workspace" || value.scope !== "aggregate") {
 		return;
 	}
 
-	if (value.tick == null) {
-		return;
-	}
-
-	const tick = Number(value.tick);
-
-	if (!Number.isFinite(tick) || tick <= 0) {
-		return;
-	}
-
-	const prev = atoms.tickCount.get();
-
-	if (tick < prev) {
-		return;
-	}
-
-	atoms.tickCount.set(tick);
+	atoms.tickCount.set(value.tick);
 	updateClock(value.timestamp);
 };
 
-/*
-ingest routes one decoded batch. An origin with an atom (balance, ...) sets
-it; an origin with a signal store takes the frame under its scope. The trade
-counter follows workspace aggregate ticks only (see advanceMarketTick).
-Cognition, sequitur and training-region feeds are folded into their own
-stores here — the same for any origin that carries their layers.
-*/
 export const ingest = (values: Value[]) => {
-	const probe = ensureKiloProbe();
-	probe.count++;
-	for (const value of values) {
-		probe.origins[value.origin] = (probe.origins[value.origin] || 0) + 1;
-		probe.scopes[value.scope] = (probe.scopes[value.scope] || 0) + 1;
-		if (probe.count < 5 || probe.last === null) {
-			probe.last = {
-				origin: value.origin,
-				scope: value.scope,
-				prefix: value.prefix,
-				idxLen: value.index.length,
-				idx0: value.index[0],
-				idx1: value.index[1],
-			};
-		}
-	}
-	for (const value of values) {
-		/*
-		The grammar feed rides origin "sequitur"; the cognition feed rides
-		origin "cognition" with its role. Both own their stores and ride
-		origins the signals record does not bind, so they are ingested
-		before the store lookup that would otherwise drop them as unbound
-		telemetry. One decoder per layer. The wire epoch is a uint64 beyond
-		exact JS numbers: the store keys epochs as strings.
-		*/
-		if (value.origin === "parallel") {
-			for (let i = 0; i < value.index.length; i++) {
-				let payload: unknown;
-				try {
-					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
-				} catch {
-					continue;
-				}
-				ingestParallelSummary(payload);
-			}
-			continue;
-		}
+	batch(() => {
+		for (const value of values) {
+			const atom = valueAtoms[value.origin];
 
-		if (value.origin === "training" && value.role === "longtail") {
-			for (let i = 0; i < value.index.length; i++) {
-				let payload: unknown;
-				try {
-					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
-				} catch {
-					continue;
-				}
-				ingestLongtailTick(payload);
-			}
-			continue;
-		}
-
-		if (value.origin === "sequitur" || value.origin === "cognition") {
-			for (let i = 0; i < value.index.length; i++) {
-				let payload: unknown;
-				try {
-					payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
-				} catch {
-					continue;
-				}
-
-				if (value.origin === "sequitur") {
-					ingestSequiturFrame(payload);
-					continue;
-				}
-
-				if (value.role === "match" && payload && typeof payload === "object") {
-					(payload as Record<string, unknown>).epoch = String(value.epoch);
-				}
-
-				ingestCognitionFrame(value.role, payload);
-			}
-
-			continue;
-		}
-
-		/*
-		Balance is one account frame, not a per-symbol store. The top bar
-		reads cash, equity, and unrealized off atoms.balance.
-		*/
-		if (value.origin === "balance") {
-			atoms.balance.set(value);
-		} else {
-			/*
-			Only origins the dashboard binds to have a store; a frame from any
-			other origin (kraken acks, desk lifecycle) is telemetry the socket
-			delivers and ingest ignores rather than routes into nothing.
-			*/
-			const store = signals[value.origin];
-			if (!store) {
-				probe.missed = probe.missed || [];
-				if (probe.missed.length < 5)
-					probe.missed.push({ origin: value.origin, scope: value.scope });
+			if (atom) {
+				atom.set(value);
 				continue;
 			}
-			probe.stored = (probe.stored || 0) + 1;
+
+			const store = signals[value.origin];
+
+			if (!store) {
+				continue;
+			}
 
 			store.setState((prev) => ({
 				...prev,
 				[value.scope]: value,
 			}));
 
-			if (value.origin === "positions") {
-				syncOpenPositionCount();
-				ingestDeskSnapshot();
-			}
-
-			/*
-			train/regions layers feed the region ring and the token strip at
-			ingest, whatever origin carried them.
-			*/
-			if (value.index.some((index) => index.includes("train/regions"))) {
-				for (let i = 0; i < value.index.length; i++) {
-					if (!value.index[i].includes("train/regions")) continue;
-					let payload: unknown;
-					try {
-						payload = JSON.parse(new TextDecoder().decode(value.layers[i]));
-					} catch {
-						continue;
-					}
-					ingestTrainRegions(Number(value.tick), value.index[i], payload);
-				}
-			}
+			advanceMarketTick(value);
 		}
+	});
 
-		advanceMarketTick(value);
-	}
-};
-
-/*
-The hub multiplexes everything over one socket: each message is one serialized
-*data.Value, routed here by its layer index. Commands go back on the same socket.
-*/
-let wsWorker: Worker | null = null;
-
-export const sendRoute = (route: string) => {
-	wsWorker?.postMessage({ type: "ROUTE", route });
-};
-
-/*
-sendCommand sends one JSON command the hub answers on this socket. With no
-socket the command cannot be sent, which is an error, not a no-op.
-*/
-export const sendCommand = (command: Record<string, unknown>) => {
-	if (wsWorker === null) {
-		throw new Error(
-			`hub socket is not running: ${JSON.stringify(command)} not sent`,
-		);
-	}
-
-	wsWorker.postMessage({ type: "COMMAND", command });
+	/*
+	Projections run when the batch flushes, so the engine readout has to
+	read them after that, once matches and the tick are both current.
+	*/
+	syncEngineTelemetry();
 };
 
 export const WsFeed = () => {
 	useEffect(() => {
-		/*
-		The training recorder samples the desk and the grammar feeds for the
-		whole session, on every surface, so the training performance window
-		keeps filling even when its own page is not open.
-		*/
 		ensureLongtailRecorder();
 
 		const url = `${hubWsUrl()}/ws`;
@@ -299,20 +98,17 @@ export const WsFeed = () => {
 			}
 		});
 
-		worker.postMessage({
-			type: "ROUTE",
-			route: atoms.route.get(),
-		});
+		bindHubWorker(worker);
 
+		sendRoute(atoms.route.get());
 		worker.postMessage({ type: "CONNECT", url });
-		wsWorker = worker;
 
 		const unsubscribeFocus = atoms.focus.subscribe((symbol: string) => {
-			worker.postMessage({ type: "FOCUS", symbol });
+			sendFocus(symbol);
 		});
 
 		const unsubscribeRoute = atoms.route.subscribe((route: string) => {
-			worker.postMessage({ type: "ROUTE", route });
+			sendRoute(route);
 		});
 
 		return () => {
@@ -320,7 +116,7 @@ export const WsFeed = () => {
 			unsubscribeRoute.unsubscribe();
 			worker.postMessage({ type: "DISCONNECT" });
 			worker.terminate();
-			wsWorker = null;
+			bindHubWorker(null);
 		};
 	}, []);
 

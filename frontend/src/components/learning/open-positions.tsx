@@ -2,9 +2,20 @@ import { useSelector } from "@tanstack/react-store";
 import { useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
-import { positionReadout } from "#/components/book-readout";
+import {
+	exploreExitGaugeMarks,
+	pnlGaugeValue,
+	positionReadout,
+} from "#/components/book-readout";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
-import { Flex, formatValue, Gauge, type GaugeTone, Trail } from "#/components/ui";
+import {
+	BadgeButton,
+	Flex,
+	formatValue,
+	Gauge,
+	type GaugeTone,
+	Trail,
+} from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
 
@@ -15,6 +26,8 @@ and the sale return from broker/price.go.
 */
 
 const trails = new Map<string, number[]>();
+const trailAt = new Map<string, number>();
+const TRAIL_SAMPLE_MS = 250;
 
 /* Match default Gauge SVG height so the P&L trail aligns with the dials. */
 const GAUGE_SIZE = 96;
@@ -23,27 +36,54 @@ const GAUGE_SIZE = 96;
 positionRows decodes every lot frame the store holds into its row objects.
 The "positions" layer is a JSON array; each element is one lot row.
 A layer that decodes to a single object (not an array) is also accepted.
+
+A connect snapshot and a later per-lot update both carry the same id. The
+newer tick wins, and a lot that only appears in one of them stays.
 */
 export const positionRows = (
-	state: Record<string, { lookup: (keys: string[]) => unknown[] }>,
+	state: Record<
+		string,
+		{ lookup: (keys: string[]) => unknown[]; tick?: bigint }
+	>,
 ): Record<string, unknown>[] => {
-	const rows: Record<string, unknown>[] = [];
+	const byID = new Map<
+		string,
+		{ row: Record<string, unknown>; tick: bigint }
+	>();
+	const anon: Record<string, unknown>[] = [];
+
+	const take = (row: Record<string, unknown>, tick: bigint) => {
+		const id = typeof row.id === "string" ? row.id : "";
+
+		if (id === "") {
+			anon.push(row);
+			return;
+		}
+
+		const prior = byID.get(id);
+
+		if (!prior || tick >= prior.tick) {
+			byID.set(id, { row, tick });
+		}
+	};
 
 	for (const frame of Object.values(state)) {
+		const tick = frame.tick ?? 0n;
+
 		for (const layer of frame.lookup(["position"])) {
 			if (Array.isArray(layer)) {
 				for (const row of layer) {
 					if (row && typeof row === "object" && !Array.isArray(row)) {
-						rows.push(row as Record<string, unknown>);
+						take(row as Record<string, unknown>, tick);
 					}
 				}
 			} else if (layer && typeof layer === "object") {
-				rows.push(layer as Record<string, unknown>);
+				take(layer as Record<string, unknown>, tick);
 			}
 		}
 	}
 
-	return rows;
+	return [...byID.values().map((held) => held.row), ...anon];
 };
 
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>
@@ -89,14 +129,20 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 
 	if (pnlPct !== undefined) {
-		const prior = trails.get(row.id as string) ?? [];
-		if (prior[prior.length - 1] !== pnlPct) {
-			trails.set(row.id as string, [...prior, pnlPct].slice(-90));
+		const id = String(row.id ?? row.symbol);
+		const prior = trails.get(id) ?? [];
+		const now = Date.now();
+		const last = trailAt.get(id) ?? 0;
+		const changed = prior.length === 0 || prior[prior.length - 1] !== pnlPct;
+		if (changed || now-last >= TRAIL_SAMPLE_MS) {
+			trails.set(id, [...prior, pnlPct].slice(-90));
+			trailAt.set(id, now);
 		}
 	}
 
-	const pnlTrail = trails.get(row.id as string) ?? [];
+	const pnlTrail = trails.get(String(row.id ?? row.symbol)) ?? [];
 	const selling = !positionReadout(row).closed && qty === 0;
+	const pnlMarks = exploreExitGaugeMarks(row);
 
 	return (
 		<div
@@ -130,13 +176,9 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 			<div className="grid grid-cols-[auto_1fr] gap-4 items-start">
 				<div className="flex gap-1">
 					<Gauge
-						value={
-							pnlPct === undefined
-								? undefined
-								: 0.5 + Math.max(-0.5, Math.min(0.5, pnlPct * 5))
-						}
+						value={pnlGaugeValue(pnlPct)}
 						tone={pnlTone}
-						ticks={[0.5]}
+						marks={pnlMarks}
 						label={
 							pnlPct === undefined ? undefined : (
 								<span style={{ color: `var(--${pnlTone})` }}>
@@ -185,9 +227,10 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 				<PositionLotVisual
 					pnlPct={pnlPct}
 					exitRoom={room}
-					entry={entry}
-					mark={mark}
+					entry={entry ?? undefined}
+					mark={mark ?? undefined}
 					exitVwap={vwap ?? undefined}
+					waitingOnBranch={row.path_found === true}
 				/>
 			</div>
 
@@ -196,10 +239,17 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 			the closed round trip lands on the Position Life-Cycle tab for
 			annotation.
 			*/}
-			<button
-				type="button"
+			<BadgeButton
 				data-l="position-exit"
 				disabled={exiting}
+				size="xs"
+				variant="error"
+				className={cn(
+					"self-start mt-0.5",
+					exiting
+						? "cursor-wait opacity-60"
+						: "hover:bg-[color-mix(in_srgb,var(--error)_18%,transparent)]",
+				)}
 				onClick={() => {
 					setExiting(true);
 
@@ -213,15 +263,8 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 						console.error(cause);
 					}
 				}}
-				className={cn(
-					"self-start mt-0.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border transition-colors",
-					exiting
-						? "border-(--line) text-(--f4) cursor-wait"
-						: "border-(--down)/40 text-(--down) hover:bg-(--down)/10 cursor-pointer",
-				)}
-			>
-				{exiting ? "closing" : "exit"}
-			</button>
+				label={exiting ? "closing" : "exit"}
+			/>
 		</div>
 	);
 };

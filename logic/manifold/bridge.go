@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -20,14 +21,12 @@ newest reading once the field has stepped.
 type Bridge struct {
 	*runtime.System
 	solver      *Solver
-	hub         io.Writer
 	lastVersion uint64
 }
 
-func NewBridge(ctx context.Context, solver *Solver, hub io.Writer) *Bridge {
+func NewBridge(ctx context.Context, solver *Solver) *Bridge {
 	bridge := &Bridge{
 		solver: solver,
-		hub:    hub,
 	}
 	bridge.System = runtime.NewSystem(ctx, "manifold", solver)
 	bridge.Transition(runtime.READY)
@@ -73,7 +72,7 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 	tick.Scope = savedScope
 
 	reading := bridge.solver.Reading()
-	if reading == nil || bridge.hub == nil {
+	if reading == nil {
 		return tick
 	}
 
@@ -94,7 +93,7 @@ func (bridge *Bridge) Step(tick *data.Value) *data.Value {
 		return tick
 	}
 
-	io.Copy(bridge.hub, frame)
+	io.Copy(ui.UI, frame)
 	bridge.lastVersion = reading.Version
 	return tick
 }

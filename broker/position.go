@@ -14,40 +14,40 @@ import (
 )
 
 type Position struct {
-	mu          sync.RWMutex
-	price       *Price
-	ID          string                  `json:"id"`
-	EntryPath   string                  `json:"entry_path"`
-	ExitPath    string                  `json:"exit_path"`
-	Symbol      string                  `json:"symbol"`
-	OpenedAt    time.Time               `json:"opened_at"`
-	ClosedAt    *time.Time              `json:"closed_at"`
-	PolicyEpoch uint64                  `json:"policy_epoch,omitempty"`
-	MarkATick   uint64                  `json:"mark_a_tick,omitempty"`
-	EntryTick   uint64                  `json:"entry_tick,omitempty"`
-	ExitTick    uint64                  `json:"exit_tick,omitempty"`
-	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
-	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty         *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"`
-	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark        *decimal.Decimal        `json:"mark,omitempty"`
-	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"`
-	ExitRoom    *decimal.Decimal        `json:"exit_room,omitempty"`
-	// BookReturn is CloseOut net return in percent — the same PnL % virtual
-	// settlement writes to net_return when the lot closes.
-	BookReturn      *decimal.Decimal `json:"book_return,omitempty"`
-	Return          *decimal.Decimal `json:"return,omitempty"`
-	HoldNs          int64            `json:"hold_ns,omitempty"`
-	Virtual         bool             `json:"virtual,omitempty"`
-	Cost            *decimal.Decimal `json:"cost,omitempty"`
-	Proceeds        *decimal.Decimal `json:"proceeds,omitempty"`
-	Profit          *decimal.Decimal `json:"profit,omitempty"`
-	NetReturn       *decimal.Decimal `json:"net_return,omitempty"`
-	OutcomeTriggers []string         `json:"outcome_triggers,omitempty"`
+	mu              sync.RWMutex
+	price           *Price
+	ID              string                  `json:"id"`
+	EntryPath       string                  `json:"entry_path"`
+	ExitPath        string                  `json:"exit_path"`
+	Symbol          string                  `json:"symbol"`
+	OpenedAt        time.Time               `json:"opened_at"`
+	ClosedAt        *time.Time              `json:"closed_at"`
+	PolicyEpoch     uint64                  `json:"policy_epoch,omitempty"`
+	EntryTick       uint64                  `json:"entry_tick,omitempty"`
+	ExitTick        uint64                  `json:"exit_tick,omitempty"`
+	EntryOrders     []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders      []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty             *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice      *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice       *decimal.Decimal        `json:"exit_price,omitempty"` // venue fill or close snapshot; not the live book walk
+	EntryFee        *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark            *decimal.Decimal        `json:"mark,omitempty"`      // headline bid (or ask fallback)
+	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"` // full-size sell through bids while open
+	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
+	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
+	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
+	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"` // first mark after virtual enter
+	HoldNs          int64                   `json:"hold_ns,omitempty"`
+	Virtual         bool                    `json:"virtual,omitempty"`
+	// PathFound is set when enter matched a stored explore or policy prefix,
+	// not on the first virtual step that mints a new explore node.
+	PathFound       bool                    `json:"path_found,omitempty"`
+	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
+	EntryTradeRate  float64                 `json:"entry_trade_rate,omitempty"`
+	HoldTicks       int                     `json:"hold_ticks,omitempty"`
+	peakOpenPnLPct  float64
 }
 
 func NewPosition(
@@ -69,76 +69,48 @@ func NewPosition(
 }
 
 /*
-Update the position with a new mark and refreshes book_return for the UI.
-The position never closes itself.
+Update refreshes the mark and reprices open PnL from the book.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
 	position.Mark = mark
-
-	if rate := position.feeRate(); rate != nil {
-		position.EntryFee = rate
-		position.ExitFee = rate
-	}
-
-	if position.price == nil || position.Qty == nil || position.Qty.Sign() <= 0 ||
-		position.EntryPrice == nil || position.EntryPrice.Sign() <= 0 {
-		return
-	}
-
-	position.ExitRoom = position.price.ExitRoom(position.Symbol, position.Qty)
-
-	cost, proceeds, profit, sale, ok := position.price.CloseOut(
-		position.Symbol, position.Qty, position.EntryPrice, position.EntryFee,
-	)
-	if !ok {
-		position.BookReturn = nil
-		position.ExitVWAP = nil
-		position.Cost = nil
-		position.Proceeds = nil
-		position.Profit = nil
-		return
-	}
-
-	position.Cost = cost
-	position.Proceeds = proceeds
-	position.Profit = profit
-	position.BookReturn = NetReturnPercentDecimal(cost, profit)
-	position.ExitVWAP = sale
+	position.repriceLocked()
 }
 
 /*
-feeRate is the current fee tier as a percent — the fee row's units
-(1.587 reads as 1.587%).
+Enter sizes from the book when qty is unset, records the buy, and for a
+virtual lot emulates the venue fill. After a successful Enter the position
+fields reflect the entry.
 */
-func (position *Position) feeRate() *decimal.Decimal {
-	if position.price == nil {
-		return nil
-	}
-
-	fee := position.price.Fee(position.Symbol)
-
-	if fee == nil || fee.Fee == nil {
-		return nil
-	}
-
-	return fee.Fee
-}
-
-/*
-Enter records a buy of qty and returns the order to submit. A virtual
-position never submits: its fill is emulated from the desk's price at entry,
-so the path discovery ledger carries real entry costs and fees through the
-same Position.Apply path venue fills use.
-*/
-func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
-	if tick == 0 {
-		return nil, errnie.Err(errnie.Validation, "[position.Enter] tape tick is unset", nil)
-	}
-
+func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
 	position.mu.Lock()
+
+	if position.Qty == nil {
+		var why string
+		position.Qty, why = position.price.Allocate(position.Symbol)
+		if position.Qty == nil || position.Qty.Sign() <= 0 {
+			position.mu.Unlock()
+
+			msg := "[position.Enter] cannot size " + position.Symbol
+			if why != "" {
+				msg += ": " + why
+			}
+
+			return nil, errnie.Err(errnie.NotFound, msg, nil)
+		}
+	}
+
+	if position.Qty.Sign() <= 0 {
+		position.mu.Unlock()
+
+		return nil, errnie.Err(
+			errnie.NotFound,
+			"[position.Enter] non-positive quantity for "+position.Symbol,
+			nil,
+		)
+	}
 
 	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
@@ -156,28 +128,17 @@ func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
 
 	position.OpenedAt = time.Now().UTC()
 	position.PolicyEpoch = data.Epoch.Load()
-	position.EntryTick = tick
-	if position.MarkATick == 0 {
-		position.MarkATick = tick
-	}
-
+	position.EntryTick = data.Tick.Load()
+	position.EntryPath = path
 	virtual := position.Virtual
-	order := position.EntryOrders[len(position.EntryOrders)-1]
 
+	order := position.EntryOrders[len(position.EntryOrders)-1]
 	position.mu.Unlock()
 
 	if virtual {
-		cost, err := position.price.EntryCost(position.Symbol, position.Qty)
+		fill, err := position.price.EntryCost(position.Symbol, position.Qty)
 
 		if err != nil {
-			if sizingAbstain(err) {
-				return nil, errnie.Err(
-					errnie.NotFound,
-					"[position.Enter] no fill price for "+position.Symbol,
-					err,
-				)
-			}
-
 			return nil, errnie.Error(errnie.Err(
 				errnie.IO,
 				"[position.Enter] no fill price for "+position.Symbol,
@@ -191,9 +152,9 @@ func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
 			ExecType:    "Fill",
 			LastQty:     position.Qty,
 			CumQty:      position.Qty,
-			LastPrice:   cost.EntryPrice,
-			AvgPrice:    cost.EntryPrice,
-			FeeUsdEquiv: cost.EntryFee,
+			LastPrice:   fill.EntryPrice,
+			AvgPrice:    fill.EntryPrice,
+			FeeUsdEquiv: fill.EntryFee,
 			Timestamp:   time.Now().UTC(),
 		})
 	}
@@ -202,27 +163,31 @@ func (position *Position) Enter(tick uint64) (*spot.OrderRequest, error) {
 }
 
 /*
-Exit records a sell of everything open and returns the order to submit. A
-position that is closed or already has its sell pending returns nil: selling
-it again would sell quantity it no longer holds.
+Exit records the sell and reprices from the bid book. After Exit the
+position carries exit economics (venue fills may still arrive via Apply).
 */
-func (position *Position) Exit(path string, tick uint64) (*spot.OrderRequest, error) {
-	if tick == 0 {
-		return nil, errnie.Err(errnie.Validation, "[position.Exit] tape tick is unset", nil)
-	}
-
+func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
+
+	if len(position.ExitOrders) == 0 {
+		return nil, errnie.Err(
+			errnie.NotFound, "[position.Exit] no exit order for "+position.Symbol, nil,
+		)
+	}
 
 	now := time.Now().UTC()
 	position.ClosedAt = &now
 	position.ExitPath = path
+	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, position.Qty)
+	position.ExitPrice = position.ExitVWAP
 
 	if !position.OpenedAt.IsZero() {
 		position.HoldNs = int64(now.Sub(position.OpenedAt))
 	}
 
-	position.ExitTick = tick
+	position.ExitTick = data.Tick.Load()
+	position.repriceLocked()
 
 	return position.ExitOrders[len(position.ExitOrders)-1], nil
 }
@@ -233,35 +198,6 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 
 	position.Fills = append(position.Fills, &execution)
 
-	fields := map[string]any{
-		"side":      execution.Side,
-		"exec_type": execution.ExecType,
-	}
-
-	if execution.LastQty != nil {
-		fields["volume"] = execution.LastQty.String()
-	}
-
-	if execution.LastPrice != nil {
-		fields["price"] = execution.LastPrice.String()
-	}
-
-	if execution.LastQty != nil && execution.LastPrice != nil {
-		fields["cost"] = execution.LastQty.Mul(execution.LastPrice).String()
-	}
-
-	if execution.FeeUsdEquiv != nil {
-		fields["fee"] = execution.FeeUsdEquiv.String()
-	}
-
-	if execution.AvgPrice != nil {
-		fields["avg_price"] = execution.AvgPrice.String()
-	}
-
-	if !execution.Timestamp.IsZero() {
-		fields["venue_at"] = execution.Timestamp.UTC().Format(time.RFC3339)
-	}
-
 	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
 		return
 	}
@@ -271,16 +207,10 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 	if side == "buy" {
 		if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
 			position.Qty = execution.CumQty
-		}
-
-		if execution.CumQty == nil || execution.CumQty.Sign() <= 0 {
-			if position.Qty == nil {
-				position.Qty = execution.LastQty
-			}
-
-			if position.Qty != nil && position.Qty != execution.LastQty {
-				position.Qty = position.Qty.Add(execution.LastQty)
-			}
+		} else if position.Qty == nil {
+			position.Qty = execution.LastQty
+		} else if position.Qty != execution.LastQty {
+			position.Qty = position.Qty.Add(execution.LastQty)
 		}
 
 		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
@@ -293,28 +223,15 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 			position.Mark = position.EntryPrice
 		}
 
-		if position.EntryFee == nil || position.EntryFee.Sign() == 0 {
-			position.EntryFee = position.feeRate()
-		}
-
-		if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
-			position.ExitFee = position.feeRate()
-		}
-
+		position.repriceLocked()
 		return
 	}
 
 	if side == "sell" {
 		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
 			position.ExitPrice = execution.AvgPrice
-		}
-
-		if (execution.AvgPrice == nil || execution.AvgPrice.Sign() <= 0) && execution.LastPrice != nil {
+		} else if execution.LastPrice != nil && execution.LastPrice.Sign() > 0 {
 			position.ExitPrice = execution.LastPrice
-		}
-
-		if position.ExitFee == nil || position.ExitFee.Sign() == 0 {
-			position.ExitFee = position.feeRate()
 		}
 
 		if position.Qty != nil {
@@ -324,10 +241,117 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 				position.Qty = decimal.NewFromFloat64(0)
 			}
 		}
+
+		position.repriceLocked()
 	}
 
 	if position.ClosedAt != nil && position.ClosedAt.IsZero() {
 		now := time.Now().UTC()
 		position.ClosedAt = &now
 	}
+}
+
+func (position *Position) repriceLocked() {
+	if position.price == nil {
+		return
+	}
+
+	qty := position.Qty
+	if qty == nil || qty.Sign() <= 0 {
+		return
+	}
+
+	fee := position.price.Fee(position.Symbol)
+	symbol := position.Symbol
+	entry := position.EntryPrice
+
+	position.ExitVWAP = position.price.ExitVWAP(symbol, qty)
+	position.ExitRoom = position.price.ExitRoom(symbol, qty)
+	position.PnL = position.price.PnL(symbol, qty, entry, fee)
+	position.PnLPct = position.price.PnLPct(symbol, qty, entry, fee)
+
+	if position.Virtual && position.ClosedAt == nil && position.OpenPnL == nil &&
+		position.PnL != nil {
+		position.OpenPnL = position.PnL
+	}
+}
+
+/*
+ShouldExit is true when a virtual lot should close on book economics:
+in profit, or down by the same quote gap it needed to reach profit at open.
+*/
+func (position *Position) SetEntryTradeRate(rate float64) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if rate > 0 {
+		position.EntryTradeRate = rate
+	}
+}
+
+func (position *Position) TickHold() {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ClosedAt != nil {
+		return
+	}
+
+	position.HoldTicks++
+
+	if position.PnLPct == nil {
+		return
+	}
+
+	pct := position.PnLPct.Float64()
+
+	if pct > position.peakOpenPnLPct {
+		position.peakOpenPnLPct = pct
+	}
+}
+
+func (position *Position) GivebackFromPeak() float64 {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	if position.PnLPct == nil || position.peakOpenPnLPct <= 0 {
+		return 0
+	}
+
+	pct := position.PnLPct.Float64()
+	if pct >= position.peakOpenPnLPct {
+		return 0
+	}
+
+	return (position.peakOpenPnLPct - pct) / position.peakOpenPnLPct
+}
+
+func (position *Position) ShouldExit() (trigger string, ok bool) {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	if position.PnL == nil {
+		return "", false
+	}
+
+	if position.PnL.Sign() > 0 {
+		return "cleared friction", true
+	}
+
+	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
+		stop := position.OpenPnL.Add(position.OpenPnL)
+
+		if position.PnL.Cmp(stop) <= 0 {
+			return "friction dip", true
+		}
+	}
+
+	return "", false
+}
+
+func (position *Position) SetOutcomeTriggers(triggers []string) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	position.OutcomeTriggers = triggers
 }

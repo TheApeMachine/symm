@@ -75,7 +75,6 @@ preventing browser layout invalidation and style recalculation.
 export const setText = (element: HTMLElement, text: string): void => {
 	if (element.textContent !== text) {
 		element.textContent = text;
-		element.innerText = text;
 	}
 };
 
@@ -172,7 +171,7 @@ const extractValue = (val: unknown, componentType?: string): unknown => {
 renderValue writes or paints a value into an element according to its data-component
 attribute (defaulting to text).
 Supports:
-- data-component="text" (default): formats number/string into textContent/innerText
+- data-component="text" (default): formats number/string into textContent
 - data-component="meter": sets Meter bar width
 - data-component="badge": sets Badge label and status
 */

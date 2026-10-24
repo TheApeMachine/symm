@@ -19,8 +19,8 @@ export const chipVariants = cva(
 	{
 		variants: {
 			variant: {
-				outline: "rounded-[3px] border border-(--line) bg-(--raised)",
-				quiet: "rounded-[3px] border border-(--line)",
+				outline: "rounded-[2px] border border-(--line) bg-(--raised)",
+				quiet: "rounded-[2px] border border-(--line)",
 				bare: "",
 			},
 			size: {
