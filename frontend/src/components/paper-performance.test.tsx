@@ -35,6 +35,7 @@ const lot = (over: Partial<DeskPosition>): DeskPosition =>
 		id: over.id ?? over.symbol ?? "lot",
 		symbol: over.symbol ?? "BTC/USD",
 		virtual: over.virtual ?? false,
+		path_found: over.path_found,
 		opened_at: over.opened_at ?? "2026-10-18T08:00:00Z",
 		closed_at: over.closed_at ?? null,
 		qty: over.qty ?? "1",
@@ -61,9 +62,19 @@ describe("PaperPerformance", () => {
 	it("reads win rate and edge from settled virtual closes the session remembers", () => {
 		ingest(
 			lot({
+				id: "explore",
+				symbol: "EXP/USD",
+				virtual: true,
+				path_found: false,
+				closed_at: "2026-10-18T09:00:00Z",
+				pnl: -0.4,
+				pnl_pct: -40,
+			}),
+			lot({
 				id: "done",
 				symbol: "UP/USD",
 				virtual: true,
+				path_found: true,
 				closed_at: "2026-10-18T09:00:00Z",
 				pnl: 0.2,
 				pnl_pct: 20,

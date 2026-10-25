@@ -1,9 +1,8 @@
-import { useSelector } from "@tanstack/react-store";
-import { useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
 	exploreExitGaugeMarks,
+	onBook,
 	pnlGaugeValue,
 	positionReadout,
 } from "#/components/book-readout";
@@ -18,6 +17,8 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
+import { useSelector } from "@tanstack/react-store";
+import { memo, useEffect, useMemo, useState } from "react";
 
 /*
 Open positions are the desk's per-lot frames: one Value per symbol on the
@@ -83,15 +84,24 @@ export const positionRows = (
 		}
 	}
 
-	return [...byID.values().map((held) => held.row), ...anon];
+	return [...Array.from(byID.values(), (held) => held.row), ...anon];
+};
+
+/** Cheap fingerprint so cards re-render when lot marks move, not on unrelated scopes. */
+export const positionsRevision = (
+	state: Record<string, { tick?: bigint }>,
+): string => {
+	const parts: string[] = [];
+	for (const [scope, frame] of Object.entries(state)) {
+		parts.push(`${scope}:${frame.tick ?? 0n}`);
+	}
+	parts.sort();
+	return parts.join("|");
 };
 
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 	rows
-		.filter(
-			(row) =>
-				!positionReadout(row).closed && row.virtual === (book === "virtual"),
-		)
+		.filter((row) => !positionReadout(row).closed && onBook(row, book))
 		.map((row) => row.symbol)
 		.sort();
 
@@ -114,8 +124,9 @@ const heldSeconds = (row: Record<string, unknown>) => {
 	return Math.max(0, (Date.now() - at) / 1000);
 };
 
-const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
+const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 	const [exiting, setExiting] = useState(false);
+	const [pnlTrail, setPnlTrail] = useState<number[]>([]);
 	const readout = positionReadout(row);
 	const entry = readout.entryPrice;
 	const mark = readout.mark;
@@ -128,31 +139,48 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 	const roomTone: GaugeTone =
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 
-	if (pnlPct !== undefined) {
-		const id = String(row.id ?? row.symbol);
-		const prior = trails.get(id) ?? [];
-		const now = Date.now();
-		const last = trailAt.get(id) ?? 0;
-		const changed = prior.length === 0 || prior[prior.length - 1] !== pnlPct;
-		if (changed || now-last >= TRAIL_SAMPLE_MS) {
-			trails.set(id, [...prior, pnlPct].slice(-90));
-			trailAt.set(id, now);
-		}
-	}
+	const lotId = String(row.id ?? row.symbol);
 
-	const pnlTrail = trails.get(String(row.id ?? row.symbol)) ?? [];
+	useEffect(() => {
+		if (pnlPct === undefined) {
+			setPnlTrail([]);
+			return;
+		}
+
+		const sample = () => {
+			const prior = trails.get(lotId) ?? [];
+			const now = Date.now();
+			const last = trailAt.get(lotId) ?? 0;
+			const changed = prior.length === 0 || prior[prior.length - 1] !== pnlPct;
+			if (!changed && now - last < TRAIL_SAMPLE_MS) {
+				setPnlTrail(prior);
+				return;
+			}
+
+			const next = [...prior, pnlPct].slice(-90);
+			trails.set(lotId, next);
+			trailAt.set(lotId, now);
+			setPnlTrail(next);
+		};
+
+		sample();
+		const timer = window.setInterval(sample, TRAIL_SAMPLE_MS);
+		return () => window.clearInterval(timer);
+	}, [lotId, pnlPct]);
 	const selling = !positionReadout(row).closed && qty === 0;
 	const pnlMarks = exploreExitGaugeMarks(row);
 
 	return (
-		<div
+		<Flex.Column
+			gap={2}
+			padding={3}
 			className={cn(
-				"border-r border-b border-(--line) bg-(--surface) p-3 flex flex-col gap-2",
+				"border-r border-b border-(--line) bg-(--surface)",
 				selling && "animate-pulse",
 			)}
 		>
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-2">
+			<Flex.Row align="center" justify="between">
+				<Flex.Row align="center" gap={2}>
 					<span
 						className="w-2.5 h-2.5 rounded-full"
 						style={{
@@ -167,14 +195,14 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 							flat
 						</span>
 					)}
-				</div>
+				</Flex.Row>
 				<span className="text-[10px] text-(--f3)">
 					held {duration(heldSeconds(row))}
 				</span>
-			</div>
+			</Flex.Row>
 
 			<div className="grid grid-cols-[auto_1fr] gap-4 items-start">
-				<div className="flex gap-1">
+				<Flex.Row gap={1}>
 					<Gauge
 						value={pnlGaugeValue(pnlPct)}
 						tone={pnlTone}
@@ -209,8 +237,8 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 						}
 						caption="exit room"
 					/>
-				</div>
-				<div className="flex min-w-0 flex-col gap-0">
+				</Flex.Row>
+				<Flex.Column className="min-w-0">
 					<Trail
 						values={pnlTrail}
 						width={240}
@@ -220,7 +248,7 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 					<span className="-mt-3 text-[10px] text-(--f3) leading-tight">
 						Close-now P&amp;L trail
 					</span>
-				</div>
+				</Flex.Column>
 			</div>
 
 			<div className="border-t border-(--line) pt-3">
@@ -265,19 +293,20 @@ const PositionCard = ({ row }: { row: Record<string, unknown> }) => {
 				}}
 				label={exiting ? "closing" : "exit"}
 			/>
-		</div>
+		</Flex.Column>
 	);
-};
+});
 
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const state = useSelector(signals.positions, (state) => state);
-	const held = positionRows(state)
-		.filter(
-			(row) =>
-				!positionReadout(row).closed && row.virtual === (book === "virtual"),
-		)
-		.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol)));
+	const positionsState = useSelector(signals.positions, (state) => state);
+	const held = useMemo(
+		() =>
+			positionRows(positionsState)
+				.filter((row) => !positionReadout(row).closed && onBook(row, book))
+				.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol))),
+		[book, positionsState],
+	);
 
 	if (held.length === 0) {
 		return (

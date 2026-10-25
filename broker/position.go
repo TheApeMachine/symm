@@ -14,39 +14,39 @@ import (
 )
 
 type Position struct {
-	mu              sync.RWMutex
-	price           *Price
-	ID              string                  `json:"id"`
-	EntryPath       string                  `json:"entry_path"`
-	ExitPath        string                  `json:"exit_path"`
-	Symbol          string                  `json:"symbol"`
-	OpenedAt        time.Time               `json:"opened_at"`
-	ClosedAt        *time.Time              `json:"closed_at"`
-	PolicyEpoch     uint64                  `json:"policy_epoch,omitempty"`
-	EntryTick       uint64                  `json:"entry_tick,omitempty"`
-	ExitTick        uint64                  `json:"exit_tick,omitempty"`
-	EntryOrders     []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders      []*spot.OrderRequest    `json:"exit_orders,omitempty"`
-	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty             *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice      *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice       *decimal.Decimal        `json:"exit_price,omitempty"` // venue fill or close snapshot; not the live book walk
-	EntryFee        *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark            *decimal.Decimal        `json:"mark,omitempty"`      // headline bid (or ask fallback)
-	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"` // full-size sell through bids while open
-	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
-	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
-	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"` // first mark after virtual enter
-	HoldNs          int64                   `json:"hold_ns,omitempty"`
-	Virtual         bool                    `json:"virtual,omitempty"`
+	mu          sync.RWMutex
+	price       *Price
+	ID          string                  `json:"id"`
+	EntryPath   string                  `json:"entry_path"`
+	ExitPath    string                  `json:"exit_path"`
+	Symbol      string                  `json:"symbol"`
+	OpenedAt    time.Time               `json:"opened_at"`
+	ClosedAt    *time.Time              `json:"closed_at"`
+	PolicyEpoch uint64                  `json:"policy_epoch,omitempty"`
+	EntryTick   uint64                  `json:"entry_tick,omitempty"`
+	ExitTick    uint64                  `json:"exit_tick,omitempty"`
+	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty         *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"` // venue fill or close snapshot; not the live book walk
+	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark        *decimal.Decimal        `json:"mark,omitempty"`      // headline bid (or ask fallback)
+	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"` // full-size sell through bids while open
+	ExitRoom    *decimal.Decimal        `json:"exit_room,omitempty"`
+	PnL         *decimal.Decimal        `json:"pnl,omitempty"`
+	PnLPct      *decimal.Decimal        `json:"pnl_pct,omitempty"`
+	OpenPnL     *decimal.Decimal        `json:"open_pnl,omitempty"` // first mark after virtual enter
+	HoldNs      int64                   `json:"hold_ns,omitempty"`
+	Virtual     bool                    `json:"virtual"`
 	// PathFound is set when enter matched a stored explore or policy prefix,
 	// not on the first virtual step that mints a new explore node.
-	PathFound       bool                    `json:"path_found,omitempty"`
-	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
-	EntryTradeRate  float64                 `json:"entry_trade_rate,omitempty"`
-	HoldTicks       int                     `json:"hold_ticks,omitempty"`
+	PathFound       bool     `json:"path_found,omitempty"`
+	OutcomeTriggers []string `json:"outcome_triggers,omitempty"`
+	EntryTradeRate  float64  `json:"entry_trade_rate,omitempty"`
+	HoldTicks       int      `json:"hold_ticks,omitempty"`
 	peakOpenPnLPct  float64
 }
 
@@ -85,6 +85,14 @@ virtual lot emulates the venue fill. After a successful Enter the position
 fields reflect the entry.
 */
 func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
+	if path == "" {
+		return nil, errnie.Err(
+			errnie.NotFound,
+			"[position.Enter] missing path for "+position.Symbol,
+			nil,
+		)
+	}
+
 	position.mu.Lock()
 
 	if position.Qty == nil {
@@ -167,6 +175,14 @@ Exit records the sell and reprices from the bid book. After Exit the
 position carries exit economics (venue fills may still arrive via Apply).
 */
 func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
+	if path == "" {
+		return nil, errnie.Err(
+			errnie.NotFound,
+			"[position.Exit] missing path for "+position.Symbol,
+			nil,
+		)
+	}
+
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -354,4 +370,14 @@ func (position *Position) SetOutcomeTriggers(triggers []string) {
 	defer position.mu.Unlock()
 
 	position.OutcomeTriggers = triggers
+}
+
+func (position *Position) AppendOutcomeTrigger(trigger string) {
+	if position == nil || trigger == "" {
+		return
+	}
+
+	position.mu.Lock()
+	position.OutcomeTriggers = append(position.OutcomeTriggers, trigger)
+	position.mu.Unlock()
 }

@@ -49,6 +49,9 @@ type Learning struct {
 	MaxExcursionBars        int
 	TimeoutLossPenalty      float64
 	EmergencyExitBrightness float64
+	MinSupportedHorizon     int
+	CliffHorizonDrop        int
+	CliffEnergyMult         float64
 	PositionTracePath       string
 	HistoryEvery            time.Duration
 	HistoryCap              int
@@ -69,7 +72,7 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.default_window_size", 15)
 	viper.SetDefault("learning.shannon_capacity", 0.45)
 	viper.SetDefault("learning.max_path_length", 8)
-	viper.SetDefault("learning.min_path_length", 3)
+	viper.SetDefault("learning.min_path_length", 2)
 	viper.SetDefault("learning.freeze_after", 5)
 	viper.SetDefault("learning.confirm_after", 3)
 	viper.SetDefault("learning.demotion_losses", 3)
@@ -89,6 +92,9 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.max_excursion_bars", 8)
 	viper.SetDefault("learning.timeout_loss_penalty", 0.02)
 	viper.SetDefault("learning.emergency_exit_brightness", 0.75)
+	viper.SetDefault("learning.min_supported_horizon", 2)
+	viper.SetDefault("learning.cliff_horizon_drop", 2)
+	viper.SetDefault("learning.cliff_energy_mult", 1.4)
 	viper.SetDefault("learning.position_trace_path", "")
 	viper.SetDefault("learning.history_every", 5*time.Second)
 	viper.SetDefault("learning.history_cap", 20000)
@@ -128,6 +134,9 @@ func NewLearning() *Learning {
 		MaxExcursionBars:        viper.GetInt("learning.max_excursion_bars"),
 		TimeoutLossPenalty:      viper.GetFloat64("learning.timeout_loss_penalty"),
 		EmergencyExitBrightness: viper.GetFloat64("learning.emergency_exit_brightness"),
+		MinSupportedHorizon:     viper.GetInt("learning.min_supported_horizon"),
+		CliffHorizonDrop:        viper.GetInt("learning.cliff_horizon_drop"),
+		CliffEnergyMult:         viper.GetFloat64("learning.cliff_energy_mult"),
 		PositionTracePath:       viper.GetString("learning.position_trace_path"),
 		HistoryEvery:            viper.GetDuration("learning.history_every"),
 		HistoryCap:              viper.GetInt("learning.history_cap"),

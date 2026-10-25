@@ -8,6 +8,7 @@ import {
 	endLongtailHistory,
 	blockedTone,
 	tokenEmitTone,
+	CHART_SAMPLES,
 	ingestLongtailHistory,
 	ingestLongtailTick,
 	type LongtailSample,
@@ -84,6 +85,14 @@ describe("summarizeBook", () => {
 		expect(stats.worstReturn).toBeNull();
 	});
 
+	it("counts a paper lot when the desk omits the virtual flag", () => {
+		const paper = openLot("BTC/USD", false);
+		delete paper.virtual;
+
+		expect(summarizeBook([paper], "paper").open).toBe(1);
+		expect(summarizeBook([paper], "virtual").open).toBe(0);
+	});
+
 	it("ignores closed lots the desk has not priced for edge stats", () => {
 		const rows = [
 			{
@@ -101,17 +110,18 @@ describe("summarizeBook", () => {
 		expect(stats.open).toBe(1);
 	});
 
-	it("counts virtual discovery closes toward win rate and edge", () => {
+	it("keeps virtual discovery closes out of win rate and edge", () => {
 		const rows = [
 			closedLot("BTC/USD", true, 50, 60_000_000_000, false),
 			closedLot("ETH/USD", true, -10, 60_000_000_000, true),
 		];
 
 		const virtual = summarizeBook(rows, "virtual");
-		expect(virtual.closed).toBe(2);
-		expect(virtual.wins).toBe(1);
-		expect(virtual.winRate).toBeCloseTo(0.5);
-		expect(virtual.meanReturn).toBeCloseTo(0.2);
+		expect(virtual.closed).toBe(1);
+		expect(virtual.wins).toBe(0);
+		expect(virtual.winRate).toBeCloseTo(0);
+		expect(virtual.meanReturn).toBeCloseTo(-0.1);
+		expect(virtual.avgHoldNs).toBe(60_000_000_000);
 	});
 
 	it("summarizes settled round trips per book", () => {
@@ -687,7 +697,7 @@ describe("epoch history", () => {
 		expect(longtailStore.state.samples[1]?.training.tokenEmitRate).toBe(0);
 	});
 
-	it("keeps an epoch longer than the old one-hour cap", () => {
+	it("keeps the newest chart window of a long epoch", () => {
 		beginLongtailHistory();
 		const batch = Array.from({ length: 800 }, (_, i) =>
 			epochSample(1_000 + i * 5_000),
@@ -695,9 +705,12 @@ describe("epoch history", () => {
 		ingestLongtailHistory(batch);
 		endLongtailHistory();
 
-		expect(longtailStore.state.samples.length).toBeGreaterThanOrEqual(800);
-		expect(longtailStore.state.samples[0]?.at).toBe(1_000);
-		expect(longtailStore.state.samples[799]?.at).toBe(1_000 + 799 * 5_000);
+		const rows = longtailStore.state.samples;
+		const newest = 1_000 + 799 * 5_000;
+
+		expect(rows).toHaveLength(CHART_SAMPLES);
+		expect(rows.some((row) => row.at === 1_000)).toBe(false);
+		expect(rows.some((row) => row.at === newest)).toBe(true);
 	});
 
 	it("leaves the page alone when the epoch tape is empty", () => {

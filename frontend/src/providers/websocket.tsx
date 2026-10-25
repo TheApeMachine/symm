@@ -1,4 +1,13 @@
 import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
+import {
+	abortDetections,
+	ingestDetectionFrame,
+} from "#/collections/detections";
+import {
+	abortHindsight,
+	hubFrameFromValue,
+	ingestHindsightFrame,
+} from "#/collections/hindsight";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
 import { syncEngineTelemetry } from "#/lib/engine-telemetry";
@@ -6,8 +15,10 @@ import { hubWsUrl } from "#/lib/hub";
 import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
 import { parseValues } from "#/types/decoder";
 import type { Value } from "#/types/value";
-import { batch } from "@tanstack/store";
+import { batch, type Store } from "@tanstack/store";
 import { useEffect } from "react";
+
+type SignalStore = Store<Record<string, Value>>;
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
@@ -16,13 +27,48 @@ const advanceMarketTick = (value: Value) => {
 		return;
 	}
 
-	atoms.tickCount.set(value.tick);
+	const tick =
+		typeof value.tick === "bigint" ? Number(value.tick) : value.tick;
+	atoms.tickCount.set(tick);
 	updateClock(value.timestamp);
 };
 
+const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
+	for (const [store, scopes] of pending) {
+		store.setState((prev) => {
+			let next: Record<string, Value> | null = null;
+
+			for (const [scope, frame] of scopes) {
+				if (prev[scope] === frame) {
+					continue;
+				}
+
+				if (next === null) {
+					next = { ...prev };
+				}
+				next[scope] = frame;
+			}
+
+			return next ?? prev;
+		});
+	}
+};
+
 export const ingest = (values: Value[]) => {
+	const pending = new Map<SignalStore, Map<string, Value>>();
+
 	batch(() => {
 		for (const value of values) {
+			if (value.origin === "detections") {
+				ingestDetectionFrame(hubFrameFromValue(value));
+				continue;
+			}
+
+			if (value.origin === "hindsight") {
+				ingestHindsightFrame(hubFrameFromValue(value));
+				continue;
+			}
+
 			const atom = valueAtoms[value.origin];
 
 			if (atom) {
@@ -36,13 +82,17 @@ export const ingest = (values: Value[]) => {
 				continue;
 			}
 
-			store.setState((prev) => ({
-				...prev,
-				[value.scope]: value,
-			}));
+			let scopes = pending.get(store);
+			if (!scopes) {
+				scopes = new Map();
+				pending.set(store, scopes);
+			}
+			scopes.set(value.scope, value);
 
 			advanceMarketTick(value);
 		}
+
+		patchSignalStores(pending);
 	});
 
 	/*
@@ -79,6 +129,8 @@ export const WsFeed = () => {
 			if (data.type === "STATUS") {
 				if (data.status === "OFFLINE") {
 					atoms.online.set("OFFLINE");
+					abortDetections("hub socket closed");
+					abortHindsight("hub socket closed");
 				}
 
 				if (data.status === "ONLINE") {

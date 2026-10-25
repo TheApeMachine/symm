@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { type CSSProperties, useMemo, useRef } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef } from "react";
 import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
@@ -195,12 +195,15 @@ const useArtifact = (): ResonanceData | undefined => {
 	its resonance layers fold into the chart's history. The focused
 	resonance reading (its own frame) rides the resonance store.
 	*/
-	const frame = useSelector(signals.workspace, (state) => state.aggregate);
+	const tick = useSelector(
+		signals.workspace,
+		(state) => state.aggregate?.tick ?? 0n,
+	);
 	const reading = useSelector(signals.resonance, (state) => state[symbol]);
 
-	useMemo(() => {
-		foldResonance(symbol, frame);
-	}, [symbol, frame]);
+	useEffect(() => {
+		foldResonance(symbol, signals.workspace.state.aggregate);
+	}, [symbol, tick]);
 
 	const held = useRef<{
 		symbol: string | undefined;

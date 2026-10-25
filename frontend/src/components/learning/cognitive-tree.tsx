@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
 import { sendCommand } from "#/providers/websocket";
 import { ModelProblem } from "./model-problem";
@@ -33,6 +33,7 @@ export const progressOf = (match: CognitionMatch): SymbolProgress => {
 export const CognitiveTree = () => {
 	const epoch = useSelector(cognitionStore, (state) => state.epoch);
 	const policyKeys = useSelector(cognitionStore, (state) => state.policyKeys);
+	const thresholds = useSelector(cognitionStore, (state) => state.thresholds);
 	const matches = useSelector(cognitionStore, (state) => state.matches);
 	const trading = useSelector(
 		cognitionStore,
@@ -54,6 +55,14 @@ export const CognitiveTree = () => {
 		}
 	}, []);
 
+	const symbols = useMemo(() => {
+		const next: Record<string, SymbolProgress> = {};
+		for (const [symbol, match] of Object.entries(matches)) {
+			next[symbol] = progressOf(match);
+		}
+		return next;
+	}, [matches]);
+
 	if (policyKeys.length === 0) {
 		return (
 			<div className="flex-1 flex flex-col min-h-0">
@@ -73,12 +82,6 @@ export const CognitiveTree = () => {
 		);
 	}
 
-	const symbols: Record<string, SymbolProgress> = {};
-
-	for (const [symbol, match] of Object.entries(matches)) {
-		symbols[symbol] = progressOf(match);
-	}
-
 	return (
 		<div className="flex-1 flex flex-col min-h-0">
 			<div
@@ -96,7 +99,12 @@ export const CognitiveTree = () => {
 							: `ungated · trained on ${gate.tickEpoch}`}
 				</span>
 			</div>
-			<RadixTreeViz keys={policyKeys} symbols={symbols} feasible={[]} />
+			<RadixTreeViz
+				keys={policyKeys}
+				thresholds={thresholds}
+				symbols={symbols}
+				feasible={[]}
+			/>
 		</div>
 	);
 };

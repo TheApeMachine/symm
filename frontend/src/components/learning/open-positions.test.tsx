@@ -93,6 +93,14 @@ describe("OpenPositions", () => {
 		expect(pnlGauge?.innerHTML).toContain("Stop exit");
 	});
 
+	it("shows a paper lot when the desk omits the virtual flag", () => {
+		const row = lot({ symbol: "ZEUS/USD" });
+		delete row.virtual;
+		ingest(row);
+		const view = render(<OpenPositions />);
+		expect(view.getByText("ZEUS/USD")).toBeTruthy();
+	});
+
 	it("keeps a virtual lot off the paper book", () => {
 		ingest(
 			lot({ symbol: "BTC/USD" }),

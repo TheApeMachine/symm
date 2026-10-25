@@ -2,15 +2,14 @@ package strategy
 
 import (
 	"context"
-	"strings"
+	"io"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Training struct {
@@ -19,35 +18,34 @@ type Training struct {
 	price     *broker.Price
 	desk      *broker.Desk
 	client    *store.Client
-	grid      *nmstore.Grid
+	stage     *Stage
 	telemetry *Telemetry
+}
+
+func (training *Training) Model() *Model {
+	if training == nil {
+		return nil
+	}
+	return training.model
 }
 
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
+	stage *Stage,
 ) *Training {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, client),
+		model:     NewModel(ctx, desk, client, stage),
 		price:     price,
 		desk:      desk,
 		client:    client,
-		grid:      nmstore.NewGrid(ctx),
+		stage:     stage,
 		telemetry: NewTelemetry(ctx),
 	}
-}
-
-func appendGridRegions(out *data.Value, lit []*nmstore.Region) {
-	if out == nil || len(lit) == 0 {
-		return
-	}
-
-	out.Append(lit, "grid", "regions")
-	out.Append(lit, "train", "regions")
 }
 
 func (training *Training) Step(value *data.Value) *data.Value {
@@ -55,85 +53,34 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	bySymbol := training.bySymbol(value)
+	symbols := SymbolsOnTick(value)
 
-	if len(bySymbol) == 0 {
+	if len(symbols) == 0 {
 		training.telemetry.EndTick(training.model, training.desk)
 		return value
 	}
 
-	// Grid priors and model path/desk are per-tick shared state: one symbol
-	// at a time (strategy ring handler goroutine, same as Path).
-	for symbol, sources := range bySymbol {
+	for _, symbol := range symbols {
 		out := data.NewValue(
 			"training", "step", symbol,
 		)
+		out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
 
-		observed, err := training.grid.Observe(
-			symbol, sources, training.desk.Has(symbol, true),
+		training.model.Decide(out, value)
+		training.telemetry.CompleteSymbolStep(
+			out,
+			training.stage.Sequencer(symbol),
+			training.model,
 		)
-
-		if err != nil {
-			training.Error(err)
-			continue
-		}
-
-		training.model.Evaluate(out, observed)
-		training.telemetry.NoteStep(out)
 		training.telemetry.NoteWalk(symbol, out)
 	}
 
 	training.telemetry.PublishWalks()
 	training.telemetry.EndTick(training.model, training.desk)
+
+	if ui.UI != nil && ui.UI.Active() {
+		io.Copy(ui.UI, value)
+	}
+
 	return value
-}
-
-func (training *Training) bySymbol(value *data.Value) map[string]map[string]map[string]float64 {
-	if value == nil {
-		return nil
-	}
-
-	out := make(map[string]map[string]map[string]float64)
-
-	for _, source := range types.SignalSourceStrings {
-		for _, layer := range value.LookupPrefix(source) {
-			parts := strings.Split(layer.Key, "/")
-
-			if len(parts) < 4 {
-				continue
-			}
-
-			symbol := parts[1] + "/" + parts[2]
-
-			var values []float64
-
-			if err := layer.Decode(&values); err != nil {
-				continue
-			}
-
-			bySource := out[symbol]
-
-			if bySource == nil {
-				bySource = make(map[string]map[string]float64)
-				out[symbol] = bySource
-			}
-
-			labels := bySource[source]
-
-			if labels == nil {
-				labels = make(map[string]float64)
-				bySource[source] = labels
-			}
-
-			for i, label := range parts[3:] {
-				if i >= len(values) {
-					break
-				}
-
-				labels[label] = values[i]
-			}
-		}
-	}
-
-	return out
 }

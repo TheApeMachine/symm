@@ -43,6 +43,14 @@ func NewSequencer() *Sequencer {
 	}
 }
 
+// Reset clears the last letter after a lot closes, so the next entry can spell it again.
+func (sequencer *Sequencer) Reset() {
+	if sequencer == nil {
+		return
+	}
+	sequencer.lastEmitted = ""
+}
+
 var (
 	flatRegime  = []uint8{6, 7, 8}
 	flatPosture = []uint8{0, 1, 2}

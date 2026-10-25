@@ -16,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -32,6 +33,35 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
+
+type hubDeskExiter struct {
+	desk   *broker.Desk
+	record func(*broker.Position)
+	path   func(string, *broker.Position) string
+}
+
+func (exiter hubDeskExiter) Exit(symbol string, virtual bool) error {
+	position := exiter.desk.Position(symbol, virtual)
+	path := ""
+	if position != nil {
+		if exiter.path != nil {
+			path = exiter.path(symbol, position)
+		}
+		if path == "" {
+			path = position.EntryPath
+		}
+	}
+
+	if err := exiter.desk.Exit(symbol, path, virtual); err != nil {
+		return err
+	}
+
+	if virtual && exiter.record != nil && position != nil {
+		exiter.record(position)
+	}
+
+	return nil
+}
 
 /*
 Booter encapsulates the bootstrapping, component assembly, and supervision
@@ -201,6 +231,7 @@ func (booter *Booter) initMarket() error {
 	)
 
 	ui.UI.RegisterCallback(booter.desk.Hello)
+	ui.UI.Exiter(hubDeskExiter{desk: booter.desk})
 	booter.startPrivateIngress()
 
 	return nil
@@ -232,13 +263,33 @@ func (booter *Booter) initPipeline() error {
 		}
 	}
 
+	stage := strategy.NewStage(ctx, booter.desk)
+	stage.Transition(nmruntime.READY)
+
+	pace := 0.05
+	if system.Cfg.Resonance != nil && system.Cfg.Resonance.LearningRate > 0 {
+		pace = system.Cfg.Resonance.LearningRate
+	}
+
+	solver := resonance.NewSolver(ctx, pace, booter.book)
+
+	if solver == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"booter: resonance solver failed construction",
+			nil,
+		)
+	}
+
+	trainingNodes := []nmruntime.Node{stage, solver}
+
 	strategyNodes := make([]nmruntime.Node, 0, 1)
 
 	// The collector writes the tape. It shares the paper account with the
 	// dashboard, so it must not place orders of its own.
 	if system.Cfg.Market.Model == "paper" {
 		booter.training = strategy.NewTraining(
-			ctx, booter.price, booter.desk,
+			ctx, booter.price, booter.desk, stage,
 		)
 
 		if err := booter.training.Error(); err != nil {
@@ -248,8 +299,13 @@ func (booter *Booter) initPipeline() error {
 		booter.training.Transition(nmruntime.READY)
 		strategyNodes = append(strategyNodes, booter.training)
 
-		ui.UI.RegisterCallback(func() {
-			ui.UI.ListPrefix("model/explore")
+		model := booter.training.Model()
+		ui.UI.Exiter(hubDeskExiter{
+			desk: booter.desk,
+			path: model.DeskExitPath,
+			record: func(position *broker.Position) {
+				model.RecordExploreClose(position)
+			},
 		})
 	}
 
@@ -258,6 +314,7 @@ func (booter *Booter) initPipeline() error {
 		"workspace",
 		[]nmruntime.Ring{
 			{Group: "signal", Nodes: booter.signals},
+			{Group: "training", Nodes: trainingNodes},
 			{Group: "strategy", Nodes: strategyNodes},
 		},
 	)

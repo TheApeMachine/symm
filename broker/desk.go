@@ -536,7 +536,7 @@ func (desk *Desk) Enter(
 		))
 	}
 
-	if err := desk.Send(order, virtual); err != nil {
+	if err := desk.Send(order, position.Symbol, virtual); err != nil {
 		cache.Drop(position.Symbol)
 		if virtual {
 			types.SetVirtualOpen(symbol, false)
@@ -632,7 +632,7 @@ func (desk *Desk) Exit(
 		))
 	}
 
-	if err := desk.Send(order, virtual); err != nil {
+	if err := desk.Send(order, position.Symbol, virtual); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Exit] failed to send order",
@@ -656,12 +656,27 @@ func (desk *Desk) Drop(symbol string) {
 /*
 send an order to the exchange.
 */
-func (desk *Desk) Send(order *spot.OrderRequest, virtual bool) error {
+func (desk *Desk) Send(order *spot.OrderRequest, symbol string, virtual bool) error {
 	if virtual {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(order)
+	if order == nil || symbol == "" {
+		return errnie.Err(
+			errnie.NotFound,
+			"[desk.Send] paper order is missing its symbol",
+			nil,
+		)
+	}
+
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+		Pair:    symbol,
+		Type:    order.Type,
+		OrdType: order.OrderType,
+		Volume:  order.Volume,
+		Price:   order.Price,
+		ClOrdId: order.ClOrdId,
+	}))
 
 	if err != nil {
 		return errnie.Err(

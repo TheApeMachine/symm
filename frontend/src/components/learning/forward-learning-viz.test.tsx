@@ -173,7 +173,8 @@ const historical = async (fixture: Fixture) => {
 		cTick: "9",
 	});
 	expect(sendCommand).toHaveBeenCalledWith({
-		type: "detections",
+		type: "s3",
+		prefix: `detections/${fixture.class}/${fixture.symbol}/`,
 		run,
 		symbol: fixture.symbol,
 		class: fixture.class,

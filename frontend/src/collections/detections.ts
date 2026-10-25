@@ -10,9 +10,9 @@ import { gobLayer } from "#/providers/gob-layer";
 Detections are what detect stored, streamed for the Historical runs tab
 (data/schema.go, DetectionsOrigin) on the hub socket:
 
-	{"type":"detections"}                       the epochs detect labelled
-	{"type":"detections","run":"<epoch>"}       that epoch's excursions
-	{"type":"detections","run":..,"symbol":..,"class":..,"at":"<c tick>"}
+	{"type":"s3","prefix":"detections/"}        the epochs detect labelled
+	{"type":"s3","prefix":"detections/","run":..}  that epoch's excursions
+	{"type":"s3","prefix":"detections/<class>/<symbol>/","run":..,"symbol":..,"class":..,"at":"<c tick>"}
 	                                            that excursion's trades A..D
 
 Each stream closes on a done or an error frame; a new request of a slot
@@ -97,7 +97,7 @@ export const beginDetectionRuns = () => {
 	flush();
 	symbolsSeen.clear();
 	detectionsStore.setState((state) => ({ ...state, runs: open() }));
-	return { type: "detections" };
+	return { type: "s3", prefix: "detections/" };
 };
 
 export const beginDetections = (run: string) => {
@@ -107,7 +107,7 @@ export const beginDetections = (run: string) => {
 		excursions: { ...open<Detection>(), run },
 		tape: null,
 	}));
-	return { type: "detections", run };
+	return { type: "s3", prefix: "detections/", run };
 };
 
 export const beginDetectionTape = (
@@ -121,7 +121,14 @@ export const beginDetectionTape = (
 		...state,
 		tape: { ...open<DetectionTrade>(), run, symbol, class: cls, cTick },
 	}));
-	return { type: "detections", run, symbol, class: cls, at: cTick };
+	return {
+		type: "s3",
+		prefix: `detections/${cls}/${symbol}/`,
+		run,
+		symbol,
+		class: cls,
+		at: cTick,
+	};
 };
 
 /*

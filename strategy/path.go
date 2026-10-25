@@ -111,11 +111,7 @@ func (path *Path) PolicyLive(symbol string, enter bool) string {
 		return path.bySymbol[symbol].String()
 	}
 
-	if live := path.triggerBySymbol[symbol].String(); live != "" {
-		return live
-	}
-
-	return path.bySymbol[symbol].String()
+	return path.triggerBySymbol[symbol].String()
 }
 
 func (path *Path) Len(symbol string) int {

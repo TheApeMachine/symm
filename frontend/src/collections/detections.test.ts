@@ -62,7 +62,10 @@ afterEach(() => {
 
 describe("detections", () => {
 	it("streams the runs, an epoch's excursions and an excursion's trades into their slots", () => {
-		expect(beginDetectionRuns()).toEqual({ type: "detections" });
+		expect(beginDetectionRuns()).toEqual({
+			type: "s3",
+			prefix: "detections/",
+		});
 		ingestDetectionFrame(
 			frame("detection_run", "", [
 				keyed(
@@ -79,7 +82,8 @@ describe("detections", () => {
 		});
 
 		expect(beginDetections(RUN.toString())).toEqual({
-			type: "detections",
+			type: "s3",
+			prefix: "detections/",
 			run: RUN.toString(),
 		});
 		const fields = EXCURSION_KEYS.map((_, idx) => idx);
@@ -102,7 +106,8 @@ describe("detections", () => {
 		});
 
 		expect(beginDetectionTape(RUN.toString(), "BTC/USD", "up", "9")).toEqual({
-			type: "detections",
+			type: "s3",
+			prefix: "detections/up/BTC/USD/",
 			run: RUN.toString(),
 			symbol: "BTC/USD",
 			class: "up",

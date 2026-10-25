@@ -280,8 +280,11 @@ export const positionReadout = (
 	};
 };
 
+/*
+A paper lot leaves virtual off the wire. Only an explicit true is a virtual lot.
+*/
 export const onBook = (row: Record<string, unknown>, book: Book) =>
-	row.virtual === (book === "virtual");
+	(row.virtual === true) === (book === "virtual");
 
 export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && !positionReadout(row).closed);
@@ -289,7 +292,7 @@ export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
 export const closedOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && positionReadout(row).closed);
 
-const countsTowardBookPerformance = (
+export const countsTowardBookPerformance = (
 	row: Record<string, unknown>,
 	book: Book,
 ): boolean => book !== "virtual" || row.path_found === true;

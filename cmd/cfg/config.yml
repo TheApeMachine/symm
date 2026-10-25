@@ -133,7 +133,7 @@ resonance:
   # length to configure; the z-score accumulates only once warm. gate: false
   # appends every proposed chord. Every policy records these settings; run
   # refuses a policy epoch trained under different ones. No defaults in code.
-  gate: false # experimental: off by default
+  gate: true
   surprise_z: 1.0
   # The resonance solver's pace: each coder's resting learning rate, and the
   # slow rate of its warm-up error average. At most 0.15 (the coders' fastest).
@@ -344,6 +344,13 @@ learning:
   max_excursion_bars: 8
   timeout_loss_penalty: 0.02
   emergency_exit_brightness: 0.75
+  min_supported_horizon: 2
+  cliff_horizon_drop: 2
+  cliff_energy_mult: 1.4
+  require_friction_gate: true
+  require_ignition_regime: true
+  ignition_min_brightness: 0.25
+  friction_min_brightness: 0.25
   # Append-only JSONL: virtual/venue open, review, close, emergency (empty = off).
   position_trace_path: logs/position_trace.jsonl
 

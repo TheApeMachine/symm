@@ -47,3 +47,44 @@ func TestPathExitTriggerPrefix(t *testing.T) {
 		t.Fatalf("policy live hold = %q", got)
 	}
 }
+
+func TestExitStartsFromTheRoot(t *testing.T) {
+	path := NewPath()
+	symbol := "BTC/USD"
+
+	path.Append(symbol, tokenizer.NewToken([]string{"R06.R00"}, 1, 0))
+	path.Append(symbol, tokenizer.NewToken([]string{"R07.R01"}, 1, 0))
+	entry := path.Live(symbol)
+	path.Reset(symbol)
+	path.AppendTrigger(symbol, tokenizer.NewToken([]string{"R08.R03"}, 1, 0))
+
+	if entry != "R06.R00/R07.R01" {
+		t.Fatalf("entry = %q", entry)
+	}
+	if got := path.TriggerLive(symbol); got != "R08.R03" {
+		t.Fatalf("exit = %q, want a new root", got)
+	}
+}
+
+func TestHoldingPathDoesNotReuseEntry(t *testing.T) {
+	path := NewPath()
+	symbol := "BTC/USD"
+
+	path.Append(symbol, tokenizer.NewToken([]string{"R06.R00"}, 1, 0))
+	path.Append(symbol, tokenizer.NewToken([]string{"R07.R01"}, 1, 0))
+
+	if got := path.PolicyLive(symbol, false); got != "" {
+		t.Fatalf("holding with no exit sentence = %q", got)
+	}
+
+	path.Reset(symbol)
+	path.AppendTrigger(symbol, tokenizer.NewToken([]string{"R07.R03"}, 1, 0))
+	path.AppendTrigger(symbol, tokenizer.NewToken([]string{"R08.R04"}, 1, 0))
+
+	if got := path.PolicyLive(symbol, false); got != "R07.R03/R08.R04" {
+		t.Fatalf("exit sentence = %q", got)
+	}
+	if got := path.Live(symbol); got != "" {
+		t.Fatalf("entry sentence survived reset = %q", got)
+	}
+}

@@ -1,5 +1,7 @@
 import { createStore } from "@tanstack/store";
 import { trySendCommand } from "#/lib/hub-socket";
+import { tryDecodeJsonBytes } from "#/lib/json-bytes";
+import { parseOneValue } from "#/types/decoder";
 import type { Value } from "#/types/value";
 
 /*
@@ -112,6 +114,8 @@ export type CognitionMatch = {
 export type CognitionState = {
 	epoch: string;
 	policyKeys: string[];
+	/** Threshold per explore key. Absent until a settled lot has written one. */
+	thresholds: Record<string, number>;
 	matches: Record<string, CognitionMatch>;
 	problem: CognitionProblem | null;
 	tree: CognitionTreeFrame | null;
@@ -120,6 +124,7 @@ export type CognitionState = {
 export const cognitionStore = createStore<CognitionState>({
 	epoch: "0",
 	policyKeys: [],
+	thresholds: {},
 	matches: {},
 	problem: null,
 	tree: null,
@@ -420,6 +425,122 @@ const isMatch = (value: unknown): value is CognitionMatch => {
 	);
 };
 
+const layerText = (raw: unknown): string | null => {
+	if (typeof raw === "string") {
+		try {
+			const decoded = atob(raw);
+			if (decoded !== "") return decoded;
+		} catch {
+			// The layer is already text.
+		}
+		return raw;
+	}
+
+	if (
+		Array.isArray(raw) &&
+		raw.every((item) => typeof item === "number" && item >= 0 && item <= 255)
+	) {
+		return new TextDecoder().decode(new Uint8Array(raw));
+	}
+
+	return null;
+};
+
+const layerNumber = (raw: unknown): number | null => {
+	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+
+	const text = layerText(raw);
+	if (text == null) return null;
+
+	try {
+		const parsed = JSON.parse(text);
+		return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+};
+
+/*
+thresholdFromStored reads the path book off a stored explore value.
+The desk starts the sum at 0.50 and each settled lot appends its step.
+A value with no threshold layer has not been scored.
+*/
+export const thresholdFromStored = (payload: unknown): number | null => {
+	if (!payload || typeof payload !== "object") return null;
+
+	const body = payload as {
+		Index?: unknown;
+		Layers?: unknown;
+		index?: unknown;
+		layers?: unknown;
+	};
+	const names = Array.isArray(body.Index) ? body.Index : body.index;
+	const layers = Array.isArray(body.Layers) ? body.Layers : body.layers;
+	if (!Array.isArray(names) || !Array.isArray(layers)) return null;
+
+	let sum = 0.5;
+	let found = false;
+
+	for (let i = 0; i < names.length; i++) {
+		const name = names[i];
+		if (typeof name !== "string" || !name.includes("threshold")) continue;
+
+		const step = layerNumber(layers[i]);
+		if (step === null) continue;
+
+		sum += step;
+		found = true;
+	}
+
+	return found ? sum : null;
+};
+
+/*
+thresholdFromExploreBytes reads a path book off one S3 list layer: either a
+JSON-marshaled explore value (hub ListPrefix) or a nested wire Value blob.
+*/
+export const thresholdFromExploreBytes = (
+	bytes: Uint8Array,
+): number | null => {
+	const json = tryDecodeJsonBytes(bytes);
+	const fromJSON = thresholdFromStored(json);
+	if (fromJSON !== null) return fromJSON;
+
+	const nested = parseOneValue(bytes);
+	if (!nested) return null;
+
+	let sum = 0.5;
+	let found = false;
+
+	for (let i = 0; i < nested.index.length; i++) {
+		if (!nested.index[i].includes("threshold")) continue;
+
+		const step = layerNumber(tryDecodeJsonBytes(nested.layers[i]));
+		if (step === null) continue;
+
+		sum += step;
+		found = true;
+	}
+
+	return found ? sum : null;
+};
+
+const sameStringList = (left: string[], right: string[]): boolean =>
+	left.length === right.length && left.every((key, index) => key === right[index]);
+
+const sameThresholds = (
+	left: Record<string, number>,
+	right: Record<string, number>,
+): boolean => {
+	const leftKeys = Object.keys(left);
+	const rightKeys = Object.keys(right);
+	if (leftKeys.length !== rightKeys.length) return false;
+	for (const key of leftKeys) {
+		if (left[key] !== right[key]) return false;
+	}
+	return true;
+};
+
 /*
 ingestS3Prefix applies a hub ListPrefix frame. Scope is the listed prefix;
 each layer is the stored object (a data.Value on S3). Keys and fields come
@@ -439,14 +560,36 @@ export const ingestS3Prefix = (value: Value) => {
 		.filter((key): key is string => key != null)
 		.sort();
 
-	cognitionStore.setState((state) => ({
-		...state,
-		epoch:
-			value.epoch != null && value.epoch !== 0n
-				? String(value.epoch)
-				: state.epoch,
-		policyKeys,
-	}));
+	const thresholds: Record<string, number> = {};
+	for (let i = 0; i < value.index.length; i++) {
+		const key = s3KeyFromIndex(value.prefix, value.index[i]);
+		if (key === null || !key.startsWith("model/explore/")) continue;
+
+		const threshold = thresholdFromExploreBytes(value.layers[i]);
+		if (threshold === null) continue;
+		thresholds[key] = threshold;
+	}
+
+	const epoch =
+		value.epoch != null && value.epoch !== 0n ? String(value.epoch) : null;
+
+	cognitionStore.setState((state) => {
+		const nextEpoch = epoch ?? state.epoch;
+		if (
+			nextEpoch === state.epoch &&
+			sameStringList(state.policyKeys, policyKeys) &&
+			sameThresholds(state.thresholds, thresholds)
+		) {
+			return state;
+		}
+
+		return {
+			...state,
+			epoch: nextEpoch,
+			policyKeys,
+			thresholds,
+		};
+	});
 	return true;
 };
 
@@ -544,6 +687,7 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 		cognitionStore.setState(() => ({
 			epoch: tree.epoch,
 			policyKeys: [...tree.keys],
+			thresholds: {},
 			matches: {},
 			problem: tree.problem ?? null,
 			tree: { ...tree, gate: tree.gate ?? null, problem: tree.problem ?? null },

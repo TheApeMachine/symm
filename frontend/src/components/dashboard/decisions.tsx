@@ -1,4 +1,7 @@
-import { cognitionStore } from "#/collections/cognition";
+import {
+	type CognitionMatch,
+	cognitionStore,
+} from "#/collections/cognition";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -8,6 +11,7 @@ import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { formatBlockedReason } from "#/lib/trigger-labels";
 import { useSelector } from "@tanstack/react-store";
+import { useMemo } from "react";
 
 type DecisionRow = {
 	id: string;
@@ -68,35 +72,40 @@ const decisionReason = (match: {
 	return "strategy telemetry";
 };
 
+const decisionsFromMatches = (
+	matches: Record<string, CognitionMatch>,
+): DecisionRow[] => {
+	const merged = new Map<string, DecisionRow>();
+
+	for (const match of Object.values(matches)) {
+		if (!match.symbol) continue;
+
+		const action =
+			match.action || (match.stored ? "stored" : match.match ? "match" : "");
+		if (!action && !match.blockedReason) continue;
+
+		const tokenCount = match.tokens?.length ?? 0;
+		merged.set(match.symbol, {
+			id: `${match.symbol}-${match.tick}`,
+			symbol: match.symbol,
+			action: action || "blocked",
+			confidence: decisionConfidence(
+				match.depth,
+				tokenCount,
+				match.similarity,
+			),
+			reason: decisionReason(match),
+		});
+	}
+
+	return [...merged.values()].sort((left, right) =>
+		left.symbol.localeCompare(right.symbol),
+	);
+};
+
 export const Decisions = () => {
-	const decisions = useSelector(cognitionStore, (state) => {
-		const merged = new Map<string, DecisionRow>();
-
-		for (const match of Object.values(state.matches)) {
-			if (!match.symbol) continue;
-
-			const action =
-				match.action || (match.stored ? "stored" : match.match ? "match" : "");
-			if (!action && !match.blockedReason) continue;
-
-			const tokenCount = match.tokens?.length ?? 0;
-			merged.set(match.symbol, {
-				id: `${match.symbol}-${match.tick}`,
-				symbol: match.symbol,
-				action: action || "blocked",
-				confidence: decisionConfidence(
-					match.depth,
-					tokenCount,
-					match.similarity,
-				),
-				reason: decisionReason(match),
-			});
-		}
-
-		return [...merged.values()].sort((left, right) =>
-			left.symbol.localeCompare(right.symbol),
-		);
-	});
+	const matches = useSelector(cognitionStore, (state) => state.matches);
+	const decisions = useMemo(() => decisionsFromMatches(matches), [matches]);
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);

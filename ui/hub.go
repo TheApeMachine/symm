@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +43,18 @@ type Hub struct {
 	callbacks  []func()
 	commit     atomic.Value
 	store      *store.Client
+	exiter     Exiter
+	streamMu   sync.Mutex
+	streams    map[string]context.CancelFunc
+	streamGen  map[string]uint64
+	nextStream uint64
+}
+
+/*
+Exiter closes a dashboard-commanded lot on the desk.
+*/
+type Exiter interface {
+	Exit(symbol string, virtual bool) error
 }
 
 /*
@@ -70,6 +85,8 @@ func NewHub(ctx context.Context) *Hub {
 	hub.commit.Store(CommitFunc(func([]byte) ([]byte, error) {
 		return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
 	}))
+	hub.streams = make(map[string]context.CancelFunc)
+	hub.streamGen = make(map[string]uint64)
 
 	hub.routes = NewRoutes(hub)
 
@@ -227,6 +244,89 @@ func (hub *Hub) RegisterCallback(callback func()) {
 /*
 HandleCommit registers the function that stores a labelled training sample.
 */
+/*
+Exiter registers the desk serving position.exit commands.
+*/
+func (hub *Hub) Exiter(exiter Exiter) {
+	hub.exiter = exiter
+}
+
+func (hub *Hub) cancelStream(kind string) {
+	hub.streamMu.Lock()
+	defer hub.streamMu.Unlock()
+
+	if cancel := hub.streams[kind]; cancel != nil {
+		cancel()
+		delete(hub.streams, kind)
+	}
+}
+
+func (hub *Hub) startStream(kind string, run func(context.Context)) {
+	hub.streamMu.Lock()
+	defer hub.streamMu.Unlock()
+
+	if cancel := hub.streams[kind]; cancel != nil {
+		cancel()
+	}
+
+	ctx, cancel := context.WithCancel(hub.ctx)
+	hub.nextStream++
+	gen := hub.nextStream
+	hub.streams[kind] = cancel
+	hub.streamGen[kind] = gen
+
+	go func() {
+		run(ctx)
+		hub.streamMu.Lock()
+		if hub.streamGen[kind] == gen {
+			delete(hub.streams, kind)
+			delete(hub.streamGen, kind)
+		}
+		hub.streamMu.Unlock()
+	}()
+}
+
+func writeDetectionDone(hub *Hub, run uint64, symbol string) {
+	scope := symbol
+	if scope == "" {
+		scope = "all"
+	}
+
+	value := data.NewValue("detections", "done", scope)
+	value.Epoch = run
+
+	if symbol == "" {
+		value.Scope = ""
+	}
+
+	value.Append([]float64{0, 0, 0, 0, 0}, "ticks", "symbols", "excursions", "policies", "papers")
+	hub.Write(value.Bytes())
+}
+
+func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
+	if hub.store == nil || prefix == "" {
+		return
+	}
+
+	hub.startStream(kind, func(ctx context.Context) {
+		for value := range hub.store.Stream(ctx, prefix) {
+			if value == nil {
+				continue
+			}
+
+			hub.Write(value.Bytes())
+		}
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		if done != nil {
+			done()
+		}
+	})
+}
+
 func (hub *Hub) HandleCommit(fn CommitFunc) {
 	if fn == nil {
 		fn = func([]byte) ([]byte, error) {
@@ -274,6 +374,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		Run       string `json:"run"`
 		Class     string `json:"class"`
 		At        string `json:"at"`
+		Virtual   bool   `json:"virtual"`
 		CaptureID int64  `json:"captureId"`
 		Prefix    string `json:"prefix"`
 		Query     string `json:"query"`
@@ -293,9 +394,84 @@ func (hub *Hub) handleCommand(payload []byte) error {
 	case "route":
 		types.SetRoute(request.Route)
 	case "position.exit":
+		if hub.exiter == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				"[hub] position.exit command with no desk: "+string(payload),
+				nil,
+			))
+		}
+
+		if request.Symbol == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[hub] position.exit command needs a symbol: "+string(payload),
+				nil,
+			))
+		}
+
+		if err := hub.exiter.Exit(request.Symbol, request.Virtual); err != nil {
+			return errnie.Error(err)
+		}
 	case "hindsight":
 	case "s3":
-		hub.ListPrefix(request.Prefix)
+		if request.Prefix == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf("[hub] s3 command needs a prefix: %s", string(payload)),
+				nil,
+			))
+		}
+
+		if hub.store == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				fmt.Sprintf("[hub] s3 command with no store: %s", string(payload)),
+				nil,
+			))
+		}
+
+		hub.cancelStream("s3")
+
+		// One aggregated frame for explore keys the cognition tree reads.
+		if request.Prefix == "model/explore" {
+			hub.ListPrefix(request.Prefix)
+			break
+		}
+
+		if strings.HasPrefix(request.Prefix, "detections/") {
+			var run uint64
+			var err error
+
+			if request.Run != "" {
+				if run, err = strconv.ParseUint(request.Run, 10, 64); err != nil {
+					return errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("[hub] s3 detections run %s is not an epoch", request.Run),
+						err,
+					))
+				}
+			}
+
+			if request.Symbol != "" {
+				if _, err = strconv.ParseUint(request.At, 10, 64); err != nil || run == 0 || request.Class == "" {
+					return errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("[hub] s3 detections tape needs run, class and C tick (at): %s", string(payload)),
+						err,
+					))
+				}
+			}
+
+			runEpoch := run
+			symbol := request.Symbol
+			hub.streamPrefix("s3", request.Prefix, func() {
+				writeDetectionDone(hub, runEpoch, symbol)
+			})
+			break
+		}
+
+		hub.streamPrefix("s3", request.Prefix, nil)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,

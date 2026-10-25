@@ -10,14 +10,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"io"
+
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -33,6 +39,10 @@ type Solver struct {
 	references    *sync.Map
 	steps         *sync.Map
 	pace          float64
+
+	// books supplies the touch midpoint each symbol's coder is supervised
+	// against; nil means no reference, so the forecast head never trains.
+	books *broker.Book
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
 	// duration so the wiring diagram can profile the resonance stage like
@@ -82,11 +92,16 @@ const (
 NewSolver returns a solver stepping at pace; a pace that is not positive is
 an error.
 */
-func NewSolver(ctx context.Context, pace float64) (*Solver, error) {
+func NewSolver(
+	ctx context.Context, pace float64, books *broker.Book,
+) *Solver {
 	if !(pace > 0) || pace > paceUpper {
-		return nil, errnie.Err(errnie.Validation, fmt.Sprintf(
-			"resonance: pace must be in (0, %g] (a coder's rate rests at pace and moves up to %g), got %g", paceUpper, paceUpper, pace,
-		), nil)
+		errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
+			"resonance: pace must be in (0, %g] (a coder's rate rests at pace and moves up to %g), got %g",
+			paceUpper, paceUpper, pace,
+		), nil))
+
+		return nil
 	}
 
 	solver := &Solver{
@@ -96,27 +111,57 @@ func NewSolver(ctx context.Context, pace float64) (*Solver, error) {
 		references:    &sync.Map{},
 		steps:         &sync.Map{},
 		pace:          pace,
+		books:         books,
 	}
 
 	solver.Transition(runtime.READY)
-	return solver, nil
+	return solver
 }
 
 /*
-Step advances symbol's predictive coder by one stored tick: its Features,
-standardized causally, and the tick's touch midpoint as the coder's
-reference (no reference when the tick recorded either side as absent).
+Step advances every symbol on the workspace tick through its predictive coder
+and attaches scalar readings on the tick under resonance/<symbol>/…. Symbols
+run concurrently (signal.RunSymbols); per-symbol coder state is sharded and
+tick.Append is synchronized. Hub readings queue per symbol.
 */
-func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
+func (solver *Solver) Step(tick *data.Value) *data.Value {
 	if tick == nil {
-		return nil, errnie.Err(errnie.Validation, "resonance: Step needs a tick and one of its symbols", nil)
+		errnie.Error(errnie.Err(errnie.Validation, "resonance: Step needs a tick", nil))
+		return tick
 	}
 
 	if err := solver.Error(); err != nil {
-		return nil, errnie.Err(errnie.Internal, "resonance: solver failed earlier", err)
+		errnie.Error(errnie.Err(errnie.Internal, "resonance: solver failed earlier", err))
+		return tick
 	}
 
-	name := tick.Scope
+	if err := signal.RunSymbols(solver.Context(), symbolsOnTick(tick), func(symbol string) {
+		reading := solver.stepSymbol(tick, symbol)
+
+		if reading != nil {
+			attachReading(tick, symbol, reading)
+		}
+	}); err != nil {
+		solver.Error(err)
+	}
+
+	return tick
+}
+
+/*
+stepSymbol advances one symbol's predictive coder: its Features, standardized
+causally, and the touch midpoint as the coder's reference (no reference when
+either side of the book is absent).
+*/
+func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
+	if tick == nil || name == "" {
+		return nil
+	}
+
+	if err := solver.Error(); err != nil {
+		return nil
+	}
+
 	sources := make(map[string]float64, len(Features))
 
 	// Group every signal layer on the tick by source and symbol, then pick the
@@ -144,11 +189,12 @@ func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
 
 			var values []float64
 			if err := layer.Decode(&values); err != nil {
-				return nil, errnie.Error(errnie.Err(
+				errnie.Error(errnie.Err(
 					errnie.UnprocessableContent,
 					"[resonance.Step] "+layer.Key+" does not decode",
 					err,
 				))
+				return nil
 			}
 
 			if bySource[source] == nil {
@@ -184,14 +230,18 @@ func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
 	features, err := solver.scorer(name).Step(sources)
 
 	if err != nil {
-		return nil, errnie.Err(errnie.UnprocessableContent, fmt.Sprintf("resonance: %s of %s", name, tick.Prefix), err)
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf(
+				"resonance: %s of %s",
+				name, tick.Prefix,
+			), err,
+		))
+
+		return nil
 	}
 
-	var midpoint float64
-
-	// No price/book layer is carried on the tick Value in the current
-	// refactor, so there is no touch midpoint to read. The coder steps with
-	// midpoint 0 and no reference until a price source is plumbed in.
+	midpoint := solver.midpoint(name)
 
 	loadedStep, _ := solver.steps.LoadOrStore(name, &atomic.Int64{})
 	step := loadedStep.(*atomic.Int64).Add(1)
@@ -199,7 +249,14 @@ func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
 	coder, err := solver.coder(name, len(features))
 
 	if err != nil {
-		return nil, err
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"resonance: coder step failed for %s", name,
+			), err,
+		))
+
+		return nil
 	}
 
 	hasReference := 0.0
@@ -213,6 +270,7 @@ func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
 	}
 
 	stepStarted := time.Now()
+
 	out := transport.Read[[12][]float64](coder.Next(transport.NewValue([2][]float64{
 		features,
 		{midpoint, hasReference, float64(step), float64(tick.Timestamp) / 1e9},
@@ -223,17 +281,68 @@ func (solver *Solver) Step(tick *data.Value) (*data.Value, error) {
 	}
 
 	if err := coder.Error(); err != nil {
-		return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: coder step failed for %s at %s", name, tick.Prefix), err)
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"resonance: coder step failed for %s at %s",
+				name, tick.Prefix,
+			), err,
+		))
+
+		return nil
 	}
 
 	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
 	reading.Epoch, reading.Tick, reading.Timestamp = tick.Epoch, tick.Tick, tick.Timestamp
 
 	if _, err := publishReturns(reading, out, coderArch(len(features))); err != nil {
-		return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: unable to publish coder reading for %s", name), err)
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("resonance: unable to publish coder reading for %s", name),
+			err,
+		))
+
+		return nil
 	}
 
-	return reading, nil
+	if ui.UI != nil && ui.UI.Active() {
+		io.Copy(ui.UI, reading)
+	}
+
+	return reading
+}
+
+/*
+midpoint is the touch midpoint of symbol's book, or 0 when there is no honest
+reference: no book source, a book that is pending, stale or invalid (the
+broker then never calls back), a missing side, or a crossed book. A one-sided
+book is deliberately not a reference: its single price would read to the
+coder as a jump the moment the other side returned.
+*/
+func (solver *Solver) midpoint(symbol string) float64 {
+	if solver.books == nil {
+		return 0
+	}
+
+	var mid float64
+
+	solver.books.Book(symbol, func(managed *book.Book) {
+		bid, ask := managed.BestBid(), managed.BestAsk()
+
+		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+			return
+		}
+
+		low, high := bid.Price.Float64(), ask.Price.Float64()
+
+		if !(low > 0) || !(high >= low) {
+			return
+		}
+
+		mid = (low + high) / 2
+	})
+
+	return mid
 }
 
 /*
@@ -379,22 +488,53 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 		for layer, rows := range arch {
 			width := 2 + 2*rows
 			if offset+width > len(out[7]) {
-				return nil, fmt.Errorf("resonance: layer reading holds %d values, layer %d of arch %v needs %d", len(out[7]), layer, arch, offset+width)
+				return nil, errnie.Error(errnie.Err(
+					errnie.Internal,
+					fmt.Sprintf(
+						"resonance: layer reading holds %d values, layer %d of arch %v needs %d",
+						len(out[7]), layer, arch, offset+width,
+					),
+					nil,
+				))
 			}
 			offset += width
 		}
 		if offset != len(out[7]) {
-			return nil, fmt.Errorf("resonance: layer reading holds %d values, arch %v accounts for %d", len(out[7]), arch, offset)
+			return nil, errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"resonance: layer reading holds %d values, arch %v accounts for %d", len(out[7]), arch, offset,
+				),
+				nil,
+			))
 		}
 	}
 
 	// The summary row is {reconstruction, energy, ..., surprise (5), ...}.
 	if len(out[0]) <= 5 {
-		return nil, fmt.Errorf("resonance: coder summary holds %d values, energy and surprise need 6", len(out[0]))
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf(
+				"resonance: coder summary holds %d values, energy and surprise need 6", len(out[0]),
+			),
+			nil,
+		))
 	}
 
 	prior.Append([]float64{out[0][1]}, "energy")
 	prior.Append([]float64{out[0][5]}, "surprise")
+
+	// The summary row {supportedHorizon, calibrated, resolvedSteps, pending,
+	// confidence, alpha, ...} is how a consumer knows whether the forecast head
+	// has learned anything yet; it is published so that evidence is visible.
+	if len(out[10]) > 5 {
+		for index, label := range []string{
+			"supported_horizon", "calibrated", "resolved_steps",
+			"pending", "confidence", "alpha",
+		} {
+			prior.Append([]float64{out[10][index]}, label)
+		}
+	}
 
 	for i, val := range out[2] {
 		prior.Append([]float64{val}, fmt.Sprintf("latent_%d", i))
@@ -419,6 +559,10 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 
 	for i, val := range out[11] {
 		prior.Append([]float64{val}, fmt.Sprintf("forward_curve_%d", i))
+	}
+
+	for i, val := range out[4] {
+		prior.Append([]float64{val}, fmt.Sprintf("task_skill_%d", i+1))
 	}
 
 	return prior, nil

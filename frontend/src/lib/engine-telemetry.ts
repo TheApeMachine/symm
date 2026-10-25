@@ -1,5 +1,6 @@
 import { atoms } from "#/collections/app";
 import { cognitionStore } from "#/collections/cognition";
+import { batch } from "@tanstack/store";
 
 /*
 syncEngineTelemetry keeps the dashboard engine readout aligned with the
@@ -14,19 +15,22 @@ export const syncEngineTelemetry = () => {
 			candidates++;
 		}
 	}
-	atoms.candidates.set(candidates);
 
+	let phase = atoms.phase.get();
 	if (tree?.trading) {
-		atoms.phase.set("trading");
-		return;
+		phase = "trading";
+	} else if (tree?.gate?.enabled) {
+		phase = "evaluate";
+	} else if (atoms.tickCount.get() > 0) {
+		phase = "live";
 	}
 
-	if (tree?.gate?.enabled) {
-		atoms.phase.set("evaluate");
-		return;
-	}
-
-	if (atoms.tickCount.get() > 0) {
-		atoms.phase.set("live");
-	}
+	batch(() => {
+		if (atoms.candidates.get() !== candidates) {
+			atoms.candidates.set(candidates);
+		}
+		if (atoms.phase.get() !== phase) {
+			atoms.phase.set(phase);
+		}
+	});
 };

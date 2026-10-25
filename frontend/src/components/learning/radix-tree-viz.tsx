@@ -1,14 +1,18 @@
-import * as d3 from "d3";
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
+import * as d3 from "d3";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Flex } from "../ui/flex";
+import {
+	paintRadixTreeStructure,
+	updateRadixTreeHighlights,
+	type TreeNode,
+} from "./radix-tree-paint";
 import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
-
-type TreeNode = d3.HierarchyPointNode<TrieNodeData>;
-type TreeLink = d3.HierarchyPointLink<TrieNodeData>;
 
 interface RadixTreeVizProps {
 	data?: TrieNodeData | null;
 	keys?: string[] | null;
+	thresholds?: Record<string, number> | null;
 	symbols?: Record<string, SymbolProgress> | null;
 	feasible?: FeasibleAction[] | null;
 	minProbability?: number;
@@ -20,52 +24,8 @@ interface RadixTreeVizProps {
 	className?: string;
 }
 
-const INBETWEEN_HEIGHT = 24;
-const INBETWEEN_WIDTH = INBETWEEN_HEIGHT;
-const TERMINAL_WIDTH = 64;
-const TERMINAL_HEIGHT = 26;
-const ROOT_WIDTH = 44;
-const ROOT_HEIGHT = 24;
-
-const grammarPrefix = (node: TrieNodeData) =>
-	node.action
-		? node.prefix.slice(0, node.prefix.lastIndexOf("/"))
-		: node.prefix;
-
-const isNodeRoot = (node: TreeNode) => node.data.id === "root";
-const isNodeTerminal = (node: TreeNode) =>
-	!node.data.children?.length && !node.data._children?.length;
-
-const getPorts = (
-	node: TreeNode,
-	projection: "horizontal" | "vertical" | "radial",
-) => {
-	const isRoot = isNodeRoot(node);
-	const isTerminal = isNodeTerminal(node);
-
-	if (projection === "vertical") {
-		const halfH = isRoot
-			? ROOT_HEIGHT / 2
-			: isTerminal
-				? TERMINAL_HEIGHT / 2
-				: INBETWEEN_HEIGHT / 2;
-		return {
-			parentPort: isRoot ? null : { cx: 0, cy: -halfH },
-			childPort: isTerminal ? null : { cx: 0, cy: halfH },
-		};
-	}
-
-	// horizontal
-	const halfW = isRoot
-		? ROOT_WIDTH / 2
-		: isTerminal
-			? TERMINAL_WIDTH / 2
-			: INBETWEEN_WIDTH / 2;
-	return {
-		parentPort: isRoot ? null : { cx: -halfW, cy: 0 },
-		childPort: isTerminal ? null : { cx: halfW, cy: 0 },
-	};
-};
+/** Above this count the trie is summarized instead of fully laid out in the scene. */
+export const MAX_TRIE_KEYS = 1_500;
 
 /*
 grammarKey drops the store location so the tree is the token path.
@@ -98,7 +58,37 @@ export function grammarKey(key: string): string {
 	return key;
 }
 
-export function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
+/*
+A branch starts at 0.50. Profit walks it toward 0.05, where it is solid.
+Loss walks it toward 0.95, where it fades.
+*/
+export const thresholdOpacity = (threshold: number): number => {
+	const span = 0.95 - 0.05;
+	const towardPrune = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
+	return 1 - towardPrune * 0.72;
+};
+
+const shadeThresholds = (node: TrieNodeData): number | null => {
+	const children = node.children ?? [];
+	const fromChildren = children
+		.map(shadeThresholds)
+		.filter((value): value is number => value !== null);
+
+	if (node.action) {
+		return typeof node.threshold === "number" ? node.threshold : null;
+	}
+
+	if (fromChildren.length === 0) return null;
+
+	node.threshold =
+		fromChildren.reduce((sum, value) => sum + value, 0) / fromChildren.length;
+	return node.threshold;
+};
+
+export function buildTreeFromPrefixes(
+	prefixes: string[],
+	thresholds?: Record<string, number> | null,
+): TrieNodeData | null {
 	if (!prefixes || prefixes.length === 0) return null;
 
 	const root: TrieNodeData = {
@@ -144,18 +134,26 @@ export function buildTreeFromPrefixes(prefixes: string[]): TrieNodeData | null {
 		if (action) {
 			if (!current.children) current.children = [];
 			const leaf = current.children.find((child) => child.action === action);
+			const threshold = thresholds?.[raw];
 			if (!leaf) {
 				current.children.push({
 					id: String(nextId++),
 					prefix: `${prefix}/${action.toLowerCase()}.bin`,
 					token: "",
 					action,
+					threshold:
+						typeof threshold === "number" && Number.isFinite(threshold)
+							? threshold
+							: undefined,
 					children: [],
 				});
+			} else if (typeof threshold === "number" && Number.isFinite(threshold)) {
+				leaf.threshold = threshold;
 			}
 		}
 	}
 
+	shadeThresholds(root);
 	return root;
 }
 
@@ -227,6 +225,7 @@ export function keyMatchesSymbol(key: string, symbol: SymbolProgress): boolean {
 export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	data,
 	keys,
+	thresholds,
 	symbols,
 	projection: externalProjection,
 	onProjectionChange,
@@ -234,11 +233,14 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 }) => {
 	const svgRef = useRef<SVGSVGElement>(null);
 	const wrapperRef = useRef<HTMLDivElement>(null);
+	const zoomLayerRef = useRef<SVGGElement>(null);
+	const gridRef = useRef<HTMLDivElement>(null);
 	const zoomBehavior = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
 		null,
 	);
+	const transformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
+	const zoomProjectionRef = useRef<typeof projection | null>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-	const [transform, setTransform] = useState<d3.ZoomTransform>(d3.zoomIdentity);
 	const [internalProjection, setInternalProjection] = useState<
 		"horizontal" | "vertical" | "radial"
 	>("horizontal");
@@ -246,9 +248,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const projection = externalProjection ?? internalProjection;
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-	const [showAllBranches, setShowAllBranches] = useState(true);
+	const [showAllBranches, setShowAllBranches] = useState(false);
 	type BranchFilter = "matching" | "enter" | "exit" | "all";
-	const [branchFilter, setBranchFilter] = useState<BranchFilter>("all");
+	const [branchFilter, setBranchFilter] = useState<BranchFilter>("matching");
 
 	const activeSymbolList = useMemo(() => {
 		if (!symbols) return [];
@@ -264,13 +266,26 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return activeSymbolList;
 	}, [activeSymbolList, selectedSymbol]);
 
-	const allKeys = useMemo(() => {
-		if (keys && keys.length > 0) return keys;
-		if (data) {
+	const { allKeys, keysTruncated, totalKeyCount } = useMemo(() => {
+		let resolved: string[] = [];
+		if (keys && keys.length > 0) resolved = keys;
+		else if (data) {
 			const extracted = extractPrefixes(data);
-			if (extracted.length > 0) return extracted;
+			if (extracted.length > 0) resolved = extracted;
 		}
-		return [];
+		const total = resolved.length;
+		if (total > MAX_TRIE_KEYS) {
+			return {
+				allKeys: resolved.slice(0, MAX_TRIE_KEYS),
+				keysTruncated: true,
+				totalKeyCount: total,
+			};
+		}
+		return {
+			allKeys: resolved,
+			keysTruncated: false,
+			totalKeyCount: total,
+		};
 	}, [keys, data]);
 
 	const actionCounts = useMemo(() => {
@@ -302,7 +317,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			case "exit":
 				return allKeys.filter((k) => grammarKey(k).endsWith("/exit.bin"));
 			case "matching":
-				return matchingKeys;
+				return matchingKeys.length > 0 ? matchingKeys : allKeys;
 			default: {
 				const unreachable: never = branchFilter;
 				return unreachable;
@@ -373,15 +388,25 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 
 	const treeData = useMemo(() => {
 		if (filteredKeys && filteredKeys.length > 0) {
-			return buildTreeFromPrefixes(filteredKeys);
+			return buildTreeFromPrefixes(filteredKeys, thresholds);
 		}
 		if (showAllBranches && allKeys.length > 0) {
-			return buildTreeFromPrefixes(allKeys);
+			return buildTreeFromPrefixes(allKeys, thresholds);
 		}
 		return null;
-	}, [filteredKeys, allKeys, showAllBranches]);
+	}, [filteredKeys, allKeys, showAllBranches, thresholds]);
 
 	const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
+
+	const applyZoomTransform = useCallback((next: d3.ZoomTransform) => {
+		transformRef.current = next;
+		zoomLayerRef.current?.setAttribute("transform", next.toString());
+		const grid = gridRef.current;
+		if (grid) {
+			grid.style.transform = `translate(${next.x % 24}px, ${next.y % 24}px) scale(${next.k})`;
+			grid.style.transformOrigin = "0 0";
+		}
+	}, []);
 
 	useEffect(() => {
 		const observeTarget = wrapperRef.current;
@@ -390,62 +415,75 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		const resizeObserver = new ResizeObserver((entries) => {
 			if (!entries[0]) return;
 			const { width, height } = entries[0].contentRect;
-			if (width > 0 && height > 0) {
-				setDimensions({ width, height });
-			}
+			if (width <= 0 || height <= 0) return;
+			setDimensions((current) =>
+				current.width > 0 &&
+				Math.abs(current.width - width) < 4 &&
+				Math.abs(current.height - height) < 4
+					? current
+					: { width, height },
+			);
 		});
 
 		resizeObserver.observe(observeTarget);
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	// Setup D3 Zoom
+	const initialZoomTransform = useCallback(
+		(width: number, height: number, mode: typeof projection) => {
+			if (mode === "radial") {
+				return d3.zoomIdentity
+					.translate(width / 2, height / 2)
+					.scale(0.8);
+			}
+			if (mode === "vertical") {
+				return d3.zoomIdentity.translate(width / 2, 60).scale(0.85);
+			}
+			return d3.zoomIdentity.translate(80, height / 2).scale(0.85);
+		},
+		[],
+	);
+
+	// Setup D3 Zoom — keep the user's pan/zoom unless projection changes.
 	useEffect(() => {
 		if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0)
 			return;
 
 		const svg = d3.select(svgRef.current);
-		const zoom = d3
-			.zoom<SVGSVGElement, unknown>()
-			.extent([
-				[0, 0],
-				[dimensions.width, dimensions.height],
-			])
-			.scaleExtent([0.1, 4])
-			.on("zoom", (zoomEvent) => {
-				setTransform(zoomEvent.transform);
-			});
+		const width = dimensions.width;
+		const height = dimensions.height;
 
-		zoomBehavior.current = zoom;
-		svg.call(zoom);
-
-		let initialTransform = d3.zoomIdentity
-			.translate(80, dimensions.height / 2)
-			.scale(0.85);
-		if (projection === "radial") {
-			initialTransform = d3.zoomIdentity
-				.translate(dimensions.width / 2, dimensions.height / 2)
-				.scale(0.8);
+		let zoom = zoomBehavior.current;
+		if (!zoom) {
+			zoom = d3
+				.zoom<SVGSVGElement, unknown>()
+				.scaleExtent([0.1, 4])
+				.on("zoom", (zoomEvent) => {
+					applyZoomTransform(zoomEvent.transform);
+				});
+			zoomBehavior.current = zoom;
+			svg.call(zoom);
 		}
-		if (projection === "vertical") {
-			initialTransform = d3.zoomIdentity
-				.translate(dimensions.width / 2, 60)
-				.scale(0.85);
-		}
-		svg.call(zoom.transform, initialTransform);
-	}, [dimensions.width, dimensions.height, projection]);
 
-	const handleNodeClick = (nodeData: TrieNodeData) => {
-		setCollapsedIds((previousIds) => {
-			const nextIds = new Set(previousIds);
-			if (nextIds.has(nodeData.id)) {
-				nextIds.delete(nodeData.id);
-				return nextIds;
-			}
-			nextIds.add(nodeData.id);
-			return nextIds;
-		});
-	};
+		zoom.extent([
+			[0, 0],
+			[width, height],
+		]);
+
+		const projectionChanged = zoomProjectionRef.current !== projection;
+		zoomProjectionRef.current = projection;
+
+		if (projectionChanged) {
+			const initial = initialZoomTransform(width, height, projection);
+			svg.call(zoom.transform, initial);
+			applyZoomTransform(initial);
+			return;
+		}
+
+		const current = transformRef.current;
+		svg.call(zoom.transform, current);
+		applyZoomTransform(current);
+	}, [dimensions, projection, applyZoomTransform, initialZoomTransform]);
 
 	const { nodes, links } = useMemo(() => {
 		if (!treeData) return { nodes: [], links: [] };
@@ -507,102 +545,92 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return ids;
 	}, [hoveredNodeId, nodes]);
 
-	const getNodePos = (node: TreeNode) => {
-		const nx = node.x;
-		const ny = node.y;
-		if (projection === "radial") {
-			const angle = nx - Math.PI / 2;
-			return {
-				x: ny * Math.cos(angle),
-				y: ny * Math.sin(angle),
-			};
-		}
-		if (projection === "vertical") {
-			return { x: nx, y: ny };
-		}
-		return { x: ny, y: nx };
-	};
+	const handleNodeClick = useCallback((nodeData: TrieNodeData) => {
+		setCollapsedIds((previousIds) => {
+			const nextIds = new Set(previousIds);
+			if (nextIds.has(nodeData.id)) {
+				nextIds.delete(nodeData.id);
+				return nextIds;
+			}
+			nextIds.add(nodeData.id);
+			return nextIds;
+		});
+	}, []);
 
-	const getLinkPorts = (source: TreeNode, target: TreeNode) => {
-		const sPos = getNodePos(source);
-		const tPos = getNodePos(target);
-		const sPorts = getPorts(source, projection);
-		const tPorts = getPorts(target, projection);
+	useEffect(() => {
+		const root = zoomLayerRef.current;
+		if (!root) return;
 
-		if (projection === "vertical") {
-			return {
-				s: {
-					x: sPos.x + (sPorts.childPort?.cx ?? 0),
-					y: sPos.y + (sPorts.childPort?.cy ?? INBETWEEN_HEIGHT / 2),
-				},
-				t: {
-					x: tPos.x + (tPorts.parentPort?.cx ?? 0),
-					y: tPos.y + (tPorts.parentPort?.cy ?? -INBETWEEN_HEIGHT / 2),
-				},
-			};
+		if (nodes.length === 0) {
+			d3.select(root).select("g.links-layer").selectAll("*").remove();
+			d3.select(root).select("g.nodes-layer").selectAll("*").remove();
+			return;
 		}
 
-		// Horizontal projection
-		return {
-			s: {
-				x: sPos.x + (sPorts.childPort?.cx ?? INBETWEEN_WIDTH / 2),
-				y: sPos.y + (sPorts.childPort?.cy ?? 0),
-			},
-			t: {
-				x: tPos.x + (tPorts.parentPort?.cx ?? -INBETWEEN_WIDTH / 2),
-				y: tPos.y + (tPorts.parentPort?.cy ?? 0),
-			},
-		};
-	};
+		paintRadixTreeStructure({
+			zoomRoot: root,
+			nodes,
+			links,
+			projection,
+			rejectedPrefixes,
+			traversedPrefixes,
+			symbolPositions,
+			activePathIds: null,
+			selectedSymbol,
+			onNodeClick: handleNodeClick,
+			onNodeHover: setHoveredNodeId,
+		});
+	}, [
+		nodes,
+		links,
+		projection,
+		rejectedPrefixes,
+		traversedPrefixes,
+		symbolPositions,
+		selectedSymbol,
+		handleNodeClick,
+	]);
 
-	const getPath = (source: TreeNode, target: TreeNode) => {
-		if (projection === "radial") {
-			return (
-				d3
-					.linkRadial<TreeLink, TreeNode>()
-					.angle((d: TreeNode) => d.x)
-					.radius((d: TreeNode) => d.y)({ source, target }) ?? undefined
-			);
-		}
+	useEffect(() => {
+		const root = zoomLayerRef.current;
+		if (!root || nodes.length === 0) return;
 
-		const { s, t } = getLinkPorts(source, target);
-
-		if (projection === "vertical") {
-			return (
-				d3
-					// biome-ignore lint/suspicious/noExplicitAny: d3 vertical link typing
-					.linkVertical<any, { x: number; y: number }>()
-					.x((d) => d.x)
-					.y((d) => d.y)({ source: s, target: t }) ?? undefined
-			);
-		}
-
-		// Horizontal projection
-		return (
-			d3
-				// biome-ignore lint/suspicious/noExplicitAny: d3 horizontal link typing
-				.linkHorizontal<any, { x: number; y: number }>()
-				.x((d) => d.x)
-				.y((d) => d.y)({ source: s, target: t }) ?? undefined
-		);
-	};
+		updateRadixTreeHighlights({
+			zoomRoot: root,
+			nodes,
+			links,
+			activePathIds,
+			selectedSymbol,
+			rejectedPrefixes,
+			traversedPrefixes,
+		});
+	}, [
+		nodes,
+		links,
+		activePathIds,
+		selectedSymbol,
+		rejectedPrefixes,
+		traversedPrefixes,
+	]);
 
 	return (
-		<div
-			className={cn(
-				"flex flex-col w-full h-full bg-(--bg) text-(--f2) font-mono",
-				className,
-			)}
+		<Flex.Column
+			fullWidth
+			fullHeight
+			className={cn("bg-(--bg) text-(--f2) font-mono", className)}
 		>
 			{/* Top Bar with Projection Controls and Active Symbol Depth Ticker */}
-			<div className="border-(--line) border-b flex flex-col bg-(--surface) shrink-0">
-				<div className="h-8 flex items-center justify-between px-3 text-xs">
-					<div className="flex gap-3 items-center">
+			<Flex.Column className="border-(--line) border-b bg-(--surface) shrink-0">
+				<Flex.Row align="center" justify="between" className="h-8 px-3 text-xs">
+					<Flex.Row align="center" gap={3}>
 						<span className="text-(--acc) border-(--acc) border-b py-1 text-[11px] font-bold tracking-wider">
 							TRIE
 						</span>
 						<span className="text-(--f3) text-[11px]">
 							{nodes.length} nodes
+							{keysTruncated
+								? ` · showing first ${MAX_TRIE_KEYS} of ${totalKeyCount} paths`
+								: null}
 						</span>
 						{activeSymbolList.length > 0 && !showAllBranches && (
 							<span className="text-(--info) text-[11px] font-medium flex items-center gap-1.5">
@@ -618,10 +646,18 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								Showing all {allKeys.length} branches
 							</span>
 						)}
-					</div>
+						{thresholds && Object.keys(thresholds).length > 0 && (
+							<span
+								className="text-(--f4) text-[10px] font-mono"
+								title="A branch starts at 0.50. Profit makes it solid. Loss fades it toward the prune."
+							>
+								solid 0.05 · faint 0.95
+							</span>
+						)}
+					</Flex.Row>
 
-					<div className="flex items-center gap-2">
-						<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px] font-mono">
+					<Flex.Row align="center" gap={2}>
+						<Flex.Row align="center" gap={1} className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px] font-mono">
 							<button
 								type="button"
 								onClick={() => {
@@ -682,9 +718,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							>
 								All ({allKeys.length})
 							</button>
-						</div>
+						</Flex.Row>
 
-						<div className="flex items-center gap-1 bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
+						<Flex.Row align="center" gap={1} className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
 							{(["horizontal", "vertical", "radial"] as const).map((mode) => (
 								<button
 									key={mode}
@@ -704,9 +740,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 									{mode}
 								</button>
 							))}
-						</div>
-					</div>
-				</div>
+						</Flex.Row>
+					</Flex.Row>
+				</Flex.Row>
 
 				{/* Live Symbols Traversal Depth Strip */}
 				{activeSymbolList.length > 0 && (
@@ -756,7 +792,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 						)}
 					</div>
 				)}
-			</div>
+			</Flex.Column>
 
 			{/* Center Visualizer Canvas */}
 			<div
@@ -764,13 +800,12 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				className="flex-1 relative bg-(--sunken) overflow-hidden"
 			>
 				<div
+					ref={gridRef}
 					className="absolute inset-0 pointer-events-none opacity-[0.12]"
 					style={{
 						backgroundImage:
 							"linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px)",
 						backgroundSize: "24px 24px",
-						transform: `translate(${transform.x % 24}px, ${transform.y % 24}px) scale(${transform.k})`,
-						transformOrigin: "0 0",
 					}}
 				/>
 
@@ -827,299 +862,9 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					aria-label="Trie visualization"
 				>
 					<title>Trie Graph Visualization</title>
-					<g transform={transform.toString()}>
-						{/* Links Layer: Edges are strictly region tokens */}
-						<g className="links">
-							{links.map((link) => {
-								const d = getPath(link.source, link.target);
-								const { s, t } = getLinkPorts(link.source, link.target);
-								const midX = (s.x + t.x) / 2;
-								const midY = (s.y + t.y) / 2;
-
-								const linkPrefix = grammarPrefix(link.target.data);
-								const isRejected =
-									rejectedPrefixes.has(linkPrefix) &&
-									!traversedPrefixes.has(linkPrefix);
-								const isSymbolLink = traversedPrefixes.has(linkPrefix);
-								const isLinkActive = activePathIds
-									? activePathIds.has(link.target.data.id)
-									: selectedSymbol
-										? isSymbolLink || isRejected
-										: true;
-
-								const token = link.target.data.token;
-
-								return (
-									<g
-										key={`link-${link.source.data.id}-${link.target.data.id}`}
-										style={{
-											opacity: isLinkActive ? 1 : 0.15,
-											transition: "opacity 0.3s ease-in-out",
-										}}
-									>
-										<path
-											d={d}
-											fill="none"
-											stroke={
-												isRejected
-													? "var(--warn)"
-													: isSymbolLink
-														? "#38bdf8"
-														: "var(--line2)"
-											}
-											strokeWidth={isRejected || isSymbolLink ? 2.5 : 1.2}
-											strokeOpacity={isRejected || isSymbolLink ? 1 : 0.6}
-											strokeDasharray={
-												isRejected || isSymbolLink ? undefined : "4 2"
-											}
-											style={{
-												transition: "all 0.3s ease-in-out",
-												filter: isRejected
-													? "drop-shadow(0 0 3px rgba(230, 160, 60, 0.55))"
-													: isSymbolLink
-														? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
-														: undefined,
-											}}
-										/>
-										{token && (
-											<g
-												transform={`translate(${midX}, ${projection === "vertical" ? midY - 6 : midY - 8})`}
-												className="pointer-events-none select-none font-mono"
-												style={{
-													transition: "transform 0.3s ease-in-out",
-												}}
-											>
-												<rect
-													x={-18}
-													y={-7}
-													width={36}
-													height={14}
-													rx={2}
-													fill="var(--surface)"
-													stroke={
-														isRejected
-															? "var(--warn)"
-															: isSymbolLink
-																? "#38bdf8"
-																: "var(--line2)"
-													}
-													strokeWidth={isRejected || isSymbolLink ? 1.5 : 1}
-													opacity={0.95}
-												/>
-												<text
-													x={0}
-													y={3.5}
-													fill={
-														isRejected
-															? "var(--warn)"
-															: isSymbolLink
-																? "#38bdf8"
-																: "var(--acc)"
-													}
-													fontSize="9px"
-													textAnchor="middle"
-													fontWeight="600"
-													className="font-mono tracking-wider"
-												>
-													{token}
-												</text>
-											</g>
-										)}
-									</g>
-								);
-							})}
-						</g>
-
-						{/* Nodes Layer: In-between nodes are empty, terminal nodes are actions */}
-						<g className="nodes">
-							{nodes.map((node) => {
-								const nodeData = node.data;
-								const isRoot = isNodeRoot(node);
-								const isTerminal = isNodeTerminal(node);
-								const hasChildren = !!(nodeData.children || nodeData._children);
-								const isCollapsed = !!nodeData._children;
-								const action = nodeData.action;
-
-								const pos = getNodePos(node);
-								const ports = getPorts(node, projection);
-								const symbolsAtNode = symbolPositions.get(nodeData.prefix);
-								const isSymbolOnPath = traversedPrefixes.has(
-									grammarPrefix(nodeData),
-								);
-
-								const isNodeActive = activePathIds
-									? activePathIds.has(nodeData.id)
-									: selectedSymbol
-										? isSymbolOnPath
-										: true;
-
-								return (
-									// biome-ignore lint/a11y/noStaticElementInteractions: node interactivity
-									<g
-										key={`node-${nodeData.id}`}
-										style={{
-											opacity: isNodeActive ? 1 : 0.15,
-											transform: `translate(${pos.x}px, ${pos.y}px)`,
-											transition: "all 0.3s ease-in-out",
-										}}
-										role={hasChildren ? "button" : "graphics-symbol"}
-										tabIndex={hasChildren ? 0 : undefined}
-										onKeyDown={(e) => {
-											if (e.key === "Enter" || e.key === " ") {
-												e.preventDefault();
-												e.stopPropagation();
-												if (hasChildren) handleNodeClick(nodeData);
-											}
-										}}
-										onClick={(e: MouseEvent) => {
-											e.stopPropagation();
-											if (hasChildren) handleNodeClick(nodeData);
-										}}
-										onMouseEnter={() => setHoveredNodeId(nodeData.id)}
-										onMouseLeave={() => setHoveredNodeId(null)}
-										className={
-											hasChildren ? "cursor-pointer" : "cursor-default"
-										}
-									>
-										{isRoot ? (
-											/* Root Node: Clean minimal junction */
-											<g>
-												<rect
-													x={-ROOT_WIDTH / 2}
-													y={-ROOT_HEIGHT / 2}
-													width={ROOT_WIDTH}
-													height={ROOT_HEIGHT}
-													rx={3}
-													fill="var(--surface)"
-													stroke="var(--acc)"
-													strokeWidth={1.5}
-												/>
-												<text
-													x={0}
-													y={0}
-													dy="0.32em"
-													textAnchor="middle"
-													fill="var(--acc)"
-													fontSize="9px"
-													fontWeight="700"
-													className="select-none pointer-events-none font-mono tracking-wider"
-												>
-													ROOT
-												</text>
-											</g>
-										) : isTerminal ? (
-											/* Terminal Node: Action badge */
-											<g>
-												<rect
-													x={-TERMINAL_WIDTH / 2}
-													y={-TERMINAL_HEIGHT / 2}
-													width={TERMINAL_WIDTH}
-													height={TERMINAL_HEIGHT}
-													rx={4}
-													fill={
-														action === "ENTER"
-															? "rgba(115, 190, 104, 0.15)"
-															: action === "EXIT"
-																? "rgba(240, 84, 79, 0.15)"
-																: action === "NOOP"
-																	? "rgba(232, 163, 61, 0.2)"
-																	: "rgba(148, 163, 184, 0.12)"
-													}
-													stroke={
-														action === "ENTER"
-															? "var(--up)"
-															: action === "EXIT"
-																? "var(--down)"
-																: action === "NOOP"
-																	? "var(--warn)"
-																	: "var(--f4)"
-													}
-													strokeWidth={
-														symbolsAtNode && symbolsAtNode.length > 0
-															? 2.5
-															: 1.2
-													}
-													strokeDasharray={
-														symbolsAtNode && symbolsAtNode.length > 0
-															? undefined
-															: "3 2"
-													}
-													opacity={
-														symbolsAtNode && symbolsAtNode.length > 0 ? 1 : 0.75
-													}
-												/>
-												<text
-													x={0}
-													y={0}
-													dy="0.32em"
-													textAnchor="middle"
-													fill={
-														action === "ENTER"
-															? "var(--up)"
-															: action === "EXIT"
-																? "var(--down)"
-																: action === "NOOP"
-																	? "var(--warn)"
-																	: "var(--f3)"
-													}
-													fontSize="11px"
-													fontWeight="700"
-													className="select-none pointer-events-none font-mono tracking-wider uppercase"
-												>
-													{action}
-												</text>
-											</g>
-										) : (
-											/* In-Between Node: Empty junction box */
-											<rect
-												x={-INBETWEEN_WIDTH / 2}
-												y={-INBETWEEN_HEIGHT / 2}
-												width={INBETWEEN_WIDTH}
-												height={INBETWEEN_HEIGHT}
-												rx={3}
-												fill="var(--surface)"
-												stroke={
-													isSymbolOnPath
-														? "#38bdf8"
-														: isCollapsed
-															? "var(--acc)"
-															: "var(--line2)"
-												}
-												strokeWidth={isSymbolOnPath || isCollapsed ? 2 : 1}
-												className="transition-colors hover:stroke-(--acc)"
-											/>
-										)}
-
-										{/* Input / Parent Port Circle */}
-										{ports.parentPort && (
-											<circle
-												cx={ports.parentPort.cx}
-												cy={ports.parentPort.cy}
-												r={3}
-												fill="var(--surface)"
-												stroke="var(--f4)"
-												strokeWidth={1.5}
-											/>
-										)}
-
-										{/* Output / Child Port Circle */}
-										{ports.childPort && (
-											<circle
-												cx={ports.childPort.cx}
-												cy={ports.childPort.cy}
-												r={isCollapsed ? 4 : 3}
-												fill={isCollapsed ? "var(--acc)" : "var(--surface)"}
-												stroke={isCollapsed ? "var(--acc)" : "var(--f4)"}
-												strokeWidth={1.5}
-											/>
-										)}
-									</g>
-								);
-							})}
-						</g>
-					</g>
+					<g ref={zoomLayerRef} />
 				</svg>
 			</div>
-		</div>
+		</Flex.Column>
 	);
 };

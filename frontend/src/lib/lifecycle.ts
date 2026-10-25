@@ -161,14 +161,31 @@ const isSnapshot = (frame: unknown): frame is Lifecycle => {
 	);
 };
 
-const remember = (life: Lifecycle) => {
+const deskLifeChanged = (prev: Lifecycle | undefined, next: Lifecycle): boolean => {
+	if (!prev) return true;
+	if (prev.status !== next.status) return true;
+	if (prev.closed_at !== next.closed_at) return true;
+	if (prev.mark?.bid !== next.mark?.bid) return true;
+	if (prev.mark?.unrealized_return !== next.mark?.unrealized_return) return true;
+	if (prev.outcome?.pnl !== next.outcome?.pnl) return true;
+	if (prev.outcome?.pnl_pct !== next.outcome?.pnl_pct) return true;
+	if ((prev.marks?.length ?? 0) !== (next.marks?.length ?? 0)) return true;
+	return false;
+};
+
+const storeLife = (life: Lifecycle): boolean => {
+	const prior = lives.get(life.id);
+	if (prior && !deskLifeChanged(prior, life)) {
+		return false;
+	}
+
 	lives.delete(life.id);
 	lives.set(life.id, life);
 
 	while (lives.size > LIFECYCLE_LIMIT) {
 		let evict: string | undefined;
-		for (const [id, life] of lives) {
-			if (life.status === "closed" || life.status === "abandoned") {
+		for (const [id, entry] of lives) {
+			if (entry.status === "closed" || entry.status === "abandoned") {
 				evict = id;
 				break;
 			}
@@ -177,7 +194,13 @@ const remember = (life: Lifecycle) => {
 		lives.delete(evict);
 	}
 
-	publish();
+	return true;
+};
+
+const remember = (life: Lifecycle) => {
+	if (storeLife(life)) {
+		publish();
+	}
 };
 
 const isFrame = (frame: unknown): frame is PositionFrame => {
@@ -251,7 +274,7 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			.map((row) => String(row.id)),
 	);
 
-	let dropped = false;
+	let changed = false;
 
 	for (const [id, life] of lives) {
 		if (!life.desk || life.status === "closed") {
@@ -260,12 +283,8 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 
 		if (!openIds.has(id)) {
 			lives.delete(id);
-			dropped = true;
+			changed = true;
 		}
-	}
-
-	if (dropped) {
-		publish();
 	}
 
 	for (const row of rows) {
@@ -290,7 +309,7 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			...((life as { marks?: LifeMark[] }).marks ?? []),
 		].slice(-400);
 
-		remember({
+		const merged: Lifecycle = {
 			...life,
 			policy_epoch: life.policy_epoch ?? existing?.policy_epoch,
 			marks_a: life.marks_a ?? existing?.marks_a,
@@ -302,7 +321,15 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
 			marks: marks.length > 0 ? marks : existing?.marks,
-		});
+		};
+
+		if (storeLife(merged)) {
+			changed = true;
+		}
+	}
+
+	if (changed) {
+		publish();
 	}
 };
 

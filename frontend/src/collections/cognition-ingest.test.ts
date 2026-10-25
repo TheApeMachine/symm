@@ -5,6 +5,7 @@ import {
 	ingestPathWalks,
 	ingestPolicyKeys,
 	ingestS3Prefix,
+	thresholdFromStored,
 	ingestTrainRegions,
 	parseTrainRegionsIndex,
 	regionHistoryStore,
@@ -41,6 +42,27 @@ describe("path walks", () => {
 		expect(match?.depth).toBe(2);
 		expect(match?.action).toBe("exit");
 		expect(cognitionStore.state.matches[""]).toBeUndefined();
+	});
+});
+
+describe("stored thresholds", () => {
+	it("sums the threshold steps on top of the 0.50 start", () => {
+		const encode = (value: unknown) => btoa(JSON.stringify(value));
+
+		expect(
+			thresholdFromStored({
+				Index: [
+					"model/explore/SYM/action",
+					"model/explore/SYM/threshold",
+					"model/explore/SYM/threshold",
+				],
+				Layers: [encode("enter"), encode(-0.05), encode(-0.05)],
+			}),
+		).toBeCloseTo(0.4);
+	});
+
+	it("leaves an unscored value without a threshold", () => {
+		expect(thresholdFromStored({ Index: ["action"], Layers: [btoa(JSON.stringify("enter"))] })).toBeNull();
 	});
 });
 
@@ -86,6 +108,29 @@ describe("policy tree keys", () => {
 			"model/explore/custom/path/enter.bin",
 		]);
 		expect(cognitionStore.state.epoch).toBe("2");
+		expect(cognitionStore.state.thresholds).toEqual({});
+	});
+
+	it("reads a threshold off the stored value body", () => {
+		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
+		const framePrefix = "s3/prefix/model/explore/1/2";
+		const key = "model/explore/R01/R02/exit.bin";
+		const stored = {
+			Index: [`${key}/threshold`],
+			Layers: [btoa(JSON.stringify(-0.05))],
+		};
+		ingestS3Prefix(
+			new Value({
+				origin: "s3",
+				role: "prefix",
+				scope: "model/explore",
+				prefix: framePrefix,
+				epoch: 3n,
+				index: [`${framePrefix}/${key}`],
+				layers: [enc.encode(JSON.stringify(stored))],
+			}),
+		);
+		expect(cognitionStore.state.thresholds[key]).toBeCloseTo(0.45);
 	});
 
 	it("ignores s3 frames for other prefixes", () => {

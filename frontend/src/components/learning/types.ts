@@ -5,6 +5,8 @@ export interface TrieNodeData {
 	prefix: string;
 	token?: string;
 	action?: string;
+	/** Path book threshold. 0.50 at the start, lower is closer to paper, higher is closer to prune. */
+	threshold?: number;
 	probability?: number;
 	stepProbability?: number;
 	tokens?: string[];

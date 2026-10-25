@@ -8,6 +8,7 @@ afterEach(() => {
 	cognitionStore.setState(() => ({
 		epoch: "0",
 		policyKeys: [],
+		thresholds: {},
 		matches: {},
 		problem: null,
 		tree: null,

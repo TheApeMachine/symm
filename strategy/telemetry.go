@@ -148,18 +148,26 @@ func stepPolicyFromStep(
 	stored := false
 	if model != nil && pathKey != "" {
 		key := []byte(pathKey)
-		model.trieMu.RLock()
 		if _, ok := model.explore.Get(key); ok {
 			stored = true
 		} else if _, ok := model.policy.Get(key); ok {
 			stored = true
 		}
-		model.trieMu.RUnlock()
 	}
 
 	phase := policyPath
 	if phase == "" {
 		phase = livePath
+	}
+
+	depth := 0
+	if phase != "" {
+		depth = 1
+		for _, char := range phase {
+			if char == '/' {
+				depth++
+			}
+		}
 	}
 
 	return stepPolicy{
@@ -169,7 +177,7 @@ func stepPolicyFromStep(
 		LivePath:    livePath,
 		TriggerPath: triggerPath,
 		PolicyPath:  policyPath,
-		Depth:       pathSegments(phase),
+		Depth:       depth,
 		Action:      action,
 		Outcome:     outcome,
 	}
@@ -396,19 +404,6 @@ func (telemetry *Telemetry) noteLearning(model *Model) {
 	if telemetry == nil || model == nil {
 		return
 	}
-
-	snap := model.LearningSnapshot()
-
-	telemetry.rollupMu.Lock()
-	defer telemetry.rollupMu.Unlock()
-
-	telemetry.rollup.DevelopedPaths = snap.Developed
-	telemetry.rollup.PromotedPaths = snap.Promoted
-	telemetry.rollup.PrunedPaths = snap.Pruned
-	telemetry.rollup.MeanThreshold = snap.MeanThreshold
-	telemetry.rollup.ExitProfit = snap.ExitProfit
-	telemetry.rollup.ExitStop = snap.ExitStop
-	telemetry.rollup.ExitBranch = snap.ExitBranch
 }
 
 func grammarRules(sequencer *tokenizer.Sequencer) []map[string]any {

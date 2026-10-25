@@ -127,7 +127,18 @@ watchScopes(signals.training, (value) => {
 
 watchScopes(signals.workspace, projectTrainRegions);
 
-watchScopes(signals.positions, () => {
+let positionsFlush: ReturnType<typeof setTimeout> | null = null;
+
+const flushPositions = () => {
+	positionsFlush = null;
 	syncOpenPositionCount();
 	ingestDeskSnapshot();
+};
+
+watchScopes(signals.positions, () => {
+	if (positionsFlush !== null) {
+		return;
+	}
+
+	positionsFlush = setTimeout(flushPositions, 50);
 });

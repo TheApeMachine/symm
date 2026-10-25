@@ -1,8 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { atoms, kernelMeasurement, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
+import type { Value } from "#/types/value";
 import {
 	Badge,
 	Button,
@@ -16,17 +17,13 @@ import { cn } from "#/lib/utils";
 
 interface MetricProps {
 	name: string;
+	measurement: Value | null;
 	compact?: boolean;
 }
 
-export const Metric = ({ name, compact = false }: MetricProps) => {
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
+export const MetricRow = memo(
+	({ name, measurement, compact = false }: MetricProps) => {
 	const headline = sourceHeadline(name) ?? name;
-	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
-	const measurement = useMemo(
-		() => kernelMeasurement(name, focusSymbol, aggregate),
-		[name, focusSymbol, aggregate],
-	);
 
 	return (
 		<Component
@@ -104,4 +101,27 @@ export const Metric = ({ name, compact = false }: MetricProps) => {
 			</Button>
 		</Component>
 	);
+});
+
+MetricRow.displayName = "MetricRow";
+
+/** Standalone metric with its own workspace subscription (tests, compact layouts). */
+export const Metric = ({
+	name,
+	compact = false,
+}: {
+	name: string;
+	compact?: boolean;
+}) => {
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const tick = useSelector(
+		signals.workspace,
+		(state) => state.aggregate?.tick ?? 0n,
+	);
+	const measurement = useMemo(
+		() =>
+			kernelMeasurement(name, focusSymbol, signals.workspace.state.aggregate),
+		[name, focusSymbol, tick],
+	);
+	return <MetricRow name={name} measurement={measurement} compact={compact} />;
 };

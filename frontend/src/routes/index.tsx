@@ -1,19 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DEFAULT_KERNELS } from "#/collections/app";
+import { KernelMetricStrip } from "#/components/ui/metric-strip";
 import { Decisions } from "#/components/dashboard/decisions";
+import { LongtailPaperPanel } from "#/components/dashboard/longtail-paper";
 import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
 import { Pulse } from "#/components/pulse";
 import { TerminalPredictionChart } from "#/components/terminal/charts";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
-import {
-	Canvas,
-	Flex,
-	Grid,
-	Metric,
-	Section,
-	Typography,
-} from "#/components/ui";
+import { Canvas, Flex, Grid, Section, Typography } from "#/components/ui";
 
 const RouteComponent = () => {
 	return (
@@ -33,9 +28,7 @@ const RouteComponent = () => {
 							meta={`${DEFAULT_KERNELS.length} kernels`}
 						/>
 						<Section.Body scroll={false} className="flex flex-col">
-							{DEFAULT_KERNELS.map((kernel) => (
-								<Metric key={kernel} name={kernel} />
-							))}
+							<KernelMetricStrip />
 						</Section.Body>
 					</Section>
 
@@ -77,6 +70,7 @@ const RouteComponent = () => {
 							<Section.Header title="Open positions" />
 							<Positions />
 						</Section>
+						<LongtailPaperPanel />
 					</Flex.Column>
 				</Grid>
 			</Flex>

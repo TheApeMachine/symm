@@ -61,6 +61,19 @@ describe("buildTreeFromPrefixes", () => {
 		expect(enterLeaf?.action).toBe("ENTER");
 		expect(exitLeaf?.action).toBe("EXIT");
 	});
+
+	it("paints a leaf with its threshold and shares that with the branch", () => {
+		const tree = buildTreeFromPrefixes(["model/explore/R01/R02/exit.bin"], {
+			"model/explore/R01/R02/exit.bin": 0.8,
+		});
+		const leaf = tree?.children
+			?.find((child) => child.token === "R01")
+			?.children?.find((child) => child.token === "R02")
+			?.children?.find((child) => child.action === "EXIT");
+
+		expect(leaf?.threshold).toBe(0.8);
+		expect(tree?.children?.[0]?.threshold).toBe(0.8);
+	});
 });
 
 describe("keyMatchesPrefix", () => {
@@ -135,6 +148,7 @@ describe("RadixTreeViz", () => {
 			<RadixTreeViz keys={sampleKeys} symbols={symbols} />,
 		);
 
+		fireEvent.click(screen.getByRole("button", { name: /All \(4\)/ }));
 		expect(container.textContent).toContain("Showing all 4 branches");
 		expect(container.textContent).toContain("R01");
 		expect(container.textContent).toContain("R05");
@@ -148,12 +162,27 @@ describe("RadixTreeViz", () => {
 		expect(container.textContent).not.toContain("R08");
 	});
 
+	it("prints the threshold under a scored leaf and fades the branch", () => {
+		const { container } = render(
+			<RadixTreeViz
+				keys={["model/explore/R01/R02/exit.bin"]}
+				thresholds={{ "model/explore/R01/R02/exit.bin": 0.8 }}
+				symbols={{}}
+			/>,
+		);
+
+		expect(container.textContent).toContain("0.80");
+		expect(container.textContent).toContain("solid 0.05");
+		const faded = container.querySelector("g[style*='opacity: 0.4']");
+		expect(faded).not.toBeNull();
+	});
+
 	it("draws the stored trie when no symbol is walking it", () => {
 		const { container } = render(
 			<RadixTreeViz keys={sampleKeys} symbols={{}} />,
 		);
 
-		expect(container.textContent).toContain("Showing all 4 branches");
+		expect(container.textContent).toContain("All (4)");
 		expect(container.textContent).toContain("R05");
 		expect(container.textContent).toContain("R08");
 		expect(container.textContent).not.toContain("No Active Symbol Sequences");

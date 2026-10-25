@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -15,6 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/system"
@@ -85,6 +88,20 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
 	}
+}
+
+func missingObject(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var api smithy.APIError
+	if errors.As(err, &api) && api.ErrorCode() == "NoSuchKey" {
+		return true
+	}
+
+	var respErr *smithyhttp.ResponseError
+	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == 404
 }
 
 /*
@@ -222,9 +239,11 @@ func (client *Client) Download(ctx context.Context, key string) *data.Value {
 	})
 
 	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] download error", err,
-		))
+		if !missingObject(err) {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[store.client] download error", err,
+			))
+		}
 
 		return nil
 	}
@@ -256,6 +275,10 @@ func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.
 			})
 
 			if err != nil {
+				if missingObject(err) {
+					continue
+				}
+
 				errnie.Error(errnie.Err(
 					errnie.IO, "[store.client] download error", err,
 				))

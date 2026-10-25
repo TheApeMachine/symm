@@ -142,6 +142,27 @@ export type HindsightFrame = {
 	layers: Layer[];
 };
 
+/** One hub Value as the hindsight/detections ingestors expect it. */
+export const hubFrameFromValue = (value: {
+	epoch: bigint;
+	tick: bigint;
+	timestamp: bigint;
+	role: string;
+	scope: string;
+	index: string[];
+	layers: Uint8Array[];
+}): HindsightFrame => ({
+	epoch: value.epoch,
+	tick: value.tick,
+	timestamp: value.timestamp,
+	role: value.role,
+	scope: value.scope,
+	layers: value.index.map((index, layerIndex) => ({
+		index,
+		bytes: value.layers[layerIndex],
+	})),
+});
+
 const emptyStream = (run: string, symbol: string): HindsightStream => ({
 	run,
 	symbol,

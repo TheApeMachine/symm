@@ -24,6 +24,7 @@ afterEach(() => {
 	cognitionStore.setState(() => ({
 		epoch: "0",
 		policyKeys: [],
+		thresholds: {},
 		matches: {},
 		problem: null,
 		tree: null,
@@ -40,6 +41,7 @@ describe("ModelProblem banner", () => {
 		cognitionStore.setState(() => ({
 			epoch: "0",
 			policyKeys: [],
+			thresholds: {},
 			matches: {},
 			problem: {
 				level: "error",
@@ -63,6 +65,7 @@ describe("ModelProblem banner", () => {
 		cognitionStore.setState(() => ({
 			epoch: "0",
 			policyKeys: [],
+			thresholds: {},
 			matches: {},
 			problem: problemTree.problem,
 			tree: problemTree,

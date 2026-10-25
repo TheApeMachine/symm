@@ -1,9 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/store";
 import type { Book } from "#/collections/book";
+import { Circular, type CircularBuffer } from "#/collections/circular";
 import { type SequiturFeed, sequiturStore } from "#/collections/sequitur";
 import {
 	closedOnBook,
+	countsTowardBookPerformance,
 	onBook,
 	openOnBook,
 	positionReadout,
@@ -294,9 +296,10 @@ const mean = (values: number[]): number | null =>
 
 /*
 summarizeBook reads one book's desk rows into round-trip statistics via
-positionReadout (broker pnl / CloseOut economics). Every settled lot with
-a book return counts, including virtual discovery. Open lots never affect
-edge. Nulls when there is nothing priced — never a fabricated zero.
+positionReadout (broker pnl / CloseOut economics). Win rate and edge count
+only lots that reused an existing path. A virtual discovery is opened on
+every symbol, so it stays out of the comparison. Open lots never affect
+edge. Nulls when nothing priced has reused a path — never a fabricated zero.
 */
 export const summarizeBook = (
 	rows: Record<string, unknown>[],
@@ -306,7 +309,10 @@ export const summarizeBook = (
 	const settled = closedOnBook(rows, book).filter(
 		(row) => positionReadout(row).returnPct !== null,
 	);
-	const returns = settled.map(
+	const scored = settled.filter((row) =>
+		countsTowardBookPerformance(row, book),
+	);
+	const returns = scored.map(
 		(row) => positionReadout(row).returnPct as number,
 	);
 	const wins = returns.filter((value) => value > 0).length;
@@ -315,7 +321,7 @@ export const summarizeBook = (
 		.filter((value): value is number => value !== null && value > 0);
 
 	return {
-		closed: settled.length,
+		closed: scored.length,
 		open: openOnBook(onThisBook, book).length,
 		wins,
 		winRate: returns.length > 0 ? wins / returns.length : null,
@@ -594,7 +600,10 @@ export const buildInsights = (
 		insights.push({
 			id: "edge",
 			title: `Round-trip edge (${book})`,
-			body: `No priced ${book} round trips yet — edge stays unknown until a lot settles with costs.`,
+			body:
+				book === "virtual"
+					? "No existing path has settled yet. Exploration closes stay out of the edge."
+					: `No priced ${book} round trips yet — edge stays unknown until a lot settles with costs.`,
 			tone: "neutral",
 		});
 	} else {
@@ -608,7 +617,7 @@ export const buildInsights = (
 		insights.push({
 			id: "edge",
 			title: `Round-trip edge (${book})`,
-			body: `Mean return ${bookStats.meanReturn === null ? "—" : signedPct(bookStats.meanReturn)} on ${bookStats.closed} settled ${book} lots; win rate ${pct(bookStats.winRate)} (${bookStats.wins}/${bookStats.closed}).${trendSentence}`,
+			body: `Mean return ${bookStats.meanReturn === null ? "—" : signedPct(bookStats.meanReturn)} on ${bookStats.closed} settled ${book === "virtual" ? "existing paths" : `${book} lots`}; win rate ${pct(bookStats.winRate)} (${bookStats.wins}/${bookStats.closed}).${trendSentence}`,
 			tone: returnTone(bookStats.meanReturn),
 		});
 	}
@@ -751,21 +760,31 @@ export const longtailStore = createStore({
 });
 
 /*
-The epoch tape, not the hour since this page opened. The engine keeps one
-sample per five seconds and replays it on connect; this cap is the longest
-series the chart will hold after that replay.
+One sample every five seconds. Two hundred and forty of them fill the
+charts with twenty minutes, and then the line scrolls.
 */
-const MAX_SAMPLES = 20_000;
+export const CHART_SAMPLES = 240;
 const SAMPLE_EVERY_MS = 5_000;
 
+let chartWindow = Circular<LongtailSample>(CHART_SAMPLES);
+
+const publishWindow = (lastSampleAt?: number) => {
+	const samples = chartWindow.values();
+	longtailStore.setState(() => ({
+		samples,
+		lastSampleAt: lastSampleAt ?? samples[samples.length - 1]?.at ?? 0,
+	}));
+};
+
+const installWindow = (rows: LongtailSample[]) => {
+	chartWindow = Circular<LongtailSample>(CHART_SAMPLES);
+	for (const row of rows) chartWindow.push(row);
+	publishWindow();
+};
+
 const pushSample = (sample: LongtailSample) => {
-	longtailStore.setState((state) => {
-		const samples = [...state.samples, sample].slice(-MAX_SAMPLES);
-		return {
-			samples,
-			lastSampleAt: sample.at,
-		};
-	});
+	chartWindow.push(sample);
+	publishWindow(sample.at);
 };
 
 const readPositions = () => deskRowsForStats();
@@ -795,7 +814,7 @@ const maybeRecordLongtailSample = () => {
 };
 
 let recorderHandle: number | null = null;
-let historyBuffer: LongtailSample[] | null = null;
+let historyBuffer: CircularBuffer<LongtailSample> | null = null;
 
 const finiteOrNull = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -883,7 +902,7 @@ beginLongtailHistory opens the buffer for one replay. The samples already
 on the page stay up until the replay ends, then the epoch replaces them.
 */
 export const beginLongtailHistory = () => {
-	historyBuffer = [];
+	historyBuffer = Circular<LongtailSample>(CHART_SAMPLES);
 };
 
 /* ingestLongtailHistory appends one batch. A batch before begin is ignored. */
@@ -910,18 +929,12 @@ reading, so the latest point still carries the grammar feed.
 export const endLongtailHistory = () => {
 	if (historyBuffer === null) return;
 
-	const seeded = [...historyBuffer].sort((a, b) => a.at - b.at);
+	const seeded = historyBuffer.values().sort((a, b) => a.at - b.at);
 	historyBuffer = null;
 
 	if (seeded.length === 0) return;
 
-	const samples = seeded.slice(-MAX_SAMPLES);
-
-	longtailStore.setState(() => ({
-		samples,
-		lastSampleAt: samples[samples.length - 1]?.at ?? 0,
-	}));
-
+	installWindow(seeded);
 	maybeRecordLongtailSample();
 };
 
@@ -945,6 +958,7 @@ export const resetLongtailRecorder = () => {
 	}
 	historyBuffer = null;
 	longtailBackendMetrics = null;
+	chartWindow = Circular<LongtailSample>(CHART_SAMPLES);
 	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
 };
 
