@@ -82,7 +82,7 @@ func (model *Model) Decide(
 
 	frictionPass, frictionChecked := frictionAllowsEntry(observed)
 	out.Append(map[string]any{
-		"frictionPass":     frictionPass,
+		"frictionPass":    frictionPass,
 		"frictionChecked": frictionChecked,
 	}, "measurement")
 
@@ -125,12 +125,15 @@ func (model *Model) Decide(
 	values := make(map[string]*data.Value)
 
 	if pathKey != "" {
-		trees := []*iradix.Tree[*data.Value]{model.policy}
-		onPaper := []bool{true}
+		trees := []*iradix.Tree[*data.Value]{model.policy, model.explore}
+		onPaper := []bool{true, false}
 
 		if holdingVirtual {
 			trees = []*iradix.Tree[*data.Value]{model.explore}
 			onPaper = []bool{false}
+		} else if holdingPaper {
+			trees = []*iradix.Tree[*data.Value]{model.policy}
+			onPaper = []bool{true}
 		}
 
 		for i, tree := range trees {
@@ -150,6 +153,22 @@ func (model *Model) Decide(
 					if !enter {
 						disagree = true
 						return true
+					}
+
+					// For explore leaves, check if cut brightness crosses threshold.
+					// Lower threshold (from winning paths) is easier to cross.
+					if !onPaper[i] {
+						threshold := 0.5
+						for idx, index := range v.Index {
+							if strings.Contains(index, "threshold") {
+								var thresh float64
+								v.At(&thresh, idx)
+								threshold += thresh
+							}
+						}
+						if cut.Brightness > 0 && cut.Brightness < threshold {
+							return false
+						}
 					}
 
 					values[string(k)] = v
@@ -212,105 +231,117 @@ func (model *Model) Decide(
 		position := model.desk.Position(symbol, virtual)
 		if position != nil && pathKey == position.EntryPath {
 			// The exit sentence has not left the entry prefix yet.
-		} else if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
-			return out
-		} else if paper {
-			model.path.Reset(symbol)
-			model.stage.ResetSequencer(symbol)
-			model.resetCliffTrack(symbol)
-			out.Append("exit submitted", "outcome")
-			return out
 		} else {
-
-			for key, value := range values {
-				if position != nil && position.PnL != nil && position.PnL.Sign() > 0 {
-					value.Append(0.05, "threshold")
+			if position != nil {
+				if paper {
+					position.AppendOutcomeTrigger("policy exit")
 				} else {
-					value.Append(-0.05, "threshold")
+					position.AppendOutcomeTrigger("explore exit")
 				}
+			}
+			if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
+				return out
+			} else if paper {
+				model.path.Reset(symbol)
+				model.stage.ResetSequencer(symbol)
+				model.resetCliffTrack(symbol)
+				out.Append("exit submitted", "outcome")
+				return out
+			} else {
 
-				model.explore, _, _ = model.explore.Insert(
-					[]byte(key),
-					value,
-				)
-
-				threshold := 0.5
-
-				for idx, index := range value.Index {
-					if strings.Contains(index, "threshold") {
-						var thresh float64
-						value.At(&thresh, idx)
-						threshold += thresh
+				for key, value := range values {
+					if position != nil && position.PnL != nil && position.PnL.Sign() > 0 {
+						value.Append(-0.05, "threshold")
+					} else {
+						value.Append(0.05, "threshold")
 					}
-				}
 
-				if threshold > 0.8 {
-					model.store.DeletePrefix("model/explore/" + key + "/")
-					model.explore, _ = model.explore.DeletePrefix([]byte(key))
-				}
-
-				if threshold < 0.2 {
-					suffix := "enter.bin"
-					var action string
-					value.Lookup(&action, "action")
-					if action == "exit" {
-						suffix = "exit.bin"
-					}
-					model.store.WriteAtPrefix(
-						"model/policy/"+key+"/"+suffix,
-						value.Bytes(),
-					)
-
-					model.policy, _, _ = model.policy.Insert(
+					model.explore, _, _ = model.explore.Insert(
 						[]byte(key),
 						value,
 					)
 
-					model.store.DeletePrefix("model/explore/" + key + "/")
-					model.explore, _ = model.explore.DeletePrefix([]byte(key))
+					threshold := 0.5
 
-					// The exit sentence starts from its own root, so the
-					// entry path is a different leaf. Paper needs both.
-					if position != nil && position.EntryPath != "" && position.EntryPath != key {
-						entry, ok := model.explore.Get([]byte(position.EntryPath))
-						if !ok || entry == nil {
-							entry = model.store.Download(
-								model.Context(),
-								"model/explore/"+position.EntryPath+"/enter.bin",
-							)
+					for idx, index := range value.Index {
+						if strings.Contains(index, "threshold") {
+							var thresh float64
+							value.At(&thresh, idx)
+							threshold += thresh
 						}
-						if entry == nil {
-							entry = data.NewValue(
-								"model", "policy", position.Symbol,
-							).Append(
-								"enter", "action",
-							)
-							entry.Append(explorePnLStep(position), "threshold")
+					}
+
+					if threshold > 0.8 {
+						model.store.DeletePrefix("model/explore/" + key + "/")
+						model.explore, _ = model.explore.DeletePrefix([]byte(key))
+					}
+
+					if threshold < 0.2 {
+						suffix := "enter.bin"
+						var action string
+						value.Lookup(&action, "action")
+
+						if action == "exit" {
+							suffix = "exit.bin"
 						}
+
 						model.store.WriteAtPrefix(
-							"model/policy/"+position.EntryPath+"/enter.bin",
-							entry.Bytes(),
+							"model/policy/"+key+"/"+suffix,
+							value.Bytes(),
 						)
+
 						model.policy, _, _ = model.policy.Insert(
-							[]byte(position.EntryPath),
-							entry,
+							[]byte(key),
+							value,
 						)
-						model.store.DeletePrefix("model/explore/" + position.EntryPath + "/")
-						model.explore, _ = model.explore.DeletePrefix([]byte(position.EntryPath))
+
+						model.store.DeletePrefix("model/explore/" + key + "/")
+						model.explore, _ = model.explore.DeletePrefix([]byte(key))
+
+						// The exit sentence starts from its own root, so the
+						// entry path is a different leaf. Paper needs both.
+						if position != nil && position.EntryPath != "" && position.EntryPath != key {
+							entry, ok := model.explore.Get([]byte(position.EntryPath))
+							if !ok || entry == nil {
+								entry = model.store.Download(
+									model.Context(),
+									"model/explore/"+position.EntryPath+"/enter.bin",
+								)
+							}
+							if entry == nil {
+								entry = data.NewValue(
+									"model", "policy", position.Symbol,
+								).Append(
+									"enter", "action",
+								)
+								entry.Append(explorePnLStep(position), "threshold")
+							}
+							model.store.WriteAtPrefix(
+								"model/policy/"+position.EntryPath+"/enter.bin",
+								entry.Bytes(),
+							)
+							model.policy, _, _ = model.policy.Insert(
+								[]byte(position.EntryPath),
+								entry,
+							)
+							model.store.DeletePrefix("model/explore/" + position.EntryPath + "/")
+							model.explore, _ = model.explore.DeletePrefix([]byte(position.EntryPath))
+						}
 					}
 				}
-			}
 
-			if model.writePaths(position) {
-				model.stage.ResetSequencer(symbol)
-				out.Append("exit submitted", "outcome")
+				if model.writePaths(position) {
+					model.stage.ResetSequencer(symbol)
+					out.Append("exit submitted", "outcome")
+				}
 			}
 		}
 	}
 
 	if position := model.desk.Position(symbol, true); position != nil {
 		exitReady := pathDepth(pathKey) >= minPathDepth() && pathKey != position.EntryPath
-		if _, ok := position.ShouldExit(); ok && exitReady {
+		if trigger, ok := position.ShouldExit(); ok && exitReady {
+			position.AppendOutcomeTrigger(trigger)
 			if err := model.desk.Exit(symbol, pathKey, true); err != nil {
 				return out
 			}
@@ -383,10 +414,10 @@ func (model *Model) explorePath(
 
 func explorePnLStep(position *broker.Position) float64 {
 	if position != nil && position.PnL != nil && position.PnL.Sign() > 0 {
-		return 0.05
+		return -0.05
 	}
 
-	return -0.05
+	return 0.05
 }
 
 func (model *Model) persistExploreLeaf(

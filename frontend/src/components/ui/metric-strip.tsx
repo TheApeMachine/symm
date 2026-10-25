@@ -10,19 +10,19 @@ through Component, but React reconciles one parent per tick instead of ten.
 */
 export const KernelMetricStrip = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const tick = useSelector(
+	const aggregate = useSelector(
 		signals.workspace,
-		(state) => state.aggregate?.tick ?? 0n,
+		(state) => state.aggregate,
 	);
 
 	const measurements = useMemo(() => {
-		const aggregate = signals.workspace.state.aggregate;
 		const out: Record<string, Value | null> = {};
 		for (const kernel of DEFAULT_KERNELS) {
-			out[kernel] = kernelMeasurement(kernel, focusSymbol, aggregate);
+			out[kernel] =
+				kernelMeasurement(kernel, focusSymbol, aggregate) ?? null;
 		}
 		return out;
-	}, [focusSymbol, tick]);
+	}, [focusSymbol, aggregate]);
 
 	return (
 		<>

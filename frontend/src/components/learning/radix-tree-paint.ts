@@ -294,7 +294,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 					? "drop-shadow(0 0 3px rgba(230, 160, 60, 0.55))"
 					: isSymbolLink
 						? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
-						: null,
+						: "none",
 			);
 
 		const token = link.target.data.token;
@@ -546,7 +546,16 @@ const paintNodes = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			);
 		}
 
-		paintNodeContents(group, node, input);
+		paintNodeContents(
+			group as unknown as d3.Selection<
+				SVGGElement,
+				TreeNode,
+				SVGGElement,
+				unknown
+			>,
+			node,
+			input,
+		);
 	});
 };
 

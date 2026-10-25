@@ -28,19 +28,19 @@ export const LongtailPaperPanel = () => {
 					</Typography.Span>
 				) : (
 					<Flex.Row gap={4} wrap="wrap">
-						<Flex.Column gap={0.5}>
+						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Verdict
 							</Typography.Span>
 							<Typography.Span>{call?.label ?? "—"}</Typography.Span>
 						</Flex.Column>
-						<Flex.Column gap={0.5}>
+						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Closed lots
 							</Typography.Span>
 							<Typography.Span>{paper?.closed ?? "—"}</Typography.Span>
 						</Flex.Column>
-						<Flex.Column gap={0.5}>
+						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Win rate
 							</Typography.Span>
@@ -50,7 +50,7 @@ export const LongtailPaperPanel = () => {
 									: "—"}
 							</Typography.Span>
 						</Flex.Column>
-						<Flex.Column gap={0.5}>
+						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Mean return
 							</Typography.Span>
@@ -60,7 +60,7 @@ export const LongtailPaperPanel = () => {
 									: "—"}
 							</Typography.Span>
 						</Flex.Column>
-						<Flex.Column gap={0.5}>
+						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Open venue
 							</Typography.Span>

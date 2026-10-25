@@ -290,11 +290,19 @@ func (position *Position) repriceLocked() {
 		position.PnL != nil {
 		position.OpenPnL = position.PnL
 	}
+
+	if position.ClosedAt == nil && position.PnLPct != nil {
+		pct := position.PnLPct.Float64()
+		if pct > position.peakOpenPnLPct {
+			position.peakOpenPnLPct = pct
+		}
+	}
 }
 
 /*
 ShouldExit is true when a virtual lot should close on book economics:
-in profit, or down by the same quote gap it needed to reach profit at open.
+trailing giveback after profit, breakeven protection, or down by enough
+to exceed initial friction with buffer against bid-ask bounce.
 */
 func (position *Position) SetEntryTradeRate(rate float64) {
 	position.mu.Lock()
@@ -350,12 +358,29 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 		return "", false
 	}
 
-	if position.PnL.Sign() > 0 {
-		return "cleared friction", true
+	// When in profit, let the trade run; only exit on trailing giveback or slip back to breakeven.
+	if position.peakOpenPnLPct > 0 {
+		pct := 0.0
+		if position.PnLPct != nil {
+			pct = position.PnLPct.Float64()
+		}
+
+		if position.peakOpenPnLPct >= 0.5 {
+			giveback := (position.peakOpenPnLPct - pct) / position.peakOpenPnLPct
+			if giveback >= 0.30 {
+				return "trailing profit", true
+			}
+		}
+
+		if pct <= 0.0 {
+			return "breakeven protect", true
+		}
 	}
 
+	// Downside stop: give 3x initial friction room so normal bid-ask spread
+	// noise does not immediately stop out the position right after entry.
 	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
-		stop := position.OpenPnL.Add(position.OpenPnL)
+		stop := position.OpenPnL.Mul(decimal.NewFromInt64(3))
 
 		if position.PnL.Cmp(stop) <= 0 {
 			return "friction dip", true

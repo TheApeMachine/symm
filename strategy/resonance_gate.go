@@ -131,7 +131,7 @@ func ignitionLit(regions []*nmstore.Region) bool {
 			continue
 		}
 
-		if region.Key >= 7 && region.Key <= 9 && region.Brightness >= min {
+		if region.Key == 7 && region.Brightness >= min {
 			return true
 		}
 	}

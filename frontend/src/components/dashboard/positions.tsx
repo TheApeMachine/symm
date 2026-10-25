@@ -3,13 +3,14 @@ import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { positionReadout } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
+import { formatValue } from "#/components/ui/dom";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { cn } from "@/lib/utils";
 import { formatExitTrigger } from "#/lib/trigger-labels";
+import { cn } from "@/lib/utils";
 
-const formatValue = (value: unknown, digits: number): string => {
+const formatNumber = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {
 		return value.toFixed(digits);
 	}
@@ -72,13 +73,13 @@ const sellMarkers = (
 
 		return {
 			trigger,
-			label: `${formatExitTrigger(trigger)}${qty ? ` ${formatValue(qty, 4)} qty` : ""}`,
+			label: `${formatExitTrigger(trigger)}${qty ? ` ${formatNumber(qty, 4)} qty` : ""}`,
 			title: [
 				trigger,
 				time,
 				qty ? `qty ${qty}` : "no order",
-				`capacity ${formatValue(sell.capacityQty, 4)} (ratio ${formatValue(sell.capacityRatio, 2)})`,
-				`budget ${formatValue(Number(sell.budget ?? 0) * 100, 3)}%`,
+				`capacity ${formatNumber(sell.capacityQty, 4)} (ratio ${formatNumber(sell.capacityRatio, 2)})`,
+				`budget ${formatNumber(Number(sell.budget ?? 0) * 100, 3)}%`,
 				String(sell.note ?? ""),
 			]
 				.filter((part) => part !== "")
@@ -119,8 +120,8 @@ const selectPositions = (
 			status: positionStatus,
 			pnl: formatValue(pnlFrac, "pct"),
 			pnlValue: pnlFrac,
-			entryPrice: formatValue(readout.entryPrice, 6),
-			mark: formatValue(readout.mark, 6),
+			entryPrice: formatNumber(readout.entryPrice, 6),
+			mark: formatNumber(readout.mark, 6),
 			returnPct: formatValue(pnlFrac, "pct"),
 		});
 	}

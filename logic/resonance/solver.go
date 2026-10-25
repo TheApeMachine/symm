@@ -524,6 +524,11 @@ func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Val
 	prior.Append([]float64{out[0][1]}, "energy")
 	prior.Append([]float64{out[0][5]}, "surprise")
 
+	if len(out[0]) > 11 && out[0][10] > 0 {
+		prior.Append([]float64{out[0][9]}, "task_skill")
+		prior.Append([]float64{out[0][11]}, "task_relative_precision")
+	}
+
 	// The summary row {supportedHorizon, calibrated, resolvedSteps, pending,
 	// confidence, alpha, ...} is how a consumer knows whether the forecast head
 	// has learned anything yet; it is published so that evidence is visible.

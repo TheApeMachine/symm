@@ -3,7 +3,6 @@ import { memo, useMemo } from "react";
 import { atoms, kernelMeasurement, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
-import type { Value } from "#/types/value";
 import {
 	Badge,
 	Button,
@@ -14,6 +13,7 @@ import {
 	Typography,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
+import type { Value } from "#/types/value";
 
 interface MetricProps {
 	name: string;
@@ -114,14 +114,13 @@ export const Metric = ({
 	compact?: boolean;
 }) => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const tick = useSelector(
+	const aggregate = useSelector(
 		signals.workspace,
-		(state) => state.aggregate?.tick ?? 0n,
+		(state) => state.aggregate,
 	);
 	const measurement = useMemo(
-		() =>
-			kernelMeasurement(name, focusSymbol, signals.workspace.state.aggregate),
-		[name, focusSymbol, tick],
+		() => kernelMeasurement(name, focusSymbol, aggregate) ?? null,
+		[name, focusSymbol, aggregate],
 	);
 	return <MetricRow name={name} measurement={measurement} compact={compact} />;
 };
