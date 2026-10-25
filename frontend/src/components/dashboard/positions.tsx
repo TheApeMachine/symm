@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils";
 
 const formatNumber = (value: unknown, digits: number): string => {
 	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			return "—";
+		}
+
 		return value.toFixed(digits);
 	}
 
@@ -20,7 +24,12 @@ const formatNumber = (value: unknown, digits: number): string => {
 		value !== "" &&
 		Number.isFinite(Number(value))
 	) {
-		return Number(value).toFixed(digits);
+		const parsed = Number(value);
+		if (!Number.isFinite(parsed)) {
+			return "—";
+		}
+
+		return parsed.toFixed(digits);
 	}
 
 	return String(value ?? "—");

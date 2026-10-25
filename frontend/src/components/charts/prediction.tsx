@@ -85,6 +85,12 @@ export const parseResonanceData = (
 			if (suffix === "task_skill") data.taskSkill = first;
 			if (suffix === "surprise") data.surprise = first;
 			if (suffix === "energy") data.energy = first;
+			if (suffix === "supported_horizon")
+				data.supportedHorizon = Math.trunc(first);
+			if (suffix === "resolved_steps")
+				data.resolvedSteps = Math.trunc(first);
+			if (suffix === "confidence") data.confidence = first;
+			if (suffix === "calibrated") data.calibrated = first >= 1;
 			if (suffix.startsWith("forward_curve_")) {
 				const idx = Number.parseInt(suffix.slice("forward_curve_".length), 10);
 				if (!Number.isNaN(idx)) data.forwardCurve[idx] = first;

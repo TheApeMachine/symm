@@ -611,8 +611,11 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 	const sizing = events.find((e) => e.kind === "sizing");
 	const outcome = life.outcome;
 
+	const entryPath = entryMatch?.fields?.path;
 	const path =
-		(entryMatch?.fields?.path as string | undefined) ?? life.path;
+		typeof entryPath === "string" && entryPath !== ""
+			? entryPath
+			: life.path;
 	const confidence = entryMatch?.fields?.confidence as number | undefined;
 	const candidates = entryMatch?.fields?.candidates as number | undefined;
 

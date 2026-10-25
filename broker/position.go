@@ -47,7 +47,7 @@ type Position struct {
 	OutcomeTriggers []string `json:"outcome_triggers,omitempty"`
 	EntryTradeRate  float64  `json:"entry_trade_rate,omitempty"`
 	HoldTicks       int      `json:"hold_ticks,omitempty"`
-	peakOpenPnLPct  float64
+	peakOpenPnLPct  float64  `json:"peak_open_pnl_pct,omitempty"`
 }
 
 func NewPosition(
@@ -365,15 +365,15 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 			pct = position.PnLPct.Float64()
 		}
 
+		if pct <= 0.0 {
+			return "breakeven protect", true
+		}
+
 		if position.peakOpenPnLPct >= 0.5 {
 			giveback := (position.peakOpenPnLPct - pct) / position.peakOpenPnLPct
 			if giveback >= 0.30 {
 				return "trailing profit", true
 			}
-		}
-
-		if pct <= 0.0 {
-			return "breakeven protect", true
 		}
 	}
 

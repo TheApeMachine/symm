@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -8,6 +9,10 @@ import (
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
+
+// ignitionRegimeKey is grid region R07 (Explosive Ignition); entry requires
+// this regime when learning.require_ignition_regime is enabled.
+const ignitionRegimeKey uint8 = 7
 
 type coderReading struct {
 	supportedHorizon float64
@@ -131,7 +136,7 @@ func ignitionLit(regions []*nmstore.Region) bool {
 			continue
 		}
 
-		if region.Key == 7 && region.Brightness >= min {
+		if region.Key == ignitionRegimeKey && region.Brightness >= min {
 			return true
 		}
 	}
@@ -149,13 +154,28 @@ func forwardCurveAligned(reading coderReading) bool {
 		need = len(reading.forward)
 	}
 
+	var sign float64
+
 	for i := 0; i < need; i++ {
-		if reading.forward[i] <= 0 {
+		value := reading.forward[i]
+
+		if value == 0 {
+			return false
+		}
+
+		here := math.Copysign(1, value)
+
+		if sign == 0 {
+			sign = here
+			continue
+		}
+
+		if here != sign {
 			return false
 		}
 	}
 
-	return true
+	return sign != 0
 }
 
 func (model *Model) resonanceAllowsEntry(

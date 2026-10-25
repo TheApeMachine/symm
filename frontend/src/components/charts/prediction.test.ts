@@ -118,18 +118,38 @@ describe("signedVectorTransform", () => {
 	});
 });
 
+const wireResonanceReading = (
+	metrics: Record<string, number>,
+): Value => {
+	const prefix = "resonance/reading/BTC-USD/0000000000000000000/0000000000000000100";
+	const encoder = new TextEncoder();
+	const index: string[] = [];
+	const layers: Uint8Array[] = [];
+
+	for (const [name, raw] of Object.entries(metrics)) {
+		index.push(`${prefix}/${name}`);
+		layers.push(encoder.encode(JSON.stringify([raw])));
+	}
+
+	return new Value({
+		origin: "resonance",
+		role: "reading",
+		scope: "BTC-USD",
+		prefix,
+		index,
+		layers,
+	});
+};
+
 describe("parseResonanceData", () => {
 	it("densifies sparse latent and forward_curve metrics into lane vectors", () => {
-		const val = new Value({
-			metrics: [
-				{ name: "latent_0", raw: 0.2 },
-				{ name: "latent_2", raw: -0.4 },
-				{ name: "forward_curve_0", raw: 0.01 },
-				{ name: "forward_curve_1", raw: -0.02 },
-				{ name: "layer_0_state_0", raw: 1 },
-				{ name: "layer_0_prediction_0", raw: 0.5 },
-			],
-			provenance: [],
+		const val = wireResonanceReading({
+			latent_0: 0.2,
+			latent_2: -0.4,
+			forward_curve_0: 0.01,
+			forward_curve_1: -0.02,
+			layer_0_state_0: 1,
+			layer_0_prediction_0: 0.5,
 		});
 
 		const parsed = parseResonanceData(val);
@@ -137,5 +157,16 @@ describe("parseResonanceData", () => {
 		expect(parsed?.forwardCurve).toEqual([0.01, -0.02]);
 		expect(parsed?.layers?.[0]?.state).toEqual([1]);
 		expect(parsed?.layers?.[0]?.prediction).toEqual([0.5]);
+	});
+
+	it("reads calibrated and supported_horizon from numeric wire metrics", () => {
+		const parsed = parseResonanceData(
+			wireResonanceReading({
+				calibrated: 1,
+				supported_horizon: 2,
+			}),
+		);
+		expect(parsed?.calibrated).toBe(true);
+		expect(parsed?.supportedHorizon).toBe(2);
 	});
 });
