@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo, useMemo } from "react";
+import { memo, useMemo, useRef } from "react";
 import { atoms, kernelMeasurement, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
@@ -15,17 +15,51 @@ import {
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
 
-/** Latest folded kernel reading for the focus symbol on the workspace tick. */
+type StickyKernelCache = Record<string, Record<string, Value>>;
+
+const stickyKernelReading = (
+	cache: StickyKernelCache,
+	kernel: string,
+	symbol: string,
+	aggregate: Value | undefined,
+): Value | null => {
+	const next = kernelMeasurement(kernel, symbol, aggregate);
+	if (!next) {
+		return cache[symbol]?.[kernel] ?? null;
+	}
+
+	const byKernel = cache[symbol] ?? {};
+	byKernel[kernel] = next;
+	cache[symbol] = byKernel;
+	return next;
+};
+
+/** Latest folded kernel reading; holds the last sample when ticks omit this kernel. */
 export const useKernelReading = (kernel: string): Value | null => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const aggregate = useSelector(
 		signals.workspace,
 		(state) => state.aggregate,
 	);
+	const stickyRef = useRef<StickyKernelCache>({});
+
 	return useMemo(
-		() => kernelMeasurement(kernel, focusSymbol, aggregate) ?? null,
+		() => stickyKernelReading(stickyRef.current, kernel, focusSymbol, aggregate),
 		[kernel, focusSymbol, aggregate],
 	);
+};
+
+export const stickyKernelMeasurements = (
+	cache: StickyKernelCache,
+	kernels: readonly string[],
+	symbol: string,
+	aggregate: Value | undefined,
+): Record<string, Value | null> => {
+	const out: Record<string, Value | null> = {};
+	for (const kernel of kernels) {
+		out[kernel] = stickyKernelReading(cache, kernel, symbol, aggregate);
+	}
+	return out;
 };
 
 interface MetricProps {

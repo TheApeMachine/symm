@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { positionReadout } from "#/components/book-readout";
 import {
 	type ChoiceSample,
@@ -46,6 +46,8 @@ export const OpenChoiceChart = ({
 }) => {
 	const [now, setNow] = useState(() => Date.now());
 	const [revision, setRevision] = useState(0);
+	const plotRef = useRef<HTMLDivElement>(null);
+	const [plotSize, setPlotSize] = useState({ w: 0, h: 168 });
 
 	useEffect(() => {
 		const live = new Set<string>();
@@ -86,8 +88,25 @@ export const OpenChoiceChart = ({
 	);
 	const watching = drawn.length > 0;
 
-	const width = 640;
-	const height = 168;
+	useLayoutEffect(() => {
+		const node = plotRef.current;
+		if (!node || !watching) return;
+
+		const sync = () => {
+			const w = Math.max(280, Math.round(node.clientWidth));
+			const h = Math.max(120, Math.round(node.clientHeight));
+			setPlotSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+		};
+
+		sync();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(sync);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [watching]);
+
+	const width = Math.max(plotSize.w, 280);
+	const height = plotSize.h;
 	const pad = { l: 52, r: 12, t: 16, b: 22 };
 	const plotW = width - pad.l - pad.r;
 	const plotH = height - pad.t - pad.b;
@@ -121,7 +140,7 @@ export const OpenChoiceChart = ({
 					: "flat";
 
 	return (
-		<section className="min-w-0 border-r border-b border-(--line) bg-(--surface) px-3 py-2">
+		<section className="w-full max-w-none shrink-0 self-stretch border-b border-(--line) bg-(--surface) px-3 py-2">
 			<div className="mb-1 flex items-baseline justify-between gap-3">
 				<div>
 					<div className="text-[11px] font-bold uppercase tracking-wider text-(--f2)">
@@ -149,12 +168,14 @@ export const OpenChoiceChart = ({
 				)}
 			</div>
 			{watching ? (
-				<svg
-					viewBox={`0 0 ${width} ${height}`}
-					className="h-40 w-full"
-					role="img"
-					aria-label="Close-now return of open positions"
-				>
+				<div ref={plotRef} className="h-44 w-full min-w-0">
+					<svg
+						viewBox={`0 0 ${width} ${height}`}
+						preserveAspectRatio="none"
+						className="block h-full w-full"
+						role="img"
+						aria-label="Close-now return of open positions"
+					>
 					<title>Close-now return of open positions</title>
 					<line
 						x1={pad.l}
@@ -237,7 +258,8 @@ export const OpenChoiceChart = ({
 							strokeWidth={2.2}
 						/>
 					)}
-				</svg>
+					</svg>
+				</div>
 			) : (
 				<div className="flex h-24 items-center justify-center text-[11px] text-(--f4)">
 					close-now return is not on these lots yet

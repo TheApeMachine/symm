@@ -51,7 +51,9 @@ describe("sourceHeadlineMetric", () => {
 	});
 
 	it("shows PumpDump's measured spread contract", () => {
+		expect(sourceHeadline("pumpdump")).toBe("volume_ratio");
 		expect(sourceMetrics("pumpdump")).toContain("spread_ratio");
+		expect(sourceMetrics("pumpdump")).toContain("volume_ratio");
 		expect(sourceMetrics("pumpdump")).toContain("volume_rate");
 	});
 

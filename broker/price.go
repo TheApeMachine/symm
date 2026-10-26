@@ -282,6 +282,21 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 }
 
 /*
+OpenDragBudgetPct is the most negative close-now PnLPct still allowed at
+entry: three times the round-trip friction hurdle, matching the virtual
+stop buffer in ShouldExit.
+*/
+func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
+	friction, ok := price.Friction(symbol)
+	if !ok || friction == nil {
+		return nil, false
+	}
+
+	budget := friction.Mul(decimal.NewFromInt64(3)).Mul(decimalHundred)
+	return budget, true
+}
+
+/*
 Return is fee-net round-trip profit as a fraction of entry cost.
 ok is false when the bid book cannot take the whole quantity.
 */

@@ -77,8 +77,11 @@ func (momentum *Momentum) trigger(
 		return "", false
 	}
 
-	if pnlPct < sample.lastPnLPct {
-		return "momentum reversal", true
+	if pnlPct <= sample.lastPnLPct {
+		if pnlPct < sample.lastPnLPct {
+			return "momentum reversal", true
+		}
+		return "momentum stall", true
 	}
 
 	if resonance == nil {
@@ -93,7 +96,7 @@ func (momentum *Momentum) trigger(
 
 	meanForward := resonance.MeanForward(reading)
 
-	if meanForward < sample.lastForward {
+	if meanForward <= sample.lastForward {
 		return "momentum fade", true
 	}
 
@@ -105,8 +108,8 @@ func (momentum *Momentum) trigger(
 
 	supported := int(reading.SupportedHorizon)
 
-	if supported < sample.lastSupported {
-		return "momentum stall", true
+	if supported <= sample.lastSupported {
+		return "momentum horizon stall", true
 	}
 
 	return "", false

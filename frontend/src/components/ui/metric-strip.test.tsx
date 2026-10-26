@@ -34,17 +34,50 @@ describe("KernelMetricStrip", () => {
 
 		expect(cvdRow).toBeTruthy();
 		expect(
-			view.container.querySelector('[data-metric-raw="signed_net_fraction"]')
-				?.textContent,
-		).toBe("—");
+			view.container.querySelector('[data-metric-meter="signed_net_fraction"]')
+				?.getAttribute("aria-valuenow"),
+		).toBe("0");
 
 		publishCvd(0.42);
 
+		const cvdMeter = () =>
+			view.container.querySelector('[data-metric-meter="signed_net_fraction"]');
+
 		await waitFor(() => {
-			expect(
-				view.container.querySelector('[data-metric-raw="signed_net_fraction"]')
-					?.textContent,
-			).toBe("0.420");
+			expect(cvdMeter()?.getAttribute("aria-valuenow")).toBe("42");
 		});
+	});
+
+	it("keeps the last kernel sample when a tick has no reading", async () => {
+		const view = render(<KernelMetricStrip />);
+		publishCvd(0.42);
+
+		const cvdMeter = () =>
+			view.container.querySelector('[data-metric-meter="signed_net_fraction"]');
+
+		await waitFor(() => {
+			expect(cvdMeter()?.getAttribute("aria-valuenow")).toBe("42");
+		});
+
+		act(() => {
+			signals.workspace.setState((prev) => ({
+				...prev,
+				aggregate: new Value({
+					origin: "workspace",
+					role: "tick",
+					scope: "aggregate",
+					prefix: "workspace/tick/aggregate/0/2",
+					tick: 2n,
+					index: [],
+					layers: [],
+				}),
+			}));
+		});
+
+		expect(cvdMeter()?.getAttribute("aria-valuenow")).toBe("42");
+		expect(
+			view.container.querySelector('[data-metric-badge="signed_net_fraction"]')
+				?.textContent,
+		).not.toBe("STANDBY");
 	});
 });

@@ -77,21 +77,24 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	}
 
 	var bookAvailable bool
-	var bestBid, bestAsk *spotbook.Level
 	var bids []float64
 	var asks []float64
 
 	signal.books.Book(symbol, func(b *spotbook.Book) {
 		bookAvailable = true
 
-		bestBid = b.BestBid()
-		bestAsk = b.BestAsk()
+		bestBid := b.BestBid()
+		bestAsk := b.BestAsk()
 		if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
 			return
 		}
 
-		bids = append(bids, bestBid.Price.Float64(), bestBid.Quantity.Float64())
-		asks = append(asks, bestAsk.Price.Float64(), bestAsk.Quantity.Float64())
+		bestBidPrice := bestBid.Price.Float64()
+		bestAskPrice := bestAsk.Price.Float64()
+
+		// Calculate expects both sides prefixed with [bestBid, bestAsk] prices.
+		bids = []float64{bestBidPrice, bestAskPrice}
+		asks = []float64{bestBidPrice, bestAskPrice}
 
 		for _, level := range b.Bids.Levels {
 			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
@@ -101,14 +104,9 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		}
 	})
 
-	if !bookAvailable {
+	if !bookAvailable || len(bids) < 2 || len(asks) < 2 {
 		return value
 	}
-
-	bestBidPrice := bestBid.Price.Float64()
-	bestAskPrice := bestAsk.Price.Float64()
-	bids = append(bids, bestBidPrice, bestBid.Quantity.Float64())
-	asks = append(asks, bestAskPrice, bestAsk.Quantity.Float64())
 
 	res, err := signal.Calculate(symbol, bids, asks)
 	if err != nil || len(res) == 0 {

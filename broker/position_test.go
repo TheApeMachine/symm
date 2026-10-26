@@ -42,6 +42,26 @@ func TestPositionTrySettleExplore(t *testing.T) {
 	})
 }
 
+func TestVirtualSymmetricBookStop(t *testing.T) {
+	Convey("virtual lots exit at twice the opening underwater return", t, func() {
+		position := &Position{
+			Virtual:    true,
+			OpenPnLPct: -1.6,
+		}
+		position.OpenPnL = decimal.NewFromFloat64(-3.2)
+		position.PnL = decimal.NewFromFloat64(-6.5)
+		position.PnLPct = decimal.NewFromFloat64(-3.3)
+
+		trigger, ok := position.ShouldExit()
+		So(ok, ShouldBeTrue)
+		So(trigger, ShouldEqual, "symmetric book stop")
+
+		position.PnLPct = decimal.NewFromFloat64(-2.0)
+		_, ok = position.ShouldExit()
+		So(ok, ShouldBeFalse)
+	})
+}
+
 func TestPositionEnterExitPath(t *testing.T) {
 	Convey("Enter and Exit require a path", t, func() {
 		position := NewPosition("BTC/USD", "", true, nil)

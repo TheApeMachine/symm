@@ -245,6 +245,15 @@ market:
       - USDS
       - RLUSD
       - UST
+      # Large-cap pairs: short holds rarely clear ~1.6% round-trip taker friction.
+      - BTC
+      - ETH
+      - SOL
+      - LTC
+      - ADA
+      - DOT
+      - LINK
+      - PEPE
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true
@@ -331,7 +340,7 @@ learning:
   minimum_path_confidence: 2
   threshold_start: 0.5
   threshold_step: 0.05
-  explore_temporal_penalty: 0.001
+  explore_temporal_penalty: 0.0
   threshold_floor: 0.05
   threshold_ceil: 0.95
   virtual_promote: 3

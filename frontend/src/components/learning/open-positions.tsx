@@ -202,8 +202,7 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 				</span>
 			</Flex.Row>
 
-			<div className="grid grid-cols-[auto_1fr] gap-4 items-start">
-				<Flex.Row gap={1}>
+			<Flex.Row gap={1} wrap="wrap">
 					<Gauge
 						value={pnlGaugeValue(pnlPct)}
 						tone={pnlTone}
@@ -239,17 +238,11 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 						caption="exit room"
 					/>
 				</Flex.Row>
-				<Flex.Column className="min-w-0">
-					<Trail
-						values={pnlTrail}
-						width={240}
-						height={GAUGE_SIZE}
-						className="max-w-full"
-					/>
-					<span className="-mt-3 text-[10px] text-(--f3) leading-tight">
-						Close-now P&amp;L trail
-					</span>
-				</Flex.Column>
+			<div className="w-full min-w-0">
+				<Trail values={pnlTrail} height={GAUGE_SIZE} className="w-full" />
+				<span className="-mt-3 block text-[10px] text-(--f3) leading-tight">
+					Close-now P&amp;L trail
+				</span>
 			</div>
 
 			<div className="border-t border-(--line) pt-3">
@@ -331,11 +324,13 @@ export const OpenPositions = () => {
 	}
 
 	return (
-		<div className="flex-1 min-h-0 overflow-auto grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
+		<Flex.Column className="flex-1 min-h-0 w-full min-w-0 overflow-auto">
 			<OpenChoiceChart lots={held} />
-			{held.map((row) => (
-				<PositionCard key={String(row.id ?? row.symbol)} row={row} />
-			))}
-		</div>
+			<div className="grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
+				{held.map((row) => (
+					<PositionCard key={String(row.id ?? row.symbol)} row={row} />
+				))}
+			</div>
+		</Flex.Column>
 	);
 };

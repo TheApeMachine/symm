@@ -1,8 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
-import { useMemo } from "react";
-import { atoms, DEFAULT_KERNELS, kernelMeasurement, signals } from "#/collections/app";
+import { useMemo, useRef } from "react";
+import { atoms, DEFAULT_KERNELS, signals } from "#/collections/app";
 import type { Value } from "#/types/value";
-import { MetricRow } from "./metric";
+import { MetricRow, stickyKernelMeasurements } from "./metric";
 
 /*
 One workspace subscription per dashboard column: each kernel row still binds
@@ -15,14 +15,18 @@ export const KernelMetricStrip = () => {
 		(state) => state.aggregate,
 	);
 
-	const measurements = useMemo(() => {
-		const out: Record<string, Value | null> = {};
-		for (const kernel of DEFAULT_KERNELS) {
-			out[kernel] =
-				kernelMeasurement(kernel, focusSymbol, aggregate) ?? null;
-		}
-		return out;
-	}, [focusSymbol, aggregate]);
+	const stickyRef = useRef<Record<string, Record<string, Value>>>({});
+
+	const measurements = useMemo(
+		() =>
+			stickyKernelMeasurements(
+				stickyRef.current,
+				DEFAULT_KERNELS,
+				focusSymbol,
+				aggregate,
+			),
+		[focusSymbol, aggregate],
+	);
 
 	return (
 		<>

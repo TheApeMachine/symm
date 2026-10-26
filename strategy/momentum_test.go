@@ -38,6 +38,24 @@ func TestMomentumReversalTrigger(t *testing.T) {
 	}
 }
 
+func TestMomentumFlatPnLStall(t *testing.T) {
+	position := broker.NewPosition("RLS/USD", "R07/R08", true, nil)
+	position.Qty = decimal.NewFromInt64(1)
+	position.PnL = decimal.NewFromInt64(1)
+	position.PnLPct = decimal.NewFromFloat64(4.0)
+
+	momentum := NewMomentum()
+	momentum.tracks.Store(position.ID, &momentumSample{
+		seeded:     true,
+		lastPnLPct: 4.0,
+	})
+
+	trigger, fired := momentum.trigger(nil, data.NewValue("test", "tick", "RLS/USD"), "RLS/USD", position)
+	if !fired || trigger != "momentum stall" {
+		t.Fatalf("trigger = (%q, %v), want momentum stall on flat PnL", trigger, fired)
+	}
+}
+
 func TestVirtualShouldExitSkipsTrailingGiveback(t *testing.T) {
 	position := broker.NewPosition("BTC/USD", "R07", true, nil)
 	position.PnL = decimal.NewFromInt64(1)

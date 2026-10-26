@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,7 @@ type Position struct {
 	PnL         *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct      *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	OpenPnL     *decimal.Decimal        `json:"open_pnl,omitempty"` // first mark after virtual enter
+	OpenPnLPct  float64                 `json:"open_pnl_pct,omitempty"`
 	HoldNs      int64                   `json:"hold_ns,omitempty"`
 	Virtual     bool                    `json:"virtual"`
 	// PathFound is set when enter matched a stored explore or policy prefix,
@@ -167,9 +169,48 @@ func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
 			FeeUsdEquiv: fill.EntryFee,
 			Timestamp:   time.Now().UTC(),
 		})
+
+		if err := position.rejectOpenBookDrag(); err != nil {
+			return nil, err
+		}
 	}
 
 	return order, nil
+}
+
+func (position *Position) rejectOpenBookDrag() error {
+	if position == nil || position.price == nil {
+		return nil
+	}
+
+	position.mu.RLock()
+	pnlPct := position.PnLPct
+	position.mu.RUnlock()
+
+	if pnlPct == nil || pnlPct.Sign() >= 0 {
+		return nil
+	}
+
+	budget, ok := position.price.OpenDragBudgetPct(position.Symbol)
+	if !ok || budget == nil {
+		return nil
+	}
+
+	maxLoss := budget.Mul(decimal.NewFromInt64(-1))
+	if pnlPct.Cmp(maxLoss) >= 0 {
+		return nil
+	}
+
+	return errnie.Err(
+		errnie.UnprocessableContent,
+		fmt.Sprintf(
+			"[position.Enter] open book drag %s%% exceeds friction budget %s%% for %s",
+			pnlPct.String(),
+			maxLoss.String(),
+			position.Symbol,
+		),
+		nil,
+	)
 }
 
 /*
@@ -291,6 +332,9 @@ func (position *Position) repriceLocked() {
 	if position.Virtual && position.ClosedAt == nil && position.OpenPnL == nil &&
 		position.PnL != nil {
 		position.OpenPnL = position.PnL
+		if position.PnLPct != nil {
+			position.OpenPnLPct = position.PnLPct.Float64()
+		}
 	}
 
 	if position.ClosedAt == nil && position.PnLPct != nil {
@@ -412,11 +456,16 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 		}
 	}
 
-	// Downside stop: give 3x initial friction room so normal bid-ask spread
-	// noise does not immediately stop out the position right after entry.
 	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
-		stop := position.OpenPnL.Mul(decimal.NewFromInt64(3))
+		if position.Virtual && position.OpenPnLPct < 0 && position.PnLPct != nil {
+			stopPct := 2 * position.OpenPnLPct
+			if position.PnLPct.Float64() <= stopPct {
+				return "symmetric book stop", true
+			}
+			return "", false
+		}
 
+		stop := position.OpenPnL.Mul(decimal.NewFromInt64(3))
 		if position.PnL.Cmp(stop) <= 0 {
 			return "friction dip", true
 		}

@@ -190,6 +190,7 @@ export const bind = (root: HTMLElement, obj: unknown) => {
 
 		const selectors = [
 			`[data-metric="${key}"]`,
+			`[data-metric-raw="${key}"]`,
 			`[data-metric-meter="${key}"]`,
 			`[data-metric-badge="${key}"]`,
 		];
@@ -213,7 +214,9 @@ export const bind = (root: HTMLElement, obj: unknown) => {
 			);
 		}
 
-		renderValue(memoizedQuery(root, selectors.join(", ")), resolved);
+		for (const selector of selectors) {
+			renderValue(memoizedQuery(root, selector), resolved);
+		}
 	}
 };
 

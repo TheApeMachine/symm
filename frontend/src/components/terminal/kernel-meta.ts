@@ -55,7 +55,7 @@ bindings: cohort_covariance_score (correlation), signed_net_fraction (cvd),
 book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
 book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
 best_lag_correlation (leadlag), relative_spread (liquidity),
-morphology_change (morphology), spread_ratio (pumpdump), breadth
+morphology_change (morphology), volume_ratio (pumpdump), breadth
 (sentiment), retreat_fraction:bid (toxicity), confidence (training).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
@@ -66,7 +66,7 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	leadlag: "led_peer_share",
 	liquidity: "relative_spread",
 	morphology: "morphology_change",
-	pumpdump: "spread_ratio",
+	pumpdump: "volume_ratio",
 	sentiment: "breadth",
 	toxicity: "retreat_fraction:bid",
 	training: "confidence",
@@ -146,11 +146,12 @@ const SOURCE_METRICS: Record<string, string[]> = {
 	],
 	liquidity: ["best_price:bid", "best_price:ask", "relative_spread"],
 	pumpdump: [
+		"spread_ratio",
 		"volume_rate",
 		"trade_rate",
+		"volume_ratio",
 		"positive_midpoint_return",
 		"negative_midpoint_return",
-		"spread_ratio",
 	],
 	sentiment: [
 		"same_direction_peer_count",

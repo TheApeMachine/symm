@@ -1,10 +1,11 @@
-import { useId } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 
 export interface TrailProps {
 	values: number[];
 	/* Value drawn as the reference line (e.g. 0 for break-even). */
 	baseline?: number;
+	/* Omit to stretch to the container width. */
 	width?: number;
 	height?: number;
 	className?: string;
@@ -18,23 +19,53 @@ block of red or green.
 export const Trail = ({
 	values,
 	baseline = 0,
-	width = 220,
+	width: widthProp,
 	height = 48,
 	className,
 }: TrailProps) => {
 	const uid = useId().replace(/:/g, "");
+	const shellRef = useRef<HTMLDivElement>(null);
+	const [fluidWidth, setFluidWidth] = useState(0);
+	const fluid = widthProp === undefined;
+
+	useLayoutEffect(() => {
+		if (!fluid) return;
+		const node = shellRef.current;
+		if (!node) return;
+
+		const sync = () => {
+			const w = Math.max(120, Math.round(node.clientWidth));
+			setFluidWidth((prev) => (prev === w ? prev : w));
+		};
+
+		sync();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(sync);
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [fluid]);
+
+	const width = fluid ? Math.max(fluidWidth, 120) : widthProp;
 	const pts = values.filter(Number.isFinite);
 	if (pts.length < 2) {
-		return (
+		const empty = (
 			<div
 				className={cn(
 					"flex items-center justify-center text-[10px] text-(--f4) border border-dashed border-(--line) rounded bg-(--sunken)",
+					fluid && "w-full",
 					className,
 				)}
-				style={{ width, height }}
+				style={fluid ? { height } : { width, height }}
 			>
 				collecting history…
 			</div>
+		);
+		return fluid ? (
+			<div ref={shellRef} className="w-full min-w-0">
+				{empty}
+			</div>
+		) : (
+			empty
 		);
 	}
 
@@ -51,12 +82,17 @@ export const Trail = ({
 	const last = pts[pts.length - 1];
 	const lastUp = last >= baseline;
 
-	return (
+	const svg = (
 		<svg
-			width={width}
+			width={fluid ? "100%" : width}
 			height={height}
-			className={cn("rounded border border-(--line) bg-(--sunken)", className)}
+			className={cn(
+				"rounded border border-(--line) bg-(--sunken)",
+				fluid && "block w-full",
+				className,
+			)}
 			viewBox={`0 0 ${width} ${height}`}
+			preserveAspectRatio="none"
 		>
 			<title>trail</title>
 			<defs>
@@ -127,5 +163,13 @@ export const Trail = ({
 				strokeWidth={1.5}
 			/>
 		</svg>
+	);
+
+	return fluid ? (
+		<div ref={shellRef} className="w-full min-w-0">
+			{svg}
+		</div>
+	) : (
+		svg
 	);
 };

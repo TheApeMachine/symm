@@ -9,6 +9,7 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -21,7 +22,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/system"
+	"golang.design/x/lockfree/lf"
 )
+
+type Record struct {
+	Key   string
+	Value []byte
+}
 
 type Client struct {
 	ctx      context.Context
@@ -30,6 +37,7 @@ type Client struct {
 	S3Client *s3.Client
 	bucket   string
 	transfer *transfermanager.Client
+	queue    *lf.Queue[Record]
 }
 
 func NewClient(ctx context.Context, bucket string) *Client {
@@ -81,12 +89,35 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		return nil
 	}
 
-	return &Client{
+	storeClient := &Client{
 		ctx:      ctx,
 		cancel:   cancel,
 		S3Client: client,
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
+		queue:    lf.NewQueue[Record](),
+	}
+
+	go storeClient.Run()
+
+	return storeClient
+}
+
+func (client *Client) Run() {
+	for {
+		select {
+		case <-client.ctx.Done():
+			return
+		default:
+			record, ok := client.queue.Dequeue()
+
+			if !ok {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+
+			client.writeFromQueue(record.Key, record.Value)
+		}
 	}
 }
 
@@ -301,10 +332,15 @@ func (client *Client) Write(p []byte) (int, error) {
 	return client.WriteAtPrefix(data.From(p).Prefix, p)
 }
 
+func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
+	client.queue.Enqueue(Record{Key: key, Value: value})
+	return len(value), nil
+}
+
 /*
 WriteAtPrefix uploads p at prefix. An empty prefix is refused.
 */
-func (client *Client) WriteAtPrefix(prefix string, p []byte) (int, error) {
+func (client *Client) writeFromQueue(prefix string, p []byte) (int, error) {
 	if prefix == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "[store.client] upload key is empty", nil,

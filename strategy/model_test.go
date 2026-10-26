@@ -38,12 +38,101 @@ func TestModelExploreRadixKey(t *testing.T) {
 	})
 }
 
+func TestMinPathDepthBlocksPrematureExploreExit(t *testing.T) {
+	Convey("stored explore exit needs a full exit prefix, not the first token", t, func() {
+		if system.Cfg == nil {
+			system.Cfg = &system.Config{Learning: system.NewLearning()}
+		}
+
+		model := &Model{explore: iradix.New[*data.Value]()}
+		exitLeaf := data.NewValue("model", "explore", "WLD/USD").Append("exit", "action")
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03", "exit"), exitLeaf)
+
+		_, values, disagree := model.matchStoredPaths("R03", false, false, true)
+		So(disagree, ShouldBeFalse)
+		So(len(values), ShouldEqual, 1)
+
+		So(pathDepth("R03"), ShouldEqual, 1)
+		So(minPathDepth(), ShouldEqual, 2)
+		So(pathDepth("R03") >= minPathDepth(), ShouldBeFalse)
+
+		_, values, disagree = model.matchStoredPaths("R03/R04", false, false, true)
+		So(disagree, ShouldBeFalse)
+		So(len(values), ShouldEqual, 0)
+
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03/R04", "exit"), exitLeaf)
+		_, values, disagree = model.matchStoredPaths("R03/R04", false, false, true)
+		So(disagree, ShouldBeFalse)
+		So(len(values), ShouldEqual, 1)
+		So(pathDepth("R03/R04") >= minPathDepth(), ShouldBeTrue)
+	})
+}
+
+func TestMatchStoredPathsRequiresUnanimousAction(t *testing.T) {
+	Convey("prefix matches block when enter and exit disagree", t, func() {
+		if system.Cfg == nil {
+			system.Cfg = &system.Config{Learning: system.NewLearning()}
+		}
+
+		model := &Model{explore: iradix.New[*data.Value]()}
+		exitLeaf := data.NewValue("model", "explore", "WLD/USD").Append("exit", "action")
+		enterLeaf := data.NewValue("model", "explore", "WLD/USD").Append("enter", "action")
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03", "exit"), exitLeaf)
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03/R04", "enter"), enterLeaf)
+
+		_, values, disagree := model.matchStoredPaths("R03", false, false, true)
+		So(disagree, ShouldBeTrue)
+		So(len(values), ShouldEqual, 0)
+
+		model = &Model{explore: iradix.New[*data.Value]()}
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03", "exit"), exitLeaf)
+		model.explore, _, _ = model.explore.Insert(exploreRadixKey("R03/R04", "exit"), exitLeaf)
+		_, values, disagree = model.matchStoredPaths("R03", false, false, true)
+		So(disagree, ShouldBeFalse)
+		So(len(values), ShouldEqual, 2)
+	})
+}
+
+func TestExploreEnterAtPrefixMatch(t *testing.T) {
+	Convey("exploreEnterAt reuses a parent enter leaf on deeper paths", t, func() {
+		if system.Cfg == nil {
+			system.Cfg = &system.Config{Learning: system.NewLearning()}
+		}
+
+		model := &Model{explore: iradix.New[*data.Value]()}
+		leaf := data.NewValue("model", "explore", "REPPO/USD").Append("enter", "action")
+		model.explore, _, _ = model.explore.Insert(
+			exploreRadixKey("R07.R05/R07.R03", "enter"),
+			leaf,
+		)
+
+		got, ok := model.exploreEnterAt("R07.R05/R07.R03/R07.R04")
+		So(ok, ShouldBeTrue)
+		So(got, ShouldEqual, leaf)
+
+		_, ok = model.exploreEnterAt("R07.R05")
+		So(ok, ShouldBeFalse)
+	})
+}
+
 func TestModelExplorePnLStep(t *testing.T) {
 	Convey("explorePnLStep after a virtual close", t, func() {
 		Convey("non-negative PnL walks the threshold down", func() {
 			position := &broker.Position{Virtual: true}
 			position.PnL = decimal.NewFromInt64(0)
 			So(explorePnLStep(position), ShouldBeLessThan, 0)
+		})
+
+		Convey("large wins accelerate threshold decay", func() {
+			runner := &broker.Position{Virtual: true}
+			runner.PnL = decimal.NewFromFloat64(1)
+			runner.PnLPct = decimal.NewFromFloat64(8.8)
+			So(explorePnLStep(runner), ShouldEqual, -0.20)
+
+			solid := &broker.Position{Virtual: true}
+			solid.PnL = decimal.NewFromFloat64(1)
+			solid.PnLPct = decimal.NewFromFloat64(3.0)
+			So(explorePnLStep(solid), ShouldEqual, -0.10)
 		})
 
 		Convey("peak open PnL counts as a win even when flat at exit", func() {
