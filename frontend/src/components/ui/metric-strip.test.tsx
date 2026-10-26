@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { focusAtom, signals } from "#/collections/app";
 import { KernelMetricStrip } from "#/components/ui/metric-strip";
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("KernelMetricStrip", () => {
-	it("binds folded kernel metrics off the workspace aggregate tick", () => {
+	it("binds folded kernel metrics off the workspace aggregate tick", async () => {
 		const view = render(<KernelMetricStrip />);
 		const cvdRow = view.container.querySelector('[data-series="signed_net_fraction"]');
 
@@ -40,9 +40,11 @@ describe("KernelMetricStrip", () => {
 
 		publishCvd(0.42);
 
-		expect(
-			view.container.querySelector('[data-metric-raw="signed_net_fraction"]')
-				?.textContent,
-		).toBe("0.420");
+		await waitFor(() => {
+			expect(
+				view.container.querySelector('[data-metric-raw="signed_net_fraction"]')
+					?.textContent,
+			).toBe("0.420");
+		});
 	});
 });
