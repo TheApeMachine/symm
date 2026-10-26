@@ -76,22 +76,15 @@ func (value *Value) Lookup(projector any, key string) {
 		break
 	}
 
-	/*
-		An absent layer is not a decode failure: the projector stays as the
-		caller left it and no error is recorded. Only a layer that is present
-		and does not decode is an error.
-	*/
+	// An absent layer is not a decode failure: the projector stays as the
+	// caller left it and no error is recorded. Only a layer that is present
+	// and does not decode is an error.
 	if buf == nil {
 		return
 	}
 
-	/*
-		An empty payload is not JSON: sonic reports it as a syntax error, but
-		reading nothing into a projector is precisely "nothing decoded" — not a
-		corrupt value. An empty object/array decodes to the zero value and
-		leaves the projector untouched, which is the same outcome without the
-		error noise.
-	*/
+	// An empty payload is not JSON: sonic reports a syntax error, but an
+	// empty read into the projector is not a corrupt value.
 	if len(bytes.TrimSpace(buf)) == 0 {
 		return
 	}
@@ -181,20 +174,34 @@ For example, LookupPrefix("cvd") returns each CVD layer,
 with keys such as "BTC/USD/midpoint_log_return/...".
 */
 func (value *Value) LookupPrefix(key string) []LayerEntry {
-	entries := make([]LayerEntry, 0)
+	if value == nil {
+		return nil
+	}
 
-	for i, index := range value.Index {
-		if i >= len(value.Layers) {
+	target := strings.Join([]string{value.Prefix, key}, "/")
+
+	value.mu.Lock()
+	index := append([]string(nil), value.Index...)
+	layers := make([][]byte, len(value.Layers))
+	copy(layers, value.Layers)
+	prefix := value.Prefix
+	value.mu.Unlock()
+
+	entries := make([]LayerEntry, 0, len(index))
+	trim := prefix + "/"
+
+	for i, layerIndex := range index {
+		if i >= len(layers) {
 			continue
 		}
 
-		if !strings.HasPrefix(index, value.Prefix+"/"+key) {
+		if layerIndex != target && !strings.HasPrefix(layerIndex, target+"/") {
 			continue
 		}
 
 		entries = append(entries, LayerEntry{
-			Key:  strings.TrimPrefix(index, value.Prefix+"/"),
-			Data: value.Layers[i],
+			Key:  strings.TrimPrefix(layerIndex, trim),
+			Data: layers[i],
 		})
 	}
 

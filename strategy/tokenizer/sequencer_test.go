@@ -127,3 +127,19 @@ func TestStepEmitsAfterLeaderChanges(t *testing.T) {
 		t.Fatalf("next = %q, want R07.R01", next.Token.String())
 	}
 }
+
+func TestHoldSpellCompressesOscillation(t *testing.T) {
+	sequencer := NewSequencer()
+	a := []*store.Region{litRegion(7, 0.5), litRegion(3, 0.4)}
+	b := []*store.Region{litRegion(8, 0.5), litRegion(3, 0.4)}
+
+	var last []string
+	for range 6 {
+		last = sequencer.Step(a, true).Spell
+		last = sequencer.Step(b, true).Spell
+	}
+
+	if len(last) > 4 {
+		t.Fatalf("spell tail = %v, want sequitur-compressed length", last)
+	}
+}

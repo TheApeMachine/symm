@@ -587,7 +587,7 @@ export const ingestS3Prefix = (value: Value) => {
 			...state,
 			epoch: nextEpoch,
 			policyKeys,
-			thresholds,
+			thresholds: { ...state.thresholds, ...thresholds },
 		};
 	});
 	return true;
@@ -684,14 +684,25 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
 		const tree = payload as CognitionTreeFrame;
-		cognitionStore.setState(() => ({
-			epoch: tree.epoch,
-			policyKeys: [...tree.keys],
-			thresholds: {},
-			matches: {},
-			problem: tree.problem ?? null,
-			tree: { ...tree, gate: tree.gate ?? null, problem: tree.problem ?? null },
-		}));
+		const policyKeys = [...tree.keys];
+		cognitionStore.setState((state) => {
+			const keysChanged = !sameStringList(state.policyKeys, policyKeys);
+			if (keysChanged) {
+				trySendCommand({ type: "s3", prefix: "model/explore" });
+			}
+			return {
+				epoch: tree.epoch,
+				policyKeys,
+				thresholds: state.thresholds,
+				matches: {},
+				problem: tree.problem ?? null,
+				tree: {
+					...tree,
+					gate: tree.gate ?? null,
+					problem: tree.problem ?? null,
+				},
+			};
+		});
 		return true;
 	}
 
@@ -716,10 +727,17 @@ export const ingestPolicyLayers = (
 	layers: Array<{ index: string; bytes: Uint8Array }>,
 ) => {
 	const keys: string[] = [];
+	const thresholds: Record<string, number> = {};
 
 	for (const layer of layers) {
 		const key = policyKeyFromIndex(layer.index);
-		if (key && !keys.includes(key)) keys.push(key);
+		if (!key || keys.includes(key)) continue;
+		keys.push(key);
+
+		if (!key.startsWith("model/explore/")) continue;
+
+		const threshold = thresholdFromExploreBytes(layer.bytes);
+		if (threshold !== null) thresholds[key] = threshold;
 	}
 
 	if (keys.length === 0) return;
@@ -728,6 +746,7 @@ export const ingestPolicyLayers = (
 		...state,
 		epoch: String(epoch),
 		policyKeys: keys,
+		thresholds: { ...state.thresholds, ...thresholds },
 	}));
 };
 

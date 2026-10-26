@@ -331,6 +331,7 @@ learning:
   minimum_path_confidence: 2
   threshold_start: 0.5
   threshold_step: 0.05
+  explore_temporal_penalty: 0.001
   threshold_floor: 0.05
   threshold_ceil: 0.95
   virtual_promote: 3

@@ -62,6 +62,15 @@ describe("buildTreeFromPrefixes", () => {
 		expect(exitLeaf?.action).toBe("EXIT");
 	});
 
+	it("defaults an unscored explore leaf to the 0.50 desk baseline", () => {
+		const tree = buildTreeFromPrefixes(["model/explore/R01/R02/enter.bin"]);
+		const leaf = tree?.children
+			?.find((child) => child.token === "R01")
+			?.children?.find((child) => child.token === "R02")
+			?.children?.find((child) => child.action === "ENTER");
+		expect(leaf?.threshold).toBe(0.5);
+	});
+
 	it("paints a leaf with its threshold and shares that with the branch", () => {
 		const tree = buildTreeFromPrefixes(["model/explore/R01/R02/exit.bin"], {
 			"model/explore/R01/R02/exit.bin": 0.8,

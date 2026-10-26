@@ -143,4 +143,31 @@ describe("useImpulseData", () => {
 		expect(result.current.regions[2]?.strength).toBe(0);
 		expect(result.current.regions[4]?.strength).toBe(0.6);
 	});
+
+	it("lights hawkes background and decay pins from the workspace tick", () => {
+		publish(
+			frame([
+				{
+					key: "hawkes/BTC/USD/background_rate",
+					payload: [0.62],
+				},
+				{
+					key: "hawkes/BTC/USD/excitation_decay",
+					payload: [1.8],
+				},
+			]),
+		);
+
+		const { result } = renderHook(() => useImpulseData(SYMBOL));
+
+		expect(
+			pin(result.current.data, "hawkes:background_rate:R07")?.activation,
+		).toBeCloseTo(0.62);
+		expect(
+			pin(result.current.data, "hawkes:excitation_decay:R03")?.activation,
+		).toBe(1);
+		expect(
+			pin(result.current.data, "hawkes:excitation_decay:R07")?.activation,
+		).toBe(1);
+	});
 });

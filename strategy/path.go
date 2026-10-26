@@ -133,6 +133,34 @@ func (path *Path) Live(symbol string) string {
 	return path.bySymbol[symbol].String()
 }
 
+// Follow replaces the current sentence with the grammar spelling.
+func (path *Path) Follow(symbol string, enter bool, spell []string) string {
+	if path == nil {
+		return strings.Join(spell, "/")
+	}
+
+	path.mu.Lock()
+	defer path.mu.Unlock()
+
+	tokens := make(tokenizer.Tokens, 0, len(spell))
+	for _, label := range spell {
+		if label == "" {
+			continue
+		}
+		tokens = append(tokens, tokenizer.NewToken([]string{label}, 0, 0))
+	}
+	if path.limit > 0 && len(tokens) > path.limit {
+		tokens = tokens[len(tokens)-path.limit:]
+	}
+
+	if enter {
+		path.bySymbol[symbol] = tokens
+	} else {
+		path.triggerBySymbol[symbol] = tokens
+	}
+	return tokens.String()
+}
+
 // After is live plus one token edge (trie lookup key for this step).
 func (path *Path) After(live string, token tokenizer.Token) string {
 	label := token.String()

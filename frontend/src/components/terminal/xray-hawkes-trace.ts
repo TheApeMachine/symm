@@ -8,6 +8,41 @@ export type HawkesTraceSample = {
 
 export type HawkesTracePoint = { at: bigint; intensity: number };
 
+const segmentIntensity = (
+	current: HawkesTraceSample,
+	next: HawkesTraceSample | undefined,
+	at: bigint,
+	start: bigint,
+	end: bigint,
+	seconds: number,
+	step: number,
+	steps: number,
+): number => {
+	if (step === steps && next !== undefined) {
+		return next.intensity;
+	}
+
+	const restBelowPeak = current.baseline < current.postArrival;
+	const useExponential = restBelowPeak && current.decay > 0;
+
+	if (!useExponential) {
+		if (next !== undefined && end > start) {
+			const progress = Number(at - start) / Number(end - start);
+			return (
+				current.postArrival +
+				(next.intensity - current.postArrival) * progress
+			);
+		}
+		return current.postArrival;
+	}
+
+	return (
+		current.baseline +
+		(current.postArrival - current.baseline) *
+			Math.exp(-current.decay * seconds)
+	);
+};
+
 /*
 The viewport retains the observed event span (at least one fitted decay time).
 Market time advances its right edge even when this symbol has no new arrivals.
@@ -41,7 +76,9 @@ export const hawkesTrace = (
 
 		if (current.at >= from) {
 			points.push({ at: current.at, intensity: current.intensity });
-			points.push({ at: current.at, intensity: current.postArrival });
+			if (current.postArrival !== current.intensity) {
+				points.push({ at: current.at, intensity: current.postArrival });
+			}
 		}
 
 		const start = current.at > from ? current.at : from;
@@ -59,10 +96,16 @@ export const hawkesTrace = (
 			const seconds = Number(at - current.at) / 1e9;
 			points.push({
 				at,
-				intensity:
-					current.baseline +
-					(current.postArrival - current.baseline) *
-						Math.exp(-current.decay * seconds),
+				intensity: segmentIntensity(
+					current,
+					next,
+					at,
+					start,
+					end,
+					seconds,
+					step,
+					steps,
+				),
 			});
 		}
 	}

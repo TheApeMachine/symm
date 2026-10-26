@@ -134,6 +134,8 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"arrival_rate:sell",
 		"branching_spectral_radius",
 		"conditional_intensity_velocity",
+		"background_rate",
+		"excitation_decay",
 	],
 	leadlag: [
 		"led_peer_share",

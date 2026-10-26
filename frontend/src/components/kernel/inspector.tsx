@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
+import { useEffect, useState } from "react";
+import { atoms, kernelMeasurement, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -90,20 +91,44 @@ export const KernelInspector = () => {
 	with a store of its own. The frame is the latest reading, the sparkline
 	series is chart-local history the modal folds frame by frame.
 	*/
-	const signalStore =
-		source === "resonance" ? signals.resonance : signals.workspace;
-	const frame = useSelector(signalStore, (state) => {
-		if (source === "resonance")
-			return state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol];
-		return state.aggregate;
+	const aggregate = useSelector(
+		signals.workspace,
+		(state) => state.aggregate,
+	);
+	const frame = useSelector(signals.resonance, (state) => {
+		if (!resonance) return undefined;
+		return state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol];
 	});
+	const signalReading =
+		!resonance && source
+			? (kernelMeasurement(source, focusSymbol, aggregate) ?? null)
+			: null;
+	const kernelFrame = resonance ? (frame ?? null) : signalReading;
+
+	const [signalHistory, setSignalHistory] = useState<number[]>([]);
+
+	useEffect(() => {
+		if (!active || resonance || !source) {
+			setSignalHistory([]);
+			return;
+		}
+		const sample = readingsFromValues(signalReading, source);
+		const next = sample.at(-1);
+		if (next === undefined) return;
+		setSignalHistory((previous) => [...previous, next].slice(-50));
+	}, [active, resonance, source, signalReading]);
 
 	if (!active) {
 		return null;
 	}
 
 	const copy = kernelCopy(source, "");
-	const points = readingsFromValues(frame ?? null, source);
+	const livePoints = readingsFromValues(kernelFrame, source);
+	const points = resonance
+		? livePoints
+		: signalHistory.length > 0
+			? signalHistory
+			: livePoints;
 	const latest = points.length > 0 ? points[points.length - 1] : null;
 	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
@@ -117,7 +142,7 @@ export const KernelInspector = () => {
 		let raw: number | null = null;
 		let snm = 0;
 
-		const value = frame ? metricValues(frame, [name])[name] : null;
+		const value = kernelFrame ? metricValues(kernelFrame, [name])[name] : null;
 
 		if (value) {
 			raw = value.raw;

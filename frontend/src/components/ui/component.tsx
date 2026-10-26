@@ -258,6 +258,7 @@ export const Component = ({
 		if (propValue !== undefined) {
 			if (propValue) {
 				walkFrame(root, propValue);
+				appendSeries(root, propValue);
 				if (onValue) onValue(propValue, root);
 			} else {
 				reset(root);

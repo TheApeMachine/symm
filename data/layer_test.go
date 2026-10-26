@@ -1,6 +1,11 @@
 package data
 
-import "testing"
+import (
+	"sync"
+	"testing"
+
+	. "github.com/smartystreets/goconvey/convey"
+)
 
 func TestLookupExactLayerKey(t *testing.T) {
 	out := NewValue("training", "step", "BTC/USD")
@@ -41,4 +46,36 @@ func TestLookupDoesNotAliasSiblingKey(t *testing.T) {
 	if policy != nil {
 		t.Fatalf("policy = %#v, want absent", policy)
 	}
+}
+
+func TestLookupPrefixConcurrentAppend(t *testing.T) {
+	Convey("LookupPrefix while Append runs on other goroutines", t, func() {
+		value := NewValue("workspace", "tick", "aggregate")
+
+		var group sync.WaitGroup
+		stop := make(chan struct{})
+
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					value.Append(1.0, "cvd", "BTC", "USD", "midpoint")
+				}
+			}
+		}()
+
+		for range 500 {
+			entries := value.LookupPrefix("cvd")
+			for _, entry := range entries {
+				So(entry.Key, ShouldNotBeBlank)
+			}
+		}
+
+		close(stop)
+		group.Wait()
+	})
 }

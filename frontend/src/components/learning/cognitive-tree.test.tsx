@@ -66,6 +66,17 @@ afterEach(() => {
 });
 
 describe("ingestCognitionFrame", () => {
+	it("keeps explore thresholds when a new tree frame arrives", () => {
+		cognitionStore.setState((state) => ({
+			...state,
+			thresholds: { "model/explore/R01/R02/exit.bin": 0.62 },
+		}));
+		expect(ingestCognitionFrame("tree", tree)).toBe(true);
+		expect(cognitionStore.state.thresholds["model/explore/R01/R02/exit.bin"]).toBe(
+			0.62,
+		);
+	});
+
 	it("keeps the tree and per-symbol matches; a new tree drops old matches", () => {
 		expect(ingestCognitionFrame("tree", tree)).toBe(true);
 		expect(

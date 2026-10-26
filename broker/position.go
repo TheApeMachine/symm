@@ -47,7 +47,9 @@ type Position struct {
 	OutcomeTriggers []string `json:"outcome_triggers,omitempty"`
 	EntryTradeRate  float64  `json:"entry_trade_rate,omitempty"`
 	HoldTicks       int      `json:"hold_ticks,omitempty"`
-	peakOpenPnLPct  float64  `json:"peak_open_pnl_pct,omitempty"`
+	PeakOpenPnLPct  float64  `json:"peak_open_pnl_pct,omitempty"`
+	// ExploreSettled is true after virtual explore thresholds and paths were persisted.
+	ExploreSettled bool `json:"explore_settled,omitempty"`
 }
 
 func NewPosition(
@@ -293,8 +295,8 @@ func (position *Position) repriceLocked() {
 
 	if position.ClosedAt == nil && position.PnLPct != nil {
 		pct := position.PnLPct.Float64()
-		if pct > position.peakOpenPnLPct {
-			position.peakOpenPnLPct = pct
+		if pct > position.PeakOpenPnLPct {
+			position.PeakOpenPnLPct = pct
 		}
 	}
 }
@@ -329,8 +331,8 @@ func (position *Position) TickHold() {
 
 	pct := position.PnLPct.Float64()
 
-	if pct > position.peakOpenPnLPct {
-		position.peakOpenPnLPct = pct
+	if pct > position.PeakOpenPnLPct {
+		position.PeakOpenPnLPct = pct
 	}
 }
 
@@ -338,16 +340,49 @@ func (position *Position) GivebackFromPeak() float64 {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 
-	if position.PnLPct == nil || position.peakOpenPnLPct <= 0 {
+	if position.PnLPct == nil || position.PeakOpenPnLPct <= 0 {
 		return 0
 	}
 
 	pct := position.PnLPct.Float64()
-	if pct >= position.peakOpenPnLPct {
+	if pct >= position.PeakOpenPnLPct {
 		return 0
 	}
 
-	return (position.peakOpenPnLPct - pct) / position.peakOpenPnLPct
+	return (position.PeakOpenPnLPct - pct) / position.PeakOpenPnLPct
+}
+
+func (position *Position) Winning() bool {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	return position.PnL != nil && position.PnL.Sign() > 0
+}
+
+// TrySettleExplore marks the virtual explore learning pass done; false if already settled.
+func (position *Position) TrySettleExplore() bool {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ExploreSettled {
+		return false
+	}
+	position.ExploreSettled = true
+	return true
+}
+
+// VirtualExploreWin is true when a closed virtual lot should walk thresholds down.
+func (position *Position) VirtualExploreWin() bool {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	if position.PnL != nil && position.PnL.Sign() >= 0 {
+		return true
+	}
+	if position.PeakOpenPnLPct > 0 {
+		return true
+	}
+	return false
 }
 
 func (position *Position) ShouldExit() (trigger string, ok bool) {
@@ -358,8 +393,8 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 		return "", false
 	}
 
-	// When in profit, let the trade run; only exit on trailing giveback or slip back to breakeven.
-	if position.peakOpenPnLPct > 0 {
+	// Virtual winners exit via strategy momentum; book layer handles losers only.
+	if !position.Virtual && position.PeakOpenPnLPct > 0 {
 		pct := 0.0
 		if position.PnLPct != nil {
 			pct = position.PnLPct.Float64()
@@ -369,8 +404,8 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 			return "breakeven protect", true
 		}
 
-		if position.peakOpenPnLPct >= 0.5 {
-			giveback := (position.peakOpenPnLPct - pct) / position.peakOpenPnLPct
+		if position.PeakOpenPnLPct >= 0.5 {
+			giveback := (position.PeakOpenPnLPct - pct) / position.PeakOpenPnLPct
 			if giveback >= 0.30 {
 				return "trailing profit", true
 			}

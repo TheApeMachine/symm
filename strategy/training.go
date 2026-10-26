@@ -36,6 +36,10 @@ func NewTraining(
 	stage *Stage,
 ) *Training {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+	if stage != nil {
+		stage.AttachStore(client)
+		stage.RestoreSequencers(ctx)
+	}
 
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
@@ -76,6 +80,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 	}
 
 	training.telemetry.PublishWalks()
+	training.model.sweepMomentum(value)
 	training.telemetry.EndTick(training.model, training.desk)
 
 	if ui.UI != nil && ui.UI.Active() {

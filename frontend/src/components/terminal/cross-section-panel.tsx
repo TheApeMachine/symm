@@ -1,8 +1,7 @@
-import { useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
+import { useKernelReading } from "#/components/ui/metric";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
 
@@ -28,11 +27,11 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const reading = useKernelReading("liquidity");
 
 	return (
 		<Panel size="lg">
-			<Component store={signals.liquidity} symbol={focusSymbol}>
+			<Component value={reading}>
 				<Flex.Row align="center" justify="between">
 					<Typography.Label size="s" tone="f1" weight="semibold">
 						Cross-section
@@ -86,7 +85,7 @@ export const CrossSectionPanel = () => {
 						<span className="w-13.5 shrink-0 font-mono text-[9px] text-(--f4)">
 							Spread
 						</span>
-						<div className="h-1 flex-1 overflow-hidden rounded-[2px] bg-(--line)">
+						<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 							<div
 								data-mbar="relative_spread"
 								className="h-full bg-(--info)"

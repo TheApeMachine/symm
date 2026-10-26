@@ -3,7 +3,7 @@ import { type CSSProperties, useEffect, useRef } from "react";
 import { atoms, signals } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
-import type { Value } from "#/types/value";
+import { Value } from "#/types/value";
 import { Flex } from "../ui";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -58,80 +58,19 @@ const densify = (sparse: number[] | undefined): number[] => {
 	return out;
 };
 
-export const parseResonanceData = (
-	measurement: Value | undefined,
-): ResonanceData | undefined => {
-	if (!measurement) return undefined;
+const numberArray = (value: unknown): number[] =>
+	Array.isArray(value)
+		? value.filter((item): item is number => typeof item === "number")
+		: [];
 
-	/*
-	A resonance reading carries one scalar layer per metric, addressed by
-	its name below the value's prefix (energy, surprise, latent_N,
-	layer_L_state_N, forward_curve_N), plus its string readings.
-	*/
-	const data: ResonanceData = {
-		forwardCurve: [],
-		dynamics: {},
-		latent: [],
-		layers: [],
-	};
+const emptyResonanceData = (): ResonanceData => ({
+	forwardCurve: [],
+	dynamics: {},
+	latent: [],
+	layers: [],
+});
 
-	for (const { suffix, payload } of measurement.readings()) {
-		if (suffix === "") continue;
-		const first = Array.isArray(payload) ? payload[0] : payload;
-
-		if (typeof first === "number" && Number.isFinite(first)) {
-			if (suffix === "task_relative_precision")
-				data.taskRelativePrecision = first;
-			if (suffix === "task_skill") data.taskSkill = first;
-			if (suffix === "surprise") data.surprise = first;
-			if (suffix === "energy") data.energy = first;
-			if (suffix === "supported_horizon")
-				data.supportedHorizon = Math.trunc(first);
-			if (suffix === "resolved_steps")
-				data.resolvedSteps = Math.trunc(first);
-			if (suffix === "confidence") data.confidence = first;
-			if (suffix === "calibrated") data.calibrated = first >= 1;
-			if (suffix.startsWith("forward_curve_")) {
-				const idx = Number.parseInt(suffix.slice("forward_curve_".length), 10);
-				if (!Number.isNaN(idx)) data.forwardCurve[idx] = first;
-			}
-			if (suffix.startsWith("dynamics_")) {
-				const prop = suffix.slice("dynamics_".length);
-				if (data.dynamics) data.dynamics[prop] = first;
-			}
-			if (suffix.startsWith("latent_")) {
-				const idx = Number.parseInt(suffix.slice("latent_".length), 10);
-				if (!Number.isNaN(idx) && data.latent) data.latent[idx] = first;
-			}
-			if (suffix.startsWith("layer_")) {
-				const parts = suffix.split("_");
-				const layerId = Number.parseInt(parts[1] ?? "", 10);
-				const prop = parts[2];
-				const idx = Number.parseInt(parts[3] ?? "", 10);
-
-				if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
-					if (!data.layers[layerId]) {
-						data.layers[layerId] = { state: [], prediction: [] };
-					}
-					const layer = data.layers[layerId];
-					if (prop === "state" && layer.state) layer.state[idx] = first;
-					else if (prop === "prediction" && layer.prediction)
-						layer.prediction[idx] = first;
-				}
-			}
-			continue;
-		}
-
-		if (typeof first !== "string") continue;
-		if (suffix === "supported_horizon")
-			data.supportedHorizon = Number.parseInt(first, 10);
-		if (suffix === "resolved_steps")
-			data.resolvedSteps = Number.parseInt(first, 10);
-		if (suffix === "confidence") data.confidence = Number.parseFloat(first);
-		if (suffix === "calibrated") data.calibrated = first === "true";
-	}
-
-	// Indexed metrics arrive sparse; densify so VectorLane has contiguous bars.
+const finalizeResonanceData = (data: ResonanceData): ResonanceData => {
 	data.forwardCurve = densify(data.forwardCurve);
 	data.latent = densify(data.latent);
 	data.layers = (data.layers ?? [])
@@ -140,8 +79,176 @@ export const parseResonanceData = (
 			state: densify(layer.state),
 			prediction: densify(layer.prediction),
 		}));
-
 	return data;
+};
+
+const parseResonanceFromRow = (
+	row: Record<string, unknown>,
+): ResonanceData | undefined => {
+	const metrics = row.metrics;
+	if (Array.isArray(metrics)) {
+		const data = emptyResonanceData();
+		for (const entry of metrics) {
+			if (!entry || typeof entry !== "object") continue;
+			const name = (entry as { name?: unknown }).name;
+			const raw = (entry as { raw?: unknown }).raw;
+			if (typeof name !== "string" || name === "") continue;
+			applyResonanceSuffix(data, name, raw);
+		}
+		return finalizeResonanceData(data);
+	}
+
+	const hasRetained =
+		"layers" in row ||
+		"forwardCurve" in row ||
+		"latent" in row ||
+		"embedding" in row ||
+		typeof row.energy === "number" ||
+		typeof row.surprise === "number";
+
+	if (!hasRetained) {
+		return undefined;
+	}
+
+	const layersRaw = row.layers;
+	const layers: LayerData[] = Array.isArray(layersRaw)
+		? layersRaw
+				.filter((layer): layer is LayerData => layer != null && typeof layer === "object")
+				.map((layer) => ({
+					state: numberArray(layer.state),
+					prediction: numberArray(layer.prediction),
+				}))
+		: [];
+
+	return finalizeResonanceData({
+		taskRelativePrecision:
+			typeof row.taskRelativePrecision === "number"
+				? row.taskRelativePrecision
+				: undefined,
+		taskSkill: typeof row.taskSkill === "number" ? row.taskSkill : undefined,
+		supportedHorizon:
+			typeof row.supportedHorizon === "number"
+				? row.supportedHorizon
+				: undefined,
+		resolvedSteps:
+			typeof row.resolvedSteps === "number" ? row.resolvedSteps : undefined,
+		surprise: typeof row.surprise === "number" ? row.surprise : undefined,
+		energy: typeof row.energy === "number" ? row.energy : undefined,
+		confidence:
+			typeof row.confidence === "number" ? row.confidence : undefined,
+		calibrated:
+			typeof row.calibrated === "boolean"
+				? row.calibrated
+				: typeof row.calibrated === "number"
+					? row.calibrated >= 1
+					: undefined,
+		forwardCurve: numberArray(row.forwardCurve),
+		dynamics:
+			row.dynamics && typeof row.dynamics === "object" && !Array.isArray(row.dynamics)
+				? (row.dynamics as Record<string, number>)
+				: {},
+		latent: numberArray(row.latent ?? row.embedding),
+		layers,
+	});
+};
+
+const applyResonanceSuffix = (
+	data: ResonanceData,
+	suffix: string,
+	payload: unknown,
+) => {
+	if (suffix === "") return;
+	const first = Array.isArray(payload) ? payload[0] : payload;
+
+	if (typeof first === "number" && Number.isFinite(first)) {
+		if (suffix === "task_relative_precision") data.taskRelativePrecision = first;
+		if (suffix === "task_skill") data.taskSkill = first;
+		if (suffix === "surprise") data.surprise = first;
+		if (suffix === "energy") data.energy = first;
+		if (suffix === "supported_horizon") data.supportedHorizon = Math.trunc(first);
+		if (suffix === "resolved_steps") data.resolvedSteps = Math.trunc(first);
+		if (suffix === "confidence") data.confidence = first;
+		if (suffix === "calibrated") data.calibrated = first >= 1;
+		if (suffix.startsWith("forward_curve_")) {
+			const idx = Number.parseInt(suffix.slice("forward_curve_".length), 10);
+			if (!Number.isNaN(idx)) data.forwardCurve[idx] = first;
+		}
+		if (suffix.startsWith("dynamics_")) {
+			const prop = suffix.slice("dynamics_".length);
+			if (data.dynamics) data.dynamics[prop] = first;
+		}
+		if (suffix.startsWith("latent_")) {
+			const idx = Number.parseInt(suffix.slice("latent_".length), 10);
+			if (!Number.isNaN(idx) && data.latent) data.latent[idx] = first;
+		}
+		if (suffix.startsWith("layer_")) {
+			const parts = suffix.split("_");
+			const layerId = Number.parseInt(parts[1] ?? "", 10);
+			const prop = parts[2];
+			const idx = Number.parseInt(parts[3] ?? "", 10);
+
+			if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
+				if (!data.layers[layerId]) {
+					data.layers[layerId] = { state: [], prediction: [] };
+				}
+				const layer = data.layers[layerId];
+				if (prop === "state" && layer.state) layer.state[idx] = first;
+				else if (prop === "prediction" && layer.prediction)
+					layer.prediction[idx] = first;
+			}
+		}
+		return;
+	}
+
+	if (typeof first !== "string") return;
+	if (suffix === "supported_horizon")
+		data.supportedHorizon = Number.parseInt(first, 10);
+	if (suffix === "resolved_steps") data.resolvedSteps = Number.parseInt(first, 10);
+	if (suffix === "confidence") data.confidence = Number.parseFloat(first);
+	if (suffix === "calibrated") data.calibrated = first === "true";
+};
+
+export const parseResonanceData = (
+	measurement: Value | Record<string, unknown> | undefined,
+): ResonanceData | undefined => {
+	if (!measurement) return undefined;
+
+	if (!(measurement instanceof Value)) {
+		const fromRow = parseResonanceFromRow(measurement);
+		if (fromRow) return fromRow;
+		if (Array.isArray(measurement.index) && Array.isArray(measurement.layers)) {
+			measurement = new Value({
+				index: measurement.index as string[],
+				layers: measurement.layers as Uint8Array[],
+				prefix:
+					typeof measurement.prefix === "string" ? measurement.prefix : "",
+				origin:
+					typeof measurement.origin === "string" ? measurement.origin : "",
+				role: typeof measurement.role === "string" ? measurement.role : "",
+				scope: typeof measurement.scope === "string" ? measurement.scope : "",
+			});
+		} else {
+			return undefined;
+		}
+	}
+
+	/*
+	A resonance reading carries one scalar layer per metric, addressed by
+	its name below the value's prefix (energy, surprise, latent_N,
+	layer_L_state_N, forward_curve_N), plus its string readings.
+	*/
+	const legacyMetrics = (measurement as Value & { metrics?: unknown }).metrics;
+	if (Array.isArray(legacyMetrics) && measurement.readings().length === 0) {
+		return parseResonanceFromRow({ metrics: legacyMetrics });
+	}
+
+	const data = emptyResonanceData();
+
+	for (const { suffix, payload } of measurement.readings()) {
+		applyResonanceSuffix(data, suffix, payload);
+	}
+
+	return finalizeResonanceData(data);
 };
 
 /*

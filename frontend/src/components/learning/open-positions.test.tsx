@@ -5,6 +5,7 @@ import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { DeskPosition } from "#/collections/types";
 import { Value } from "#/types/value";
+import { resetOpenChoices } from "./open-choice-trail";
 import { OpenPositions, positionRows } from "./open-positions";
 
 const lotFrame = (row: DeskPosition) => {
@@ -50,6 +51,7 @@ afterEach(() => {
 	cleanup();
 	bookAtom.set("paper");
 	signals.positions.setState(() => ({}));
+	resetOpenChoices();
 });
 
 describe("OpenPositions", () => {
@@ -62,10 +64,15 @@ describe("OpenPositions", () => {
 	it("draws a card from the position JSON the desk sent", () => {
 		ingest(lot({ symbol: "RLC/USD" }));
 		const view = render(<OpenPositions />);
-		expect(view.getByText("RLC/USD")).toBeTruthy();
+		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
 		expect(view.getByText("held 1m 15s")).toBeTruthy();
 		expect(view.getByText("5.0%")).toBeTruthy();
-		expect(view.getByText(/ahead after fees|behind after fees|roughly flat/i)).toBeTruthy();
+		expect(
+			view.getByText(/ahead after fees|behind after fees|roughly flat/i),
+		).toBeTruthy();
+		expect(view.getByText("Open choices")).toBeTruthy();
+		expect(view.getByText("entry after fees")).toBeTruthy();
+		expect(view.getByText(/book \+5\.0%/)).toBeTruthy();
 	});
 
 	it("shows exit room on the gauge when the book covers the lot", () => {
@@ -86,8 +93,9 @@ describe("OpenPositions", () => {
 		);
 		bookAtom.set("virtual");
 		const view = render(<OpenPositions />);
-		const gauges = view.container.querySelectorAll('[role="img"]');
-		const pnlGauge = gauges[0];
+		const pnlGauge = [...view.container.querySelectorAll('[role="img"]')].find(
+			(node) => node.querySelector("title")?.textContent === "Gauge",
+		);
 		expect(pnlGauge?.querySelectorAll("line").length).toBe(2);
 		expect(pnlGauge?.innerHTML).toContain("Profit exit");
 		expect(pnlGauge?.innerHTML).toContain("Stop exit");
@@ -98,7 +106,7 @@ describe("OpenPositions", () => {
 		delete row.virtual;
 		ingest(row);
 		const view = render(<OpenPositions />);
-		expect(view.getByText("ZEUS/USD")).toBeTruthy();
+		expect(view.getAllByText("ZEUS/USD").length).toBeGreaterThan(0);
 	});
 
 	it("keeps a virtual lot off the paper book", () => {
@@ -107,13 +115,13 @@ describe("OpenPositions", () => {
 			lot({ id: "trial", symbol: "ETH/USD", virtual: true }),
 		);
 		const paper = render(<OpenPositions />);
-		expect(paper.getByText("BTC/USD")).toBeTruthy();
+		expect(paper.getAllByText("BTC/USD").length).toBeGreaterThan(0);
 		expect(paper.queryByText("ETH/USD")).toBeNull();
 		paper.unmount();
 
 		bookAtom.set("virtual");
 		const virtual = render(<OpenPositions />);
-		expect(virtual.getByText("ETH/USD")).toBeTruthy();
+		expect(virtual.getAllByText("ETH/USD").length).toBeGreaterThan(0);
 		expect(virtual.queryByText("BTC/USD")).toBeNull();
 	});
 });

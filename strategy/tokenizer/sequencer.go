@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -11,11 +12,21 @@ Sequencer turns one tick's region brightness into a single path letter.
 The letter is regime.posture: the brightest role in each band. Brightness
 elects the role and stays out of the spelling. Risk (R12–R14) is a veto,
 not a letter.
+
+Each side (enter vs hold) keeps its own Sequitur sentence. Spell is the
+tail of that sentence after digram compression, which is what Path follows
+so oscillating chords do not inflate the trie one edge per tick.
 */
 type Sequencer struct {
-	sequitur    *Sequitur
+	enter       *Sequitur
+	hold        *Sequitur
+	active      *Sequitur
 	mdl         *MDL
 	lastEmitted string
+	holding     bool
+	enterBreak  bool
+	holdBreak   bool
+	pos         uint32
 }
 
 // StepSilence explains why no path token was emitted this tick.
@@ -30,25 +41,33 @@ const (
 )
 
 // StepResult is one tick's tokenizer outcome for path and telemetry.
+// Spell is the current sentence in grammar form (terminals and rule refs).
 type StepResult struct {
 	Token   Token
+	Spell   []string
 	Silence StepSilence
 	Peak    float64
 }
 
 func NewSequencer() *Sequencer {
 	return &Sequencer{
-		sequitur: NewSequitur(),
-		mdl:      NewMDL(NewCalibrator()),
+		enter: NewSequitur(),
+		hold:  NewSequitur(),
+		mdl:   NewMDL(NewCalibrator()),
 	}
 }
 
-// Reset clears the last letter after a lot closes, so the next entry can spell it again.
+// Reset clears the open sentences after a lot closes.
 func (sequencer *Sequencer) Reset() {
 	if sequencer == nil {
 		return
 	}
 	sequencer.lastEmitted = ""
+	sequencer.holding = false
+	sequencer.enterBreak = false
+	sequencer.holdBreak = false
+	sequencer.enter.Sentence()
+	sequencer.hold.Sentence()
 }
 
 var (
@@ -91,12 +110,65 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 		return StepResult{Silence: StepSilenceDuplicate, Peak: postureBrightness}
 	}
 
+	active := sequencer.sentence(holding)
+	active.Analyze([]string{label})
+
+	boundary, _, _, meta := sequencer.mdl.Analyze(sequencer.pos, labelCode(label))
+	sequencer.pos++
+
+	limit := 8
+	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MaxPathLength > 0 {
+		limit = system.Cfg.Learning.MaxPathLength
+	}
+	spell := active.Tail(limit)
+
+	if boundary {
+		if holding {
+			sequencer.holdBreak = true
+		} else {
+			sequencer.enterBreak = true
+		}
+	}
+
 	sequencer.lastEmitted = label
+	sequencer.holding = holding
+	sequencer.active = active
 
 	return StepResult{
-		Token: NewToken([]string{label}, postureBrightness, 0),
+		Token: NewToken([]string{label}, postureBrightness, meta),
+		Spell: spell,
 		Peak:  postureBrightness,
 	}
+}
+
+func (sequencer *Sequencer) sentence(holding bool) *Sequitur {
+	active := sequencer.enter
+	pending := &sequencer.enterBreak
+	if holding {
+		active = sequencer.hold
+		pending = &sequencer.holdBreak
+		if !sequencer.holding {
+			active.Sentence()
+			*pending = false
+		}
+	} else if sequencer.holding {
+		active.Sentence()
+		*pending = false
+	}
+
+	if *pending {
+		active.Sentence()
+		*pending = false
+	}
+	return active
+}
+
+func labelCode(label string) byte {
+	var regime, posture int
+	if _, err := fmt.Sscanf(label, "R%d.R%d", &regime, &posture); err != nil {
+		return 0
+	}
+	return byte((regime << 4) | posture)
 }
 
 /*
@@ -133,9 +205,82 @@ func brightest(lit []*store.Region, keys []uint8) (float64, uint8, bool) {
 }
 
 func (sequencer *Sequencer) Grammar() *Sequitur {
-	return sequencer.sequitur
+	if sequencer == nil {
+		return nil
+	}
+	if sequencer.active != nil {
+		return sequencer.active
+	}
+	return sequencer.enter
 }
 
 func (sequencer *Sequencer) MDL() *MDL {
 	return sequencer.mdl
+}
+
+// SymbolState is one symbol's sentences and MDL segmenter, saved beside explore paths.
+type SymbolState struct {
+	LastEmitted string     `json:"last_emitted"`
+	Holding     bool       `json:"holding"`
+	EnterBreak  bool       `json:"enter_break"`
+	HoldBreak   bool       `json:"hold_break"`
+	Pos         uint32     `json:"pos"`
+	EnterRoot   []string   `json:"enter_root"`
+	HoldRoot    []string   `json:"hold_root"`
+	EnterRules  []RuleView `json:"enter_rules"`
+	HoldRules   []RuleView `json:"hold_rules"`
+	MDL         MDLState   `json:"mdl"`
+}
+
+func (sequencer *Sequencer) State() SymbolState {
+	if sequencer == nil {
+		return SymbolState{}
+	}
+
+	return SymbolState{
+		LastEmitted: sequencer.lastEmitted,
+		Holding:     sequencer.holding,
+		EnterBreak:  sequencer.enterBreak,
+		HoldBreak:   sequencer.holdBreak,
+		Pos:         sequencer.pos,
+		EnterRoot:   sequencer.enter.RootSequence(),
+		HoldRoot:    sequencer.hold.RootSequence(),
+		EnterRules:  sequencer.enter.RuleViews(),
+		HoldRules:   sequencer.hold.RuleViews(),
+		MDL:         sequencer.mdl.State(),
+	}
+}
+
+func (sequencer *Sequencer) Restore(state SymbolState) {
+	if sequencer == nil {
+		return
+	}
+
+	restoreGrammar(sequencer.enter, state.EnterRoot, state.EnterRules)
+	restoreGrammar(sequencer.hold, state.HoldRoot, state.HoldRules)
+
+	if sequencer.mdl == nil {
+		sequencer.mdl = NewMDL(NewCalibrator())
+	}
+	sequencer.mdl.Restore(state.MDL)
+
+	sequencer.lastEmitted = state.LastEmitted
+	sequencer.holding = state.Holding
+	sequencer.enterBreak = state.EnterBreak
+	sequencer.holdBreak = state.HoldBreak
+	sequencer.pos = state.Pos
+	sequencer.active = sequencer.enter
+	if state.Holding {
+		sequencer.active = sequencer.hold
+	}
+}
+
+func restoreGrammar(grammar *Sequitur, root []string, rules []RuleView) {
+	if grammar == nil {
+		return
+	}
+	for _, view := range rules {
+		grammar.Learn(view.ID, view.Count, view.Symbols)
+	}
+	grammar.RestoreRoot(root)
 }

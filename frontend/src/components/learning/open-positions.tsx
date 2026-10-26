@@ -1,3 +1,5 @@
+import { useSelector } from "@tanstack/react-store";
+import { memo, useEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
@@ -6,6 +8,7 @@ import {
 	pnlGaugeValue,
 	positionReadout,
 } from "#/components/book-readout";
+import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
 import {
 	BadgeButton,
@@ -17,8 +20,6 @@ import {
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
-import { useSelector } from "@tanstack/react-store";
-import { memo, useEffect, useMemo, useState } from "react";
 
 /*
 Open positions are the desk's per-lot frames: one Value per symbol on the
@@ -331,6 +332,7 @@ export const OpenPositions = () => {
 
 	return (
 		<div className="flex-1 min-h-0 overflow-auto grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
+			<OpenChoiceChart lots={held} />
 			{held.map((row) => (
 				<PositionCard key={String(row.id ?? row.symbol)} row={row} />
 			))}

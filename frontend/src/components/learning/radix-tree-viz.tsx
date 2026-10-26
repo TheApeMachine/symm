@@ -1,11 +1,11 @@
-import { cn } from "#/lib/utils";
 import * as d3 from "d3";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "#/lib/utils";
 import { Flex } from "../ui/flex";
 import {
 	paintRadixTreeStructure,
-	updateRadixTreeHighlights,
 	type TreeNode,
+	updateRadixTreeHighlights,
 } from "./radix-tree-paint";
 import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
 
@@ -66,6 +66,20 @@ export const thresholdOpacity = (threshold: number): number => {
 	const span = 0.95 - 0.05;
 	const towardPrune = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
 	return 1 - towardPrune * 0.72;
+};
+
+/** Desk baseline before any settled lot adjusts the leaf. */
+const EXPLORE_BASE_THRESHOLD = 0.5;
+
+const exploreLeafThreshold = (
+	rawKey: string,
+	threshold: number | undefined,
+): number | undefined => {
+	if (typeof threshold === "number" && Number.isFinite(threshold)) {
+		return threshold;
+	}
+	if (rawKey.startsWith("model/explore/")) return EXPLORE_BASE_THRESHOLD;
+	return undefined;
 };
 
 const shadeThresholds = (node: TrieNodeData): number | null => {
@@ -134,21 +148,18 @@ export function buildTreeFromPrefixes(
 		if (action) {
 			if (!current.children) current.children = [];
 			const leaf = current.children.find((child) => child.action === action);
-			const threshold = thresholds?.[raw];
+			const resolved = exploreLeafThreshold(raw, thresholds?.[raw]);
 			if (!leaf) {
 				current.children.push({
 					id: String(nextId++),
 					prefix: `${prefix}/${action.toLowerCase()}.bin`,
 					token: "",
 					action,
-					threshold:
-						typeof threshold === "number" && Number.isFinite(threshold)
-							? threshold
-							: undefined,
+					threshold: resolved,
 					children: [],
 				});
-			} else if (typeof threshold === "number" && Number.isFinite(threshold)) {
-				leaf.threshold = threshold;
+			} else if (resolved !== undefined) {
+				leaf.threshold = resolved;
 			}
 		}
 	}
@@ -432,9 +443,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const initialZoomTransform = useCallback(
 		(width: number, height: number, mode: typeof projection) => {
 			if (mode === "radial") {
-				return d3.zoomIdentity
-					.translate(width / 2, height / 2)
-					.scale(0.8);
+				return d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8);
 			}
 			if (mode === "vertical") {
 				return d3.zoomIdentity.translate(width / 2, 60).scale(0.85);
@@ -657,7 +666,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 					</Flex.Row>
 
 					<Flex.Row align="center" gap={2}>
-						<Flex.Row align="center" gap={1} className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px] font-mono">
+						<Flex.Row
+							align="center"
+							gap={1}
+							className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px] font-mono"
+						>
 							<button
 								type="button"
 								onClick={() => {
@@ -720,7 +733,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							</button>
 						</Flex.Row>
 
-						<Flex.Row align="center" gap={1} className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]">
+						<Flex.Row
+							align="center"
+							gap={1}
+							className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]"
+						>
 							{(["horizontal", "vertical", "radial"] as const).map((mode) => (
 								<button
 									key={mode}

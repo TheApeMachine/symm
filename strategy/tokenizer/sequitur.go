@@ -332,11 +332,11 @@ longest chain of rule references, terminals counting as 1. Count is how
 many times the digram has been replaced by this rule.
 */
 type RuleView struct {
-	ID        int
-	Count     int
-	Depth     int
-	Symbols   []string
-	Terminals []string
+	ID        int      `json:"id"`
+	Count     int      `json:"count"`
+	Depth     int      `json:"depth"`
+	Symbols   []string `json:"symbols"`
+	Terminals []string `json:"terminals"`
 }
 
 /*
@@ -559,5 +559,118 @@ func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {
 	}
 	if !sequitur.isSentinel(b) && b != a {
 		sequitur.check(b)
+	}
+}
+
+// Sentence drops the current root and keeps the rules. The next letter starts
+// a new phrase with the same rule ids.
+func (sequitur *Sequitur) Sentence() {
+	if sequitur == nil {
+		return
+	}
+
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+	sequitur.clearRootLocked()
+}
+
+func (sequitur *Sequitur) clearRootLocked() {
+	sequitur.sentinel.Next = sequitur.sentinel
+	sequitur.sentinel.Prev = sequitur.sentinel
+	sequitur.digrams = make(map[[2]Symbol]*Node)
+	sequitur.length = 0
+	sequitur.pendingLen = 0
+	sequitur.lastKind = ""
+}
+
+func displayRuleID(symbol string) (int, bool) {
+	if len(symbol) < 2 || symbol[0] != 'M' {
+		return 0, false
+	}
+	id, err := strconv.Atoi(symbol[1:])
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func parseDisplay(symbol string) Symbol {
+	if id, ok := displayRuleID(symbol); ok {
+		return ruleSymbol(id)
+	}
+	return Symbol(symbol)
+}
+
+// Learn copies one rule into this grammar so a restart spells digrams the same way.
+func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
+	if sequitur == nil || id <= 0 || len(symbols) == 0 {
+		return
+	}
+
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+
+	if existing := sequitur.rules[id]; existing != nil {
+		if count > existing.Count {
+			existing.Count = count
+		}
+		return
+	}
+
+	head := &Node{}
+	prev := head
+	var pair [2]Symbol
+	for i, display := range symbols {
+		node := &Node{Val: parseDisplay(display)}
+		if i < 2 {
+			pair[i] = node.Val
+		}
+		node.Prev = prev
+		prev.Next = node
+		prev = node
+	}
+	prev.Next = head
+	head.Prev = prev
+
+	if count < 2 {
+		count = 2
+	}
+
+	sequitur.rules[id] = &Rule{ID: id, Count: count, Head: head}
+	if len(symbols) == 2 {
+		sequitur.ruleByDigram[pair] = id
+	}
+	if id >= sequitur.nextID {
+		sequitur.nextID = id + 1
+	}
+}
+
+// RestoreRoot installs a saved sentence without discovering new rules.
+func (sequitur *Sequitur) RestoreRoot(symbols []string) {
+	if sequitur == nil {
+		return
+	}
+
+	sequitur.mu.Lock()
+	defer sequitur.mu.Unlock()
+	sequitur.clearRootLocked()
+
+	var prev *Node
+	for _, display := range symbols {
+		if display == "" {
+			continue
+		}
+		node := &Node{Val: parseDisplay(display)}
+		sequitur.appendNode(node)
+		sequitur.length++
+		if prev != nil {
+			digram := [2]Symbol{prev.Val, node.Val}
+			if _, ruled := sequitur.ruleByDigram[digram]; !ruled {
+				if _, exists := sequitur.digrams[digram]; !exists {
+					sequitur.digrams[digram] = prev
+				}
+			}
+		}
+		prev = node
 	}
 }

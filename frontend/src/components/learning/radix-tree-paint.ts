@@ -1,6 +1,15 @@
 import * as d3 from "d3";
 import type { SymbolProgress, TrieNodeData } from "./types";
 
+/** Show small temporal steps above the 0.50 desk baseline. */
+export const formatExploreThreshold = (threshold: number): string => {
+	if (!Number.isFinite(threshold)) return "";
+	if (threshold >= 0.45 && threshold <= 0.55) {
+		return threshold.toFixed(3);
+	}
+	return threshold.toFixed(2);
+};
+
 const thresholdOpacity = (threshold: number): number => {
 	const span = 0.95 - 0.05;
 	const towardPrune = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
@@ -407,7 +416,7 @@ const paintNodeContents = (
 	} else if (isTerminal) {
 		if (typeof nodeData.threshold === "number") {
 			group.append("title").text(
-				`threshold ${nodeData.threshold.toFixed(2)}`,
+				`threshold ${formatExploreThreshold(nodeData.threshold)}`,
 			);
 		}
 		const hasSymbol = !!(symbolsAtNode && symbolsAtNode.length > 0);
@@ -441,12 +450,12 @@ const paintNodeContents = (
 				.attr("text-anchor", "middle")
 				.attr("fill", "var(--f2)")
 				.attr("font-size", "8px")
-				.text(nodeData.threshold.toFixed(2));
+				.text(formatExploreThreshold(nodeData.threshold));
 		}
 	} else {
 		if (typeof nodeData.threshold === "number") {
 			group.append("title").text(
-				`threshold ${nodeData.threshold.toFixed(2)}`,
+				`threshold ${formatExploreThreshold(nodeData.threshold)}`,
 			);
 		}
 		group

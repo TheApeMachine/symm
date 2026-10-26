@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import {
 	kernelCopy,
 	metricLabel,
@@ -8,6 +8,7 @@ import {
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
+import { useKernelReading } from "#/components/ui/metric";
 import { Typography } from "#/components/ui/typography";
 
 export const SignalDetail = () => {
@@ -16,6 +17,7 @@ export const SignalDetail = () => {
 	const symbols = useSelector(atoms.symbols, (state) => state) as string[];
 
 	const source = selected || "cvd";
+	const reading = useKernelReading(source);
 	const copy =
 		source === ""
 			? { name: "Signal detail", sub: "", blurb: "" }
@@ -36,8 +38,7 @@ export const SignalDetail = () => {
 	return (
 		<Component
 			key={`${source}:${focusSymbol}`}
-			store={signals[source]}
-			symbol={focusSymbol}
+			value={reading}
 			className="min-h-0 overflow-auto px-5 py-4.5"
 		>
 			<Flex.Row className="items-start justify-between gap-3">

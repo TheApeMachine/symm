@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 )
 
@@ -21,6 +22,7 @@ type Stage struct {
 	*runtime.System
 	grid       *nmstore.Grid
 	desk       *broker.Desk
+	client     *store.Client
 	sequencers *sync.Map
 }
 
@@ -33,6 +35,21 @@ func NewStage(ctx context.Context, desk *broker.Desk) *Stage {
 	}
 }
 
+func (stage *Stage) AttachStore(client *store.Client) {
+	if stage == nil {
+		return
+	}
+	stage.client = client
+}
+
+func (stage *Stage) RestoreSequencers(ctx context.Context) {
+	if stage == nil || stage.client == nil {
+		return
+	}
+
+	tokenizer.RestoreCatalog(ctx, stage.client, stage.RestoreSequencer)
+}
+
 func (stage *Stage) Sequencer(symbol string) *tokenizer.Sequencer {
 	if stage == nil || symbol == "" {
 		return tokenizer.NewSequencer()
@@ -42,13 +59,29 @@ func (stage *Stage) Sequencer(symbol string) *tokenizer.Sequencer {
 	return loaded.(*tokenizer.Sequencer)
 }
 
+func (stage *Stage) RestoreSequencer(symbol string, state tokenizer.SymbolState) {
+	if stage == nil || symbol == "" {
+		return
+	}
+
+	sequencer := stage.Sequencer(symbol)
+	sequencer.Restore(state)
+	stage.sequencers.Store(symbol, sequencer)
+}
+
+func (stage *Stage) PersistSequencer(ctx context.Context, symbol string) {
+	if stage == nil || stage.client == nil || symbol == "" {
+		return
+	}
+	stage.Sequencer(symbol).Persist(ctx, stage.client, symbol)
+}
+
 func (stage *Stage) ResetSequencer(symbol string) {
 	if stage == nil || symbol == "" {
 		return
 	}
 
 	loaded, ok := stage.sequencers.Load(symbol)
-
 	if !ok {
 		return
 	}
@@ -62,16 +95,16 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 	}
 
 	bySymbol := SignalSourcesBySymbol(tick)
-
 	if len(bySymbol) == 0 {
 		return tick
 	}
+
+	ctx := stage.Context()
 
 	for symbol, sources := range bySymbol {
 		observed, err := stage.grid.Observe(
 			symbol, sources, stage.desk.Has(symbol, true),
 		)
-
 		if err != nil {
 			stage.Error(err)
 			return tick
@@ -88,10 +121,13 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 		holding := holdingPaper || holdingVirtual
 
 		sequencer := stage.Sequencer(symbol)
-
 		step := sequencer.Step(observed, holding)
 		tick.Append(step, "stage", symbol, "step")
 		tick.Append(step.Token, "stage", symbol, "cut")
+
+		if len(step.Spell) > 0 && stage.client != nil {
+			sequencer.Persist(ctx, stage.client, symbol)
+		}
 	}
 
 	return tick

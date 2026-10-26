@@ -322,6 +322,16 @@ export const ingestTrainingStep = (value: Value, now = Date.now()) => {
 
 	const ok = ingestSequiturFrame(frame, now);
 
+	const exploreThresholds = value.reading("exploreThresholds") as
+		| Record<string, number>
+		| undefined;
+	if (exploreThresholds && typeof exploreThresholds === "object") {
+		cognitionStore.setState((state) => ({
+			...state,
+			thresholds: { ...state.thresholds, ...exploreThresholds },
+		}));
+	}
+
 	if (value.reading("outcome") === "exit submitted") {
 		trySendCommand({ type: "s3", prefix: "model/explore" });
 	}

@@ -256,21 +256,27 @@ export const latentPointsFromFrames = (
 		cross-section.
 		*/
 		const parsed = frame instanceof Value ? parseResonanceData(frame) : null;
+		const row = frame as Record<string, unknown>;
 		const position = parsed?.latent
 			? parsed.latent.slice(0, 2)
-			: numberArray((frame as Record<string, unknown>).embedding);
+			: numberArray(row.latent ?? row.embedding);
 
 		if (position.length < 2) {
 			return [];
 		}
 
+		const at =
+			frame instanceof Value
+				? String(frame.tick)
+				: stringValue(row.at ?? row.tick);
+
 		return [
 			{
-				key: `${symbol}:${String(frame instanceof Value ? frame.tick : "")}`,
+				key: `${symbol}:${at}`,
 				symbol,
 				x: position[0] ?? 0,
 				y: position[1] ?? 0,
-				category: stringValue((frame as Record<string, unknown>).category),
+				category: stringValue(row.category),
 			},
 		];
 	});

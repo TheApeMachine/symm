@@ -29,6 +29,8 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		conditional_intensity_velocity: [3],
 		"arrival_rate:sell": [4, 7],
 		branching_spectral_radius: [1, 7],
+		background_rate: [7],
+		excitation_decay: [3, 7],
 	},
 	leadlag: {
 		led_peer_share: [1, 5, 7],

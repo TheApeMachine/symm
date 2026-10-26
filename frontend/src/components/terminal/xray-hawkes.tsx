@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { atoms, clockAtom, signals } from "#/collections/app";
+import { atoms, clockAtom, kernelMeasurement, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
 import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
@@ -61,8 +61,23 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 		metrics.conditional_intensity > 0
 			? metrics.conditional_intensity
 			: totalArrival;
-	const baseline = Math.min(buyRate, sellRate);
-	const decay = radius > 0 ? 1.0 : 0.5;
+	const muRest =
+		metrics.background_rate ??
+		(metrics["background_rate:buy"] ?? 0) +
+			(metrics["background_rate:sell"] ?? 0);
+	const baseline =
+		muRest > 0 && muRest < level
+			? muRest
+			: totalArrival > 0 && totalArrival < level
+				? totalArrival
+				: level * 0.85;
+	const fittedDecay = metrics.excitation_decay;
+	const decay =
+		fittedDecay !== undefined && fittedDecay > 0
+			? fittedDecay
+			: radius > 0
+				? 1.0
+				: 0.5;
 
 	return {
 		at: row.timestamp,
@@ -73,8 +88,10 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 	};
 };
 
+const HAWKES_SAMPLE_CAP = 50;
+
 export const XrayHawkesPanel = () => {
-	const _focusSymbol = useSelector(atoms.focus, (state) => state);
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -82,6 +99,7 @@ export const XrayHawkesPanel = () => {
 		let samples: HawkesTraceSample[] = [];
 		let marketAt = 0n;
 		let frame = 0;
+		let lastTick: bigint | undefined;
 
 		const set = (field: string, value: string) => {
 			const element = root.current?.querySelector<HTMLElement>(
@@ -182,24 +200,39 @@ export const XrayHawkesPanel = () => {
 			if (!frame) frame = requestAnimationFrame(paint);
 		};
 
-		const update = () => {
-			/*
-			The kernel layers ride the aggregate workspace frame: the tick
-			is the render trigger and its hawkes rows are the sample stream.
-			*/
-			const frame = signals.workspace.state.aggregate;
-			const rows = frame ? [frame] : [];
-			samples = rows.flatMap((row) => {
-				if (!row) return [];
-				try {
-					const sample = hawkesSample(row);
-					return sample ? [sample] : [];
-				} catch {
-					return [];
+		const appendSample = (reading: Value) => {
+			try {
+				const sample = hawkesSample(reading);
+				if (!sample) return;
+				const prior = samples.at(-1);
+				if (prior && prior.at === sample.at) {
+					samples = [...samples.slice(0, -1), sample];
+				} else {
+					samples = [...samples, sample];
 				}
-			});
-			const latest = rows.at(-1);
-			const metrics = latest ? latest.metrics() : {};
+				if (samples.length > HAWKES_SAMPLE_CAP) {
+					samples = samples.slice(-HAWKES_SAMPLE_CAP);
+				}
+			} catch {
+				// Malformed fitted rows are skipped; live metrics stay drawable.
+			}
+		};
+
+		const update = () => {
+			const aggregate = signals.workspace.state.aggregate;
+			const reading = kernelMeasurement("hawkes", focusSymbol, aggregate);
+
+			if (
+				reading &&
+				aggregate &&
+				aggregate.tick !== undefined &&
+				aggregate.tick !== lastTick
+			) {
+				lastTick = aggregate.tick;
+				appendSample(reading);
+			}
+
+			const metrics = reading?.metrics() ?? {};
 			const fitted = samples.at(-1);
 			const buyRate = metrics["arrival_rate:buy"];
 			const sellRate = metrics["arrival_rate:sell"];
@@ -222,7 +255,18 @@ export const XrayHawkesPanel = () => {
 						? `${sellRate.toFixed(2)}/s`
 						: "—",
 			);
-			set("mu", fitted ? `${fitted.baseline.toFixed(4)} /s` : "—");
+			const muRest =
+				metrics.background_rate ??
+				((metrics["background_rate:buy"] ?? 0) +
+					(metrics["background_rate:sell"] ?? 0));
+			set(
+				"mu",
+				muRest > 0
+					? `${muRest.toFixed(4)} /s`
+					: fitted
+						? `${fitted.baseline.toFixed(4)} /s`
+						: "—",
+			);
 			set(
 				"lambda",
 				metrics.conditional_intensity !== undefined
@@ -249,7 +293,8 @@ export const XrayHawkesPanel = () => {
 						: "0%";
 			}
 
-			if (latest && latest.timestamp > marketAt) marketAt = latest.timestamp;
+			const at = reading?.timestamp ?? aggregate?.timestamp;
+			if (at !== undefined && at > marketAt) marketAt = at;
 
 			schedule();
 		};
@@ -276,7 +321,7 @@ export const XrayHawkesPanel = () => {
 			resize.disconnect();
 			cancelAnimationFrame(frame);
 		};
-	}, []);
+	}, [focusSymbol]);
 
 	return (
 		<div

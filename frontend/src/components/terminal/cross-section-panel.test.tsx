@@ -1,34 +1,47 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { focusAtom, RingBuffer, signals } from "#/collections/app";
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { focusAtom, signals } from "#/collections/app";
 import { Value } from "#/types/value";
 import { CrossSectionPanel } from "./cross-section-panel";
 
+const publishLiquidity = (metrics: Record<string, number>) => {
+	const prefix = "workspace/tick/aggregate/0/1";
+	const keys = Object.keys(metrics);
+	const aggregate = new Value({
+		origin: "workspace",
+		role: "tick",
+		scope: "aggregate",
+		prefix,
+		timestamp: 1_700_000_000_000_000_000n,
+		index: keys.map((key) => `${prefix}/liquidity/BTC/USD/${key}`),
+		layers: keys.map((key) =>
+			new TextEncoder().encode(JSON.stringify([metrics[key]])),
+		),
+	});
+	act(() => {
+		signals.workspace.setState((prev) => ({ ...prev, aggregate }));
+	});
+};
+
+afterEach(() => {
+	cleanup();
+	focusAtom.set("BTC/USD");
+	signals.workspace.setState(() => ({}));
+});
+
 describe("CrossSectionPanel", () => {
 	it("renders panel and binds liquidity metrics live", () => {
-		focusAtom.set("BTC/USD");
-		const ring = new RingBuffer<Value>(10);
-		signals.liquidity.setState((prev) => ({ ...prev, "BTC/USD": ring }));
-
 		const view = render(<CrossSectionPanel />);
 
 		expect(
 			view.container.querySelector('[data-metric="symbol"]')?.textContent,
 		).toBe("—");
 
-		act(() => {
-			const val = new Value({
-				scope: "BTC/USD",
-				timestamp: 1_700_000_000_000_000_000n,
-				metrics: [
-					{ name: "relative_spread", raw: 0.0004, snm: 0.0004 },
-					{ name: "best_price:bid", raw: 95123.45, snm: 95123.45 },
-					{ name: "best_price:ask", raw: 95127.25, snm: 95127.25 },
-				],
-			});
-			ring.add(val);
-			signals.liquidity.setState((prev) => ({ ...prev, "BTC/USD": ring }));
+		publishLiquidity({
+			relative_spread: 0.0004,
+			"best_price:bid": 95123.45,
+			"best_price:ask": 95127.25,
 		});
 
 		expect(

@@ -46,6 +46,57 @@ func NewCalibrator(opts ...CalibratorOption) *Calibrator {
 	return calibrator
 }
 
+type calibratorState struct {
+	Pop         float64     `json:"pop"`
+	Phase       float64     `json:"phase"`
+	Window      windowState `json:"window"`
+	PhaseWindow windowState `json:"phase_window"`
+}
+
+func (calibrator *Calibrator) state() calibratorState {
+	if calibrator == nil {
+		return calibratorState{Pop: 1, Phase: 1}
+	}
+
+	calibrator.mu.RLock()
+	defer calibrator.mu.RUnlock()
+
+	return calibratorState{
+		Pop:         calibrator.sensitivityPop,
+		Phase:       calibrator.sensitivityPhase,
+		Window:      calibrator.window.state(),
+		PhaseWindow: calibrator.phaseWindow.state(),
+	}
+}
+
+func (calibrator *Calibrator) restore(state calibratorState) {
+	if calibrator == nil {
+		return
+	}
+
+	calibrator.mu.Lock()
+	defer calibrator.mu.Unlock()
+
+	if state.Pop > 0 {
+		calibrator.sensitivityPop = state.Pop
+	}
+	if state.Phase > 0 {
+		calibrator.sensitivityPhase = state.Phase
+	}
+	if calibrator.window == nil {
+		calibrator.window = NewFastWindow(state.Window.Size)
+	}
+	if calibrator.phaseWindow == nil {
+		calibrator.phaseWindow = NewFastWindow(state.PhaseWindow.Size)
+	}
+	if calibrator.window != nil {
+		calibrator.window.restore(state.Window)
+	}
+	if calibrator.phaseWindow != nil {
+		calibrator.phaseWindow.restore(state.PhaseWindow)
+	}
+}
+
 func (calibrator *Calibrator) SensitivityPop() float64 {
 	calibrator.mu.RLock()
 	defer calibrator.mu.RUnlock()

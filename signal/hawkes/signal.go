@@ -36,6 +36,8 @@ func NewSignal(ctx context.Context) *Signal {
 			"branching_spectral_radius",
 			"conditional_intensity",
 			"conditional_intensity_velocity",
+			"background_rate",
+			"excitation_decay",
 		},
 	}
 
@@ -142,5 +144,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		radius,
 		intensity,
 		intensityVelocity,
+		res["background_rate"],
+		res["excitation_decay"],
 	}, append(keys, signal.keys...)...)
 }

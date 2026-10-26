@@ -58,6 +58,62 @@ describe("hawkesTrace", () => {
 		expect(plot.points.at(-1)?.intensity).toBeCloseTo(0.4 + 0.3 * Math.exp(-2));
 	});
 
+	it("linearly bridges ticks when the rest rate would sit above the peak", () => {
+		const high: HawkesTraceSample = {
+			at: 0n,
+			intensity: 0.4,
+			postArrival: 0.4,
+			baseline: 0.9,
+			decay: 1,
+		};
+		const low: HawkesTraceSample = {
+			at: 1_000_000_000n,
+			intensity: 0.25,
+			postArrival: 0.25,
+			baseline: 0.9,
+			decay: 1,
+		};
+		const { points } = hawkesTrace([high, low], 20);
+		const mids = points.filter(
+			(point) => point.at > 0n && point.at < 1_000_000_000n,
+		);
+		expect(mids.length).toBeGreaterThan(0);
+		expect(mids.every((point) => point.intensity <= high.postArrival)).toBe(
+			true,
+		);
+		expect(mids.every((point) => point.intensity >= low.intensity)).toBe(true);
+	});
+
+	it("meets the next arrival at its pre-jump level instead of overshooting decay", () => {
+		const first: HawkesTraceSample = {
+			at: 0n,
+			intensity: 0.2,
+			postArrival: 1,
+			baseline: 0.2,
+			decay: 1,
+		};
+		const second: HawkesTraceSample = {
+			at: 1_000_000_000n,
+			intensity: 0.35,
+			postArrival: 0.35,
+			baseline: 0.2,
+			decay: 1,
+		};
+		const extrapolated =
+			first.baseline +
+			(first.postArrival - first.baseline) * Math.exp(-1);
+		expect(extrapolated).toBeGreaterThan(second.intensity);
+
+		const { points } = hawkesTrace([first, second], 40);
+		const atArrival = points.filter((point) => point.at === 1_000_000_000n);
+		expect(atArrival.some((point) => point.intensity === second.intensity)).toBe(
+			true,
+		);
+		expect(atArrival.every((point) => point.intensity <= extrapolated)).toBe(
+			true,
+		);
+	});
+
 	it("scrolls events off-screen when viewportSpan is supplied", () => {
 		const samples = [
 			arrival(0n),

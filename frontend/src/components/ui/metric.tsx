@@ -15,6 +15,19 @@ import {
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
 
+/** Latest folded kernel reading for the focus symbol on the workspace tick. */
+export const useKernelReading = (kernel: string): Value | null => {
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const aggregate = useSelector(
+		signals.workspace,
+		(state) => state.aggregate,
+	);
+	return useMemo(
+		() => kernelMeasurement(kernel, focusSymbol, aggregate) ?? null,
+		[kernel, focusSymbol, aggregate],
+	);
+};
+
 interface MetricProps {
 	name: string;
 	measurement: Value | null;
@@ -68,7 +81,7 @@ export const MetricRow = memo(
 					data-k="sparkline"
 					data-series={headline}
 					title={`${name} sparkline`}
-					className="mt-0 h-0 min-h-0"
+					className="mt-0 min-h-0 flex-1"
 				/>
 				<Flex.Row
 					align="center"
@@ -113,14 +126,6 @@ export const Metric = ({
 	name: string;
 	compact?: boolean;
 }) => {
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const aggregate = useSelector(
-		signals.workspace,
-		(state) => state.aggregate,
-	);
-	const measurement = useMemo(
-		() => kernelMeasurement(name, focusSymbol, aggregate) ?? null,
-		[name, focusSymbol, aggregate],
-	);
+	const measurement = useKernelReading(name);
 	return <MetricRow name={name} measurement={measurement} compact={compact} />;
 };

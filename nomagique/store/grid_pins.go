@@ -64,6 +64,8 @@ var regionMetricPins = map[string]map[string][]uint8{
 		"arrival_rate:sell":              {4, 7},
 		"branching_spectral_radius":      {1, 7},
 		"conditional_intensity":          {}, // deliberately unpinned: kept out of the grid
+		"background_rate":                {}, // deliberately unpinned: μ rest for UI trace
+		"excitation_decay":               {}, // deliberately unpinned: fitted β for UI trace
 	},
 	"leadlag": {
 		"led_peer_share":               {1, 5, 7},

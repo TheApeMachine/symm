@@ -198,12 +198,9 @@ describe("xray-view", () => {
 	});
 
 	it("projects live gate-coder readings into hierarchy layers and a latent point per carrier", () => {
-		const reading = (scope: string, x: number, y: number) =>
-			new Value({
-				origin: "resonance",
-				role: "reading",
-				scope,
-				metrics: [
+		const reading = (scope: string, x: number, y: number) => ({
+			symbol: scope,
+			metrics: [
 					{ name: "energy", raw: 0.12 },
 					{ name: "surprise", raw: 0.45 },
 					{ name: "latent_0", raw: x },
@@ -213,7 +210,7 @@ describe("xray-view", () => {
 					{ name: "layer_1_state_0", raw: 0.3 },
 					{ name: "layer_1_prediction_0", raw: 0.1 },
 				],
-			});
+		});
 
 		retainResonanceRow("BTC/USD", reading("BTC/USD", 0.2, -0.4));
 		retainResonanceRow("ETH/USD", reading("ETH/USD", -0.1, 0.7));

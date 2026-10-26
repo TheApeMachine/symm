@@ -137,3 +137,54 @@ func (window *FastWindow) Stats() (mean, stddev float64) {
 	
 	return
 }
+
+type windowState struct {
+	Data   []float64 `json:"data"`
+	Size   int       `json:"size"`
+	Count  int       `json:"count"`
+	Head   int       `json:"head"`
+	Sum    float64   `json:"sum"`
+	SumSq  float64   `json:"sum_sq"`
+	Drifts int       `json:"drifts"`
+}
+
+func (window *FastWindow) state() windowState {
+	if window == nil {
+		return windowState{}
+	}
+
+	return windowState{
+		Data:   append([]float64(nil), window.data...),
+		Size:   window.size,
+		Count:  window.count,
+		Head:   window.head,
+		Sum:    window.sum,
+		SumSq:  window.sumSq,
+		Drifts: window.drifts,
+	}
+}
+
+func (window *FastWindow) restore(state windowState) {
+	if window == nil {
+		return
+	}
+
+	if state.Size > 0 && state.Size != window.size {
+		window.data = make([]float64, state.Size)
+		window.size = state.Size
+	}
+	if window.data == nil || len(window.data) != window.size {
+		window.data = make([]float64, window.size)
+	}
+
+	copy(window.data, state.Data)
+	window.count = state.Count
+	window.head = state.Head
+	window.sum = state.Sum
+	window.sumSq = state.SumSq
+	window.drifts = state.Drifts
+	if window.count > window.size {
+		window.count = window.size
+	}
+	window.recalc()
+}

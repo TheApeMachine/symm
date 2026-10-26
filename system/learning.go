@@ -22,6 +22,7 @@ type Learning struct {
 	MinimumPathConfidence   int
 	ThresholdStart          float64
 	ThresholdStep           float64
+	ExploreTemporalPenalty  float64
 	ThresholdFloor          float64
 	ThresholdCeil           float64
 	VirtualPromote          int
@@ -65,6 +66,7 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.minimum_path_confidence", 2)
 	viper.SetDefault("learning.threshold_start", 0.5)
 	viper.SetDefault("learning.threshold_step", 0.05)
+	viper.SetDefault("learning.explore_temporal_penalty", 0.001)
 	viper.SetDefault("learning.threshold_floor", 0.05)
 	viper.SetDefault("learning.threshold_ceil", 0.95)
 	viper.SetDefault("learning.virtual_promote", 3)
@@ -107,6 +109,7 @@ func NewLearning() *Learning {
 		MinimumPathConfidence:   viper.GetInt("learning.minimum_path_confidence"),
 		ThresholdStart:          viper.GetFloat64("learning.threshold_start"),
 		ThresholdStep:           viper.GetFloat64("learning.threshold_step"),
+		ExploreTemporalPenalty:  viper.GetFloat64("learning.explore_temporal_penalty"),
 		ThresholdFloor:          viper.GetFloat64("learning.threshold_floor"),
 		ThresholdCeil:           viper.GetFloat64("learning.threshold_ceil"),
 		VirtualPromote:          viper.GetInt("learning.virtual_promote"),
