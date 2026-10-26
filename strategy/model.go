@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"maps"
 	"context"
 	"strings"
 
@@ -101,6 +102,7 @@ func (model *Model) Decide(out *data.Value, tick *data.Value) *data.Value {
 
 	var surprise []float64
 	tick.Lookup(&surprise, model.resonance.LayerKey(symbol, "surprise"))
+
 	if len(surprise) > 0 {
 		out.Append(surprise, "resonance", "surprise")
 	}
@@ -115,6 +117,7 @@ func (model *Model) Decide(out *data.Value, tick *data.Value) *data.Value {
 		pathKey = model.path.Follow(symbol, enter, step.Spell)
 	} else {
 		pathKey = model.path.After(model.path.PolicyLive(symbol, enter), cut)
+	
 		if cut.String() != "" {
 			if enter {
 				model.path.Append(symbol, cut)
@@ -177,21 +180,24 @@ func (model *Model) Decide(out *data.Value, tick *data.Value) *data.Value {
 		if model.tryExploreStoredEnter(out, symbol, pathKey) {
 			return out
 		}
+
 		if model.tryPolicyStoredEnter(
 			out, tick, symbol, pathKey, observed, frictionPass, frictionChecked,
 		) {
 			return out
 		}
+		
 		if model.exploreNewPath(symbol, pathKey) {
 			out.Append("enter submitted", "outcome")
 		}
+		
 		return out
 	}
 
-	if !disagree && len(values) > 0 && pathKey != "" && pathDepth(pathKey) >= minPathDepth() {
+	if !disagree && len(values) > 0 && pathKey != "" && pathDepth(pathKey) >= system.Cfg.Learning.MinPathLength {
 		virtual := !paper
-
 		position := model.desk.Position(symbol, virtual)
+
 		if position != nil && pathKey == position.EntryPath {
 			// Exit sentence still on the entry prefix.
 		} else {
@@ -202,15 +208,19 @@ func (model *Model) Decide(out *data.Value, tick *data.Value) *data.Value {
 					position.AppendOutcomeTrigger("explore exit")
 				}
 			}
+
 			if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
 				return out
 			}
+
 			if paper {
 				model.path.Reset(symbol)
 				model.stage.ResetSequencer(symbol)
+
 				if model.resonance != nil {
 					model.resonance.ForgetHold(symbol)
 				}
+
 				out.Append("exit submitted", "outcome")
 				return out
 			}
@@ -233,6 +243,7 @@ func (model *Model) penalizeExploreInactivity(
 	}
 
 	penalty := exploreTemporalPenalty()
+
 	if penalty <= 0 {
 		return
 	}
@@ -241,6 +252,7 @@ func (model *Model) penalizeExploreInactivity(
 		if _, ok := model.exploreLeafAt(pathKey, action); !ok {
 			continue
 		}
+
 		model.bumpExploreLeaf(symbol, pathKey, action, penalty)
 		updated := model.exploreLeaf(pathKey, action, symbol)
 		model.noteExploreThreshold(out, pathKey, action, leafThreshold(updated))
@@ -251,10 +263,13 @@ func (model *Model) exploreLeafAt(pathKey, action string) (*data.Value, bool) {
 	if model == nil || model.explore == nil || pathKey == "" || action == "" {
 		return nil, false
 	}
+
 	leaf, ok := model.explore.Get(exploreRadixKey(pathKey, action))
+
 	if !ok || leaf == nil {
 		return nil, false
 	}
+
 	return leaf, true
 }
 
@@ -264,32 +279,38 @@ func (model *Model) noteExploreThreshold(
 	if out == nil || pathKey == "" {
 		return
 	}
+
 	suffix := "enter.bin"
+
 	if action == "exit" {
 		suffix = "exit.bin"
 	}
+
 	key := "model/explore/" + pathKey + "/" + suffix
 
 	var prior map[string]float64
 	out.Lookup(&prior, "exploreThresholds")
 	next := map[string]float64{}
-	for k, v := range prior {
-		next[k] = v
-	}
+
+	maps.Copy(next, prior)
+
 	next[key] = threshold
 	out.Append(next, "exploreThresholds")
 }
 
 func pathParentPrefixes(pathKey string) []string {
 	parts := strings.Split(pathKey, "/")
+
 	if len(parts) < 2 {
 		return nil
 	}
 
 	out := make([]string, 0, len(parts)-1)
+
 	for n := len(parts) - 1; n >= 1; n-- {
 		out = append(out, strings.Join(parts[:n], "/"))
 	}
+
 	return out
 }
 
@@ -303,9 +324,10 @@ func (model *Model) exploreEnterAt(pathKey string) (*data.Value, bool) {
 	}
 
 	for _, prefix := range pathParentPrefixes(pathKey) {
-		if pathDepth(prefix) < minPathDepth() {
+		if pathDepth(prefix) < system.Cfg.Learning.MinPathLength {
 			continue
 		}
+
 		if leaf, ok := model.exploreLeafAt(prefix, "enter"); ok {
 			return leaf, true
 		}
@@ -318,15 +340,20 @@ func (model *Model) policyEnterAt(pathKey string) (*data.Value, bool) {
 	if model == nil || model.policy == nil || pathKey == "" {
 		return nil, false
 	}
+
 	leaf, ok := model.policy.Get([]byte(pathKey))
+
 	if !ok || leaf == nil {
 		return nil, false
 	}
+
 	var action string
 	leaf.Lookup(&action, "action")
+
 	if action != "enter" {
 		return nil, false
 	}
+
 	return leaf, true
 }
 
@@ -336,16 +363,21 @@ func (model *Model) tryExploreStoredEnter(
 	if _, ok := model.exploreEnterAt(pathKey); !ok {
 		return false
 	}
+
 	if err := model.desk.Enter(symbol, pathKey, true, true); err != nil {
 		return false
 	}
+
 	model.path.Reset(symbol)
+
 	if model.resonance != nil {
 		model.resonance.ForgetHold(symbol)
 	}
+
 	if out != nil {
 		out.Append("enter submitted", "outcome")
 	}
+
 	return true
 }
 
@@ -359,28 +391,37 @@ func (model *Model) tryPolicyStoredEnter(
 	if _, ok := model.policyEnterAt(pathKey); !ok {
 		return false
 	}
+
 	if frictionChecked && !frictionPass {
 		if out != nil {
 			out.Append("friction", "blockedReason")
 		}
+
 		return false
 	}
+
 	if model.resonance != nil && !model.resonance.AllowsEntry(tick, symbol, observed) {
 		if out != nil {
 			out.Append("resonance veto", "blockedReason")
 		}
+
 		return false
 	}
+
 	if !model.paperRoom() {
 		return false
 	}
+
 	if err := model.desk.Enter(symbol, pathKey, false, true); err != nil {
 		return false
 	}
+
 	model.path.Reset(symbol)
+
 	if model.resonance != nil {
 		model.resonance.ForgetHold(symbol)
 	}
+
 	return true
 }
 
@@ -388,14 +429,8 @@ func pathDepth(pathKey string) int {
 	if pathKey == "" {
 		return 0
 	}
-	return strings.Count(pathKey, "/") + 1
-}
 
-func minPathDepth() int {
-	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MinPathLength > 1 {
-		return system.Cfg.Learning.MinPathLength
-	}
-	return 2
+	return strings.Count(pathKey, "/") + 1
 }
 
 /*
@@ -425,6 +460,7 @@ func (model *Model) matchStoredPaths(
 	}
 
 	want := "exit"
+
 	if enter {
 		want = "enter"
 	}
@@ -438,12 +474,14 @@ func (model *Model) matchStoredPaths(
 
 			var stored string
 			v.Lookup(&stored, "action")
+
 			if stored != "enter" && stored != "exit" {
 				return false
 			}
 
 			seen[stored] = struct{}{}
 			values[string(k)] = v
+
 			return false
 		})
 
@@ -451,10 +489,12 @@ func (model *Model) matchStoredPaths(
 			values = make(map[string]*data.Value)
 			continue
 		}
+
 		if len(seen) > 1 {
 			disagree = true
 			break
 		}
+
 		if _, ok := seen[want]; !ok {
 			disagree = true
 			break
@@ -466,6 +506,7 @@ func (model *Model) matchStoredPaths(
 	if disagree {
 		values = make(map[string]*data.Value)
 	}
+
 	return false, values, disagree
 }
 
@@ -474,12 +515,15 @@ func (model *Model) exploreNewPath(symbol, pathKey string) bool {
 	if pathKey == "" {
 		return false
 	}
+
 	if _, ok := model.exploreEnterAt(pathKey); ok {
 		return false
 	}
+	
 	if err := model.desk.Enter(symbol, pathKey, true, false); err != nil {
 		return false
 	}
+	
 	model.path.Reset(symbol)
 	return true
 }
@@ -500,6 +544,7 @@ func (model *Model) finishVirtualExplore(
 		if model.path != nil {
 			model.path.Reset(position.Symbol)
 		}
+
 		return true
 	}
 
@@ -508,20 +553,25 @@ func (model *Model) finishVirtualExplore(
 		model.adjustVirtualPair(position)
 		model.reconcileVirtualPair(position)
 	}
+
 	written := model.writePaths(position)
 	model.publishExplorePairThresholds(out, position)
 	model.refreshExploreUI()
+	
 	if model.stage != nil {
 		model.stage.PersistSequencer(model.Context(), position.Symbol)
 	}
+	
 	return written
 }
 
 func (model *Model) adjustVirtualPair(position *broker.Position) {
 	step := explorePnLStep(position)
+
 	if position.EntryPath != "" {
 		model.bumpExploreLeaf(position.Symbol, position.EntryPath, "enter", step)
 	}
+	
 	if position.ExitPath != "" {
 		model.bumpExploreLeaf(position.Symbol, position.ExitPath, "exit", step)
 	}
@@ -530,6 +580,7 @@ func (model *Model) adjustVirtualPair(position *broker.Position) {
 func (model *Model) reconcileVirtualPair(position *broker.Position) {
 	entryKey := position.EntryPath
 	exitKey := position.ExitPath
+	
 	if entryKey == "" && exitKey == "" {
 		return
 	}
@@ -555,6 +606,7 @@ func (model *Model) pruneExplorePair(entryKey, exitKey string) {
 		if spec.key == "" {
 			continue
 		}
+	
 		model.store.DeletePrefix("model/explore/" + spec.key + "/")
 		model.explore, _ = model.explore.DeletePrefix([]byte(spec.key))
 	}
@@ -568,12 +620,15 @@ func (model *Model) promoteExplorePair(entryKey, exitKey, symbol string) {
 		if spec.key == "" {
 			continue
 		}
+	
 		leaf := model.exploreLeaf(spec.key, spec.action, symbol)
+	
 		if leaf == nil {
 			continue
 		}
 
 		suffix := "enter.bin"
+	
 		if spec.action == "exit" {
 			suffix = "exit.bin"
 		}
@@ -589,6 +644,7 @@ func (model *Model) bumpExploreLeaf(symbol, pathKey, action string, step float64
 	if model.onPolicy(pathKey) {
 		return
 	}
+	
 	leaf := model.exploreLeaf(pathKey, action, symbol)
 	leaf.Append(step, "threshold")
 	model.explore, _, _ = model.explore.Insert(exploreRadixKey(pathKey, action), leaf)
@@ -601,10 +657,12 @@ func (model *Model) publishExplorePairThresholds(
 	if position == nil {
 		return
 	}
+	
 	if position.EntryPath != "" {
 		leaf := model.exploreLeaf(position.EntryPath, "enter", position.Symbol)
 		model.noteExploreThreshold(out, position.EntryPath, "enter", leafThreshold(leaf))
 	}
+	
 	if position.ExitPath != "" {
 		leaf := model.exploreLeaf(position.ExitPath, "exit", position.Symbol)
 		model.noteExploreThreshold(out, position.ExitPath, "exit", leafThreshold(leaf))
@@ -635,6 +693,7 @@ func (model *Model) exploreLeaf(pathKey, action, symbol string) *data.Value {
 	}
 
 	storeKey := "model/explore/" + pathKey + "/" + action + ".bin"
+	
 	if model.store != nil && model.System != nil {
 		if leaf := model.store.Download(model.Context(), storeKey); leaf != nil {
 			return leaf
@@ -648,6 +707,7 @@ func exploreTemporalPenalty() float64 {
 	if system.Cfg != nil && system.Cfg.Learning != nil {
 		return system.Cfg.Learning.ExploreTemporalPenalty
 	}
+	
 	return 0
 }
 
@@ -682,6 +742,7 @@ func explorePnLStep(position *broker.Position) float64 {
 	}
 
 	pnlPct := 0.0
+
 	if position.PnLPct != nil {
 		pnlPct = position.PnLPct.Float64()
 	}
@@ -705,6 +766,7 @@ func (model *Model) writePaths(position *broker.Position) bool {
 		errnie.Error(errnie.Err(
 			errnie.NotFound, "[model.writePaths] missing entry and exit path", nil,
 		))
+
 		return false
 	}
 
@@ -712,6 +774,7 @@ func (model *Model) writePaths(position *broker.Position) bool {
 		leaf := model.exploreLeaf(position.EntryPath, "enter", position.Symbol)
 		model.saveExploreLeaf(position.EntryPath, "enter", leaf)
 	}
+
 	if position.ExitPath != "" {
 		leaf := model.exploreLeaf(position.ExitPath, "exit", position.Symbol)
 		model.saveExploreLeaf(position.ExitPath, "exit", leaf)
@@ -725,6 +788,7 @@ func (model *Model) saveExploreLeaf(pathKey, action string, leaf *data.Value) {
 	if leaf == nil || model.onPolicy(pathKey) {
 		return
 	}
+
 	model.explore, _, _ = model.explore.Insert(exploreRadixKey(pathKey, action), leaf)
 	model.store.WriteAtPrefix("model/explore/"+pathKey+"/"+action+".bin", leaf.Bytes())
 }
@@ -739,12 +803,14 @@ func (model *Model) tryBookStopExit(
 	}
 
 	trigger, shouldExit := position.ShouldExit()
+
 	if !shouldExit || trigger == "" {
 		return false
 	}
 
 	symbol := position.Symbol
 	pathKey := position.EntryPath
+
 	if pathKey == "" {
 		pathKey = model.path.PolicyLive(symbol, false)
 	}
@@ -757,12 +823,14 @@ func (model *Model) tryBookStopExit(
 	}
 
 	model.momentum.forget(position)
+
 	if model.resonance != nil {
 		model.resonance.ForgetHold(symbol)
 	}
 
 	if model.finishVirtualExplore(position, out) {
 		model.stage.ResetSequencer(symbol)
+
 		if out != nil {
 			out.Append(trigger, "outcome")
 			out.Append("exit submitted", "outcome")
@@ -780,11 +848,13 @@ func (model *Model) tryMomentumExit(
 	virtual bool,
 ) bool {
 	position := model.desk.Position(symbol, virtual)
+
 	if position == nil || tick == nil {
 		return false
 	}
 
 	trigger, shouldExit := model.momentum.trigger(model.resonance, tick, symbol, position)
+
 	if !shouldExit {
 		model.momentum.advance(model.resonance, tick, symbol, position)
 		return false
@@ -802,6 +872,7 @@ func (model *Model) tryMomentumExit(
 
 	if model.finishVirtualExplore(position, out) {
 		model.stage.ResetSequencer(symbol)
+	
 		if out != nil {
 			out.Append(trigger, "outcome")
 			out.Append("exit submitted", "outcome")
@@ -826,6 +897,7 @@ func (model *Model) sweepMomentum(tick *data.Value) {
 		}
 
 		pathKey := position.EntryPath
+	
 		if pathKey == "" {
 			pathKey = model.path.PolicyLive(position.Symbol, false)
 		}
@@ -838,9 +910,11 @@ func (model *Model) RecordExploreClose(position *broker.Position) bool {
 	if position == nil {
 		return false
 	}
+	
 	if position.Virtual {
 		return model.finishVirtualExplore(position, nil)
 	}
+	
 	return model.writePaths(position)
 }
 
@@ -848,6 +922,7 @@ func (model *Model) DeskExitPath(symbol string, position *broker.Position) strin
 	if position == nil {
 		return ""
 	}
+	
 	return model.emergencyExitPath(symbol, "", position)
 }
 
@@ -885,6 +960,7 @@ func (model *Model) paperRoom() bool {
 	}
 
 	max := system.Cfg.Learning.MaxVenuePositions
+	
 	if max <= 0 {
 		return true
 	}
@@ -896,6 +972,7 @@ func (model *Model) onPolicy(pathKey string) bool {
 	if model == nil || model.policy == nil || pathKey == "" {
 		return false
 	}
+	
 	_, ok := model.policy.Get([]byte(pathKey))
 	return ok
 }
@@ -907,6 +984,7 @@ func (model *Model) loadPolicyFromStore() {
 
 	cfg := system.Cfg.Learning
 	prefixes := []string{"model/policy/"}
+	
 	if cfg.PolicyPrefix != "" && cfg.PolicyPrefix != "model/policy/" {
 		prefixes = append(prefixes, cfg.PolicyPrefix)
 	}
@@ -919,17 +997,20 @@ func (model *Model) loadPolicyFromStore() {
 func (model *Model) loadPolicyPrefix(prefix, enterSuffix, exitSuffix string) {
 	for objectKey := range model.store.ListKeys(prefix) {
 		pathKey, action, ok := trieObjectKey(objectKey, prefix, enterSuffix, exitSuffix)
+	
 		if !ok {
 			continue
 		}
 
 		value := model.store.Download(model.Context(), objectKey)
+	
 		if value == nil {
 			continue
 		}
 
 		var stored string
 		value.Lookup(&stored, "action")
+	
 		if stored == "" {
 			value.Append(action, "action")
 		}
@@ -947,17 +1028,20 @@ func (model *Model) loadExploreFromStore() {
 
 	for objectKey := range model.store.ListKeys("model/explore/") {
 		pathKey, action, ok := trieObjectKey(objectKey, "model/explore/", cfg.EnterSuffix, cfg.ExitSuffix)
+	
 		if !ok {
 			continue
 		}
 
 		value := model.store.Download(model.Context(), objectKey)
+	
 		if value == nil {
 			continue
 		}
 
 		var stored string
 		value.Lookup(&stored, "action")
+	
 		if stored == "" {
 			value.Append(action, "action")
 		}

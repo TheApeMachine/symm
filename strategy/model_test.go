@@ -5,10 +5,10 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/system"
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestExploreLeafPathKeyNotSymbol(t *testing.T) {
@@ -53,8 +53,8 @@ func TestMinPathDepthBlocksPrematureExploreExit(t *testing.T) {
 		So(len(values), ShouldEqual, 1)
 
 		So(pathDepth("R03"), ShouldEqual, 1)
-		So(minPathDepth(), ShouldEqual, 2)
-		So(pathDepth("R03") >= minPathDepth(), ShouldBeFalse)
+		So(system.Cfg.Learning.MinPathLength, ShouldEqual, 2)
+		So(pathDepth("R03") >= system.Cfg.Learning.MinPathLength, ShouldBeFalse)
 
 		_, values, disagree = model.matchStoredPaths("R03/R04", false, false, true)
 		So(disagree, ShouldBeFalse)
@@ -64,7 +64,7 @@ func TestMinPathDepthBlocksPrematureExploreExit(t *testing.T) {
 		_, values, disagree = model.matchStoredPaths("R03/R04", false, false, true)
 		So(disagree, ShouldBeFalse)
 		So(len(values), ShouldEqual, 1)
-		So(pathDepth("R03/R04") >= minPathDepth(), ShouldBeTrue)
+		So(pathDepth("R03/R04") >= system.Cfg.Learning.MinPathLength, ShouldBeTrue)
 	})
 }
 

@@ -8,7 +8,7 @@ import {
 	clearRetainedTelemetry,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
-import { Value } from "#/types/value";
+import type { Value } from "#/types/value";
 import { Route } from "./xray";
 
 vi.mock("#/components/terminal/xray-hierarchy", () => ({
@@ -26,15 +26,15 @@ vi.mock("#/components/terminal/xray-panels", () => ({
 }));
 
 const publish = (symbol: string, embedding: number[]) => {
-	const row = new Value({
-		origin: "resonance",
-		role: "frame",
-		scope: symbol,
-	});
-	(row as Record<string, unknown>).embedding = embedding;
 	resonanceStore.setState((state) => ({
 		...state,
-		[symbol]: row,
+		[symbol]: {
+			origin: "resonance",
+			role: "frame",
+			scope: symbol,
+			symbol,
+			embedding,
+		} as unknown as Value,
 	}));
 };
 

@@ -81,6 +81,7 @@ func (momentum *Momentum) trigger(
 		if pnlPct < sample.lastPnLPct {
 			return "momentum reversal", true
 		}
+		
 		return "momentum stall", true
 	}
 

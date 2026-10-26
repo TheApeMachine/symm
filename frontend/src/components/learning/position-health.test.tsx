@@ -113,19 +113,26 @@ describe("position-health components", () => {
 	});
 
 	it("renders TradeRegionScores with live measured brightness from signals.training", () => {
-		signals.training.setState(() => ({
-			"ZAMA/USD": new Value({
-				scope: "ZAMA/USD",
-				origin: "training",
-				metrics: [
-					{ name: "region_brightness:R06", raw: 2.85 },
-					{ name: "region_members:R06", raw: 7 },
-					{ name: "region_brightness:R01", raw: 1.42 },
-					{ name: "region_members:R01", raw: 4 },
-				],
-				provenance: [{ name: "token_path", value: "R01/R06" }],
-			}),
-		}));
+		const frame = new Value({
+			scope: "ZAMA/USD",
+			origin: "training",
+			prefix: "stage/tick/ZAMA-USD",
+		});
+		frame.layers = [
+			new TextEncoder().encode(JSON.stringify([2.85])),
+			new TextEncoder().encode(JSON.stringify([7])),
+			new TextEncoder().encode(JSON.stringify([1.42])),
+			new TextEncoder().encode(JSON.stringify([4])),
+			new TextEncoder().encode(JSON.stringify(["R01/R06"])),
+		];
+		frame.index = [
+			`${frame.prefix}/region_brightness:R06`,
+			`${frame.prefix}/region_members:R06`,
+			`${frame.prefix}/region_brightness:R01`,
+			`${frame.prefix}/region_members:R01`,
+			`${frame.prefix}/token_path`,
+		];
+		signals.training.setState(() => ({ "ZAMA/USD": frame }));
 
 		const markup = renderToStaticMarkup(<TradeRegionScores life={mockLife} />);
 		expect(markup).toContain("R06");

@@ -143,12 +143,15 @@ func (path *Path) Follow(symbol string, enter bool, spell []string) string {
 	defer path.mu.Unlock()
 
 	tokens := make(tokenizer.Tokens, 0, len(spell))
+
 	for _, label := range spell {
 		if label == "" {
 			continue
 		}
+	
 		tokens = append(tokens, tokenizer.NewToken([]string{label}, 0, 0))
 	}
+	
 	if path.limit > 0 && len(tokens) > path.limit {
 		tokens = tokens[len(tokens)-path.limit:]
 	}
@@ -158,20 +161,25 @@ func (path *Path) Follow(symbol string, enter bool, spell []string) string {
 	} else {
 		path.triggerBySymbol[symbol] = tokens
 	}
+	
 	return tokens.String()
 }
 
 // After is live plus one token edge (trie lookup key for this step).
 func (path *Path) After(live string, token tokenizer.Token) string {
 	label := token.String()
+	
 	if label == "" {
 		return live
 	}
+	
 	if live == "" {
 		return label
 	}
+	
 	if live == label || strings.HasSuffix(live, "/"+label) {
 		return live
 	}
+
 	return live + "/" + label
 }
