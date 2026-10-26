@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ResonanceFrame } from "#/collections/types";
 import {
 	parseResonanceData,
+	parseResonanceFromWorkspace,
 	signedVectorTransform,
 	vectorSlotTransform,
 } from "#/components/charts/prediction";
@@ -168,5 +169,30 @@ describe("parseResonanceData", () => {
 		);
 		expect(parsed?.calibrated).toBe(true);
 		expect(parsed?.supportedHorizon).toBe(2);
+	});
+
+	it("folds resonance layers from the workspace aggregate tick", () => {
+		const prefix = "workspace/tick/aggregate/1/100";
+		const frame = new Value({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			prefix,
+			index: [
+				`${prefix}/resonance/BTC-USD/layer_0_state_0`,
+				`${prefix}/resonance/BTC-USD/layer_0_prediction_0`,
+				`${prefix}/resonance/BTC-USD/energy`,
+			],
+			layers: [
+				new TextEncoder().encode(JSON.stringify([0.9])),
+				new TextEncoder().encode(JSON.stringify([0.4])),
+				new TextEncoder().encode(JSON.stringify([1.2])),
+			],
+		});
+
+		const parsed = parseResonanceFromWorkspace("BTC/USD", frame);
+		expect(parsed?.layers?.[0]?.state).toEqual([0.9]);
+		expect(parsed?.layers?.[0]?.prediction).toEqual([0.4]);
+		expect(parsed?.energy).toBe(1.2);
 	});
 });

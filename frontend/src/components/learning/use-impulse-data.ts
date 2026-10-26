@@ -31,8 +31,8 @@ const CANONICAL_PINS = getCanonicalPinDefs();
 const CANONICAL_COUNTS = getCanonicalRegionCounts();
 
 /*
-useImpulseData tracks the live SOM grid cells and confluence regions from signals.training
-and peer signal stores for the given symbol.
+useImpulseData tracks the live SOM grid cells and confluence regions from the
+workspace aggregate tick (and training step frames when present) for the symbol.
 */
 export const useImpulseData = (symbol: string): ImpulseDataState => {
 	const initialNodes = useMemo(() => createCanonicalGridNodes(), []);
@@ -180,6 +180,18 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 							) {
 								continue;
 							}
+							gridRegions.push(region);
+						}
+					}
+				}
+				if (symbol) {
+					for (const { payload } of frame.layersUnder(
+						`stage/${symbol}/regions`,
+					)) {
+						if (!Array.isArray(payload)) continue;
+						sawRegionLayer = true;
+						for (const region of payload) {
+							if (!region || typeof region.key !== "number") continue;
 							gridRegions.push(region);
 						}
 					}

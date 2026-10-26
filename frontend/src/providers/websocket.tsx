@@ -1,13 +1,4 @@
 import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
-import {
-	abortDetections,
-	ingestDetectionFrame,
-} from "#/collections/detections";
-import {
-	abortHindsight,
-	hubFrameFromValue,
-	ingestHindsightFrame,
-} from "#/collections/hindsight";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
 import { syncEngineTelemetry } from "#/lib/engine-telemetry";
@@ -27,10 +18,28 @@ const advanceMarketTick = (value: Value) => {
 		return;
 	}
 
-	const tick =
-		typeof value.tick === "bigint" ? Number(value.tick) : value.tick;
+	const tick = typeof value.tick === "bigint" ? Number(value.tick) : value.tick;
 	atoms.tickCount.set(tick);
 	updateClock(value.timestamp);
+};
+
+/*
+The workspace drain can fan out the aggregate tick before later pipeline
+stages append signal and grid layers. A second frame for the same tick may
+carry fewer layers — keep the richer one so impulse map and kernel readers
+do not lose live metrics.
+*/
+const keepExistingWorkspaceAggregate = (
+	existing: Value | undefined,
+	incoming: Value,
+): boolean => {
+	if (!existing || incoming.scope !== "aggregate") {
+		return false;
+	}
+	if (existing.tick !== incoming.tick) {
+		return false;
+	}
+	return incoming.index.length < existing.index.length;
 };
 
 const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
@@ -40,6 +49,14 @@ const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
 
 			for (const [scope, frame] of scopes) {
 				if (prev[scope] === frame) {
+					continue;
+				}
+
+				if (
+					store === signals.workspace &&
+					scope === "aggregate" &&
+					keepExistingWorkspaceAggregate(prev[scope], frame)
+				) {
 					continue;
 				}
 
@@ -59,16 +76,6 @@ export const ingest = (values: Value[]) => {
 
 	batch(() => {
 		for (const value of values) {
-			if (value.origin === "detections") {
-				ingestDetectionFrame(hubFrameFromValue(value));
-				continue;
-			}
-
-			if (value.origin === "hindsight") {
-				ingestHindsightFrame(hubFrameFromValue(value));
-				continue;
-			}
-
 			const atom = valueAtoms[value.origin];
 
 			if (atom) {
@@ -129,8 +136,6 @@ export const WsFeed = () => {
 			if (data.type === "STATUS") {
 				if (data.status === "OFFLINE") {
 					atoms.online.set("OFFLINE");
-					abortDetections("hub socket closed");
-					abortHindsight("hub socket closed");
 				}
 
 				if (data.status === "ONLINE") {

@@ -12,7 +12,6 @@ import {
 	ingestLongtailTick,
 } from "#/collections/longtail";
 import { ingestPaperRecord, parsePaperRecord } from "#/collections/paper";
-import { ingestParallelSummary } from "#/collections/parallel";
 import {
 	ingestSequiturFrame,
 	ingestTrainingStep,
@@ -66,10 +65,6 @@ watchScopes(signals.paper, (value) => {
 	ingestPaperRecord(record);
 });
 
-watchScopes(signals.parallel, (value) => {
-	decodeLayers(value, ingestParallelSummary);
-});
-
 watchScopes(signals.sequitur, (value) => {
 	decodeLayers(value, ingestSequiturFrame);
 });
@@ -116,7 +111,9 @@ watchScopes(signals.training, (value) => {
 		return;
 	}
 	if (value.role === "walk") {
-		decodeLayers(value, (payload) => ingestPathWalks(Number(value.tick), payload));
+		decodeLayers(value, (payload) =>
+			ingestPathWalks(Number(value.tick), payload),
+		);
 		return;
 	}
 	if (value.role === "step") {

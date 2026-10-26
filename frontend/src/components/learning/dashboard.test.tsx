@@ -27,7 +27,6 @@ describe("LearningDashboard", () => {
 
 		expect(getByText("Open positions")).toBeTruthy();
 		expect(getByText("Position life-cycle")).toBeTruthy();
-		expect(getByText("Historical runs")).toBeTruthy();
 		expect(getByText("Cognitive tree")).toBeTruthy();
 		expect(getByText("Impulse map")).toBeTruthy();
 	});
@@ -41,17 +40,6 @@ describe("LearningDashboard", () => {
 
 		expect(tabAtom.get()).toBe("positions");
 		expect(container.textContent).toContain("No open positions");
-	});
-
-	it("switches to historical runs view when tab is selected", () => {
-		const { container, getByText } = render(<LearningDashboard />);
-
-		act(() => {
-			fireEvent.click(getByText("Historical runs"));
-		});
-
-		expect(tabAtom.get()).toBe("historical");
-		expect(container.textContent).toContain("HISTORICAL RUNS");
 	});
 
 	it("switches to cognitive tree view when tab is selected", () => {
@@ -73,7 +61,7 @@ describe("LearningDashboard", () => {
 		});
 
 		expect(tabAtom.get()).toBe("impulse");
-		expect(container.textContent).toContain("Quiescent · Awaiting impulse");
+		expect(container.textContent).toContain("Grid regions");
 	});
 
 	it("switches to sequitur grammar view when tab is selected", () => {

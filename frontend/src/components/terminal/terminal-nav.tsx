@@ -34,27 +34,7 @@ export const SURFACE_ITEMS: Array<{
 		icon: "signal",
 		to: "/longtail",
 	},
-	{
-		key: "parallel",
-		label: "Parallel",
-		icon: "scan",
-		to: "/parallel",
-	},
-	{
-		key: "diagnostics",
-		label: "System diagnostics",
-		icon: "lanes",
-		to: "/diagnostics",
-	},
-	{
-		key: "influence",
-		label: "Influence field",
-		icon: "spark",
-		to: "/influence",
-	},
-	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
-	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },
 	{
 		key: "workbench",
 		label: "Analytical workbench",

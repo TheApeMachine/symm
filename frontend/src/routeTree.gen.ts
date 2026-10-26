@@ -11,13 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as WorkbenchRouteImport } from './routes/workbench'
-import { Route as SignalsRouteImport } from './routes/signals'
-import { Route as ParallelRouteImport } from './routes/parallel'
 import { Route as LongtailRouteImport } from './routes/longtail'
 import { Route as LearningRouteImport } from './routes/learning'
-import { Route as InfluenceRouteImport } from './routes/influence'
-import { Route as HindsightRouteImport } from './routes/hindsight'
-import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as IndexRouteImport } from './routes/index'
 
 const XrayRoute = XrayRouteImport.update({
@@ -30,16 +25,6 @@ const WorkbenchRoute = WorkbenchRouteImport.update({
   path: '/workbench',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SignalsRoute = SignalsRouteImport.update({
-  id: '/signals',
-  path: '/signals',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ParallelRoute = ParallelRouteImport.update({
-  id: '/parallel',
-  path: '/parallel',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LongtailRoute = LongtailRouteImport.update({
   id: '/longtail',
   path: '/longtail',
@@ -50,21 +35,6 @@ const LearningRoute = LearningRouteImport.update({
   path: '/learning',
   getParentRoute: () => rootRouteImport,
 } as any)
-const InfluenceRoute = InfluenceRouteImport.update({
-  id: '/influence',
-  path: '/influence',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HindsightRoute = HindsightRouteImport.update({
-  id: '/hindsight',
-  path: '/hindsight',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DiagnosticsRoute = DiagnosticsRouteImport.update({
-  id: '/diagnostics',
-  path: '/diagnostics',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -73,89 +43,38 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
-  '/parallel': typeof ParallelRoute
-  '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
-  '/parallel': typeof ParallelRoute
-  '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/diagnostics': typeof DiagnosticsRoute
-  '/hindsight': typeof HindsightRoute
-  '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
   '/longtail': typeof LongtailRoute
-  '/parallel': typeof ParallelRoute
-  '/signals': typeof SignalsRoute
   '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/diagnostics'
-    | '/hindsight'
-    | '/influence'
-    | '/learning'
-    | '/longtail'
-    | '/parallel'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
+  fullPaths: '/' | '/learning' | '/longtail' | '/workbench' | '/xray'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/diagnostics'
-    | '/hindsight'
-    | '/influence'
-    | '/learning'
-    | '/longtail'
-    | '/parallel'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
-  id:
-    | '__root__'
-    | '/'
-    | '/diagnostics'
-    | '/hindsight'
-    | '/influence'
-    | '/learning'
-    | '/longtail'
-    | '/parallel'
-    | '/signals'
-    | '/workbench'
-    | '/xray'
+  to: '/' | '/learning' | '/longtail' | '/workbench' | '/xray'
+  id: '__root__' | '/' | '/learning' | '/longtail' | '/workbench' | '/xray'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DiagnosticsRoute: typeof DiagnosticsRoute
-  HindsightRoute: typeof HindsightRoute
-  InfluenceRoute: typeof InfluenceRoute
   LearningRoute: typeof LearningRoute
   LongtailRoute: typeof LongtailRoute
-  ParallelRoute: typeof ParallelRoute
-  SignalsRoute: typeof SignalsRoute
   WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
 }
@@ -176,20 +95,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkbenchRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/signals': {
-      id: '/signals'
-      path: '/signals'
-      fullPath: '/signals'
-      preLoaderRoute: typeof SignalsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/parallel': {
-      id: '/parallel'
-      path: '/parallel'
-      fullPath: '/parallel'
-      preLoaderRoute: typeof ParallelRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/longtail': {
       id: '/longtail'
       path: '/longtail'
@@ -204,27 +109,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LearningRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/influence': {
-      id: '/influence'
-      path: '/influence'
-      fullPath: '/influence'
-      preLoaderRoute: typeof InfluenceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hindsight': {
-      id: '/hindsight'
-      path: '/hindsight'
-      fullPath: '/hindsight'
-      preLoaderRoute: typeof HindsightRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/diagnostics': {
-      id: '/diagnostics'
-      path: '/diagnostics'
-      fullPath: '/diagnostics'
-      preLoaderRoute: typeof DiagnosticsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -237,13 +121,8 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DiagnosticsRoute: DiagnosticsRoute,
-  HindsightRoute: HindsightRoute,
-  InfluenceRoute: InfluenceRoute,
   LearningRoute: LearningRoute,
   LongtailRoute: LongtailRoute,
-  ParallelRoute: ParallelRoute,
-  SignalsRoute: SignalsRoute,
   WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,
 }

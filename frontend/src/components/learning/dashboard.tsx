@@ -5,7 +5,6 @@ import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Component } from "../ui";
 import { CognitiveTree } from "./cognitive-tree";
-import { ForwardLearningViz } from "./forward-learning-viz";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import { LifecycleView } from "./lifecycle-view";
 import { OpenPositions } from "./open-positions";
@@ -14,7 +13,6 @@ import { SequiturGrammarViz } from "./sequitur-grammar-viz";
 export type Tab =
 	| "positions"
 	| "forward"
-	| "historical"
 	| "cognitive"
 	| "sequitur"
 	| "impulse";
@@ -22,7 +20,6 @@ export type Tab =
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "positions", label: "Open positions" },
 	{ key: "forward", label: "Position life-cycle" },
-	{ key: "historical", label: "Historical runs" },
 	{ key: "cognitive", label: "Cognitive tree" },
 	{ key: "sequitur", label: "Sequitur grammar" },
 	{ key: "impulse", label: "Impulse map" },
@@ -36,8 +33,8 @@ export const LearningDashboard = () => {
 
 	return (
 		<Component
-			store={signals.training}
-			symbol={focus}
+			store={signals.workspace}
+			symbol="aggregate"
 			className="h-full min-h-0 w-full flex flex-col"
 		>
 			<Flex.Column className="h-full min-h-0 w-full bg-(--bg) text-(--f2) font-mono">
@@ -69,12 +66,6 @@ export const LearningDashboard = () => {
 				{tab === "forward" && (
 					<Flex.Column className="flex-1 min-h-0">
 						<LifecycleView />
-					</Flex.Column>
-				)}
-
-				{tab === "historical" && (
-					<Flex.Column className="flex-1 min-h-0">
-						<ForwardLearningViz tapeSource="historical" />
 					</Flex.Column>
 				)}
 

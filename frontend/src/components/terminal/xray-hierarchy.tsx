@@ -1,4 +1,5 @@
 import { createRef } from "react";
+import { symbolScopeAliases } from "#/collections/app";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
 import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
@@ -127,10 +128,13 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as Array<Value | Record<string, unknown>>;
 
-	const focused = frames.find(
-		(frame) =>
-			(frame instanceof Value ? frame.scope : frame.symbol) === focusSymbol,
-	);
+	const aliases = new Set(symbolScopeAliases(focusSymbol));
+	const focused = frames.find((frame) => {
+		const scope = String(
+			frame instanceof Value ? frame.scope : frame.symbol ?? "",
+		);
+		return aliases.has(scope);
+	});
 	const layers = xrayLayersFromResonance(focused);
 
 	if (symbolRef.current !== null) {
@@ -139,10 +143,15 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	}
 
 	if (waitingRef.current !== null && rowsRef.current !== null) {
-		waitingRef.current.textContent =
-			frames.length === 0
-				? "waiting for resonance layers"
-				: `no resonance carrier for ${focusSymbol}`;
+		if (frames.length === 0) {
+			waitingRef.current.textContent = "waiting for resonance layers";
+		} else if (!focused) {
+			waitingRef.current.textContent = `no resonance carrier for ${focusSymbol}`;
+		} else if (layers.length === 0) {
+			waitingRef.current.textContent = `resonance carrier for ${focusSymbol} has no layer rows yet`;
+		} else {
+			waitingRef.current.textContent = "";
+		}
 		paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
 	}
 };

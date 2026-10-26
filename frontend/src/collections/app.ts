@@ -18,6 +18,22 @@ export const DEFAULT_KERNELS = [
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
+
+/** Desk scope (BTC/USD) and escaped hub scope (BTC-USD) for layer lookups. */
+export const symbolScopeAliases = (symbol: string): string[] => {
+	if (!symbol) return [];
+	const aliases = new Set<string>([symbol]);
+	if (symbol.includes("/")) {
+		aliases.add(symbol.replace(/\//g, "-"));
+	} else {
+		const dash = symbol.indexOf("-");
+		if (dash > 0) {
+			aliases.add(`${symbol.slice(0, dash)}/${symbol.slice(dash + 1)}`);
+		}
+	}
+	return [...aliases];
+};
+
 export const clockAtom = createAtom<number | null>(null);
 
 export const updateClock = (at: number | bigint | null | undefined) => {
@@ -84,7 +100,6 @@ export const signals: Record<string, Store<Record<string, Value>>> = {
 	positions: createStore<Record<string, Value>>({}),
 	s3: createStore<Record<string, Value>>({}),
 	paper: createStore<Record<string, Value>>({}),
-	parallel: createStore<Record<string, Value>>({}),
 	sequitur: createStore<Record<string, Value>>({}),
 	cognition: createStore<Record<string, Value>>({}),
 };
@@ -212,7 +227,13 @@ export const signalFor = (
 	frame: Value | undefined = workspaceFrame(),
 ): Record<string, unknown> => {
 	if (!frame) return {};
-	return readKernel(kernel, symbol, frame).metrics;
+	for (const scope of symbolScopeAliases(symbol)) {
+		const metrics = readKernel(kernel, scope, frame).metrics;
+		if (Object.keys(metrics).length > 0) {
+			return metrics;
+		}
+	}
+	return {};
 };
 
 /*

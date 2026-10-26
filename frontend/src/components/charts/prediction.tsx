@@ -281,6 +281,38 @@ resonanceLayers yields the tick's resonance layers for one symbol as
 [metric, payload]: the Go Append addressed them
 resonance/<symbol>/<metric> below the frame prefix.
 */
+/*
+parseResonanceFromWorkspace folds resonance/<scope>/… layers on the workspace
+aggregate tick into the same ResonanceData shape as a dedicated reading frame.
+The backend attaches those scalars with an escaped scope (BTC-USD); the x-ray
+panels keep the dashboard focus symbol (BTC/USD).
+*/
+export const parseResonanceFromWorkspace = (
+	symbol: string,
+	frame: Value | undefined,
+): ResonanceData | undefined => {
+	if (!frame || !symbol) return undefined;
+
+	const data = emptyResonanceData();
+	for (const [suffix, payload] of resonanceLayers(frame, symbol)) {
+		applyResonanceSuffix(data, suffix, payload);
+	}
+
+	const finalized = finalizeResonanceData(data);
+	const hasLayers = (finalized.layers?.length ?? 0) > 0;
+	const hasLatent = (finalized.latent?.length ?? 0) > 0;
+	const hasScalars =
+		finalized.energy !== undefined ||
+		finalized.surprise !== undefined ||
+		(finalized.forwardCurve?.length ?? 0) > 0;
+
+	if (!hasLayers && !hasLatent && !hasScalars) {
+		return undefined;
+	}
+
+	return finalized;
+};
+
 export function* resonanceLayers(
 	frame: Value,
 	symbol: string,

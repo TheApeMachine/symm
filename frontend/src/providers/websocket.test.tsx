@@ -230,4 +230,41 @@ describe("ingest", () => {
 
 		expect(signals.kraken).toBeUndefined();
 	});
+
+	it("keeps the richer workspace aggregate when the same tick is fanned out twice", () => {
+		signals.workspace.setState(() => ({}));
+
+		const prefix = "workspace/tick/aggregate/1/99";
+		const rich = new Value({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			prefix,
+			tick: 99n,
+			index: [
+				`${prefix}/cvd/BTC/USD/midpoint_log_return`,
+				`${prefix}/train/regions/BTC/USD`,
+			],
+			layers: [
+				new TextEncoder().encode(JSON.stringify([0.42])),
+				new TextEncoder().encode(
+					JSON.stringify([{ symbol: "BTC/USD", key: 1, brightness: 0.8 }]),
+				),
+			],
+		});
+		const sparse = new Value({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			prefix,
+			tick: 99n,
+			index: [`${prefix}/spot:trade`],
+			layers: [new TextEncoder().encode(JSON.stringify([]))],
+		});
+
+		ingest([rich]);
+		ingest([sparse]);
+
+		expect(signals.workspace.state.aggregate?.index.length).toBe(2);
+	});
 });
