@@ -172,34 +172,6 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 }
 
 /*
-ExecutionSubscription requests the authenticated executions stream on the
-private transport, live websocket or Paper alike.
-*/
-type ExecutionSubscription struct {
-	Token string
-}
-
-/*
-NewExecutionSubscription binds the current authenticated websocket token.
-*/
-func NewExecutionSubscription(token string) ExecutionSubscription {
-	return ExecutionSubscription{Token: token}
-}
-
-/*
-MarshalJSON encodes Kraken's private executions subscription request.
-*/
-func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel": "executions",
-			"token":   subscription.Token,
-		},
-	})
-}
-
-/*
 ToValue serializes the Execution frame into a *data.Value layer.
 */
 func (execution *Execution) ToValue(epochs ...int64) *data.Value {
@@ -218,21 +190,5 @@ func (execution *Execution) ToValue(epochs ...int64) *data.Value {
 	}
 	val.Append(execution)
 	return val
-}
-
-/*
-NewExecutionFromValue reconstructs an Execution from a *data.Value layer.
-*/
-func NewExecutionFromValue(val *data.Value) (*Execution, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "[kraken.execution] cannot convert nil value to execution", nil)
-	}
-
-	var execution Execution
-	if err := sonic.Unmarshal(val.Layers[0], &execution); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[kraken.execution] failed to unmarshal execution", err)
-	}
-
-	return &execution, nil
 }
 

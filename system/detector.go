@@ -1,10 +1,6 @@
 package system
 
-import (
-	"fmt"
-
-	"github.com/spf13/viper"
-)
+import "github.com/spf13/viper"
 
 /*
 Detector configures how detect bounds an excursion's precursor and where it
@@ -28,23 +24,4 @@ func NewDetector() *Detector {
 		MinPrecursorTicks:     viper.GetInt64("detector.min_precursor_ticks"),
 		ExecutionLeadFraction: viper.GetFloat64("detector.execution_lead_fraction"),
 	}
-}
-
-/*
-Validate rejects a detector configuration that is missing or out of range.
-*/
-func (detector *Detector) Validate() error {
-	if detector == nil {
-		return fmt.Errorf("detector configuration is missing")
-	}
-
-	if detector.MinPrecursorTicks < 1 {
-		return fmt.Errorf("detector.min_precursor_ticks %d must be at least 1", detector.MinPrecursorTicks)
-	}
-
-	if detector.ExecutionLeadFraction < 0 || detector.ExecutionLeadFraction >= 1 {
-		return fmt.Errorf("detector.execution_lead_fraction %v must be in [0, 1)", detector.ExecutionLeadFraction)
-	}
-
-	return nil
 }

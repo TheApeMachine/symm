@@ -1,10 +1,6 @@
 package system
 
-import (
-	"fmt"
-
-	"github.com/spf13/viper"
-)
+import "github.com/spf13/viper"
 
 /*
 Paper configures where `make run` keeps its paper-trade records. Run never
@@ -18,19 +14,4 @@ type Paper struct {
 
 func NewPaper() *Paper {
 	return &Paper{RecordsPath: viper.GetString("paper.records_path")}
-}
-
-/*
-Validate rejects a paper configuration without a records path.
-*/
-func (paper *Paper) Validate() error {
-	if paper == nil {
-		return fmt.Errorf("paper configuration is missing")
-	}
-
-	if paper.RecordsPath == "" {
-		return fmt.Errorf("paper.records_path is not configured")
-	}
-
-	return nil
 }

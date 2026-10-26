@@ -570,6 +570,52 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 };
 
 /*
+trainingVerdict reads grammar reuse, policy hits, and path-book growth —
+not desk PnL (that lives in the top bar).
+*/
+export const trainingVerdict = (samples: LongtailSample[]): Verdict => {
+	if (samples.length < 2) {
+		return { label: "Warming up", tone: "neutral" };
+	}
+
+	const latest = samples[samples.length - 1].training;
+	const prior = samples[Math.max(0, samples.length - 16)].training;
+
+	if (
+		latest.reuseRate === null &&
+		latest.policyStoredRate === null &&
+		latest.developedPaths === null
+	) {
+		return { label: "Warming up", tone: "neutral" };
+	}
+
+	const reuse = latest.reuseRate ?? 0;
+	const create = latest.createRate ?? 0;
+	const policy = latest.policyStoredRate ?? 0;
+	const blocked = latest.blockedRate ?? 0;
+	const pathTrend = trendOf(latest.developedPaths, prior.developedPaths);
+
+	if (reuse >= 0.5 && policy >= 0.25) {
+		if (pathTrend === "up") return { label: "Reusing paths", tone: "good" };
+		return { label: "Reusing paths", tone: "info" };
+	}
+
+	if (create >= 0.55 && reuse < 0.3) {
+		return { label: "Finding structure", tone: "info" };
+	}
+
+	if (blocked >= 0.85 && (latest.tokenEmitRate ?? 0) < 0.05) {
+		return { label: "Quiet gate", tone: "warn" };
+	}
+
+	if ((latest.developedPaths ?? 0) > 0 && pathTrend === "up") {
+		return { label: "Path book growing", tone: "good" };
+	}
+
+	return { label: "Learning", tone: "neutral" };
+};
+
+/*
 buildInsights writes the plain-language readings the right rail shows. Each
 insight carries the tone of the metric it describes, so a bad number is never
 announced in green.
@@ -592,33 +638,49 @@ export const buildInsights = (
 	}
 
 	const prior = samples[Math.max(0, samples.length - 16)];
-	const bookStats = latest[book];
 	const training = latest.training;
 	const insights: Insight[] = [];
 
-	if (bookStats.winRate === null) {
+	if (training.reuseRate === null && training.createRate === null) {
 		insights.push({
-			id: "edge",
-			title: `Round-trip edge (${book})`,
-			body:
-				book === "virtual"
-					? "No existing path has settled yet. Exploration closes stay out of the edge."
-					: `No priced ${book} round trips yet — edge stays unknown until a lot settles with costs.`,
+			id: "grammar",
+			title: "Grammar structure",
+			body: "No sequitur event mix yet. Reuse means the spelling already existed; create means a new rule was minted.",
 			tone: "neutral",
 		});
 	} else {
-		const trend = trendOf(bookStats.meanReturn, prior[book].meanReturn);
+		const reuseTrend = trendOf(training.reuseRate, prior.training.reuseRate);
 		const trendSentence =
-			trend === "up"
-				? " Edge is improving versus the earlier window."
-				: trend === "down"
-					? " Edge is slipping versus the earlier window."
-					: " Edge is steady on this horizon.";
+			reuseTrend === "up"
+				? " Reuse is rising versus the earlier window."
+				: reuseTrend === "down"
+					? " Reuse is falling — more new rules than before."
+					: "";
+		const coverage =
+			training.actionCoverage === null
+				? "—"
+				: pct(training.actionCoverage);
 		insights.push({
-			id: "edge",
-			title: `Round-trip edge (${book})`,
-			body: `Mean return ${bookStats.meanReturn === null ? "—" : signedPct(bookStats.meanReturn)} on ${bookStats.closed} settled ${book === "virtual" ? "existing paths" : `${book} lots`}; win rate ${pct(bookStats.winRate)} (${bookStats.wins}/${bookStats.closed}).${trendSentence}`,
-			tone: returnTone(bookStats.meanReturn),
+			id: "grammar",
+			title: "Grammar structure",
+			body: `Rule events: ${pct(training.reuseRate ?? 0)} reuse, ${pct(training.createRate ?? 0)} create, ${pct(training.inlineRate ?? 0)} inline. ${training.rules ?? 0} rules; ${coverage} carry a stored enter/exit.${trendSentence}`,
+			tone: reuseTone(training.reuseRate),
+		});
+	}
+
+	if (training.policyStoredRate === null && training.outcomeRate === null) {
+		insights.push({
+			id: "policy",
+			title: "Policy match",
+			body: "No policy checks yet. A hit means the live token path ended on a stored explore or policy leaf.",
+			tone: "neutral",
+		});
+	} else {
+		insights.push({
+			id: "policy",
+			title: "Policy match",
+			body: `${pct(training.policyStoredRate ?? 0)} of symbol checks hit a stored path; ${pct(training.outcomeRate ?? 0)} fired an enter/exit outcome (${pct(training.outcomeEnterRate ?? 0)} enter, ${pct(training.outcomeExitRate ?? 0)} exit).`,
+			tone: matchTone(training.policyStoredRate),
 		});
 	}
 

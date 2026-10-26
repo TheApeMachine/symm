@@ -21,22 +21,3 @@ dashboard. Empty suppresses all signal metric publication.
 func SetFocus(symbol string) {
 	uiFocus.Store(symbol)
 }
-
-/*
-Focus returns the current dashboard focus symbol, or empty when ungated.
-*/
-func Focus() string {
-	value := uiFocus.Load()
-
-	if value == nil {
-		return ""
-	}
-
-	symbol, ok := value.(string)
-
-	if !ok {
-		return ""
-	}
-
-	return symbol
-}

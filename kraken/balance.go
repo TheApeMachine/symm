@@ -54,24 +54,6 @@ type Wallet struct {
 	Balance *decimal.Decimal `json:"balance"`
 }
 
-/*
-NewBalance decodes a streamed balances frame. An undecodable frame is an
-error, never a partially filled wallet that would overwrite the account state.
-*/
-func NewBalance(buf []byte) (*Balance, error) {
-	var balance Balance
-
-	if err := sonic.Unmarshal(buf, &balance); err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[kraken.balance] invalid balances frame",
-			err,
-		)
-	}
-
-	return &balance, nil
-}
-
 func (balance *Balance) MarshalJSON() ([]byte, error) {
 	type alias Balance
 	return sonic.Marshal((*alias)(balance))
@@ -209,18 +191,4 @@ func (balance *Balance) ToValue(epochs ...int64) *data.Value {
 	}
 	val.Append(balance)
 	return val
-}
-
-/*
-NewBalanceFromValue reconstructs a Balance from a *data.Value layer.
-*/
-func NewBalanceFromValue(val *data.Value) (*Balance, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "empty balance value", nil)
-	}
-	var balance Balance
-	if err := sonic.Unmarshal(val.Layers[0], &balance); err != nil {
-		return nil, err
-	}
-	return &balance, nil
 }

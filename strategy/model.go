@@ -496,8 +496,18 @@ func (model *Model) finishVirtualExplore(
 		return true
 	}
 
-	model.adjustVirtualPair(position)
-	model.reconcileVirtualPair(position)
+	if !position.VirtualExploreCloseTeaches() {
+		if model.path != nil {
+			model.path.Reset(position.Symbol)
+		}
+		return true
+	}
+
+	// Reused paths walk thresholds on win/loss. New paths persist at desk 0.5.
+	if position.PathFound {
+		model.adjustVirtualPair(position)
+		model.reconcileVirtualPair(position)
+	}
 	written := model.writePaths(position)
 	model.publishExplorePairThresholds(out, position)
 	model.refreshExploreUI()

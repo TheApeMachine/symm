@@ -29,9 +29,6 @@ type LogReturns struct {
 	prevLog float64
 }
 
-func NewLogReturns() core.Primitive {
-	return &LogReturns{}
-}
 
 func (op *LogReturns) Next(
 	in iter.Seq[unsafe.Pointer],

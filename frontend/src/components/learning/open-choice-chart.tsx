@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { positionReadout } from "#/components/book-readout";
+import { cn } from "#/lib/utils";
 import {
 	type ChoiceSample,
 	dropOpenChoices,
@@ -48,6 +49,7 @@ export const OpenChoiceChart = ({
 	const [revision, setRevision] = useState(0);
 	const plotRef = useRef<HTMLDivElement>(null);
 	const [plotSize, setPlotSize] = useState({ w: 0, h: 168 });
+	const [legendOpen, setLegendOpen] = useState(false);
 
 	useEffect(() => {
 		const live = new Set<string>();
@@ -168,7 +170,13 @@ export const OpenChoiceChart = ({
 				)}
 			</div>
 			{watching ? (
-				<div ref={plotRef} className="h-44 w-full min-w-0">
+				<div
+					ref={plotRef}
+					className={cn(
+						"w-full min-w-0",
+						legendOpen ? "h-44" : "h-[min(22rem,42vh)]",
+					)}
+				>
 					<svg
 						viewBox={`0 0 ${width} ${height}`}
 						preserveAspectRatio="none"
@@ -265,30 +273,48 @@ export const OpenChoiceChart = ({
 					close-now return is not on these lots yet
 				</div>
 			)}
-			<div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-				{series.map((item) => (
-					<span
-						key={item.id}
-						className="inline-flex items-center gap-1 text-[10px] text-(--f3)"
-					>
+			<button
+				type="button"
+				className="mt-1 flex w-full items-center justify-between gap-2 rounded border border-(--line) bg-(--sunken) px-2 py-0.5 text-left text-[10px] text-(--f3) transition-colors hover:border-(--acc)/40 hover:text-(--f2)"
+				aria-expanded={legendOpen}
+				onClick={() => setLegendOpen((open) => !open)}
+			>
+				<span>
+					{legendOpen ? "Hide" : "Show"} symbol legend
+					<span className="ml-1 tabular-nums text-(--f4)">
+						({series.length})
+					</span>
+				</span>
+				<span className="text-(--f4)" aria-hidden>
+					{legendOpen ? "▾" : "▸"}
+				</span>
+			</button>
+			{legendOpen ? (
+				<div className="mt-1 max-h-40 overflow-auto flex flex-wrap gap-x-3 gap-y-1 border border-(--line) border-t-0 bg-(--sunken)/50 px-2 py-1.5">
+					{series.map((item) => (
 						<span
-							className="inline-block h-1.5 w-3 rounded-sm"
-							style={{ background: item.stroke }}
-						/>
-						{item.symbol}
-						<span className="tabular-nums text-(--f2)">
-							{item.pnl === null ? "…" : pctText(item.pnl)}
+							key={item.id}
+							className="inline-flex items-center gap-1 text-[10px] text-(--f3)"
+						>
+							<span
+								className="inline-block h-1.5 w-3 rounded-sm"
+								style={{ background: item.stroke }}
+							/>
+							{item.symbol}
+							<span className="tabular-nums text-(--f2)">
+								{item.pnl === null ? "…" : pctText(item.pnl)}
+							</span>
 						</span>
-					</span>
-				))}
-				{mean.length > 1 && (
-					<span className="inline-flex items-center gap-1 text-[10px] text-(--f1)">
-						<span className="inline-block h-0.5 w-3 bg-(--f1)" />
-						book
-					</span>
-				)}
-				<span className="text-[10px] text-(--f4)">entry after fees</span>
-			</div>
+					))}
+					{mean.length > 1 && (
+						<span className="inline-flex items-center gap-1 text-[10px] text-(--f1)">
+							<span className="inline-block h-0.5 w-3 bg-(--f1)" />
+							book
+						</span>
+					)}
+					<span className="text-[10px] text-(--f4)">entry after fees</span>
+				</div>
+			) : null}
 		</section>
 	);
 };

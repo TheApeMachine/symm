@@ -1,13 +1,26 @@
 import * as d3 from "d3";
 import type { SymbolProgress, TrieNodeData } from "./types";
 
-/** Show small temporal steps above the 0.50 desk baseline. */
 export const formatExploreThreshold = (threshold: number): string => {
 	if (!Number.isFinite(threshold)) return "";
-	if (threshold >= 0.45 && threshold <= 0.55) {
-		return threshold.toFixed(3);
-	}
 	return threshold.toFixed(2);
+};
+
+/** Path edge labels that are signed magnitudes (±0.023), not region ids (R01). */
+export const formatTrieLinkToken = (token: string): string => {
+	const signed = token.match(/^±(-?\d+(?:\.\d+)?)$/);
+	if (signed) {
+		const n = Number.parseFloat(signed[1]);
+		return Number.isFinite(n) ? `±${Math.abs(n).toFixed(2)}` : token;
+	}
+	const plain = token.match(/^[-+]?\d+(?:\.\d+)?$/);
+	if (plain) {
+		const n = Number.parseFloat(token);
+		if (!Number.isFinite(n)) return token;
+		const sign = n < 0 ? "-" : token.startsWith("+") ? "+" : "";
+		return `${sign}${Math.abs(n).toFixed(2)}`;
+	}
+	return token;
 };
 
 const thresholdOpacity = (threshold: number): number => {
@@ -349,7 +362,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			.attr("font-size", "9px")
 			.attr("text-anchor", "middle")
 			.attr("font-weight", 600)
-			.text(token);
+			.text(formatTrieLinkToken(token));
 	});
 };
 

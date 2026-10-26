@@ -71,7 +71,7 @@ describe("OpenPositions", () => {
 			view.getByText(/ahead after fees|behind after fees|roughly flat/i),
 		).toBeTruthy();
 		expect(view.getByText("Open choices")).toBeTruthy();
-		expect(view.getByText("entry after fees")).toBeTruthy();
+		expect(view.getByText(/Show symbol legend/)).toBeTruthy();
 		expect(view.getByText(/book \+5\.0%/)).toBeTruthy();
 	});
 

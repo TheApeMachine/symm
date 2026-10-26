@@ -415,18 +415,33 @@ func (position *Position) TrySettleExplore() bool {
 	return true
 }
 
-// VirtualExploreWin is true when a closed virtual lot should walk thresholds down.
+func (position *Position) closedInProfit() bool {
+	return position.PnL != nil && position.PnL.Sign() >= 0
+}
+
+/*
+VirtualExploreCloseTeaches: reused path → always update thresholds. First time
+on this path → only if the close made money; the path is saved at desk 0.5.
+*/
+func (position *Position) VirtualExploreCloseTeaches() bool {
+	position.mu.RLock()
+	defer position.mu.RUnlock()
+
+	if !position.Virtual {
+		return true
+	}
+	if position.PathFound {
+		return true
+	}
+	return position.closedInProfit()
+}
+
+// VirtualExploreWin: at exit, win means PnL is zero or positive.
 func (position *Position) VirtualExploreWin() bool {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 
-	if position.PnL != nil && position.PnL.Sign() >= 0 {
-		return true
-	}
-	if position.PeakOpenPnLPct > 0 {
-		return true
-	}
-	return false
+	return position.closedInProfit()
 }
 
 func (position *Position) ShouldExit() (trigger string, ok bool) {

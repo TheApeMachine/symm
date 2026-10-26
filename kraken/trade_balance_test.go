@@ -41,15 +41,7 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 			So(val, ShouldNotBeNil)
 			So(val.Scope, ShouldEqual, "USD")
 			So(val.Role, ShouldEqual, "trade_balance")
-
-			Convey("and NewTradeBalanceResultFromValue reconstructs equity, unrealized, and cash", func() {
-				restored, err := kraken.NewTradeBalanceResultFromValue(val)
-				So(err, ShouldBeNil)
-				So(restored, ShouldNotBeNil)
-				So(restored.Equity.String(), ShouldEqual, tb.Equity.String())
-				So(restored.UnrealizedPnL.String(), ShouldEqual, tb.UnrealizedPnL.String())
-				So(restored.AvailableCash.String(), ShouldEqual, tb.AvailableCash.String())
-			})
+			So(val.Epoch, ShouldEqual, uint64(123456789))
 		})
 	})
 }

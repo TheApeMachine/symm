@@ -60,30 +60,6 @@ func TestInstrumentPairMeasurementRoundTrip(t *testing.T) {
 			So(val.Epoch, ShouldEqual, uint64(epoch))
 			So(val.Scope, ShouldEqual, "BTC/USD")
 			So(val.Role, ShouldEqual, "instrument")
-
-			Convey("and NewInstrumentPairFromValue completely reconstructs the original pair", func() {
-				restored, err := kraken.NewInstrumentPairFromValue(val)
-
-				So(err, ShouldBeNil)
-				So(restored, ShouldNotBeNil)
-				So(restored.Symbol, ShouldEqual, original.Symbol)
-				So(restored.Base, ShouldEqual, original.Base)
-				So(restored.Quote, ShouldEqual, original.Quote)
-				So(restored.Status, ShouldEqual, original.Status)
-				So(restored.QtyPrecision, ShouldEqual, original.QtyPrecision)
-				So(restored.PricePrecision, ShouldEqual, original.PricePrecision)
-				So(restored.CostPrecision, ShouldEqual, original.CostPrecision)
-				So(restored.Marginable, ShouldEqual, original.Marginable)
-				So(restored.HasIndex, ShouldEqual, original.HasIndex)
-				So(restored.PositionLimitLong, ShouldEqual, original.PositionLimitLong)
-				So(restored.PositionLimitShort, ShouldEqual, original.PositionLimitShort)
-				So(restored.CostMin.String(), ShouldEqual, original.CostMin.String())
-				So(restored.QtyMin.String(), ShouldEqual, original.QtyMin.String())
-				So(restored.QtyIncrement.String(), ShouldEqual, original.QtyIncrement.String())
-				So(restored.MarginInitial.String(), ShouldEqual, original.MarginInitial.String())
-				So(restored.TickSize.String(), ShouldEqual, original.TickSize.String())
-				So(restored.PriceIncrement.String(), ShouldEqual, original.PriceIncrement.String())
-			})
 		})
 	})
 }
@@ -121,15 +97,6 @@ func TestInstrumentSnapshotWithPeers(t *testing.T) {
 			So(val.Epoch, ShouldEqual, uint64(epoch))
 			So(val.Role, ShouldEqual, "snapshot")
 			So(val.Scope, ShouldEqual, "instrument")
-
-			Convey("and NewInstrumentFromValue restores the snapshot", func() {
-				restored, err := kraken.NewInstrumentFromValue(val)
-				So(err, ShouldBeNil)
-				So(restored, ShouldNotBeNil)
-				So(len(restored.Data.Pairs), ShouldEqual, 2)
-				So(restored.Data.Pairs[0].Symbol, ShouldEqual, "BTC/USD")
-				So(restored.Data.Pairs[1].Symbol, ShouldEqual, "ETH/USD")
-			})
 		})
 	})
 }

@@ -3,72 +3,44 @@ import { useMemo } from "react";
 import { bookAtom } from "#/collections/book";
 import {
 	alertVariant,
+	blockedTone,
 	buildInsights,
+	coverageTone,
 	type LongtailSample,
+	type TrainingSample,
+	matchTone,
 	pct,
-	returnTone,
-	signedPct,
+	reuseTone,
 	type Tone,
 	toneColor,
 	toneVariant,
+	trainingVerdict,
 	useLongtailReport,
-	verdict,
-	winRateTone,
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
 import { Flex } from "#/components/ui/flex";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
-The training performance surface. It answers one question — is the book
-making money, and is that changing? — from settled round trips and the path
-book: developed paths, the paper floor, prunes, and why lots closed.
+Path-learning surface: grammar reuse, policy hits, path-book growth, and why
+virtuals close — not desk edge or win rate (those live in the top bar).
 
-Everything fits one screen: a verdict header, an eight-tile KPI strip with
-deltas and sparklines, six measured charts, and a right rail of health
-readings plus plain-language alerts. Charts draw in their container's actual
-pixel size, so nothing stretches; every colour is contextual, so a bad number
-never paints green.
+One screen: training verdict, eight KPI tiles, six charts, and a right rail.
 */
 
 const rate = (value: number) => `${Math.round(value * 100)}%`;
 const countLabel = (value: number) => `${Math.round(value)}`;
 
-const formatHold = (ns: number) => {
-	const seconds = Math.abs(ns) / 1e9;
-	if (seconds < 90) return `${seconds.toFixed(0)}s`;
-	const minutes = seconds / 60;
-	if (minutes < 90) return `${minutes.toFixed(0)}m`;
-	return `${(minutes / 60).toFixed(1)}h`;
-};
-
-const holdTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 180e9
-			? "good"
-			: value >= 30e9
-				? "warn"
-				: "bad";
-
 const levelTone = (_value: number | null): Tone => "neutral";
 
-const branchShare = (sample: LongtailSample): number | null => {
-	const training = sample.training;
-	if (
-		training?.exitProfit === null ||
-		training?.exitProfit === undefined ||
-		training.exitStop === null ||
-		training.exitStop === undefined ||
-		training.exitBranch === null ||
-		training.exitBranch === undefined
-	) {
-		return null;
-	}
-	const total = training.exitProfit + training.exitStop + training.exitBranch;
-	if (total === 0) return null;
-	return training.exitBranch / total;
-};
+const createTone = (value: number | null): Tone =>
+	value === null
+		? "neutral"
+		: value <= 0.35
+			? "good"
+			: value <= 0.55
+				? "warn"
+				: "bad";
 
 /* A flat sparkline sits mid-height instead of pinning to the floor. */
 const sparkPath = (
@@ -112,48 +84,60 @@ type Kpi = {
 	epsilon: number;
 };
 
-const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
+const kpis: Kpi[] = [
 	{
-		id: "edge",
-		label: `edge (${book})`,
-		value: (s) => s[book]?.meanReturn ?? null,
-		format: signedPct,
+		id: "reuse",
+		label: "rule reuse",
+		value: (s) => s.training?.reuseRate ?? null,
+		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: returnTone,
+		tone: reuseTone,
 		higherIsBetter: true,
 		colorDelta: true,
-		epsilon: 0.005,
+		epsilon: 0.02,
 	},
 	{
-		id: "win",
-		label: `win rate (${book})`,
-		value: (s) => s[book]?.winRate ?? null,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
+		id: "create",
+		label: "new rules",
+		value: (s) => s.training?.createRate ?? null,
+		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: winRateTone,
-		higherIsBetter: true,
+		tone: createTone,
+		higherIsBetter: false,
 		colorDelta: true,
-		epsilon: 0.005,
+		epsilon: 0.02,
 	},
 	{
-		id: "hold",
-		label: "avg hold",
-		value: (s) => s[book]?.avgHoldNs ?? null,
-		format: formatHold,
+		id: "policy",
+		label: "policy hit",
+		value: (s) => s.training?.policyStoredRate ?? null,
+		format: rate,
 		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : "−"}${formatHold(Math.abs(delta))}`,
-		tone: holdTone,
+			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
+		tone: matchTone,
 		higherIsBetter: true,
 		colorDelta: true,
-		epsilon: 5e9,
+		epsilon: 0.02,
+	},
+	{
+		id: "coverage",
+		label: "action rules",
+		value: (s) => s.training?.actionCoverage ?? null,
+		format: rate,
+		formatDelta: (delta) =>
+			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
+		tone: coverageTone,
+		higherIsBetter: true,
+		colorDelta: true,
+		epsilon: 0.02,
 	},
 	{
 		id: "letters",
 		label: "new letters",
 		value: (s) => s.training?.tokenEmitRate ?? null,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
+		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
 		tone: levelTone,
@@ -184,27 +168,15 @@ const kpisFor = (book: "paper" | "virtual"): Kpi[] => [
 		epsilon: 0.5,
 	},
 	{
-		id: "pruned",
-		label: "pruned",
-		value: (s) => s.training?.prunedPaths ?? null,
+		id: "explore",
+		label: "explore opens",
+		value: (s) => s.training?.exploredEnter ?? null,
 		format: countLabel,
 		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
 		tone: levelTone,
 		higherIsBetter: false,
 		colorDelta: false,
 		epsilon: 0.5,
-	},
-	{
-		id: "branch",
-		label: "branch exits",
-		value: branchShare,
-		format: (v) => `${(100 * v).toFixed(0)}%`,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: (value) => (value !== null && value > 0 ? "good" : "neutral"),
-		higherIsBetter: true,
-		colorDelta: true,
-		epsilon: 0.02,
 	},
 ];
 
@@ -286,104 +258,120 @@ type ChartDef = {
 	tone: (sample: LongtailSample | undefined) => Tone;
 };
 
-const bookPoint = (
-	sample: LongtailSample | undefined,
-	book: "paper" | "virtual",
-	key: "winRate" | "meanReturn",
-): number | null => sample?.[book]?.[key] ?? null;
-
 const trainingPoint = (
 	sample: LongtailSample | undefined,
-	key:
-		| "tokenEmitRate"
-		| "blockedRate"
-		| "reuseRate"
-		| "createRate"
-		| "policyStoredRate"
-		| "outcomeRate",
+	key: keyof TrainingSample,
 ): number | null => {
 	const value = sample?.training?.[key];
 	return typeof value === "number" ? value : null;
 };
 
-const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
+const trainingCharts: ChartDef[] = [
 	{
-		id: "win",
-		label: `${book} win rate`,
-		caption: "settled lots whose book return is positive",
+		id: "grammar",
+		label: "Rule reuse vs create",
+		caption: "sequitur events on the last append — reuse means the spelling already existed",
 		series: (samples) => {
 			const latest = samples[samples.length - 1];
 			return [
 				{
-					values: samples.map((s) => bookPoint(s, book, "winRate")),
-					stroke: toneColor(winRateTone(bookPoint(latest, book, "winRate"))),
+					label: "reuse",
+					values: samples.map((s) => trainingPoint(s, "reuseRate")),
+					stroke: toneColor(reuseTone(trainingPoint(latest, "reuseRate"))),
+				},
+				{
+					label: "create",
+					values: samples.map((s) => trainingPoint(s, "createRate")),
+					stroke: toneColor(createTone(trainingPoint(latest, "createRate"))),
+				},
+			];
+		},
+		formatY: rate,
+		yDomain: [0, 1],
+		tone: (s) => reuseTone(trainingPoint(s, "reuseRate")),
+	},
+	{
+		id: "policy",
+		label: "Policy match",
+		caption: "stored path hits and enter/exit outcomes on symbol checks",
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					label: "stored",
+					values: samples.map((s) => trainingPoint(s, "policyStoredRate")),
+					stroke: toneColor(
+						matchTone(trainingPoint(latest, "policyStoredRate")),
+					),
+				},
+				{
+					label: "enter",
+					values: samples.map((s) => trainingPoint(s, "outcomeEnterRate")),
+					stroke: "var(--up)",
+				},
+				{
+					label: "exit",
+					values: samples.map((s) => trainingPoint(s, "outcomeExitRate")),
+					stroke: "var(--down)",
+				},
+			];
+		},
+		formatY: rate,
+		yDomain: [0, 1],
+		tone: (s) => matchTone(trainingPoint(s, "policyStoredRate")),
+	},
+	{
+		id: "coverage",
+		label: "Action coverage",
+		caption: "share of grammar rules that carry a stored enter or exit",
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					values: samples.map((s) => trainingPoint(s, "actionCoverage")),
+					stroke: toneColor(
+						coverageTone(trainingPoint(latest, "actionCoverage")),
+					),
 					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
 				},
 			];
 		},
 		formatY: rate,
 		yDomain: [0, 1],
-		baseline: 0.5,
-		tone: (s) => winRateTone(bookPoint(s, book, "winRate")),
-	},
-	{
-		id: "return",
-		label: `${book} mean return`,
-		caption: "mean desk pnl on settled lots (fraction)",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					values: samples.map((s) => bookPoint(s, book, "meanReturn")),
-					stroke: toneColor(returnTone(bookPoint(latest, book, "meanReturn"))),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
-		},
-		formatY: (v) => `${(100 * v).toFixed(1)}%`,
-		baseline: 0,
-		tone: (s) => returnTone(bookPoint(s, book, "meanReturn")),
-	},
-	{
-		id: "hold",
-		label: "Average hold",
-		caption: "mean time a settled lot stayed open",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			const hold = latest?.[book]?.avgHoldNs ?? null;
-			return [
-				{
-					values: samples.map((s) => {
-						const ns = s[book]?.avgHoldNs;
-						return ns === null || ns === undefined ? null : ns / 1e9;
-					}),
-					stroke: toneColor(holdTone(hold)),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
-		},
-		formatY: (v) => formatHold(v * 1e9),
-		tone: (s) => holdTone(s?.[book]?.avgHoldNs ?? null),
+		tone: (s) => coverageTone(trainingPoint(s, "actionCoverage")),
 	},
 	{
 		id: "letters",
-		label: "New letters",
-		caption: "symbol steps whose regime.posture letter changed",
-		series: (samples) => [
-			{
-				values: samples.map((s) => trainingPoint(s, "tokenEmitRate")),
-				stroke: "var(--info)",
-				fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-			},
-		],
+		label: "Letter gate",
+		caption: "new path letters vs lit ticks that stayed quiet",
+		series: (samples) => {
+			const latest = samples[samples.length - 1];
+			return [
+				{
+					label: "emit",
+					values: samples.map((s) => trainingPoint(s, "tokenEmitRate")),
+					stroke: "var(--info)",
+				},
+				{
+					label: "blocked",
+					values: samples.map((s) => trainingPoint(s, "blockedRate")),
+					stroke: toneColor(blockedTone(trainingPoint(latest, "blockedRate"))),
+				},
+				{
+					label: "duplicate",
+					values: samples.map((s) => trainingPoint(s, "blockedDuplicateRate")),
+					stroke: "var(--warn)",
+				},
+			];
+		},
 		formatY: rate,
-		yDomain: [0, 1] as [number, number],
-		tone: () => "info" as Tone,
+		yDomain: [0, 1],
+		tone: (s) => blockedTone(trainingPoint(s, "blockedRate")),
 	},
 	{
 		id: "paths",
 		label: "Path book",
-		caption: "developed paths, and how many have reached the paper floor",
+		caption: "developed, paper floor, pruned, and mean book threshold",
 		series: (samples) => [
 			{
 				label: "developed",
@@ -394,6 +382,11 @@ const chartsFor = (book: "paper" | "virtual"): ChartDef[] => [
 				label: "paper",
 				values: samples.map((s) => s.training?.promotedPaths ?? null),
 				stroke: "var(--up)",
+			},
+			{
+				label: "pruned",
+				values: samples.map((s) => s.training?.prunedPaths ?? null),
+				stroke: "var(--down)",
 			},
 		],
 		formatY: countLabel,
@@ -540,10 +533,8 @@ export const LongtailDashboard = () => {
 	const book = useSelector(bookAtom, (state) => state);
 
 	const times = useMemo(() => samples.map((s) => s.at), [samples]);
-	const kpis = useMemo(() => kpisFor(book), [book]);
-	const charts = useMemo(() => chartsFor(book), [book]);
 	const insights = useMemo(() => buildInsights(samples, book), [samples, book]);
-	const v = useMemo(() => verdict(samples, book), [samples, book]);
+	const v = useMemo(() => trainingVerdict(samples), [samples]);
 
 	const latest = samples[samples.length - 1];
 	const first = samples[0];
@@ -565,7 +556,7 @@ export const LongtailDashboard = () => {
 			>
 				<Flex.Row align="center" gap={2}>
 					<span className="text-[11px] font-bold uppercase tracking-wide text-(--f1)">
-						Training performance
+						Path learning
 					</span>
 					<Badge
 						variant={toneVariant(v.tone)}
@@ -609,7 +600,7 @@ export const LongtailDashboard = () => {
 
 			<Flex.Row className="min-h-0 flex-1">
 				<div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 grid-rows-3">
-					{charts.map((chart) => (
+					{trainingCharts.map((chart) => (
 						<ChartPanel
 							key={chart.id}
 							chart={chart}
@@ -662,6 +653,52 @@ export const LongtailDashboard = () => {
 									: training.meanThreshold.toFixed(2)
 							}
 							tone="info"
+						/>
+					</RailBlock>
+
+					<RailBlock title="Grammar">
+						<RailRow
+							label="rule reuse"
+							value={
+								training?.reuseRate === null ||
+								training?.reuseRate === undefined
+									? "—"
+									: pct(training.reuseRate)
+							}
+							meter={training?.reuseRate ?? null}
+							tone={reuseTone(training?.reuseRate ?? null)}
+						/>
+						<RailRow
+							label="new rules"
+							value={
+								training?.createRate === null ||
+								training?.createRate === undefined
+									? "—"
+									: pct(training.createRate)
+							}
+							tone={createTone(training?.createRate ?? null)}
+						/>
+						<RailRow
+							label="policy hit"
+							value={
+								training?.policyStoredRate === null ||
+								training?.policyStoredRate === undefined
+									? "—"
+									: pct(training.policyStoredRate)
+							}
+							meter={training?.policyStoredRate ?? null}
+							tone={matchTone(training?.policyStoredRate ?? null)}
+						/>
+						<RailRow
+							label="action rules"
+							value={
+								training?.actionCoverage === null ||
+								training?.actionCoverage === undefined
+									? "—"
+									: pct(training.actionCoverage)
+							}
+							meter={training?.actionCoverage ?? null}
+							tone={coverageTone(training?.actionCoverage ?? null)}
 						/>
 					</RailBlock>
 
@@ -769,14 +806,24 @@ export const LongtailDashboard = () => {
 							tone="info"
 						/>
 						<RailRow
-							label="settled hold"
+							label="branch share"
 							value={
-								bookStats?.avgHoldNs === null ||
-								bookStats?.avgHoldNs === undefined
+								!training ||
+								training.exitProfit === null ||
+								training.exitStop === null ||
+								training.exitBranch === null
 									? "—"
-									: formatHold(bookStats.avgHoldNs)
+									: (() => {
+											const total =
+												(training.exitProfit ?? 0) +
+												(training.exitStop ?? 0) +
+												(training.exitBranch ?? 0);
+											return total === 0
+												? "—"
+												: pct((training.exitBranch ?? 0) / total);
+										})()
 							}
-							tone={holdTone(bookStats?.avgHoldNs ?? null)}
+							tone="info"
 						/>
 					</RailBlock>
 

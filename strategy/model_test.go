@@ -115,6 +115,53 @@ func TestExploreEnterAtPrefixMatch(t *testing.T) {
 	})
 }
 
+func TestFinishVirtualExploreNewProfitDoesNotBump(t *testing.T) {
+	Convey("first profitable close does not walk threshold before save", t, func() {
+		if system.Cfg == nil {
+			system.Cfg = &system.Config{Learning: system.NewLearning()}
+		}
+
+		model := &Model{explore: iradix.New[*data.Value](), path: NewPath()}
+		position := &broker.Position{
+			Virtual:   true,
+			PathFound: false,
+			Symbol:    "ZRC/USD",
+			EntryPath: "R07/R00",
+			ExitPath:  "R07/R01",
+		}
+		position.PnL = decimal.NewFromFloat64(1)
+
+		model.finishVirtualExplore(position, nil)
+
+		_, ok := model.explore.Get(exploreRadixKey("R07/R00", "enter"))
+		So(ok, ShouldBeFalse)
+	})
+}
+
+func TestFinishVirtualExploreIgnoresNewPathLoss(t *testing.T) {
+	Convey("finishVirtualExplore skips trie writes for a new path loss", t, func() {
+		if system.Cfg == nil {
+			system.Cfg = &system.Config{Learning: system.NewLearning()}
+		}
+
+		model := &Model{explore: iradix.New[*data.Value](), path: NewPath()}
+		position := &broker.Position{
+			Virtual:   true,
+			PathFound: false,
+			Symbol:    "ZRC/USD",
+			EntryPath: "R07/R00",
+			ExitPath:  "R07/R01",
+		}
+		position.PnL = decimal.NewFromFloat64(-1)
+
+		model.finishVirtualExplore(position, nil)
+
+		_, ok := model.explore.Get(exploreRadixKey("R07/R00", "enter"))
+		So(ok, ShouldBeFalse)
+		So(position.ExploreSettled, ShouldBeTrue)
+	})
+}
+
 func TestModelExplorePnLStep(t *testing.T) {
 	Convey("explorePnLStep after a virtual close", t, func() {
 		Convey("non-negative PnL walks the threshold down", func() {
@@ -135,16 +182,7 @@ func TestModelExplorePnLStep(t *testing.T) {
 			So(explorePnLStep(solid), ShouldEqual, -0.10)
 		})
 
-		Convey("peak open PnL counts as a win even when flat at exit", func() {
-			position := &broker.Position{
-				Virtual:        true,
-				PeakOpenPnLPct: 0.01,
-			}
-			position.PnL = decimal.NewFromFloat64(-0.01)
-			So(explorePnLStep(position), ShouldBeLessThan, 0)
-		})
-
-		Convey("a loss with no peak walks the threshold up", func() {
+		Convey("a loss walks the threshold up", func() {
 			position := &broker.Position{Virtual: true}
 			position.PnL = decimal.NewFromFloat64(-0.1)
 			So(explorePnLStep(position), ShouldBeGreaterThan, 0)

@@ -22,28 +22,13 @@ type Calibrator struct {
 	phaseWindow      *FastWindow
 }
 
-type CalibratorOption func(*Calibrator)
-
-func WithWindowSize(size int) CalibratorOption {
-	return func(calibrator *Calibrator) {
-		calibrator.window = NewFastWindow(size)
-		calibrator.phaseWindow = NewFastWindow(size)
-	}
-}
-
-func NewCalibrator(opts ...CalibratorOption) *Calibrator {
-	calibrator := &Calibrator{
+func NewCalibrator() *Calibrator {
+	return &Calibrator{
 		sensitivityPop:   1.0,
 		sensitivityPhase: 1.0,
 		window:           NewFastWindow(system.Cfg.Learning.DefaultWindowSize),
 		phaseWindow:      NewFastWindow(system.Cfg.Learning.DefaultWindowSize),
 	}
-
-	for _, opt := range opts {
-		opt(calibrator)
-	}
-
-	return calibrator
 }
 
 type calibratorState struct {

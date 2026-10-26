@@ -9,24 +9,37 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestVirtualExploreCloseTeaches(t *testing.T) {
+	Convey("VirtualExploreCloseTeaches", t, func() {
+		Convey("reused paths always teach", func() {
+			position := &Position{Virtual: true, PathFound: true}
+			position.PnL = decimal.NewFromFloat64(-0.5)
+			So(position.VirtualExploreCloseTeaches(), ShouldBeTrue)
+		})
+
+		Convey("new path teaches on a profitable close", func() {
+			position := &Position{Virtual: true, PathFound: false}
+			position.PnL = decimal.NewFromFloat64(0.01)
+			So(position.VirtualExploreCloseTeaches(), ShouldBeTrue)
+		})
+
+		Convey("new path loss is ignored", func() {
+			position := &Position{Virtual: true, PathFound: false}
+			position.PnL = decimal.NewFromFloat64(-0.01)
+			So(position.VirtualExploreCloseTeaches(), ShouldBeFalse)
+		})
+	})
+}
+
 func TestPositionVirtualExploreWin(t *testing.T) {
-	Convey("VirtualExploreWin on a virtual lot", t, func() {
-		Convey("non-negative PnL is a win", func() {
+	Convey("VirtualExploreWin is profit at close only", t, func() {
+		Convey("zero or positive PnL is a win", func() {
 			position := &Position{Virtual: true}
 			position.PnL = decimal.NewFromInt64(0)
 			So(position.VirtualExploreWin(), ShouldBeTrue)
 		})
 
-		Convey("peak open PnL is a win when exit PnL dipped", func() {
-			position := &Position{
-				Virtual:        true,
-				PeakOpenPnLPct: 0.01,
-			}
-			position.PnL = decimal.NewFromFloat64(-0.01)
-			So(position.VirtualExploreWin(), ShouldBeTrue)
-		})
-
-		Convey("a loss with no peak is not a win", func() {
+		Convey("negative PnL at close is a loss", func() {
 			position := &Position{Virtual: true}
 			position.PnL = decimal.NewFromFloat64(-0.1)
 			So(position.VirtualExploreWin(), ShouldBeFalse)

@@ -5,7 +5,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 )
 
@@ -127,21 +126,5 @@ func (req *AddOrderRequest) ToValue(epochs ...int64) *data.Value {
 	}
 	val.Append(req)
 	return val
-}
-
-/*
-NewAddOrderRequestFromValue reconstructs an AddOrderRequest from a *data.Value.
-*/
-func NewAddOrderRequestFromValue(val *data.Value) (*AddOrderRequest, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "[kraken.order] cannot convert nil value to order request", nil)
-	}
-
-	var req AddOrderRequest
-	if err := sonic.Unmarshal(val.Layers[0], &req); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[kraken.order] failed to unmarshal order request", err)
-	}
-
-	return &req, nil
 }
 

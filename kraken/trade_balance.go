@@ -1,9 +1,7 @@
 package kraken
 
 import (
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 )
 
@@ -90,21 +88,5 @@ func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...i
 		val.Append(wallet)
 	}
 	return val
-}
-
-/*
-NewTradeBalanceResultFromValue reconstructs a TradeBalanceResult from a *data.Value layer.
-*/
-func NewTradeBalanceResultFromValue(val *data.Value) (*TradeBalanceResult, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "[kraken.trade_balance] cannot convert nil value to trade balance", nil)
-	}
-
-	var tb TradeBalanceResult
-	if err := sonic.Unmarshal(val.Layers[0], &tb); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[kraken.trade_balance] failed to unmarshal trade balance", err)
-	}
-
-	return &tb, nil
 }
 

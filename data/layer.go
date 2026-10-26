@@ -178,14 +178,17 @@ func (value *Value) LookupPrefix(key string) []LayerEntry {
 		return nil
 	}
 
-	target := strings.Join([]string{value.Prefix, key}, "/")
-
 	value.mu.Lock()
 	index := append([]string(nil), value.Index...)
 	layers := make([][]byte, len(value.Layers))
 	copy(layers, value.Layers)
 	prefix := value.Prefix
 	value.mu.Unlock()
+
+	target := prefix
+	if key != "" {
+		target = strings.Join([]string{prefix, key}, "/")
+	}
 
 	entries := make([]LayerEntry, 0, len(index))
 	trim := prefix + "/"
@@ -195,7 +198,11 @@ func (value *Value) LookupPrefix(key string) []LayerEntry {
 			continue
 		}
 
-		if layerIndex != target && !strings.HasPrefix(layerIndex, target+"/") {
+		if key == "" {
+			if layerIndex != prefix && !strings.HasPrefix(layerIndex, trim) {
+				continue
+			}
+		} else if layerIndex != target && !strings.HasPrefix(layerIndex, target+"/") {
 			continue
 		}
 

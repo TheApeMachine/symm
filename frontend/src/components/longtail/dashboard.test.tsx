@@ -110,7 +110,7 @@ describe("LongtailDashboard", () => {
 	it("reports warming up and waits for history with no samples", () => {
 		const { getByText, container } = render(<LongtailDashboard />);
 
-		expect(getByText("Training performance")).toBeTruthy();
+		expect(getByText("Path learning")).toBeTruthy();
 		expect(getByText("Warming up")).toBeTruthy();
 		// Every chart waits for a second sample before it can draw a line.
 		expect(container.textContent).toContain("collecting history…");
@@ -168,104 +168,78 @@ describe("LongtailDashboard", () => {
 
 		// Eight KPI tiles.
 		for (const id of [
-			"edge",
-			"win",
-			"hold",
+			"reuse",
+			"create",
+			"policy",
+			"coverage",
 			"letters",
 			"developed",
 			"promoted",
-			"pruned",
-			"branch",
+			"explore",
 		]) {
 			expect(container.querySelector(`[data-kpi="${id}"]`)).not.toBeNull();
 		}
 
-		for (const id of ["win", "return", "hold", "letters", "paths", "exits"]) {
+		for (const id of [
+			"grammar",
+			"policy",
+			"coverage",
+			"letters",
+			"paths",
+			"exits",
+		]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(container.querySelectorAll("svg[role='img']")).toHaveLength(6);
+		expect(container.querySelectorAll("[data-chart]")).toHaveLength(6);
 
-		for (const title of ["Paths", "Letters", "Desk", "Exits"]) {
+		for (const title of ["Paths", "Grammar", "Letters", "Desk", "Exits"]) {
 			expect(getByText(title, { selector: "div" })).toBeTruthy();
 		}
 		expect(getByText("Plain-language readings")).toBeTruthy();
 	});
 
-	it("paints a bad edge red and a good edge green — never the reverse", () => {
+	it("paints low reuse red and high reuse green", () => {
 		const bad = [
 			sample(1_000, {
-				virtual: bookStats({
-					closed: 5,
-					wins: 1,
-					winRate: 0.2,
-					meanReturn: -0.1,
-				}),
 				training: training({
-					rules: 3,
 					reuseRate: 0.1,
 					createRate: 0.8,
-					tokenEmitRate: 0.03,
 					policyStoredRate: 0.01,
 				}),
 			}),
 			sample(6_000, {
-				virtual: bookStats({
-					closed: 6,
-					wins: 1,
-					winRate: 0.15,
-					meanReturn: -0.12,
-				}),
 				training: training({
-					rules: 3,
 					reuseRate: 0.1,
 					createRate: 0.8,
-					tokenEmitRate: 0.03,
 					policyStoredRate: 0.01,
 				}),
 			}),
 		];
 
 		longtailStore.setState(() => ({ samples: bad, lastSampleAt: 6_000 }));
-		bookAtom.set("virtual");
 		const badView = render(<LongtailDashboard />);
 
-		const badEdge = badView.container.querySelector(
-			'[data-kpi="edge"] .tabular-nums',
+		const badReuse = badView.container.querySelector(
+			'[data-kpi="reuse"] .font-bold',
 		) as HTMLElement;
-		expect(badEdge.style.color).toBe("var(--down)");
-		expect(badView.getByText("Degrading")).toBeTruthy();
+		expect(badReuse.style.color).toBe("var(--down)");
+		expect(badView.getByText("Finding structure")).toBeTruthy();
 
 		cleanup();
 
 		const good = [
 			sample(1_000, {
-				virtual: bookStats({
-					closed: 4,
-					wins: 3,
-					winRate: 0.6,
-					meanReturn: 0.01,
-				}),
 				training: training({
-					rules: 10,
 					reuseRate: 0.6,
-					createRate: 0.3,
-					tokenEmitRate: 0.08,
-					policyStoredRate: 0.05,
+					createRate: 0.2,
+					policyStoredRate: 0.4,
 				}),
 			}),
 			sample(6_000, {
-				virtual: bookStats({
-					closed: 5,
-					wins: 4,
-					winRate: 0.65,
-					meanReturn: 0.03,
-				}),
 				training: training({
-					rules: 11,
-					reuseRate: 0.6,
-					createRate: 0.3,
-					tokenEmitRate: 0.08,
-					policyStoredRate: 0.05,
+					reuseRate: 0.65,
+					createRate: 0.18,
+					policyStoredRate: 0.42,
 				}),
 			}),
 		];
@@ -273,119 +247,10 @@ describe("LongtailDashboard", () => {
 		longtailStore.setState(() => ({ samples: good, lastSampleAt: 6_000 }));
 		const goodView = render(<LongtailDashboard />);
 
-		const goodEdge = goodView.container.querySelector(
-			'[data-kpi="edge"] .tabular-nums',
+		const goodReuse = goodView.container.querySelector(
+			'[data-kpi="reuse"] .font-bold',
 		) as HTMLElement;
-		expect(goodEdge.style.color).toBe("var(--up)");
-		expect(goodView.getByText("Improving")).toBeTruthy();
-	});
-
-	it("paints a short hold red and a long hold green", () => {
-		longtailStore.setState(() => ({
-			samples: [
-				sample(1_000, {
-					virtual: bookStats({
-						closed: 2,
-						wins: 1,
-						winRate: 0.5,
-						meanReturn: 0.01,
-						avgHoldNs: 10e9,
-					}),
-				}),
-				sample(6_000, {
-					virtual: bookStats({
-						closed: 2,
-						wins: 1,
-						winRate: 0.5,
-						meanReturn: 0.01,
-						avgHoldNs: 10e9,
-					}),
-				}),
-			],
-			lastSampleAt: 6_000,
-		}));
-		bookAtom.set("virtual");
-		const shortView = render(<LongtailDashboard />);
-		const shortHold = shortView.container.querySelector(
-			'[data-kpi="hold"] > span',
-		) as HTMLElement;
-		expect(shortHold.style.color).toBe("var(--down)");
-		expect(shortHold.textContent).toContain("10s");
-
-		cleanup();
-
-		longtailStore.setState(() => ({
-			samples: [
-				sample(1_000, {
-					virtual: bookStats({
-						closed: 2,
-						wins: 1,
-						winRate: 0.5,
-						meanReturn: 0.01,
-						avgHoldNs: 600e9,
-					}),
-				}),
-				sample(6_000, {
-					virtual: bookStats({
-						closed: 2,
-						wins: 1,
-						winRate: 0.5,
-						meanReturn: 0.01,
-						avgHoldNs: 600e9,
-					}),
-				}),
-			],
-			lastSampleAt: 6_000,
-		}));
-		const longView = render(<LongtailDashboard />);
-		const longHold = longView.container.querySelector(
-			'[data-kpi="hold"] > span',
-		) as HTMLElement;
-		expect(longHold.style.color).toBe("var(--up)");
-		expect(longHold.textContent).toContain("10m");
-	});
-
-	it("reads the selected book's metrics", () => {
-		longtailStore.setState(() => ({
-			samples: [
-				sample(1_000, {
-					paper: bookStats({
-						closed: 2,
-						wins: 2,
-						winRate: 1,
-						meanReturn: 0.05,
-					}),
-					virtual: bookStats({
-						closed: 2,
-						wins: 0,
-						winRate: 0,
-						meanReturn: -0.05,
-					}),
-				}),
-				sample(6_000, {
-					paper: bookStats({
-						closed: 2,
-						wins: 2,
-						winRate: 1,
-						meanReturn: 0.05,
-					}),
-					virtual: bookStats({
-						closed: 2,
-						wins: 0,
-						winRate: 0,
-						meanReturn: -0.05,
-					}),
-				}),
-			],
-			lastSampleAt: 6_000,
-		}));
-		bookAtom.set("paper");
-
-		const { container } = render(<LongtailDashboard />);
-		const edge = container.querySelector(
-			'[data-kpi="edge"] .font-bold',
-		) as HTMLElement;
-		expect(edge.textContent).toBe("+5.0%");
-		expect(edge.style.color).toBe("var(--up)");
+		expect(goodReuse.style.color).toBe("var(--up)");
+		expect(goodView.getByText("Reusing paths")).toBeTruthy();
 	});
 });

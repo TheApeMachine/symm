@@ -85,7 +85,7 @@ func TestMDL(t *testing.T) {
 		})
 
 		Convey("When calibrator history lowers the active density ceiling", func() {
-			cal := NewCalibrator(WithWindowSize(4))
+			cal := NewCalibrator()
 			seq = NewMDL(cal)
 			seq.ShannonCeiling = 1.0
 			seq.MinSegmentBytes = 2

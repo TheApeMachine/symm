@@ -333,6 +333,16 @@ func (client *Client) Write(p []byte) (int, error) {
 }
 
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
+	if key == "" {
+		return client.writeFromQueue("", value)
+	}
+
+	if client.queue == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload queue is not ready", nil,
+		))
+	}
+
 	client.queue.Enqueue(Record{Key: key, Value: value})
 	return len(value), nil
 }

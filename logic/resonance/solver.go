@@ -346,34 +346,10 @@ func (solver *Solver) midpoint(symbol string) float64 {
 }
 
 /*
-ReadSurprise is the surprise a Step reading carries.
-*/
-func ReadSurprise(reading *data.Value) (float64, error) {
-	surprise, ok := floatMetrics(reading)["surprise"]
-
-	if !ok {
-		return 0, errnie.Err(errnie.UnprocessableContent, "resonance: reading carries no surprise", nil)
-	}
-
-	return surprise, nil
-}
-
-/*
 paceUpper is the fastest learning rate a symbol's coder may move to (its
 Pace's upper bound); the pace it rests at is the solver's.
 */
 const paceUpper = 0.150
-
-/*
-Rates are the two timescales of every coder's Pace in a solver stepping at
-pace: fast, the rate a coder moves up to when its error is badly ranked, and
-slow, the pace it rests at. They are the coders' own learning timescales, so
-averages of a coder's error at these rates track it as fast and as slowly as
-it can learn.
-*/
-func Rates(pace float64) (fast, slow float64) {
-	return paceUpper, pace
-}
 
 func coderArch(featureDim int) []int {
 	return []int{featureDim, featureDim * 4, featureDim * 2, featureDim}

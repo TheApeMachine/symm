@@ -36,21 +36,7 @@ func TestBalanceValueRoundTrip(t *testing.T) {
 			So(val.Origin, ShouldEqual, "kraken")
 			So(val.Role, ShouldEqual, "snapshot")
 			So(val.Scope, ShouldEqual, "balances")
-
-			Convey("and NewBalanceFromValue completely restores balance rows", func() {
-				restored, err := kraken.NewBalanceFromValue(val)
-				So(err, ShouldBeNil)
-				So(restored, ShouldNotBeNil)
-				So(len(restored.Data), ShouldEqual, 2)
-
-				dataMap := make(map[string]kraken.BalanceData)
-				for _, row := range restored.Data {
-					dataMap[row.Asset] = row
-				}
-
-				So(dataMap["BTC"].Balance.String(), ShouldEqual, "1.5")
-				So(dataMap["USD"].Balance.String(), ShouldEqual, "1000.50")
-			})
+			So(val.Epoch, ShouldEqual, uint64(987654321))
 		})
 	})
 }

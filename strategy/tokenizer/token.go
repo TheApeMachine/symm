@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/nomagique/store"
 )
 
 /*
@@ -31,30 +30,6 @@ func NewToken(symbols []string, brightness float64, meta SegmentMeta) Token {
 		Brightness: brightness,
 		Meta:       meta,
 	}
-}
-
-func TokenFromSegment(symbols []string, segment []*store.Region, meta SegmentMeta) Token {
-	var brightness float64
-
-	for _, region := range segment {
-		if region == nil {
-			continue
-		}
-
-		if region.Brightness > brightness {
-			brightness = region.Brightness
-		}
-	}
-
-	if len(symbols) == 0 {
-		for _, region := range segment {
-			if region != nil {
-				symbols = append(symbols, RegionLabel(region.Key))
-			}
-		}
-	}
-
-	return NewToken(symbols, brightness, meta)
 }
 
 func (token Token) String() string {
@@ -99,30 +74,4 @@ func (token *Token) UnmarshalJSON(data []byte) error {
 
 func RegionLabel(key uint8) string {
 	return fmt.Sprintf("R%02d", key)
-}
-
-// CutHasEnterBand reports whether the token names an enter-band region (R00–R02).
-func CutHasEnterBand(token Token) bool {
-	return cutHasBand(token, 0, 2)
-}
-
-// CutHasExitBand reports whether the token names an exit-band region (R03–R05).
-func CutHasExitBand(token Token) bool {
-	return cutHasBand(token, 3, 5)
-}
-
-func cutHasBand(token Token, lo, hi uint8) bool {
-	for _, symbol := range token.Symbols {
-		var key int
-
-		if _, err := fmt.Sscanf(symbol, "R%d", &key); err != nil {
-			continue
-		}
-
-		if key >= int(lo) && key <= int(hi) {
-			return true
-		}
-	}
-
-	return false
 }

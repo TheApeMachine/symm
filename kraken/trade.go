@@ -98,16 +98,6 @@ type TradeVolume struct {
 	Result TradeVolumeResult `json:"result"`
 }
 
-func NewTradeVolume(buf []byte) *TradeVolumeResult {
-	result, err := ParseTradeVolume(buf)
-	if err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, err.Error(), err))
-		return nil
-	}
-
-	return result
-}
-
 func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
 	tradeVolume := &TradeVolume{}
 

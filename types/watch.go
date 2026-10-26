@@ -1,10 +1,6 @@
 package types
 
-import (
-	"sync"
-
-	"github.com/theapemachine/symm/data"
-)
+import "sync"
 
 /*
 uiWatch holds symbols the desk currently holds as open virtual lots. The
@@ -24,26 +20,4 @@ func SetVirtualOpen(symbol string, open bool) {
 	}
 
 	uiWatch.Delete(symbol)
-}
-
-func IsVirtualOpen(symbol string) bool {
-	if symbol == "" {
-		return false
-	}
-
-	_, ok := uiWatch.Load(symbol)
-
-	return ok
-}
-
-func isFocusOrVirtualOpen(value *data.Value) bool {
-	if value == nil {
-		return false
-	}
-
-	if isFocus(value) {
-		return true
-	}
-
-	return IsVirtualOpen(value.Scope)
 }

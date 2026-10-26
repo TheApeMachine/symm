@@ -9,6 +9,15 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+func newCalibratorForTest(window int) *Calibrator {
+	return &Calibrator{
+		sensitivityPop:   1.0,
+		sensitivityPhase: 1.0,
+		window:           NewFastWindow(window),
+		phaseWindow:      NewFastWindow(window),
+	}
+}
+
 func TestCalibrator(t *testing.T) {
 	Convey("Given a new Calibrator", t, func() {
 		cal := NewCalibrator()
@@ -44,7 +53,7 @@ func TestCalibrator(t *testing.T) {
 		})
 
 		Convey("When recalibrating with chunk density", func() {
-			cal = NewCalibrator(WithWindowSize(5))
+			cal = newCalibratorForTest(5)
 
 			Convey("It should early return if window is not warmed", func() {
 				cal.FeedbackChunk(0.35, 1.0, 1.0)
@@ -108,7 +117,7 @@ func TestCalibrator(t *testing.T) {
 }
 
 func BenchmarkFeedbackChunk(b *testing.B) {
-	cal := NewCalibrator(WithWindowSize(128))
+	cal := NewCalibrator()
 
 	for b.Loop() {
 		cal.FeedbackChunk(0.35, 1.0, 1.0)

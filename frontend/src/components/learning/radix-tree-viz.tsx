@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import { Flex } from "../ui/flex";
 import {
+	formatTrieLinkToken,
 	paintRadixTreeStructure,
 	type TreeNode,
 	updateRadixTreeHighlights,
@@ -793,7 +794,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 										D{s.depth}
 									</span>
 									<span className="text-(--f3) text-[9px]">
-										{s.tokens.join("→")}
+										{s.tokens.map(formatTrieLinkToken).join("→")}
 									</span>
 								</button>
 							);

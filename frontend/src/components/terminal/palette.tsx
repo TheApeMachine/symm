@@ -27,11 +27,6 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		label: "Influence field",
 		hint: "Derived weighted force field · coefficient flow",
 	},
-	{
-		id: "fluid",
-		label: "Fluid manifold",
-		hint: "Particle gas · gas volume · complex wave field",
-	},
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
 	{ id: "xray", label: "Latent x-ray", hint: "State-space cross-section" },
 	{

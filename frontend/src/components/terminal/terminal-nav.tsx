@@ -1,11 +1,11 @@
-import { Link } from "@tanstack/react-router";
-import { useSelector } from "@tanstack/react-store";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { Clock } from "@/components/clock";
 import { Engine } from "@/components/engine";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Nav } from "@/components/ui/nav";
+import { Link } from "@tanstack/react-router";
+import { useSelector } from "@tanstack/react-store";
 
 type TerminalRoutePath =
 	| "/"
@@ -52,7 +52,6 @@ export const SURFACE_ITEMS: Array<{
 		icon: "spark",
 		to: "/influence",
 	},
-	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
 	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },

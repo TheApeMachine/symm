@@ -17,7 +17,6 @@ import { Route as LongtailRouteImport } from './routes/longtail'
 import { Route as LearningRouteImport } from './routes/learning'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
-import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
 import { Route as IndexRouteImport } from './routes/index'
 
@@ -61,11 +60,6 @@ const HindsightRoute = HindsightRouteImport.update({
   path: '/hindsight',
   getParentRoute: () => rootRouteImport,
 } as any)
-const FluidRoute = FluidRouteImport.update({
-  id: '/fluid',
-  path: '/fluid',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const DiagnosticsRoute = DiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -80,7 +74,6 @@ const IndexRoute = IndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
@@ -93,7 +86,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
@@ -107,7 +99,6 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/diagnostics': typeof DiagnosticsRoute
-  '/fluid': typeof FluidRoute
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/learning': typeof LearningRoute
@@ -122,7 +113,6 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/diagnostics'
-    | '/fluid'
     | '/hindsight'
     | '/influence'
     | '/learning'
@@ -135,7 +125,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/diagnostics'
-    | '/fluid'
     | '/hindsight'
     | '/influence'
     | '/learning'
@@ -148,7 +137,6 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/diagnostics'
-    | '/fluid'
     | '/hindsight'
     | '/influence'
     | '/learning'
@@ -162,7 +150,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
-  FluidRoute: typeof FluidRoute
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
   LearningRoute: typeof LearningRoute
@@ -231,13 +218,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HindsightRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/fluid': {
-      id: '/fluid'
-      path: '/fluid'
-      fullPath: '/fluid'
-      preLoaderRoute: typeof FluidRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/diagnostics': {
       id: '/diagnostics'
       path: '/diagnostics'
@@ -258,7 +238,6 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DiagnosticsRoute: DiagnosticsRoute,
-  FluidRoute: FluidRoute,
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
   LearningRoute: LearningRoute,

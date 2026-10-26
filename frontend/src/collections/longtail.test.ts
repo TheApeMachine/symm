@@ -23,6 +23,7 @@ import {
 	type TrainingSample,
 	toneColor,
 	toneVariant,
+	trainingVerdict,
 	verdict,
 	warmTone,
 	winRateTone,
@@ -558,6 +559,33 @@ describe("verdict", () => {
 	});
 });
 
+describe("trainingVerdict", () => {
+	it("labels strong reuse and policy hits", () => {
+		const samples = [
+			sample({
+				training: {
+					reuseRate: 0.55,
+					createRate: 0.2,
+					policyStoredRate: 0.3,
+					developedPaths: 4,
+				},
+			}),
+			sample({
+				training: {
+					reuseRate: 0.6,
+					createRate: 0.15,
+					policyStoredRate: 0.35,
+					developedPaths: 6,
+				},
+			}),
+		];
+		expect(trainingVerdict(samples)).toEqual({
+			label: "Reusing paths",
+			tone: "good",
+		});
+	});
+});
+
 describe("buildInsights", () => {
 	it("reports the warmup state without data", () => {
 		const insights = buildInsights([], "virtual");
@@ -603,9 +631,9 @@ describe("buildInsights", () => {
 		);
 
 		const byId = Object.fromEntries(insights.map((i) => [i.id, i]));
-		expect(byId.edge.tone).toBe("bad");
-		expect(byId.edge.body).toContain("-12.0%");
-		expect(byId.edge.body).toContain("slipping");
+		expect(byId.grammar.tone).toBe("bad");
+		expect(byId.grammar.body).toContain("reuse");
+		expect(byId.policy.body).toContain("stored path");
 		expect(byId.paths.tone).toBe("neutral");
 		expect(byId.emit.body).toContain("new letter");
 		expect(byId.exits.tone).toBe("neutral");

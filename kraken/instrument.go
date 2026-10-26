@@ -91,22 +91,6 @@ func (instrument *Instrument) ToValue(epochs ...int64) *data.Value {
 }
 
 /*
-NewInstrumentFromValue reconstructs an Instrument from a *data.Value.
-*/
-func NewInstrumentFromValue(val *data.Value) (*Instrument, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "[kraken.instrument] cannot convert nil value to instrument", nil)
-	}
-
-	var instrument Instrument
-	if err := sonic.Unmarshal(val.Layers[0], &instrument); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[kraken.instrument] failed to unmarshal instrument", err)
-	}
-
-	return &instrument, nil
-}
-
-/*
 ToValue serializes the InstrumentPair into a *data.Value layer.
 */
 func (pair *InstrumentPair) ToValue(epochs ...int64) *data.Value {
@@ -120,20 +104,4 @@ func (pair *InstrumentPair) ToValue(epochs ...int64) *data.Value {
 	}
 	val.Append(pair)
 	return val
-}
-
-/*
-NewInstrumentPairFromValue reconstructs an InstrumentPair from a *data.Value.
-*/
-func NewInstrumentPairFromValue(val *data.Value) (*InstrumentPair, error) {
-	if val == nil || len(val.Layers) == 0 {
-		return nil, errnie.Err(errnie.Validation, "[kraken.instrument] cannot convert nil value to pair", nil)
-	}
-
-	var pair InstrumentPair
-	if err := sonic.Unmarshal(val.Layers[0], &pair); err != nil {
-		return nil, errnie.Err(errnie.Validation, "[kraken.instrument] failed to unmarshal pair", err)
-	}
-
-	return &pair, nil
 }

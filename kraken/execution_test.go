@@ -3,7 +3,6 @@ package kraken_test
 import (
 	"testing"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
@@ -61,43 +60,7 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 			So(val, ShouldNotBeNil)
 			So(val.Scope, ShouldEqual, "BTC/USD")
 			So(val.Role, ShouldEqual, "execution")
-
-			Convey("and NewExecutionFromValue reconstructs execution with exact values", func() {
-				restored, err := kraken.NewExecutionFromValue(val)
-				So(err, ShouldBeNil)
-				So(restored, ShouldNotBeNil)
-				So(len(restored.Data), ShouldEqual, 1)
-
-				item := restored.Data[0]
-				So(item.Symbol, ShouldEqual, "BTC/USD")
-				So(item.OrderID, ShouldEqual, "ord-999")
-				So(item.ClientOrderID, ShouldEqual, "cl-ord-888")
-				So(item.ExecID, ShouldEqual, "exec-777")
-				So(item.ExecType, ShouldEqual, "trade")
-				So(item.Side, ShouldEqual, "buy")
-				So(item.OrderType, ShouldEqual, "limit")
-				So(item.OrderStatus, ShouldEqual, "filled")
-				So(item.LastPrice.String(), ShouldEqual, "50000.5")
-				So(item.LastQty.String(), ShouldEqual, "0.1")
-				So(item.Cost.String(), ShouldEqual, "5000.05")
-				So(item.CumQty.String(), ShouldEqual, "0.1")
-				So(item.CumCost.String(), ShouldEqual, "5000.05")
-				So(item.AvgPrice.String(), ShouldEqual, "50000.5")
-				So(item.FeeUsdEquiv.String(), ShouldEqual, "12.50")
-			})
+			So(val.Epoch, ShouldEqual, uint64(123456789))
 		})
-	})
-}
-
-func TestExecutionSubscriptionMarshal(t *testing.T) {
-	Convey("ExecutionSubscription encodes private executions subscribe", t, func() {
-		raw, err := sonic.Marshal(kraken.NewExecutionSubscription("tok-1"))
-		So(err, ShouldBeNil)
-		var decoded map[string]any
-		So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
-		So(decoded["method"], ShouldEqual, "subscribe")
-		params := decoded["params"].(map[string]any)
-		So(params["channel"], ShouldEqual, "executions")
-		So(params["token"], ShouldEqual, "tok-1")
 	})
 }
