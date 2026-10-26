@@ -121,17 +121,11 @@ func (req *AddOrderRequest) ToValue(epochs ...int64) *data.Value {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(req)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
 	val := data.NewValue("kraken", "order", req.Pair)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
 	}
-	val.Append(buf)
+	val.Append(req)
 	return val
 }
 

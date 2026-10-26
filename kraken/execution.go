@@ -207,12 +207,6 @@ func (execution *Execution) ToValue(epochs ...int64) *data.Value {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(execution)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
 	symbol := ""
 	if len(execution.Data) > 0 {
 		symbol = execution.Data[0].Symbol
@@ -222,7 +216,7 @@ func (execution *Execution) ToValue(epochs ...int64) *data.Value {
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
 	}
-	val.Append(buf)
+	val.Append(execution)
 	return val
 }
 

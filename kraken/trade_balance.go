@@ -81,21 +81,13 @@ func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...i
 		return nil
 	}
 
-	buf, err := sonic.Marshal(tb)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
 	val := data.NewValue("kraken", "trade_balance", quote)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
 	}
-	val.Append(buf)
+	val.Append(tb)
 	if wallet != nil {
-		if wbuf, err := sonic.Marshal(wallet); err == nil {
-			val.Append(wbuf)
-		}
+		val.Append(wallet)
 	}
 	return val
 }

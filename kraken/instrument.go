@@ -82,17 +82,11 @@ func (instrument *Instrument) ToValue(epochs ...int64) *data.Value {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(instrument)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
 	val := data.NewValue("kraken", "snapshot", "instrument")
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
 	}
-	val.Append(buf)
+	val.Append(instrument)
 	return val
 }
 
@@ -120,17 +114,11 @@ func (pair *InstrumentPair) ToValue(epochs ...int64) *data.Value {
 		return nil
 	}
 
-	buf, err := sonic.Marshal(pair)
-	if err != nil {
-		errnie.Error(err)
-		return nil
-	}
-
 	val := data.NewValue("kraken", "instrument", pair.Symbol)
 	if len(epochs) > 0 && epochs[0] > 0 {
 		val.Epoch = uint64(epochs[0])
 	}
-	val.Append(buf)
+	val.Append(pair)
 	return val
 }
 
