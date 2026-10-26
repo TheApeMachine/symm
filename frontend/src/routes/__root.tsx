@@ -24,32 +24,17 @@ const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
 	"learning",
 	"longtail",
-	"parallel",
-	"influence",
-	"fluid",
-	"signals",
 	"xray",
-	"diagnostics",
-	"hindsight",
 	"workbench",
 ]);
 
-const SURFACE_ALIASES: Record<string, TerminalSurface> = {
-	insight: "signals",
-	diag: "diagnostics",
-};
+const SURFACE_ALIASES: Record<string, TerminalSurface> = {};
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
 	learning: "/learning",
 	longtail: "/longtail",
-	parallel: "/parallel",
-	influence: "/influence",
-	fluid: "/fluid",
-	signals: "/signals",
 	xray: "/xray",
-	diagnostics: "/diagnostics",
-	hindsight: "/hindsight",
 	workbench: "/workbench",
 };
 

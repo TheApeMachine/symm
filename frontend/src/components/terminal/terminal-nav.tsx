@@ -11,13 +11,7 @@ type TerminalRoutePath =
 	| "/"
 	| "/learning"
 	| "/longtail"
-	| "/parallel"
-	| "/influence"
-	| "/fluid"
-	| "/signals"
 	| "/xray"
-	| "/diagnostics"
-	| "/hindsight"
 	| "/workbench";
 
 export const SURFACE_ITEMS: Array<{

@@ -23,9 +23,9 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 	},
 	{ id: "xray", label: "Latent x-ray", hint: "State-space cross-section" },
 	{
-		id: "diagnostics",
-		label: "System diagnostics",
-		hint: "Stream lanes · commit lag · stalls",
+		id: "workbench",
+		label: "Analytical workbench",
+		hint: "Cross-symbol analysis · saved views",
 	},
 ];
 

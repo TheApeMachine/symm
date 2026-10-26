@@ -5,13 +5,7 @@ export type TerminalSurface =
 	| "dashboard"
 	| "learning"
 	| "longtail"
-	| "parallel"
-	| "influence"
-	| "fluid"
-	| "signals"
 	| "xray"
-	| "diagnostics"
-	| "hindsight"
 	| "workbench";
 
 export { DEFAULT_FOCUS_SYMBOL };

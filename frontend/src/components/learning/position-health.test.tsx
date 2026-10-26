@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RingBuffer, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { Value } from "#/types/value";
 import {
@@ -113,9 +113,8 @@ describe("position-health components", () => {
 	});
 
 	it("renders TradeRegionScores with live measured brightness from signals.training", () => {
-		const ring = new RingBuffer<Value>(10);
-		ring.add(
-			new Value({
+		signals.training.setState(() => ({
+			"ZAMA/USD": new Value({
 				scope: "ZAMA/USD",
 				origin: "training",
 				metrics: [
@@ -126,8 +125,7 @@ describe("position-health components", () => {
 				],
 				provenance: [{ name: "token_path", value: "R01/R06" }],
 			}),
-		);
-		signals.training.state["ZAMA/USD"] = ring;
+		}));
 
 		const markup = renderToStaticMarkup(<TradeRegionScores life={mockLife} />);
 		expect(markup).toContain("R06");

@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { atoms, RingBuffer, signals } from "#/collections/app";
-import { Value } from "#/types/value";
+import { atoms, signals } from "#/collections/app";
 import { TerminalTopBar } from "./terminal-top-bar";
 
 describe("TerminalTopBar", () => {
@@ -22,16 +21,5 @@ describe("TerminalTopBar", () => {
 		atoms.tickCount.set(45678);
 		const html = renderToStaticMarkup(<TerminalTopBar />);
 		expect(html).toContain("45,678");
-	});
-
-	it("renders training steps as ticks when available", () => {
-		const ring = new RingBuffer<Value>(50);
-		const val = new Value({ tick: 1234n });
-		ring.add(val);
-
-		signals.training.setState(() => ({ "BTC/USD": ring }));
-
-		const html = renderToStaticMarkup(<TerminalTopBar />);
-		expect(html).toContain("1,234");
 	});
 });
