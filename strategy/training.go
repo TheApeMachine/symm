@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/theapemachine/symm/broker"
@@ -62,6 +63,14 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 	symbols := SymbolsOnTick(value)
 
+	for _, symbol := range training.desk.PendingTrainSymbols() {
+		if !slices.Contains(symbols, symbol) {
+			symbols = append(symbols, symbol)
+		}
+	}
+
+	slices.Sort(symbols)
+
 	if len(symbols) == 0 {
 		training.telemetry.EndTick(training.model, training.desk)
 		return value
@@ -76,8 +85,6 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			)
 			
 			out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
-
-			training.model.sequencers.Store(symbol, training.stage.Sequencer(symbol))
 
 			var observed []*nmstore.Region
 			value.Lookup(&observed, strings.Join([]string{"stage", symbol, "regions"}, "/"))

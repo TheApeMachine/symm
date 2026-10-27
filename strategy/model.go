@@ -19,13 +19,10 @@ import (
 
 type Model struct {
 	*runtime.System
-	mu             sync.RWMutex
-	desk           *broker.Desk
-	store          *store.Client
-	sequencers     *sync.Map
-	sequences      *sync.Map
-	tries          *sync.Map
-	exploreSettled sync.Map
+	desk      *broker.Desk
+	store     *store.Client
+	sequences *sync.Map
+	tries     *sync.Map
 }
 
 func NewModel(
@@ -38,12 +35,11 @@ func NewModel(
 	}
 
 	model := &Model{
-		System:     runtime.NewSystem(ctx, "model"),
-		desk:       desk,
-		store:      client,
-		sequencers: &sync.Map{},
-		sequences:  &sync.Map{},
-		tries:      &sync.Map{},
+		System:    runtime.NewSystem(ctx, "model"),
+		desk:      desk,
+		store:     client,
+		sequences: &sync.Map{},
+		tries:     &sync.Map{},
 	}
 
 	model.tries.Store("explore", iradix.New[*data.Value]())
@@ -60,11 +56,16 @@ func NewModel(
 		tree := untypedTree.(*iradix.Tree[*data.Value])
 
 		for prefix := range model.store.ListKeys(fmt.Sprintf("model/%s/", key)) {
+			val := model.store.Download(ctx, prefix)
+			if val == nil {
+				continue
+			}
+
 			chunks := strings.Split(prefix, "/")
 
 			tree, _, _ = tree.Insert([]byte(
 				strings.Join(chunks[2:len(chunks)-1], "/"),
-			), model.store.Download(ctx, prefix))
+			), val)
 		}
 
 		model.tries.Store(key, tree)
@@ -94,23 +95,32 @@ func (model *Model) Evaluate(
 
 	coder := ReadCoder(source, symbol)
 
-	untypedSequencer, ok := model.sequencers.Load(symbol)
+	sequences, _ := model.sequences.LoadOrStore(
+		role+"/"+symbol, tokenizer.NewTokens(),
+	)
 
-	if !ok {
-		return out
-	}
-
-	sequencer := untypedSequencer.(*tokenizer.Sequencer)
-
-	sequences, _ := model.sequences.LoadOrStore(role+"/"+symbol, tokenizer.NewTokens())
 	path := sequences.(tokenizer.Tokens)
 
 	out.Append(observed, "lit")
-	step := sequencer.Step(observed, enter)
-	cut := step.Token
+
+	var cut tokenizer.Token
+
+	if tick == nil {
+		return out
+	}
+
+	tick.Lookup(&cut, strings.Join(
+		[]string{"stage", symbol, "cut"}, "/",
+	))
+
+	if cut.String() == "" {
+		return out
+	}
+
 	out.Append(cut, "cut")
 
 	path = append(path, cut)
+	model.sequences.Store(role+"/"+symbol, path)
 
 	if len(path) > 0 {
 		out.Append(path.String(), "path")
@@ -119,38 +129,46 @@ func (model *Model) Evaluate(
 	out.Append(path.String(), "policyPath")
 	out.Append(enter, "enter")
 
-	// =========================================================================
-	// 1. ENTRY EVALUATION (Flat)
-	// =========================================================================
+	if pending, ok := model.desk.TakePendingTrain(symbol); ok {
+		model.completeExit(out, symbol, pending)
+		return out
+	}
+
 	if enter {
 		// Gap 3: Cannot enter without a valid grammar path
 		if path.Len() < system.Cfg.Learning.MinPathLength {
 			return out
 		}
 
-		// Check if this path exists in policy or explore tries
-		untypedTrie, ok := model.tries.Load(role)
+		pathFound := false
+		probe := []byte(path.String() + "/enter")
 
-		if !ok {
-			return out
+		for _, book := range []string{"explore", "policy"} {
+			untypedTrie, ok := model.tries.Load(book)
+
+			if !ok {
+				continue
+			}
+
+			trie := untypedTrie.(*iradix.Tree[*data.Value])
+
+			if _, _, ok := trie.Root().LongestPrefix(probe); ok {
+				pathFound = true
+				break
+			}
 		}
 
-		trie := untypedTrie.(*iradix.Tree[*data.Value])
-		_, _, pathFound := trie.Root().LongestPrefix([]byte(path.String() + "/enter"))
-
-		// Gate 1: Predictive coder forward curve must be bullish
 		if !coder.Bullish {
 			return out
 		}
 
-		// Gate 2: Open virtual lot
 		if err := model.desk.Enter(symbol, path.String(), true, pathFound); err != nil {
+			errnie.Error(err)
 			return out
 		}
 
 		out.Append("enter submitted", "outcome")
 
-		// Record entry surprise on position for cliff detection
 		if pos := model.desk.Position(symbol, true); pos != nil {
 			pos.OpenSurprise = coder.Surprise
 		}
@@ -159,60 +177,53 @@ func (model *Model) Evaluate(
 		return out
 	}
 
-	// =========================================================================
-	// 2. EXIT EVALUATION (Holding)
-	// =========================================================================
 	position := model.desk.Position(symbol, true)
 
 	if position == nil {
 		return out
 	}
 
+	position.ExitPath = path.String()
 	shouldExit := false
 
-	// Trigger A: Informational Cliff (Model surprise doubled)
 	if position.OpenSurprise > 0 && coder.Surprise >= 2*position.OpenSurprise {
 		shouldExit = true
 	}
 
-	// Trigger B: Order-book momentum stop or reversal
-	if !shouldExit {
-		if _, ok := position.ShouldExit(); ok {
-			shouldExit = true
+	if !shouldExit && path.Len() >= system.Cfg.Learning.MinPathLength {
+		if untypedTrie, ok := model.tries.Load(role); ok {
+			trie := untypedTrie.(*iradix.Tree[*data.Value])
+
+			if _, _, ok := trie.Root().LongestPrefix([]byte(path.String() + "/exit")); ok {
+				shouldExit = true
+			}
 		}
 	}
 
-	// Trigger C: Exit Path Matched in Radix Trie
-	if !shouldExit && path.Len() >= system.Cfg.Learning.MinPathLength {
-		untypedTrie, ok := model.tries.Load(role)
-
-		if !ok {
+	if shouldExit {
+		if err := model.desk.Exit(symbol, path.String(), true); err != nil {
+			errnie.Error(err)
 			return out
 		}
 
-		trie := untypedTrie.(*iradix.Tree[*data.Value])
-		_, _, pathFound := trie.Root().LongestPrefix([]byte(path.String() + "/exit"))
-
-		if pathFound {
-			shouldExit = true
+		if pending, ok := model.desk.TakePendingTrain(symbol); ok {
+			model.completeExit(out, symbol, pending)
 		}
 	}
 
-	// If no exit triggered, keep holding
-	if !shouldExit {
-		return out
-	}
+	return out
+}
 
-	if err := model.desk.Exit(symbol, path.String(), true); err != nil {
-		errnie.Error(err)
-		return out
+func (model *Model) completeExit(
+	out *data.Value, symbol string, position *broker.Position,
+) {
+	for _, book := range []string{"explore", "policy"} {
+		model.updatePathThreshold(book, position)
 	}
-
-	model.updatePathThreshold(role, position)
 
 	out.Append("exit submitted", "outcome")
-	model.sequences.Store(role+"/"+symbol, tokenizer.NewTokens())
-	return out
+	model.sequences.Store("explore/"+symbol, tokenizer.NewTokens())
+	model.sequences.Store("policy/"+symbol, tokenizer.NewTokens())
 }
 
 func (model *Model) updatePathThreshold(
@@ -230,51 +241,83 @@ func (model *Model) updatePathThreshold(
 
 	trie := untypedTrie.(*iradix.Tree[*data.Value])
 
-	for _, path := range []string{
+	for _, pathKey := range []string{
 		position.EntryPath, position.ExitPath,
 	} {
-		value, pathFound := trie.Get([]byte(path))
+		if pathKey == "" {
+			continue
+		}
 
-		if !pathFound || value == nil {
-			return
+		value, ok := trie.Get([]byte(pathKey))
+
+		if !ok || value == nil {
+			continue
 		}
 
 		var action string
 		value.Lookup(&action, "action")
 
-		threshold := getThreshold(value)
+		threshold := model.getThreshold(value)
 
-		// Profitable lowers threshold (closer to promotion); loss raises threshold
 		if position.PnL != nil && position.PnL.Sign() > 0 {
-			threshold -= 0.05
+			threshold -= 0.01
 		} else {
-			threshold += 0.05
+			threshold += 0.01
 		}
 
-		// Prune if threshold exceeds 0.8
 		if threshold > 0.8 {
-			trie, _, _ = trie.Delete([]byte(path))
+			if model.store != nil {
+				model.store.DeletePrefix(fmt.Sprintf("model/%s/%s/", role, pathKey))
+			}
+
+			trie, _, _ = trie.Delete([]byte(pathKey))
+			continue
 		}
 
-		// Promote from explore to policy if threshold < 0.2
-		if threshold < 0.2 {
-			trie, _, _ = trie.Insert(
-				[]byte(path),
-				data.NewValue("model", role, path),
-			)
+		if threshold < 0.01 {
+			threshold = 0.01
 		}
 
-		// Update existing path in place
 		value.Append(action, "action")
 		value.Append(threshold, "threshold")
 
-		trie, _, _ = trie.Insert([]byte(path), value)
+		if threshold < 0.2 && role == "explore" {
+			if model.store != nil {
+				model.store.DeletePrefix(fmt.Sprintf("model/explore/%s/", pathKey))
+			}
+
+			trie, _, _ = trie.Delete([]byte(pathKey))
+
+			if untypedPolicy, ok := model.tries.Load("policy"); ok {
+				policy := untypedPolicy.(*iradix.Tree[*data.Value])
+				policy, _, _ = policy.Insert([]byte(pathKey), value)
+				model.tries.Store("policy", policy)
+			}
+
+			if model.store != nil {
+				model.store.WriteAtPrefix(
+					fmt.Sprintf("model/policy/%s/%s.bin", pathKey, action),
+					value.Bytes(),
+				)
+			}
+
+			continue
+		}
+
+		trie, _, _ = trie.Insert([]byte(pathKey), value)
+
+		if model.store != nil {
+			model.store.WriteAtPrefix(
+				fmt.Sprintf("model/%s/%s/%s.bin", role, pathKey, action),
+				value.Bytes(),
+			)
+		}
 	}
 
 	model.tries.Store(role, trie)
 }
 
-func getThreshold(value *data.Value) float64 {
+func (model *Model) getThreshold(value *data.Value) float64 {
 	if value == nil {
 		return 0.5
 	}

@@ -298,15 +298,6 @@ func (booter *Booter) initPipeline() error {
 
 		booter.training.Transition(nmruntime.READY)
 		strategyNodes = append(strategyNodes, booter.training)
-
-		model := booter.training.Model()
-		ui.UI.Exiter(hubDeskExiter{
-			desk: booter.desk,
-			path: model.DeskExitPath,
-			record: func(position *broker.Position) {
-				model.RecordExploreClose(position)
-			},
-		})
 	}
 
 	booter.workspace = nmruntime.NewWorkspace(
@@ -501,6 +492,26 @@ func (booter *Booter) startIngress(
 					booter.Context(), err,
 				) {
 					errnie.Error(err)
+				}
+
+				if booter.desk != nil && level3 != nil {
+					seen := map[string]struct{}{}
+
+					for _, entry := range level3.Data {
+						if entry.Symbol == "" {
+							continue
+						}
+
+						if _, ok := seen[entry.Symbol]; ok {
+							continue
+						}
+
+						seen[entry.Symbol] = struct{}{}
+
+						if booter.desk.Has(entry.Symbol, true) {
+							booter.desk.RepriceFromBook(entry.Symbol)
+						}
+					}
 				}
 			case "trade":
 				data.Tick.Add(1)

@@ -274,9 +274,7 @@ export const positionReadout = (
 		closedAt,
 		holdNs: holdNs as number | null,
 		closed,
-		exitPending:
-			((row.exit_orders as Record<string, unknown>[])?.length ?? 0) > 0 &&
-			!closed,
+		exitPending: row.exit_order != null && !closed,
 	};
 };
 

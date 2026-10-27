@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -16,7 +17,9 @@ import (
 
 type Position struct {
 	mu           sync.RWMutex
+	transport    Transport
 	price        *Price
+	onSettled    func(*Position)
 	ID           string                  `json:"id"`
 	EntryPath    string                  `json:"entry_path"`
 	ExitPath     string                  `json:"exit_path"`
@@ -26,8 +29,8 @@ type Position struct {
 	PolicyEpoch  uint64                  `json:"policy_epoch,omitempty"`
 	EntryTick    uint64                  `json:"entry_tick,omitempty"`
 	ExitTick     uint64                  `json:"exit_tick,omitempty"`
-	EntryOrders  []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders   []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	EntryOrder   *spot.OrderRequest      `json:"entry_order,omitempty"`
+	ExitOrder    *spot.OrderRequest      `json:"exit_order,omitempty"`
 	Fills        []*kraken.ExecutionData `json:"fills,omitempty"`
 	Qty          *decimal.Decimal        `json:"qty,omitempty"`
 	EntryPrice   *decimal.Decimal        `json:"entry_price,omitempty"`
@@ -52,13 +55,15 @@ func NewPosition(
 	path string,
 	virtual bool,
 	price *Price,
+	transport Transport,
+	onSettled func(*Position),
 ) *Position {
 	return &Position{
 		price:       price,
+		transport:   transport,
+		onSettled:   onSettled,
 		ID:          uuid.NewString(),
-		EntryOrders: make([]*spot.OrderRequest, 0),
-		ExitOrders:  make([]*spot.OrderRequest, 0),
-		Fills:       make([]*kraken.ExecutionData, 0),
+		Fills: make([]*kraken.ExecutionData, 0),
 		Symbol:      symbol,
 		EntryPath:   path,
 		Virtual:     virtual,
@@ -66,84 +71,110 @@ func NewPosition(
 }
 
 /*
-Update refreshes the mark and reprices open PnL from the book.
+Update refreshes the mark, reprices open PnL, and exits immediately when
+ShouldExit fires — no wait for the next workspace tick.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
-	position.mu.Lock()
-	defer position.mu.Unlock()
+	var (
+		path   string
+		closed bool
+	)
 
-	position.Mark = mark
-	position.repriceLocked()
+	position.mu.Lock()
+
+	if position.ClosedAt == nil {
+		position.Mark = mark
+		position.repriceLocked()
+
+		if _, ok := position.shouldExitLocked(); ok {
+			path = position.ExitPath
+			closed = path != ""
+		}
+	}
+
+	position.mu.Unlock()
+
+	if !closed {
+		return
+	}
+
+	if err := position.Exit(path); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if position.onSettled != nil {
+		position.onSettled(position)
+	}
 }
 
 /*
 Enter sizes from the book when qty is unset, records the buy, and for a
 virtual lot emulates the venue fill.
 */
-func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
+func (position *Position) Enter(path string) error {
 	if path == "" {
-		return nil, errnie.Err(
+		return errnie.Err(
 			errnie.NotFound,
 			"[position.Enter] missing path for "+position.Symbol,
 			nil,
 		)
 	}
 
-	position.mu.Lock()
-
-	if position.Qty == nil {
+	qty := position.Qty
+	if qty == nil {
 		var why string
-		position.Qty, why = position.price.Allocate(position.Symbol)
-		if position.Qty == nil || position.Qty.Sign() <= 0 {
-			position.mu.Unlock()
-
+		qty, why = position.price.Allocate(position.Symbol)
+		if qty == nil || qty.Sign() <= 0 {
 			msg := "[position.Enter] cannot size " + position.Symbol
 			if why != "" {
 				msg += ": " + why
 			}
 
-			return nil, errnie.Err(errnie.NotFound, msg, nil)
+			return errnie.Err(errnie.NotFound, msg, nil)
 		}
 	}
 
-	if position.Qty.Sign() <= 0 {
-		position.mu.Unlock()
-
-		return nil, errnie.Err(
+	if qty.Sign() <= 0 {
+		return errnie.Err(
 			errnie.NotFound,
 			"[position.Enter] non-positive quantity for "+position.Symbol,
 			nil,
 		)
 	}
 
-	position.EntryOrders = append(position.EntryOrders, &spot.OrderRequest{
+	vol := qty.String()
+	entryOrder := &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "buy",
-		Volume:    position.Qty.String(),
-	})
-
-	position.ExitOrders = append(position.ExitOrders, &spot.OrderRequest{
+		Volume:    vol,
+	}
+	exitOrder := &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "sell",
-		Volume:    position.Qty.String(),
-	})
+		Volume:    vol,
+	}
 
-	position.OpenedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	position.mu.Lock()
+	position.Qty = qty
+	position.EntryOrder = entryOrder
+	position.ExitOrder = exitOrder
+	position.OpenedAt = now
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
+	position.ExitPath = path
 	virtual := position.Virtual
-
-	order := position.EntryOrders[len(position.EntryOrders)-1]
 	position.mu.Unlock()
 
 	if virtual {
-		fill, err := position.price.EntryCost(position.Symbol, position.Qty)
+		fill, err := position.price.EntryCost(position.Symbol, qty)
 
 		if err != nil {
-			return nil, errnie.Error(errnie.Err(
+			return errnie.Error(errnie.Err(
 				errnie.IO,
 				"[position.Enter] no fill price for "+position.Symbol,
 				err,
@@ -154,8 +185,8 @@ func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
 			Symbol:      position.Symbol,
 			Side:        "buy",
 			ExecType:    "Fill",
-			LastQty:     position.Qty,
-			CumQty:      position.Qty,
+			LastQty:     qty,
+			CumQty:      qty,
 			LastPrice:   fill.EntryPrice,
 			AvgPrice:    fill.EntryPrice,
 			FeeUsdEquiv: fill.EntryFee,
@@ -163,11 +194,11 @@ func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
 		})
 
 		if err := position.rejectOpenBookDrag(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	return order, nil
+	return position.Send(entryOrder)
 }
 
 func (position *Position) rejectOpenBookDrag() error {
@@ -208,9 +239,9 @@ func (position *Position) rejectOpenBookDrag() error {
 /*
 Exit records the sell and reprices from the bid book.
 */
-func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
+func (position *Position) Exit(path string) error {
 	if path == "" {
-		return nil, errnie.Err(
+		return errnie.Err(
 			errnie.NotFound,
 			"[position.Exit] missing path for "+position.Symbol,
 			nil,
@@ -220,8 +251,8 @@ func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	if len(position.ExitOrders) == 0 {
-		return nil, errnie.Err(
+	if position.ExitOrder == nil {
+		return errnie.Err(
 			errnie.NotFound, "[position.Exit] no exit order for "+position.Symbol, nil,
 		)
 	}
@@ -239,7 +270,7 @@ func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
 	position.ExitTick = data.Tick.Load()
 	position.repriceLocked()
 
-	return position.ExitOrders[len(position.ExitOrders)-1], nil
+	return position.Send(position.ExitOrder)
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {
@@ -351,14 +382,15 @@ ShouldExit checks two conditions:
 func (position *Position) ShouldExit() (trigger string, ok bool) {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
+	return position.shouldExitLocked()
+}
 
-	if position.PnL == nil {
+func (position *Position) shouldExitLocked() (trigger string, ok bool) {
+	if position.PnL == nil || position.ClosedAt != nil {
 		return "", false
 	}
 
 	// 1. DOWNSIDE STOP:
-	// OpenPnL is negative (e.g. -$10). It needed +$10 to reach breakeven ($0).
-	// If it drops that same $10 downwards, it hits -$20 (2 * OpenPnL).
 	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
 		stop := position.OpenPnL.Mul(decimal.NewFromInt64(2))
 		if position.PnL.Cmp(stop) <= 0 {
@@ -366,11 +398,55 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 		}
 	}
 
-	// 2. UPSIDE MOMENTUM EXIT:
-	// Only triggers once the position has shown upward momentum into profit.
-	if position.PnL.Sign() > 0 && position.PnL.Cmp(position.LastPnL) <= 0 {
+	// 2. PROFIT GIVEBACK:
+	if position.LastPnL != nil &&
+		position.LastPnL.Sign() > 0 &&
+		position.PnL.Sign() <= 0 {
+		return "profit giveback", true
+	}
+
+	// 3. UPSIDE MOMENTUM EXIT:
+	if position.LastPnL != nil &&
+		position.PnL.Sign() > 0 &&
+		position.PnL.Cmp(position.LastPnL) <= 0 {
 		return "momentum exit", true
 	}
 
 	return "", false
+}
+
+/*
+send an order to the exchange.
+*/
+func (position *Position) Send(order *spot.OrderRequest) error {
+	if position.Virtual {
+		return nil
+	}
+
+	if order == nil || position.Symbol == "" {
+		return errnie.Err(
+			errnie.NotFound,
+			"[desk.Send] paper order is missing its symbol",
+			nil,
+		)
+	}
+
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+		Pair:    position.Symbol,
+		Type:    order.Type,
+		OrdType: order.OrderType,
+		Volume:  order.Volume,
+		Price:   order.Price,
+		ClOrdId: order.ClOrdId,
+	}))
+
+	if err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"[desk.Send] failed to marshal order",
+			err,
+		)
+	}
+
+	return position.transport.Write(buf)
 }

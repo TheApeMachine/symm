@@ -8,12 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -29,7 +27,6 @@ type Desk struct {
 	*runtime.System
 	mu        sync.Mutex
 	transport Transport
-	rest      *network.REST
 	price     *Price
 	balance   *Balance
 	history   *History
@@ -39,7 +36,7 @@ type Desk struct {
 	// at boot and each Exit). Train Drop clears the live cache only; the
 	// archive keeps closed lots visible to the dashboard.
 	virtualArchive *sync.Map
-	books          *Book
+	pendingTrain   *sync.Map
 	helloMu        sync.Mutex
 	lastHello      time.Time
 	helloArmed     bool
@@ -55,13 +52,13 @@ func NewDesk(
 ) *Desk {
 	desk := &Desk{
 		transport:      transport,
-		rest:           network.NewREST(),
 		balance:        balance,
 		history:        NewHistory(ctx),
 		price:          price,
 		positions:      NewCache(ctx),
 		virtuals:       NewCache(ctx),
 		virtualArchive: &sync.Map{},
+		pendingTrain:   &sync.Map{},
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
@@ -71,17 +68,6 @@ func NewDesk(
 		"virtual":  desk.virtuals,
 	} {
 		for value := range desk.history.Restore(key) {
-			/*
-				Prefix is "[origin]/[role]/[scope]/[epoch]/[tick]": the
-				role records whether the lot was open or closed when it was
-				persisted. The scope is the symbol and carries its own
-				slash ("BTC/USD"), so the prefix holds more than five
-				segments and only the leading role is read. Anything else —
-				an empty value, an interrupted object — is not a position
-				record and decodes to a ghost keyed by the empty symbol
-				that no update can ever mark or close, so it would
-				broadcast to every client forever.
-			*/
 			fields := strings.Split(value.Prefix, "/")
 			if len(fields) < 5 {
 				continue
@@ -99,13 +85,6 @@ func NewDesk(
 				continue
 			}
 
-			/*
-				A frame whose positions layer decoded to nothing (absent,
-				empty, or a non-object payload) leaves a zero position on
-				our hands. Restoring it would key an untradeable ghost by
-				the empty symbol that no Update can ever mark or close, so
-				it would broadcast to every client forever. Skip it.
-			*/
 			if position.Symbol == "" {
 				continue
 			}
@@ -113,6 +92,8 @@ func NewDesk(
 			// History JSON does not carry the live price book. Without it,
 			// later marks never reprice and a lot in profit never exits.
 			position.price = desk.price
+			position.transport = desk.transport
+			position.onSettled = desk.onPositionSettled
 
 			switch role {
 			case "open":
@@ -287,34 +268,25 @@ func (desk *Desk) writeHello() {
 	}
 }
 
-/*
-Positions returns the open positions in the desk.
-*/
-func (desk *Desk) Positions(open bool) []*Position {
-	if open {
-		return desk.positions.All(true)
+func (desk *Desk) cacheFor(virtual bool) (*Cache, string) {
+	if virtual {
+		return desk.virtuals, "virtual"
 	}
 
-	return desk.virtuals.All(true)
+	return desk.positions, "position"
 }
 
 /*
 OpenPositions returns the open positions in the desk.
 */
 func (desk *Desk) OpenPositions(virtual bool) []*Position {
-	if virtual {
-		return desk.virtuals.All(true)
-	}
-
-	return desk.positions.All(true)
+	cache, _ := desk.cacheFor(virtual)
+	return cache.All(true)
 }
 
 func (desk *Desk) Position(symbol string, virtual bool) *Position {
-	if virtual {
-		return desk.virtuals.Get(symbol, true)
-	}
-
-	return desk.positions.Get(symbol, true)
+	cache, _ := desk.cacheFor(virtual)
+	return cache.Get(symbol, true)
 }
 
 /*
@@ -330,6 +302,59 @@ func (desk *Desk) ClosedVirtuals() []*Position {
 }
 
 /*
+TakePendingTrain returns a virtual lot closed on a mark exit since the last
+take. Evaluate consumes it for path threshold updates.
+*/
+func (desk *Desk) TakePendingTrain(symbol string) (*Position, bool) {
+	if desk == nil || symbol == "" {
+		return nil, false
+	}
+
+	val, ok := desk.pendingTrain.LoadAndDelete(symbol)
+	if !ok {
+		return nil, false
+	}
+
+	position, ok := val.(*Position)
+	return position, ok && position != nil
+}
+
+/*
+PendingTrainSymbols lists pairs waiting for Evaluate to score a mark exit.
+*/
+func (desk *Desk) PendingTrainSymbols() []string {
+	if desk == nil {
+		return nil
+	}
+
+	out := make([]string, 0)
+
+	desk.pendingTrain.Range(func(key, _ any) bool {
+		if symbol, ok := key.(string); ok && symbol != "" {
+			out = append(out, symbol)
+		}
+
+		return true
+	})
+
+	slices.Sort(out)
+	return out
+}
+
+func (desk *Desk) onPositionSettled(position *Position) {
+	if desk == nil || position == nil {
+		return
+	}
+
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	if err := desk.releaseLocked(position); err != nil {
+		errnie.Error(err)
+	}
+}
+
+/*
 Update marks open positions against the trade price. Called from the workspace
 tick handler — the desk sits off the trade ingress path, so this is where
 marks become live.
@@ -339,8 +364,17 @@ other open lot is repriced from the book so an exit still sees a live mark,
 and that reprice stays on the desk.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
-	changed := make([]*Position, 0, len(trades))
-	seen := make(map[string]struct{}, len(trades))
+	if len(trades) == 0 {
+		return
+	}
+
+	latest := make(map[string]*decimal.Decimal, len(trades))
+	for i := range trades {
+		latest[trades[i].Symbol] = &trades[i].Price
+	}
+
+	var changed []*Position
+	seen := make(map[string]struct{})
 
 	note := func(position *Position) {
 		if position == nil || position.ID == "" {
@@ -355,42 +389,64 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 		changed = append(changed, position)
 	}
 
-	traded := make(map[string]struct{}, len(trades))
-	for _, trade := range trades {
-		traded[trade.Symbol] = struct{}{}
-	}
-
-	for _, val := range []*Cache{
-		desk.positions, desk.virtuals,
-	} {
-		for _, trade := range trades {
-			position := val.Get(trade.Symbol, true)
-
-			if position == nil {
-				continue
-			}
-
-			position.Update(&trade.Price)
-			note(position)
-		}
-
-		for _, position := range val.All(true) {
+	for _, cache := range []*Cache{desk.positions, desk.virtuals} {
+		for _, position := range cache.All(true) {
 			if position == nil || position.Symbol == "" {
 				continue
 			}
 
-			if _, ok := traded[position.Symbol]; ok {
-				continue
-			}
-
-			mark := desk.price.CurrentMark(position.Symbol)
-			if mark != nil {
+			if mark, ok := latest[position.Symbol]; ok {
 				position.Update(mark)
+				note(position)
+			} else if desk.repriceOpenFromBook(position) {
+				note(position)
 			}
 		}
 	}
 
 	desk.publishChanged(changed)
+}
+
+/*
+RepriceFromBook refreshes one open lot from the live book. Used when level3
+moves the mark before the next trade print on that pair.
+*/
+func (desk *Desk) RepriceFromBook(symbol string) bool {
+	if desk == nil || symbol == "" {
+		return false
+	}
+
+	changed := false
+
+	for _, val := range []*Cache{
+		desk.positions, desk.virtuals,
+	} {
+		position := val.Get(symbol, true)
+
+		if position == nil {
+			continue
+		}
+
+		if desk.repriceOpenFromBook(position) {
+			changed = true
+		}
+	}
+
+	return changed
+}
+
+func (desk *Desk) repriceOpenFromBook(position *Position) bool {
+	if desk == nil || position == nil || position.Symbol == "" {
+		return false
+	}
+
+	mark := desk.price.CurrentMark(position.Symbol)
+	if mark == nil {
+		return false
+	}
+
+	position.Update(mark)
+	return true
 }
 
 /*
@@ -418,11 +474,8 @@ Has reports whether the desk holds an open position (paper or virtual)
 for the symbol.
 */
 func (desk *Desk) Has(symbol string, virtual bool) bool {
-	if virtual {
-		return desk.virtuals.Has(symbol)
-	}
-
-	return desk.positions.Has(symbol)
+	cache, _ := desk.cacheFor(virtual)
+	return cache.Has(symbol)
 }
 
 /*
@@ -463,23 +516,21 @@ book is rejected.
 func (desk *Desk) Enter(
 	symbol string, path string, virtual bool, pathFound bool,
 ) error {
-	if virtual {
-		if desk.virtuals.Has(symbol) {
-			return errnie.Err(
-				errnie.TooManyRequests,
-				"[desk.Enter] virtual already exists",
-				nil,
-			)
-		}
-	} else if desk.positions.Has(symbol) {
+	cache, key := desk.cacheFor(virtual)
+
+	if cache.Has(symbol) {
 		return errnie.Err(
 			errnie.TooManyRequests,
-			"[desk.Enter] position already exists",
+			"[desk.Enter] "+key+" already exists",
 			nil,
 		)
 	}
 
-	position := NewPosition(symbol, path, virtual, desk.price)
+	position := NewPosition(
+		symbol, path, virtual, desk.price, desk.transport,
+		desk.onPositionSettled,
+	)
+
 	position.PathFound = pathFound
 
 	if desk.price.Status() != runtime.READY {
@@ -490,30 +541,16 @@ func (desk *Desk) Enter(
 		)
 	}
 
-	order, err := position.Enter(path)
+	err := position.Enter(path)
 
 	if err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
-	key := "position"
-
-	if virtual {
-		key = "virtual"
-	}
-
-	/*
-		The desk owns the position from the moment it enters: register it in
-		the right cache so ticks mark it and Hello publishes it immediately.
-		Without this only a restart (history restore) would ever surface a
-		live entry.
-	*/
-	cache := desk.positions
-
-	if virtual {
-		cache = desk.virtuals
-	}
-
+	// The desk owns the position from the moment it enters: register it in
+	// the right cache so ticks mark it and Hello publishes it immediately.
+	// Without this only a restart (history restore) would ever surface a
+	// live entry.
 	cache.Add(position.Symbol, position)
 
 	if virtual {
@@ -536,18 +573,6 @@ func (desk *Desk) Enter(
 		))
 	}
 
-	if err := desk.Send(order, position.Symbol, virtual); err != nil {
-		cache.Drop(position.Symbol)
-		if virtual {
-			types.SetVirtualOpen(symbol, false)
-		}
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[desk.Enter] failed to send order",
-			err,
-		))
-	}
-
 	// The entry is live. Publish this lot; the rest of the book is already
 	// on the page from the last snapshot or its own updates.
 	desk.publishChanged([]*Position{position})
@@ -561,13 +586,8 @@ Exit a position and report what settled.
 func (desk *Desk) Exit(
 	symbol string, path string, virtual bool,
 ) error {
-	var position *Position
-
-	if virtual {
-		position = desk.virtuals.Get(symbol, true)
-	} else {
-		position = desk.positions.Get(symbol, true)
-	}
+	cache, _ := desk.cacheFor(virtual)
+	position := cache.Get(symbol, true)
 
 	if position == nil {
 		return errnie.Err(
@@ -577,55 +597,48 @@ func (desk *Desk) Exit(
 		)
 	}
 
-	order, err := position.Exit(path)
-
-	if err != nil {
+	if err := position.Exit(path); err != nil {
 		return err
 	}
 
-	// The exit is final: the position leaves the open cache. A paper
-	// position stays addressable on the closed side until the venue's sell
-	// executions land (Apply settles the lot wherever the position lives),
-	// then history.Move retires it from the desk entirely.
-	if virtual {
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	return desk.releaseLocked(position)
+}
+
+func (desk *Desk) releaseLocked(position *Position) error {
+	if position == nil || position.Symbol == "" {
+		return nil
+	}
+
+	cache, key := desk.cacheFor(position.Virtual)
+
+	if !cache.Has(position.Symbol) {
+		return nil
+	}
+
+	if position.Virtual {
 		types.SetVirtualOpen(position.Symbol, false)
 		desk.archiveVirtual(position)
 		desk.virtuals.Remove(position.Symbol)
+		desk.pendingTrain.Store(position.Symbol, position)
 	} else {
 		desk.positions.Remove(position.Symbol)
 	}
 
-	key := "position"
-
-	if virtual {
-		key = "virtual"
-	}
-
-	/*
-		The exit is final: the open record is retired and the closed one carries the
-		outcome. The open records of a symbol live under "[origin]/open/[symbol]/", the
-		closed record under the value's own prefix.
-	*/
 	value := data.NewValue(
-		key, "closed", symbol,
+		key, "closed", position.Symbol,
 	).Append(
 		position, "position",
 	)
 
 	if err := desk.history.Move(
-		value, key+"/open/"+symbol+"/",
+		value, key+"/open/"+position.Symbol+"/",
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Exit] failed to store position",
-			err,
-		))
-	}
-
-	if err := desk.Send(order, position.Symbol, virtual); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[desk.Exit] failed to send order",
 			err,
 		))
 	}
@@ -641,40 +654,4 @@ Drop retires a virtual from the desk entirely, open or closed.
 func (desk *Desk) Drop(symbol string) {
 	types.SetVirtualOpen(symbol, false)
 	desk.virtuals.Drop(symbol)
-}
-
-/*
-send an order to the exchange.
-*/
-func (desk *Desk) Send(order *spot.OrderRequest, symbol string, virtual bool) error {
-	if virtual {
-		return nil
-	}
-
-	if order == nil || symbol == "" {
-		return errnie.Err(
-			errnie.NotFound,
-			"[desk.Send] paper order is missing its symbol",
-			nil,
-		)
-	}
-
-	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
-		Pair:    symbol,
-		Type:    order.Type,
-		OrdType: order.OrderType,
-		Volume:  order.Volume,
-		Price:   order.Price,
-		ClOrdId: order.ClOrdId,
-	}))
-
-	if err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"[desk.Send] failed to marshal order",
-			err,
-		)
-	}
-
-	return desk.transport.Write(buf)
 }

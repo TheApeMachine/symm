@@ -164,6 +164,10 @@ func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta
 		seq.lastGain = gain
 
 		seq.offset = absK
+		if seq.offset > len(seq.buf) {
+			seq.offset = len(seq.buf)
+		}
+
 		seq.dist = NewDistribution()
 
 		for _, b := range seq.buf[seq.offset:] {
