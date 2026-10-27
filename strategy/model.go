@@ -19,33 +19,33 @@ import (
 
 type Model struct {
 	*runtime.System
-	desk      *broker.Desk
-	store     *store.Client
-	sequences *sync.Map
-	tries     *sync.Map
+	desk  *broker.Desk
+	stage *Stage
+	store *store.Client
+	tries *sync.Map
 }
 
 func NewModel(
 	ctx context.Context,
 	desk *broker.Desk,
 	client *store.Client,
+	stage *Stage,
 ) *Model {
 	if client == nil {
 		client = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 	}
 
 	model := &Model{
-		System:    runtime.NewSystem(ctx, "model"),
-		desk:      desk,
-		store:     client,
-		sequences: &sync.Map{},
-		tries:     &sync.Map{},
+		System: runtime.NewSystem(ctx, "model"),
+		desk:   desk,
+		stage:  stage,
+		store:  client,
+		tries:  &sync.Map{},
 	}
 
 	model.tries.Store("explore", iradix.New[*data.Value]())
 	model.tries.Store("policy", iradix.New[*data.Value]())
 
-	// Restore explore and policy tries from S3 storage
 	for _, key := range []string{"explore", "policy"} {
 		untypedTree, ok := model.tries.Load(key)
 
@@ -86,32 +86,21 @@ func (model *Model) Evaluate(
 
 	enter := !model.desk.Has(symbol, true)
 
-	// Gap 1: Read coder layers from workspace tick if provided, fallback to out
 	source := out
-
 	if tick != nil {
 		source = tick
 	}
 
 	coder := ReadCoder(source, symbol)
 
-	sequences, _ := model.sequences.LoadOrStore(
-		role+"/"+symbol, tokenizer.NewTokens(),
-	)
-
-	path := sequences.(tokenizer.Tokens)
-
 	out.Append(observed, "lit")
-
-	var cut tokenizer.Token
 
 	if tick == nil {
 		return out
 	}
 
-	tick.Lookup(&cut, strings.Join(
-		[]string{"stage", symbol, "cut"}, "/",
-	))
+	var cut tokenizer.Token
+	tick.Lookup(&cut, strings.Join([]string{"stage", symbol, "cut"}, "/"))
 
 	if cut.String() == "" {
 		return out
@@ -119,14 +108,17 @@ func (model *Model) Evaluate(
 
 	out.Append(cut, "cut")
 
-	path = append(path, cut)
-	model.sequences.Store(role+"/"+symbol, path)
+	var step tokenizer.StepResult
+	tick.Lookup(&step, strings.Join([]string{"stage", symbol, "step"}, "/"))
 
-	if len(path) > 0 {
-		out.Append(path.String(), "path")
+	pathKey := strings.Join(step.Spell, "/")
+	pathDepth := len(step.Spell)
+
+	if pathKey != "" {
+		out.Append(pathKey, "path")
 	}
 
-	out.Append(path.String(), "policyPath")
+	out.Append(pathKey, "policyPath")
 	out.Append(enter, "enter")
 
 	if pending, ok := model.desk.TakePendingTrain(symbol); ok {
@@ -135,13 +127,12 @@ func (model *Model) Evaluate(
 	}
 
 	if enter {
-		// Gap 3: Cannot enter without a valid grammar path
-		if path.Len() < system.Cfg.Learning.MinPathLength {
+		if pathDepth < system.Cfg.Learning.MinPathLength {
 			return out
 		}
 
 		pathFound := false
-		probe := []byte(path.String() + "/enter")
+		probe := []byte(pathKey + "/enter")
 
 		for _, book := range []string{"explore", "policy"} {
 			untypedTrie, ok := model.tries.Load(book)
@@ -162,8 +153,7 @@ func (model *Model) Evaluate(
 			return out
 		}
 
-		if err := model.desk.Enter(symbol, path.String(), true, pathFound); err != nil {
-			errnie.Error(err)
+		if err := model.desk.Enter(symbol, pathKey, true, pathFound); err != nil {
 			return out
 		}
 
@@ -173,7 +163,10 @@ func (model *Model) Evaluate(
 			pos.OpenSurprise = coder.Surprise
 		}
 
-		model.sequences.Store(role+"/"+symbol, tokenizer.NewTokens())
+		if model.stage != nil {
+			model.stage.ResetSequencer(symbol)
+		}
+
 		return out
 	}
 
@@ -183,25 +176,25 @@ func (model *Model) Evaluate(
 		return out
 	}
 
-	position.ExitPath = path.String()
+	position.ExitPath = pathKey
 	shouldExit := false
 
 	if position.OpenSurprise > 0 && coder.Surprise >= 2*position.OpenSurprise {
 		shouldExit = true
 	}
 
-	if !shouldExit && path.Len() >= system.Cfg.Learning.MinPathLength {
+	if !shouldExit && pathDepth >= system.Cfg.Learning.MinPathLength {
 		if untypedTrie, ok := model.tries.Load(role); ok {
 			trie := untypedTrie.(*iradix.Tree[*data.Value])
 
-			if _, _, ok := trie.Root().LongestPrefix([]byte(path.String() + "/exit")); ok {
+			if _, _, ok := trie.Root().LongestPrefix([]byte(pathKey + "/exit")); ok {
 				shouldExit = true
 			}
 		}
 	}
 
 	if shouldExit {
-		if err := model.desk.Exit(symbol, path.String(), true); err != nil {
+		if err := model.desk.Exit(symbol, pathKey, true); err != nil {
 			errnie.Error(err)
 			return out
 		}
@@ -222,8 +215,10 @@ func (model *Model) completeExit(
 	}
 
 	out.Append("exit submitted", "outcome")
-	model.sequences.Store("explore/"+symbol, tokenizer.NewTokens())
-	model.sequences.Store("policy/"+symbol, tokenizer.NewTokens())
+
+	if model.stage != nil {
+		model.stage.ResetSequencer(symbol)
+	}
 }
 
 func (model *Model) updatePathThreshold(
@@ -241,21 +236,16 @@ func (model *Model) updatePathThreshold(
 
 	trie := untypedTrie.(*iradix.Tree[*data.Value])
 
-	for _, pathKey := range []string{
-		position.EntryPath, position.ExitPath,
-	} {
-		if pathKey == "" {
-			continue
-		}
+	for _, pathUpdate := range pathThresholdUpdates(position) {
+		pathKey := pathUpdate.key
+		action := pathUpdate.action
 
 		value, ok := trie.Get([]byte(pathKey))
-
 		if !ok || value == nil {
-			continue
+			value = data.NewValue("model", role, position.Symbol).Append(
+				action, "action",
+			)
 		}
-
-		var action string
-		value.Lookup(&action, "action")
 
 		threshold := model.getThreshold(value)
 
@@ -315,6 +305,35 @@ func (model *Model) updatePathThreshold(
 	}
 
 	model.tries.Store(role, trie)
+}
+
+type pathThresholdUpdate struct {
+	key    string
+	action string
+}
+
+func pathThresholdUpdates(position *broker.Position) []pathThresholdUpdate {
+	if position == nil {
+		return nil
+	}
+
+	out := make([]pathThresholdUpdate, 0, 2)
+
+	if position.EntryPath != "" {
+		out = append(out, pathThresholdUpdate{
+			key:    position.EntryPath,
+			action: "enter",
+		})
+	}
+
+	if position.ExitPath != "" && position.ExitPath != position.EntryPath {
+		out = append(out, pathThresholdUpdate{
+			key:    position.ExitPath,
+			action: "exit",
+		})
+	}
+
+	return out
 }
 
 func (model *Model) getThreshold(value *data.Value) float64 {

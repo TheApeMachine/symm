@@ -1,7 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
-import { atoms, kernelMeasurement, signals } from "#/collections/app";
+import { useEffect, useMemo, useState } from "react";
+import {
+	atoms,
+	kernelMeasurement,
+	kernelSymbolForAggregate,
+	resonanceFrameForSymbol,
+	signals,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -95,13 +101,18 @@ export const KernelInspector = () => {
 		signals.workspace,
 		(state) => state.aggregate,
 	);
+	const querySymbol = useMemo(
+		() => kernelSymbolForAggregate(focusSymbol, aggregate),
+		[focusSymbol, aggregate],
+	);
+
 	const frame = useSelector(signals.resonance, (state) => {
 		if (!resonance) return undefined;
-		return state[focusSymbol.replace(/\//g, "-")] ?? state[focusSymbol];
+		return resonanceFrameForSymbol(state, focusSymbol);
 	});
 	const signalReading =
 		!resonance && source
-			? (kernelMeasurement(source, focusSymbol, aggregate) ?? null)
+			? (kernelMeasurement(source, querySymbol, aggregate) ?? null)
 			: null;
 	const kernelFrame = resonance ? (frame ?? null) : signalReading;
 

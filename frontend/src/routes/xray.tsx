@@ -1,7 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import { atoms, DEFAULT_FOCUS_SYMBOL, signals, symbolScopeAliases } from "#/collections/app";
+import {
+	atoms,
+	DEFAULT_FOCUS_SYMBOL,
+	kernelSymbolForAggregate,
+	signals,
+	symbolScopeAliases,
+	symbolsOnAggregate,
+} from "#/collections/app";
 import { parseResonanceFromWorkspace } from "#/components/charts/prediction";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
@@ -31,14 +38,22 @@ const XrayPaintBridge = () => {
 			}
 
 			const aggregate = signals.workspace.state.aggregate;
-			for (const alias of symbolScopeAliases(focusSymbol)) {
-				const folded = parseResonanceFromWorkspace(alias, aggregate);
-				if (!folded) continue;
-				retainResonanceRow(focusSymbol, {
-					symbol: focusSymbol,
-					...folded,
-				});
-				break;
+			const carriers = new Set<string>([
+				focusSymbol,
+				kernelSymbolForAggregate(focusSymbol, aggregate),
+				...symbolsOnAggregate(aggregate),
+			]);
+
+			for (const sym of carriers) {
+				for (const alias of symbolScopeAliases(sym)) {
+					const folded = parseResonanceFromWorkspace(alias, aggregate);
+					if (!folded) continue;
+					retainResonanceRow(sym, {
+						symbol: sym,
+						...folded,
+					});
+					break;
+				}
 			}
 
 			const universe = getAllRetainedResonance();

@@ -1,18 +1,39 @@
 import { useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
+import { useMemo } from "react";
+import {
+	atoms,
+	kernelSymbolForAggregate,
+	resonanceFrameForSymbol,
+	signals,
+} from "#/collections/app";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import type { Value } from "#/types/value";
+import {
+	getRetainedResonance,
+	valueFromRetainedRow,
+} from "./xray-view";
 
 export const XrayFactsPanel = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const storeReading = useSelector(signals.resonance, (state) =>
+		resonanceFrameForSymbol(state, focusSymbol),
+	);
+	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
+
+	const reading = useMemo((): Value | undefined => {
+		if (storeReading) return storeReading;
+		const querySymbol = kernelSymbolForAggregate(focusSymbol, aggregate);
+		const retained =
+			getRetainedResonance(focusSymbol) ??
+			getRetainedResonance(querySymbol);
+
+		return valueFromRetainedRow(focusSymbol, retained);
+	}, [focusSymbol, storeReading, aggregate]);
 
 	return (
-		<Component
-			store={signals.resonance}
-			symbol={focusSymbol}
-			className="flex h-full flex-col"
-		>
+		<Component value={reading ?? null} className="flex h-full flex-col">
 			<Flex.Column className="mt-2 gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]">
 				<Flex.Row justify="between" gap={3}>
 					<Typography.Label size="xs" tone="f3" weight="normal">

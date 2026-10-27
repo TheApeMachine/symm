@@ -1,3 +1,5 @@
+import { batch, type Store } from "@tanstack/store";
+import { useEffect } from "react";
 import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
@@ -5,41 +7,40 @@ import { syncEngineTelemetry } from "#/lib/engine-telemetry";
 import { hubWsUrl } from "#/lib/hub";
 import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
 import { parseValues } from "#/types/decoder";
-import type { Value } from "#/types/value";
-import { batch, type Store } from "@tanstack/store";
-import { useEffect } from "react";
+import {
+	mergeWorkspaceAggregate,
+	type Value,
+	workspaceAggregateEqual,
+} from "#/types/value";
 
 type SignalStore = Store<Record<string, Value>>;
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
+const workspaceAggregateScope = (value: Value): string => {
+	if (
+		value.origin === "workspace" &&
+		value.role === "tick" &&
+		value.scope === ""
+	) {
+		return "aggregate";
+	}
+	return value.scope;
+};
+
 const advanceMarketTick = (value: Value) => {
-	if (value.origin !== "workspace" || value.scope !== "aggregate") {
+	if (value.origin !== "workspace") {
+		return;
+	}
+	if (workspaceAggregateScope(value) !== "aggregate") {
 		return;
 	}
 
 	const tick = typeof value.tick === "bigint" ? Number(value.tick) : value.tick;
-	atoms.tickCount.set(tick);
+	if (atoms.tickCount.get() !== tick) {
+		atoms.tickCount.set(tick);
+	}
 	updateClock(value.timestamp);
-};
-
-/*
-The workspace drain can fan out the aggregate tick before later pipeline
-stages append signal and grid layers. A second frame for the same tick may
-carry fewer layers — keep the richer one so impulse map and kernel readers
-do not lose live metrics.
-*/
-const keepExistingWorkspaceAggregate = (
-	existing: Value | undefined,
-	incoming: Value,
-): boolean => {
-	if (!existing || incoming.scope !== "aggregate") {
-		return false;
-	}
-	if (existing.tick !== incoming.tick) {
-		return false;
-	}
-	return incoming.index.length < existing.index.length;
 };
 
 const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
@@ -52,18 +53,22 @@ const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
 					continue;
 				}
 
-				if (
-					store === signals.workspace &&
-					scope === "aggregate" &&
-					keepExistingWorkspaceAggregate(prev[scope], frame)
-				) {
+				let nextFrame = frame;
+				if (store === signals.workspace && scope === "aggregate") {
+					nextFrame = mergeWorkspaceAggregate(prev[scope], frame);
+					if (workspaceAggregateEqual(prev[scope], nextFrame)) {
+						continue;
+					}
+				}
+
+				if (prev[scope] === nextFrame) {
 					continue;
 				}
 
 				if (next === null) {
 					next = { ...prev };
 				}
-				next[scope] = frame;
+				next[scope] = nextFrame;
 			}
 
 			return next ?? prev;
@@ -89,12 +94,14 @@ export const ingest = (values: Value[]) => {
 				continue;
 			}
 
+			const scope = workspaceAggregateScope(value);
+
 			let scopes = pending.get(store);
 			if (!scopes) {
 				scopes = new Map();
 				pending.set(store, scopes);
 			}
-			scopes.set(value.scope, value);
+			scopes.set(scope, value);
 
 			advanceMarketTick(value);
 		}

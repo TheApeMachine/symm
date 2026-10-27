@@ -1,9 +1,19 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { atoms, clockAtom, kernelMeasurement, signals } from "#/collections/app";
+import {
+	atoms,
+	clockAtom,
+	kernelMeasurement,
+	kernelSymbolForAggregate,
+	signals,
+} from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
-import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
+import {
+	type HawkesTraceSample,
+	hawkesTrace,
+	orderTracePoints,
+} from "./xray-hawkes-trace";
 
 /*
 An event's mark determines its excitation jump. Windowed event counts are not
@@ -19,8 +29,11 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 	const totalArrival = buyRate + sellRate;
 	const radius = metrics.branching_spectral_radius ?? 0;
 
-	// Check if this row is using legacy fitted fields (used in unit test fixtures)
-	if (metrics.excitation_decay !== undefined) {
+	const legacyEvent =
+		side !== "" &&
+		metrics["excitation_amplitude:buy_from_buy"] !== undefined;
+
+	if (legacyEvent && metrics.excitation_decay !== undefined) {
 		const decay = metrics.excitation_decay;
 		if (decay === 0) return null;
 		if (side !== "buy" && side !== "sell") {
@@ -50,12 +63,6 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 		};
 	}
 
-	/*
-		The published conditional intensity is λ at the event. Velocity is
-		(λ − λ_prev) / Δt, so a short gap turns it into a needle that is not
-		a jump in the process. The trace decays this level toward the rest
-		rate; the next event's level is the next jump.
-	*/
 	const level =
 		metrics.conditional_intensity !== undefined &&
 		metrics.conditional_intensity > 0
@@ -88,18 +95,17 @@ export const hawkesSample = (row: Value): HawkesTraceSample | null => {
 	};
 };
 
-const HAWKES_SAMPLE_CAP = 50;
-
 export const XrayHawkesPanel = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
 	useEffect(() => {
-		let samples: HawkesTraceSample[] = [];
+		let sample: HawkesTraceSample | undefined;
+		let lastFrameTimestamp: bigint | undefined;
 		let marketAt = 0n;
 		let frame = 0;
-		let lastTick: bigint | undefined;
+		let lastMetrics: Record<string, number> = {};
 
 		const set = (field: string, value: string) => {
 			const element = root.current?.querySelector<HTMLElement>(
@@ -114,73 +120,73 @@ export const XrayHawkesPanel = () => {
 			const canvas = hawkesCanvasRef.current;
 			const context = canvas?.getContext("2d");
 
-			if (!canvas || !context) return;
+			if (!canvas || !context || !sample) return;
 
 			const ratio = window.devicePixelRatio;
 			const width = canvas.clientWidth;
 			const height = canvas.clientHeight;
 			canvas.width = width * ratio;
 			canvas.height = height * ratio;
-			context.scale(ratio, ratio);
-			const HAWKES_VIEWPORT_SPAN = 15_000_000_000n;
-			const plot = hawkesTrace(samples, width, marketAt, HAWKES_VIEWPORT_SPAN);
+			context.setTransform(ratio, 0, 0, ratio, 0, 0);
+			context.clearRect(0, 0, width, height);
 
-			if (plot.points.length === 0) return;
+			const HAWKES_VIEWPORT_SPAN = 15_000_000_000n;
+			const plot = hawkesTrace(
+				[sample],
+				width,
+				marketAt,
+				HAWKES_VIEWPORT_SPAN,
+			);
+			const curve = orderTracePoints(plot.points);
+
+			if (curve.length === 0) return;
 
 			const pad = 14;
 			const base = height - 26;
 			const top = 30;
-			// Scale using visible samples and points so off-screen spikes don't lock the scale
-			const visibleSamples = samples.filter((sample) => sample.at >= plot.from);
-			const samplesToScale =
-				visibleSamples.length > 0 ? visibleSamples : samples;
 			const peak = Math.max(
-				1.0,
-				...samplesToScale.map((sample) =>
-					Math.max(sample.intensity, sample.postArrival),
-				),
-				...plot.points.map((p) => p.intensity),
+				sample.baseline * 1.12,
+				sample.intensity,
+				sample.postArrival,
+				...curve.map((p) => p.intensity),
+				1e-6,
 			);
 			const toX = (at: bigint) =>
 				pad +
 				(Number(at - plot.from) / Number(plot.through - plot.from)) *
 					(width - 2 * pad);
 			const toY = (value: number) => base - (value / peak) * (base - top);
-			const last = samples.at(-1) as HawkesTraceSample;
-			set("lambda", `${plot.points.at(-1)?.intensity.toFixed(4)} /s`);
+
+			set("lambda", `${curve.at(-1)?.intensity.toFixed(4)} /s`);
 			context.strokeStyle = "#3A342B";
 			context.setLineDash([3, 3]);
 			context.beginPath();
-			context.moveTo(pad, toY(last.baseline));
-			context.lineTo(width - pad, toY(last.baseline));
+			context.moveTo(pad, toY(sample.baseline));
+			context.lineTo(width - pad, toY(sample.baseline));
 			context.stroke();
 			context.setLineDash([]);
 			context.beginPath();
-			context.moveTo(toX(plot.points[0].at), base);
-
-			for (const point of plot.points)
+			context.moveTo(toX(plot.from), base);
+			for (const point of curve) {
 				context.lineTo(toX(point.at), toY(point.intensity));
-
+			}
 			context.lineTo(toX(plot.through), base);
 			context.closePath();
 			context.fillStyle = "rgba(235, 140, 50, 0.15)";
 			context.fill();
 			context.beginPath();
-			context.moveTo(toX(plot.points[0].at), toY(plot.points[0].intensity));
-
-			for (const point of plot.points)
+			context.moveTo(toX(curve[0].at), toY(curve[0].intensity));
+			for (const point of curve) {
 				context.lineTo(toX(point.at), toY(point.intensity));
-
+			}
 			context.strokeStyle = "rgba(235, 140, 50, 0.85)";
 			context.lineWidth = 1.6;
 			context.stroke();
-			context.strokeStyle = "rgba(127, 186, 203, 0.75)";
-			context.lineWidth = 1;
 
-			for (const sample of samples) {
-				if (sample.at < plot.from) continue;
-
+			if (sample.at >= plot.from) {
 				const position = toX(sample.at);
+				context.strokeStyle = "rgba(127, 186, 203, 0.75)";
+				context.lineWidth = 1;
 				context.beginPath();
 				context.moveTo(position, base);
 				context.lineTo(position, base + 8);
@@ -200,40 +206,34 @@ export const XrayHawkesPanel = () => {
 			if (!frame) frame = requestAnimationFrame(paint);
 		};
 
-		const appendSample = (reading: Value) => {
-			try {
-				const sample = hawkesSample(reading);
-				if (!sample) return;
-				const prior = samples.at(-1);
-				if (prior && prior.at === sample.at) {
-					samples = [...samples.slice(0, -1), sample];
-				} else {
-					samples = [...samples, sample];
-				}
-				if (samples.length > HAWKES_SAMPLE_CAP) {
-					samples = samples.slice(-HAWKES_SAMPLE_CAP);
-				}
-			} catch {
-				// Malformed fitted rows are skipped; live metrics stay drawable.
-			}
-		};
-
 		const update = () => {
 			const aggregate = signals.workspace.state.aggregate;
-			const reading = kernelMeasurement("hawkes", focusSymbol, aggregate);
+			const querySymbol = kernelSymbolForAggregate(focusSymbol, aggregate);
+			const reading =
+				kernelMeasurement("hawkes", querySymbol, aggregate) ??
+				kernelMeasurement("hawkes", focusSymbol, aggregate);
 
-			if (
-				reading &&
-				aggregate &&
-				aggregate.tick !== undefined &&
-				aggregate.tick !== lastTick
-			) {
-				lastTick = aggregate.tick;
-				appendSample(reading);
+			const frameTs = reading?.timestamp ?? aggregate?.timestamp;
+			if (reading && frameTs !== undefined) {
+				if (
+					lastFrameTimestamp === undefined ||
+					frameTs > lastFrameTimestamp
+				) {
+					lastFrameTimestamp = frameTs;
+					try {
+						const next = hawkesSample(reading);
+						if (next) sample = next;
+					} catch {
+						// Malformed fitted rows are skipped; live metrics stay drawable.
+					}
+				}
 			}
 
-			const metrics = reading?.metrics() ?? {};
-			const fitted = samples.at(-1);
+			const live = reading?.metrics() ?? {};
+			if (Object.keys(live).length > 0) {
+				lastMetrics = live;
+			}
+			const metrics = Object.keys(live).length > 0 ? live : lastMetrics;
 			const buyRate = metrics["arrival_rate:buy"];
 			const sellRate = metrics["arrival_rate:sell"];
 			const radius = metrics.branching_spectral_radius;
@@ -263,8 +263,8 @@ export const XrayHawkesPanel = () => {
 				"mu",
 				muRest > 0
 					? `${muRest.toFixed(4)} /s`
-					: fitted
-						? `${fitted.baseline.toFixed(4)} /s`
+					: sample
+						? `${sample.baseline.toFixed(4)} /s`
 						: "—",
 			);
 			set(
@@ -272,14 +272,14 @@ export const XrayHawkesPanel = () => {
 				metrics.conditional_intensity !== undefined
 					? `${metrics.conditional_intensity.toFixed(2)} /s`
 					: totalArrival > 0
-						? `${totalArrival.toFixed(2)} /s`
+						? `${totalArrival.toFixed(2)}/s`
 						: "—",
 			);
 			set(
 				"eta",
 				radius !== undefined
 					? radius.toFixed(3)
-					: fitted
+					: sample
 						? (metrics.branching_spectral_radius?.toFixed(3) ?? "—")
 						: "—",
 			);
@@ -293,8 +293,9 @@ export const XrayHawkesPanel = () => {
 						: "0%";
 			}
 
-			const at = reading?.timestamp ?? aggregate?.timestamp;
-			if (at !== undefined && at > marketAt) marketAt = at;
+			if (frameTs !== undefined && frameTs > marketAt) {
+				marketAt = frameTs;
+			}
 
 			schedule();
 		};

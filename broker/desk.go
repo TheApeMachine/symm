@@ -8,12 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -25,21 +23,15 @@ fills beside their shadow fills, and reports each completed round trip.
 */
 type Desk struct {
 	*runtime.System
-	mu        sync.Mutex
-	transport Transport
-	price     *Price
-	balance   *Balance
-	history   *History
-	positions *Cache
-	virtuals  *Cache
-	// virtualArchive is every settled virtual round trip (S3 closed records
-	// at boot and each Exit). Train Drop clears the live cache only; the
-	// archive keeps closed lots visible to the dashboard.
+	mu             sync.Mutex
+	transport      Transport
+	price          *Price
+	balance        *Balance
+	history        *History
+	positions      *Cache
+	virtuals       *Cache
 	virtualArchive *sync.Map
 	pendingTrain   *sync.Map
-	helloMu        sync.Mutex
-	lastHello      time.Time
-	helloArmed     bool
 }
 
 const helloMinGap = 250 * time.Millisecond
@@ -102,13 +94,9 @@ func NewDesk(
 				}
 
 				val.Restore(position)
-
-				if key == "virtual" {
-					types.SetVirtualOpen(position.Symbol, true)
-				}
 			case "closed":
 				if key == "virtual" && position.ID != "" {
-					desk.archiveVirtual(position)
+					desk.virtualArchive.Store(position.ID, position)
 				}
 			}
 		}
@@ -119,148 +107,16 @@ func NewDesk(
 }
 
 /*
-ArchiveVirtual keeps a settled virtual lot visible after the live cache drops it.
-*/
-func (desk *Desk) ArchiveVirtual(position *Position) {
-	if desk.virtualArchive == nil {
-		desk.virtualArchive = &sync.Map{}
-	}
-
-	desk.archiveVirtual(position)
-}
-
-func (desk *Desk) archiveVirtual(position *Position) {
-	if desk == nil || position == nil || position.ID == "" {
-		return
-	}
-
-	desk.virtualArchive.Store(position.ID, position)
-}
-
-/*
-publishLots is the positions snapshot: open paper and virtual lots, any
-virtual still on the closed side awaiting Train, and every archived
-virtual close loaded from S3 or recorded at Exit.
-*/
-func (desk *Desk) publishLots() []*Position {
-	seen := make(map[string]struct{})
-	lots := make([]*Position, 0)
-
-	add := func(position *Position) {
-		if position == nil || position.ID == "" {
-			return
-		}
-
-		if _, ok := seen[position.ID]; ok {
-			return
-		}
-
-		seen[position.ID] = struct{}{}
-		lots = append(lots, position)
-	}
-
-	for _, position := range desk.positions.All(true) {
-		add(position)
-	}
-
-	for _, position := range desk.virtuals.All(true) {
-		add(position)
-	}
-
-	for _, position := range desk.virtuals.Closed() {
-		add(position)
-	}
-
-	desk.virtualArchive.Range(func(_, value any) bool {
-		add(value.(*Position))
-		return true
-	})
-
-	slices.SortFunc(lots, func(a, b *Position) int {
-		return strings.Compare(a.Symbol, b.Symbol)
-	})
-
-	return lots
-}
-
-/*
-Lots is the desk's round-trip set for the epoch tape: everything Hello
-publishes, plus paper closes still on the desk. Paper closes leave the
-open cache before the venue fills them, and Hello does not publish that
-side.
-*/
-func (desk *Desk) Lots() []*Position {
-	if desk == nil {
-		return nil
-	}
-
-	lots := desk.publishLots()
-	seen := make(map[string]struct{}, len(lots))
-
-	for _, position := range lots {
-		if position != nil && position.ID != "" {
-			seen[position.ID] = struct{}{}
-		}
-	}
-
-	for _, position := range desk.positions.Closed() {
-		if position == nil || position.ID == "" {
-			continue
-		}
-
-		if _, ok := seen[position.ID]; ok {
-			continue
-		}
-
-		lots = append(lots, position)
-	}
-
-	return lots
-}
-
-/*
 Hello is a callback for the ui.Hub that fires when a new WebSocket
 connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	if desk == nil {
-		return
-	}
-
-	desk.helloMu.Lock()
-	wait := time.Since(desk.lastHello)
-
-	if wait < helloMinGap {
-		if !desk.helloArmed {
-			desk.helloArmed = true
-			time.AfterFunc(helloMinGap-wait, desk.flushHello)
-		}
-
-		desk.helloMu.Unlock()
-		return
-	}
-
-	desk.lastHello = time.Now()
-	desk.helloMu.Unlock()
-	desk.writeHello()
-}
-
-func (desk *Desk) flushHello() {
-	if desk == nil {
-		return
-	}
-
-	desk.helloMu.Lock()
-	desk.helloArmed = false
-	desk.lastHello = time.Now()
-	desk.helloMu.Unlock()
-	desk.writeHello()
-}
-
-func (desk *Desk) writeHello() {
 	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		desk.publishLots(), "positions",
+		append(
+			desk.positions.AllPositions(),
+			desk.virtuals.AllPositions()...,
+		), "positions",
 	))
 
 	if desk.balance.value != nil {
@@ -281,7 +137,7 @@ OpenPositions returns the open positions in the desk.
 */
 func (desk *Desk) OpenPositions(virtual bool) []*Position {
 	cache, _ := desk.cacheFor(virtual)
-	return cache.All(true)
+	return cache.OpenPositions()
 }
 
 func (desk *Desk) Position(symbol string, virtual bool) *Position {
@@ -368,105 +224,24 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 		return
 	}
 
-	latest := make(map[string]*decimal.Decimal, len(trades))
-	for i := range trades {
-		latest[trades[i].Symbol] = &trades[i].Price
-	}
-
-	var changed []*Position
-	seen := make(map[string]struct{})
-
-	note := func(position *Position) {
-		if position == nil || position.ID == "" {
-			return
-		}
-
-		if _, ok := seen[position.ID]; ok {
-			return
-		}
-
-		seen[position.ID] = struct{}{}
-		changed = append(changed, position)
-	}
+	changed := make([]*Position, 0)
 
 	for _, cache := range []*Cache{desk.positions, desk.virtuals} {
-		for _, position := range cache.All(true) {
+		for _, position := range cache.OpenPositions() {
 			if position == nil || position.Symbol == "" {
 				continue
 			}
 
-			if mark, ok := latest[position.Symbol]; ok {
+			if mark := desk.price.CurrentMark(position.Symbol); mark != nil {
 				position.Update(mark)
-				note(position)
-			} else if desk.repriceOpenFromBook(position) {
-				note(position)
+				changed = append(changed, position)
 			}
 		}
 	}
 
-	desk.publishChanged(changed)
-}
-
-/*
-RepriceFromBook refreshes one open lot from the live book. Used when level3
-moves the mark before the next trade print on that pair.
-*/
-func (desk *Desk) RepriceFromBook(symbol string) bool {
-	if desk == nil || symbol == "" {
-		return false
-	}
-
-	changed := false
-
-	for _, val := range []*Cache{
-		desk.positions, desk.virtuals,
-	} {
-		position := val.Get(symbol, true)
-
-		if position == nil {
-			continue
-		}
-
-		if desk.repriceOpenFromBook(position) {
-			changed = true
-		}
-	}
-
-	return changed
-}
-
-func (desk *Desk) repriceOpenFromBook(position *Position) bool {
-	if desk == nil || position == nil || position.Symbol == "" {
-		return false
-	}
-
-	mark := desk.price.CurrentMark(position.Symbol)
-	if mark == nil {
-		return false
-	}
-
-	position.Update(mark)
-	return true
-}
-
-/*
-publishChanged writes one frame per lot. The page keeps every other lot it
-already has, keyed by id, so a quiet position stays on screen.
-*/
-func (desk *Desk) publishChanged(positions []*Position) {
-	if desk == nil || len(positions) == 0 || ui.UI == nil || !ui.UI.Active() {
-		return
-	}
-
-	for _, position := range positions {
-		if position == nil || position.ID == "" {
-			continue
-		}
-
-		io.Copy(ui.UI, data.NewValue("positions", "update", position.ID).Append(
-			position, "position",
-		))
-	}
+	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
+		changed, "positions",
+	))
 }
 
 /*
@@ -476,6 +251,18 @@ for the symbol.
 func (desk *Desk) Has(symbol string, virtual bool) bool {
 	cache, _ := desk.cacheFor(virtual)
 	return cache.Has(symbol)
+}
+
+/*
+CanSize reports whether the book and budget can allocate a venue-valid lot.
+*/
+func (desk *Desk) CanSize(symbol string) bool {
+	if desk == nil || desk.price == nil || symbol == "" {
+		return false
+	}
+
+	qty, _ := desk.price.Allocate(symbol)
+	return qty != nil && qty.Sign() > 0
 }
 
 /*
@@ -526,25 +313,30 @@ func (desk *Desk) Enter(
 		)
 	}
 
+	qty, why := desk.price.Allocate(symbol)
+	if qty == nil || qty.Sign() <= 0 {
+		msg := "[desk.Enter] cannot size " + symbol
+		if why != "" {
+			msg += ": " + why
+		}
+
+		return errnie.Err(errnie.NotFound, msg, nil)
+	}
+
 	position := NewPosition(
-		symbol, path, virtual, desk.price, desk.transport,
+		symbol,
+		path,
+		pathFound,
+		virtual,
+		desk.price,
+		desk.transport,
 		desk.onPositionSettled,
 	)
 
-	position.PathFound = pathFound
-
-	if desk.price.Status() != runtime.READY {
-		return errnie.Err(
-			errnie.NotFound,
-			"[desk.Enter] price is not ready for "+symbol,
-			nil,
-		)
-	}
-
-	err := position.Enter(path)
+	err := position.Enter(path, qty)
 
 	if err != nil {
-		return errnie.Error(err)
+		return err
 	}
 
 	// The desk owns the position from the moment it enters: register it in
@@ -553,19 +345,13 @@ func (desk *Desk) Enter(
 	// live entry.
 	cache.Add(position.Symbol, position)
 
-	if virtual {
-		types.SetVirtualOpen(symbol, true)
-	}
-
 	if err := desk.history.Store(data.NewValue(
 		key, "open", symbol,
 	).Append(
 		position, "position",
 	)); err != nil {
 		cache.Drop(position.Symbol)
-		if virtual {
-			types.SetVirtualOpen(symbol, false)
-		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[desk.Enter] failed to store position",
@@ -575,7 +361,9 @@ func (desk *Desk) Enter(
 
 	// The entry is live. Publish this lot; the rest of the book is already
 	// on the page from the last snapshot or its own updates.
-	desk.publishChanged([]*Position{position})
+	io.Copy(ui.UI, data.NewValue("positions", "update", position.ID).Append(
+		position, "position",
+	))
 
 	return nil
 }
@@ -619,8 +407,6 @@ func (desk *Desk) releaseLocked(position *Position) error {
 	}
 
 	if position.Virtual {
-		types.SetVirtualOpen(position.Symbol, false)
-		desk.archiveVirtual(position)
 		desk.virtuals.Remove(position.Symbol)
 		desk.pendingTrain.Store(position.Symbol, position)
 	} else {
@@ -643,15 +429,9 @@ func (desk *Desk) releaseLocked(position *Position) error {
 		))
 	}
 
-	desk.publishChanged([]*Position{position})
+	io.Copy(ui.UI, data.NewValue("positions", "update", position.ID).Append(
+		position, "position",
+	))
 
 	return nil
-}
-
-/*
-Drop retires a virtual from the desk entirely, open or closed.
-*/
-func (desk *Desk) Drop(symbol string) {
-	types.SetVirtualOpen(symbol, false)
-	desk.virtuals.Drop(symbol)
 }

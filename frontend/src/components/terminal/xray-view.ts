@@ -1,8 +1,11 @@
-import { parseResonanceData } from "#/components/charts/prediction";
+import { symbolScopeAliases } from "#/collections/app";
+import {
+	parseResonanceData,
+	type ResonanceData,
+} from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
-import type { Value as ResonanceFrame } from "#/types/value";
-import { Value } from "#/types/value";
+import { type Value as ResonanceFrame, Value } from "#/types/value";
 
 export type HawkesMetrics = {
 	intensity: number | null;
@@ -173,7 +176,11 @@ hawkesMetricsFromFrames reads Hawkes intensity metrics from a flat value
 history for one symbol/source without store access.
 */
 export const hawkesMetricsFromFrames = (frames: Value[]): HawkesMetrics => {
-	const epoch = valueEpochs(frames).at(-1);
+	const epochs = valueEpochs(frames);
+	const epoch = epochs.sort(
+		(left, right) =>
+			Number((left[0]?.timestamp ?? 0n) - (right[0]?.timestamp ?? 0n)),
+	).at(-1);
 
 	if (epoch === undefined) {
 		return {
@@ -340,6 +347,90 @@ Retained universe maps across sparse telemetry updates.
 const retainedResonance = new Map<string, Record<string, unknown>>();
 const retainedHawkes = new Map<string, Record<string, number>>();
 
+const keepScalar = (
+	next: number | undefined,
+	prev: number | undefined,
+): number | undefined => {
+	if (next === undefined) return prev;
+	if (
+		next === 0 &&
+		prev !== undefined &&
+		Number.isFinite(prev) &&
+		Math.abs(prev) > 1e-9
+	) {
+		return prev;
+	}
+	return next;
+};
+
+export const carrierScope = (
+	frame: ResonanceFrame | Record<string, unknown> | Value,
+): string => {
+	if (frame instanceof Value) return frame.scope;
+	const row = frame as Record<string, unknown>;
+	return stringValue(row.symbol ?? row.scope);
+};
+
+/*
+resolveXrayCarrier picks the focus symbol's row when it has hierarchy layers,
+otherwise the best available carrier in the retained universe.
+*/
+export const resolveXrayCarrier = (
+	frames: Array<ResonanceFrame | Record<string, unknown> | Value>,
+	focusSymbol: string,
+): ResonanceFrame | Record<string, unknown> | Value | undefined => {
+	if (frames.length === 0) return undefined;
+
+	const aliases = new Set(symbolScopeAliases(focusSymbol));
+	const direct = frames.find((frame) => aliases.has(carrierScope(frame)));
+
+	if (direct && xrayLayersFromResonance(direct).length > 0) {
+		return direct;
+	}
+
+	for (const frame of frames) {
+		if (xrayLayersFromResonance(frame).length > 0) {
+			return frame;
+		}
+	}
+
+	return direct ?? frames[0];
+};
+
+export const valueFromRetainedRow = (
+	symbol: string,
+	row: Record<string, unknown> | null | undefined,
+): Value | undefined => {
+	if (!row) return undefined;
+
+	const prefix = `resonance/reading/${symbol.replace(/\//g, "-")}`;
+	const value = new Value({
+		scope: symbol,
+		prefix,
+		origin: "resonance",
+		role: "reading",
+	});
+	const enc = new TextEncoder();
+
+	const pushScalar = (key: string, raw: unknown) => {
+		if (raw === undefined || raw === null) return;
+		const num = Array.isArray(raw) ? raw[0] : raw;
+		if (typeof num !== "number" || !Number.isFinite(num)) return;
+		value.index.push(`${prefix}/${key}`);
+		value.layers.push(enc.encode(JSON.stringify([num])));
+	};
+
+	pushScalar("energy", row.energy);
+	pushScalar("surprise", row.surprise);
+	pushScalar("confidence", row.confidence);
+	pushScalar("supported_horizon", row.supportedHorizon);
+	pushScalar("resolved_steps", row.resolvedSteps);
+	pushScalar("maturity", row.maturity);
+
+	if (value.index.length === 0) return undefined;
+	return value;
+};
+
 export const retainResonanceRow = (
 	symbol: string,
 	row: Record<string, unknown> | Value,
@@ -385,10 +476,39 @@ export const retainResonanceRow = (
 				? parsedData.embedding
 				: (existing.embedding ?? existing.latent ?? []);
 
+	const plain = row instanceof Value ? {} : (row as Record<string, unknown>);
+	const incomingLayers = (parsedData.layers ??
+		plain.layers) as ResonanceData["layers"];
+	const existingLayers = existing.layers as ResonanceData["layers"];
+	const layers =
+		incomingLayers &&
+		incomingLayers.length > 0 &&
+		xrayLayersFromResonance({ layers: incomingLayers }).length > 0
+			? incomingLayers
+			: existingLayers;
+
+	const incomingLatent = (parsedData.latent ?? plain.latent) as
+		| number[]
+		| undefined;
+	const existingLatent = existing.latent as number[] | undefined;
+
 	retainedResonance.set(symbol, {
 		...existing,
-		...row,
+		...plain,
 		...parsedData,
+		layers,
+		latent:
+			incomingLatent && incomingLatent.length > 0
+				? incomingLatent
+				: existingLatent,
+		surprise: keepScalar(
+			(parsedData.surprise ?? plain.surprise) as number | undefined,
+			existing.surprise as number | undefined,
+		),
+		energy: keepScalar(
+			(parsedData.energy ?? plain.energy) as number | undefined,
+			existing.energy as number | undefined,
+		),
 		embedding,
 		symbol,
 	});

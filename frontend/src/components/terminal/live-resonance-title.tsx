@@ -1,19 +1,21 @@
 import { useSelector } from "@tanstack/react-store";
-import { atoms, signals } from "#/collections/app";
+import { atoms, resonanceFrameForSymbol, signals } from "#/collections/app";
 import {
 	parseResonanceData,
+	parseResonanceFromWorkspace,
 	type ResonanceData,
 } from "#/components/charts/prediction";
 
 export const LiveResonanceTitle = () => {
 	const symbol = useSelector(atoms.focus);
-	const last = useSelector(
-		signals.resonance,
-		(state) => state[symbol.replace(/\//g, "-")],
+	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
+	const last = useSelector(signals.resonance, (state) =>
+		resonanceFrameForSymbol(state, symbol),
 	);
-	const artifact: ResonanceData | null = last
-		? (parseResonanceData(last) ?? null)
-		: null;
+	const artifact: ResonanceData | null =
+		parseResonanceData(last) ??
+		parseResonanceFromWorkspace(symbol, aggregate) ??
+		null;
 
 	const horizonVal =
 		artifact && artifact.supportedHorizon != null

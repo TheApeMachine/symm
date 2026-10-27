@@ -171,6 +171,28 @@ describe("parseResonanceData", () => {
 		expect(parsed?.supportedHorizon).toBe(2);
 	});
 
+	it("treats energy and surprise as resonance content on the aggregate tick", () => {
+		const prefix = "workspace/tick/aggregate/1/100";
+		const frame = new Value({
+			origin: "workspace",
+			role: "tick",
+			scope: "aggregate",
+			prefix,
+			index: [
+				`${prefix}/resonance/BTC-USD/energy`,
+				`${prefix}/resonance/BTC-USD/surprise`,
+			],
+			layers: [
+				new TextEncoder().encode(JSON.stringify([1.2])),
+				new TextEncoder().encode(JSON.stringify([0.05])),
+			],
+		});
+
+		const parsed = parseResonanceFromWorkspace("BTC/USD", frame);
+		expect(parsed?.energy).toBe(1.2);
+		expect(parsed?.surprise).toBe(0.05);
+	});
+
 	it("folds resonance layers from the workspace aggregate tick", () => {
 		const prefix = "workspace/tick/aggregate/1/100";
 		const frame = new Value({

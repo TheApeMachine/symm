@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { signalFor, signals, workspaceFrame } from "#/collections/app";
+import {
+	kernelSymbolForAggregate,
+	signalFor,
+	signals,
+	workspaceFrame,
+} from "#/collections/app";
 import type { Value } from "#/types/value";
 import {
 	createCanonicalGridNodes,
@@ -124,6 +129,8 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 		};
 
 		const updateFromTelemetry = () => {
+			const aggregate = workspaceFrame();
+			const querySymbol = kernelSymbolForAggregate(symbol, aggregate);
 			const trainingState = signals.training?.state;
 
 			// Look for the training frame for the symbol, or any scope.
@@ -158,7 +165,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				counts: number;
 				symbol?: string;
 			}> = [];
-			let sawRegionLayer = false;
+			let sawRegionLayerForSymbol = false;
 			/*
 			Training.Step appends the lit regions onto the workspace tick
 			as train/regions. A training-origin frame may also carry
@@ -170,29 +177,30 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				for (const key of ["train/regions", "grid/regions"]) {
 					for (const { payload } of frame.layersUnder(key)) {
 						if (!Array.isArray(payload)) continue;
-						sawRegionLayer = true;
 						for (const region of payload) {
 							if (!region || typeof region.key !== "number") continue;
 							if (
 								typeof region.symbol === "string" &&
 								region.symbol !== "" &&
-								region.symbol !== symbol
+								region.symbol !== symbol &&
+								region.symbol !== querySymbol
 							) {
 								continue;
 							}
 							gridRegions.push(region);
+							sawRegionLayerForSymbol = true;
 						}
 					}
 				}
-				if (symbol) {
+				if (querySymbol) {
 					for (const { payload } of frame.layersUnder(
-						`stage/${symbol}/regions`,
+						`stage/${querySymbol}/regions`,
 					)) {
 						if (!Array.isArray(payload)) continue;
-						sawRegionLayer = true;
 						for (const region of payload) {
 							if (!region || typeof region.key !== "number") continue;
 							gridRegions.push(region);
+							sawRegionLayerForSymbol = true;
 						}
 					}
 				}
@@ -226,7 +234,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			name keep the reading they already hold.
 			*/
 			for (const pin of CANONICAL_PINS) {
-				const payloads = signalFor(pin.source, symbol);
+				const payloads = signalFor(pin.source, querySymbol, aggregate);
 				const payload = payloads[pin.metric];
 				if (!Array.isArray(payload) || payload.length === 0) continue;
 
@@ -249,7 +257,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			symbol (post midpoint cut). Regions absent from that row read
 			as zero so consistently dead slots stay visible in the panel.
 			*/
-			if (sawRegionLayer) {
+			if (sawRegionLayerForSymbol) {
 				for (let i = 0; i < 15; i++) {
 					const regionKey = `R${String(i).padStart(2, "0")}`;
 					const explicitBrightness =

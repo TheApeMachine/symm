@@ -263,8 +263,6 @@ export const Component = ({
 				walkFrame(root, propValue);
 				appendSeries(root, propValue);
 				if (onValue) onValue(propValue, root);
-			} else {
-				reset(root);
 			}
 			return;
 		}

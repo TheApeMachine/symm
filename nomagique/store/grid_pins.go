@@ -20,12 +20,6 @@ REGIME:
   - R08: Turbulent Friction (Chop & Warping: book mutation imbalance, shape KS divergence)
   - R09: Dead / Starved (Hold-relative tape fade: trade rate vs entry baseline)
 
-HOLD (injected while a lot is open; not a market signal source):
-  - trade_rate_ratio: current trade_rate / trade_rate_at_entry → R09
-  - giveback_from_peak: open PnL giveback fraction from hold peak → R03, R04
-  - bars_held: ticks since entry → R04
-  - evaporation_index: bid withdrawal + sell arrival + spread stress → R04
-
 HISTORY:
   - R10: Macro Trajectory Recurrence (Cross-asset covariance MDL path distance & percentile)
   - R11: Sentiment Trajectory Recurrence (Market breadth MDL path distance & percentile)
@@ -45,76 +39,75 @@ var regionMetricPins = map[string]map[string][]uint8{
 		"historical_path_percentile": {10},
 	},
 	"cvd": {
-		"midpoint_log_return":          {2},
-		"flow_aligned_midpoint_return": {4},
+		"midpoint_log_return":          {0},
+		"flow_aligned_midpoint_return": {3},
 		"gross_notional":               {2},
 		"signed_net_fraction":          {1, 5},
 	},
 	"depthflow": {
 		"mutation_activity_imbalance": {8},
-		"book_imbalance":              {2, 6},
+		"book_imbalance":              {1, 6},
 		"net_displayed_flow:bid":      {1, 5},
 		"touch_notional:bid":          {14},
 		"touch_notional:ask":          {2, 14},
-		"touch_imbalance":             {1, 6},
+		"touch_imbalance":             {1, 5},
 	},
 	"hawkes": {
 		"arrival_rate:buy":               {0, 7},
-		"conditional_intensity_velocity": {3},
-		"arrival_rate:sell":              {4, 7},
+		"arrival_rate:sell":              {3, 4},
 		"branching_spectral_radius":      {1, 7},
-		"conditional_intensity":          {}, // deliberately unpinned: kept out of the grid
-		"background_rate":                {}, // deliberately unpinned: μ rest for UI trace
-		"excitation_decay":               {}, // deliberately unpinned: fitted β for UI trace
+		"conditional_intensity_velocity": {0, 3},
+		"conditional_intensity":          {},
+		"background_rate":                {},
+		"excitation_decay":               {},
 	},
 	"leadlag": {
-		"led_peer_share":               {1, 5, 7},
+		"led_peer_share":               {1, 7},
 		"covariance_score_gain_median": {7},
-		"best_lag_seconds_median":      {2, 4, 6, 13},
-		"best_lag_seconds_mad":         {6, 13},
-		"defined_peer_count":           {}, // deliberately unpinned: kept out of the grid
+		"best_lag_seconds_median":      {6, 13},
+		"best_lag_seconds_mad":         {8, 13},
+		"defined_peer_count":           {},
 	},
 	"liquidity": {
-		// deliberately unpinned: raw touch prices, kept out of the grid
 		"best_price:bid":  {},
 		"best_price:ask":  {},
-		"relative_spread": {4, 8, 12},
+		"relative_spread": {6, 8, 12},
 		"fee_rate":        {12},
 		"friction_hurdle": {12},
 	},
 	"morphology": {
-		"concentration:ask":   {2, 4},
-		"entropy:ask":         {6, 14},
-		"book_shape_distance": {2, 6},
-		"book_shape_ks":       {8},
-		"morphology_change":   {4, 6, 8},
+		"concentration:ask":   {2},
 		"concentration:bid":   {5, 14},
-		"entropy:bid":         {2, 4, 5, 6},
+		"entropy:bid":         {5, 6},
+		"entropy:ask":         {6, 14},
+		"book_shape_distance": {6, 8},
+		"book_shape_ks":       {8},
+		"morphology_change":   {4, 8},
 	},
 	"pumpdump": {
-		"volume_rate":              {0, 7, 8},
+		"volume_rate":              {0, 7},
 		"volume_ratio":             {0, 7},
-		"trade_rate":               {0, 6},
+		"trade_rate":               {0, 9},
 		"positive_midpoint_return": {0},
 		"negative_midpoint_return": {3},
-		"spread_ratio":             {4, 6},
+		"spread_ratio":             {6, 8},
 	},
 	"sentiment": {
-		"same_direction_peer_count":     {0, 1, 5},
+		"same_direction_peer_count":     {0, 1},
 		"opposite_direction_peer_count": {2, 13},
 		"breadth":                       {13},
-		"breadth_velocity":              {2, 13},
+		"breadth_velocity":              {8, 13},
 		"historical_path_distance":      {11},
 		"historical_path_percentile":    {11},
 	},
 	"toxicity": {
-		"retreat_fraction:bid":    {2, 5},
+		"retreat_fraction:bid":    {2, 4},
 		"net_withdrawal_rate:bid": {4},
 	},
 	"hold": {
-		"trade_rate_ratio":    {9},
-		"giveback_from_peak":  {3, 4},
-		"bars_held":           {4},
-		"evaporation_index":   {4},
+		"trade_rate_ratio":   {9},
+		"bars_held":          {9},
+		"giveback_from_peak": {3},
+		"evaporation_index":  {4},
 	},
 }

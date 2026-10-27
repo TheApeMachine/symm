@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -183,7 +181,13 @@ func (hub *Hub) wsHandler() fiber.Handler {
 				err := conn.WriteMessage(websocket.BinaryMessage, p)
 
 				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						fmt.Sprintf("[hub] websocket write failed (%d bytes)", len(p)),
+						err,
+					))
 					conn.Close()
+					hub.connected.Store(false)
 					return
 				}
 			}
@@ -284,23 +288,6 @@ func (hub *Hub) startStream(kind string, run func(context.Context)) {
 		}
 		hub.streamMu.Unlock()
 	}()
-}
-
-func writeDetectionDone(hub *Hub, run uint64, symbol string) {
-	scope := symbol
-	if scope == "" {
-		scope = "all"
-	}
-
-	value := data.NewValue("detections", "done", scope)
-	value.Epoch = run
-
-	if symbol == "" {
-		value.Scope = ""
-	}
-
-	value.Append([]float64{0, 0, 0, 0, 0}, "ticks", "symbols", "excursions", "policies", "papers")
-	hub.Write(value.Bytes())
 }
 
 func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
@@ -436,38 +423,6 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		// One aggregated frame for explore keys the cognition tree reads.
 		if request.Prefix == "model/explore" {
 			hub.ListPrefix(request.Prefix)
-			break
-		}
-
-		if strings.HasPrefix(request.Prefix, "detections/") {
-			var run uint64
-			var err error
-
-			if request.Run != "" {
-				if run, err = strconv.ParseUint(request.Run, 10, 64); err != nil {
-					return errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("[hub] s3 detections run %s is not an epoch", request.Run),
-						err,
-					))
-				}
-			}
-
-			if request.Symbol != "" {
-				if _, err = strconv.ParseUint(request.At, 10, 64); err != nil || run == 0 || request.Class == "" {
-					return errnie.Error(errnie.Err(
-						errnie.Validation,
-						fmt.Sprintf("[hub] s3 detections tape needs run, class and C tick (at): %s", string(payload)),
-						err,
-					))
-				}
-			}
-
-			runEpoch := run
-			symbol := request.Symbol
-			hub.streamPrefix("s3", request.Prefix, func() {
-				writeDetectionDone(hub, runEpoch, symbol)
-			})
 			break
 		}
 

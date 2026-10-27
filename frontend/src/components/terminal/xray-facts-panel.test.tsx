@@ -19,21 +19,25 @@ describe("XrayFactsPanel", () => {
 
 		// Live value
 		act(() => {
+			const prefix = "resonance/reading/BTC-USD";
+			const enc = new TextEncoder();
+			const layers: Record<string, number | string> = {
+				energy: 0.1234,
+				surprise: 0.0567,
+				confidence: 0.952,
+				supported_horizon: 32,
+				resolved_steps: 120,
+				maturity: 42,
+			};
+			const index = Object.keys(layers).map((key) => `${prefix}/${key}`);
 			const val = new Value({
 				scope: "BTC/USD",
-				metrics: [
-					{ name: "energy", raw: 0.1234, snm: 0.1234 },
-					{ name: "surprise", raw: 0.0567, snm: 0.0567 },
-				],
-				metadata: [{ name: "maturity", value: 42 }],
-				provenance: [
-					{ name: "confidence", value: "0.952" },
-					{ name: "supported_horizon", value: "32" },
-					{ name: "resolved_steps", value: "120" },
-					{ name: "maturity", value: "42" },
-				],
+				prefix,
+				index,
+				layers: Object.values(layers).map((v) =>
+					enc.encode(JSON.stringify([v])),
+				),
 			});
-			(val as Record<string, unknown>).maturity = 42;
 			signals.resonance.setState((prev) => ({ ...prev, "BTC/USD": val }));
 		});
 

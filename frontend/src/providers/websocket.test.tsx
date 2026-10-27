@@ -265,6 +265,47 @@ describe("ingest", () => {
 		ingest([rich]);
 		ingest([sparse]);
 
-		expect(signals.workspace.state.aggregate?.index.length).toBe(2);
+		const aggregate = signals.workspace.state.aggregate;
+		expect(aggregate?.index.length).toBe(3);
+		expect(aggregate?.index.some((idx) => idx.includes("cvd/BTC/USD"))).toBe(
+			true,
+		);
+		expect(aggregate?.index.some((idx) => idx.includes("spot:trade"))).toBe(
+			true,
+		);
+	});
+
+	it("replaces the aggregate on a new tick without carrying prior layers", () => {
+		signals.workspace.setState(() => ({}));
+
+		const priorPrefix = "workspace/tick/aggregate/0/10";
+		const nextPrefix = "workspace/tick/aggregate/0/11";
+		ingest([
+			new Value({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				prefix: priorPrefix,
+				tick: 10n,
+				index: [`${priorPrefix}/cvd/BTC/USD/signed_net_fraction`],
+				layers: [new TextEncoder().encode(JSON.stringify([-0.2]))],
+			}),
+		]);
+		ingest([
+			new Value({
+				origin: "workspace",
+				role: "tick",
+				scope: "aggregate",
+				prefix: nextPrefix,
+				tick: 11n,
+				index: [`${nextPrefix}/spot:trade`],
+				layers: [new TextEncoder().encode(JSON.stringify([]))],
+			}),
+		]);
+
+		const aggregate = signals.workspace.state.aggregate;
+		expect(aggregate?.tick).toBe(11n);
+		expect(aggregate?.index.length).toBe(1);
+		expect(aggregate?.index[0]).toContain("spot:trade");
 	});
 });

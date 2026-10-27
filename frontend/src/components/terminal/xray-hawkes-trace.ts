@@ -8,6 +8,31 @@ export type HawkesTraceSample = {
 
 export type HawkesTracePoint = { at: bigint; intensity: number };
 
+/*
+hawkesLevelAt evaluates λ along the decay published with one fitted event.
+*/
+export const hawkesLevelAt = (
+	sample: HawkesTraceSample,
+	at: bigint,
+): number => {
+	if (at <= sample.at) {
+		return sample.intensity;
+	}
+
+	const seconds = Number(at - sample.at) / 1e9;
+	const restBelowPeak = sample.baseline < sample.postArrival;
+
+	if (restBelowPeak && sample.decay > 0) {
+		return (
+			sample.baseline +
+			(sample.postArrival - sample.baseline) *
+				Math.exp(-sample.decay * seconds)
+		);
+	}
+
+	return sample.postArrival;
+};
+
 const segmentIntensity = (
 	current: HawkesTraceSample,
 	next: HawkesTraceSample | undefined,
@@ -111,4 +136,61 @@ export const hawkesTrace = (
 	}
 
 	return { points, from, through };
+};
+
+const MIN_EVENT_GAP_NS = 100_000_000n;
+
+/*
+samplesForTrace drops aggregate ticks that share one frame timestamp. The
+workspace publishes one clock per batch; stacking fifty revisions at the
+same `at` draws a vertical comb, not Hawkes decay.
+*/
+export const samplesForTrace = (
+	samples: HawkesTraceSample[],
+): HawkesTraceSample[] => {
+	if (samples.length === 0) return [];
+	if (samples.length === 1) return samples;
+
+	const sorted = [...samples].sort((left, right) =>
+		left.at < right.at ? -1 : left.at > right.at ? 1 : 0,
+	);
+	const first = sorted[0];
+	const last = sorted.at(-1);
+	if (!first || !last) return sorted;
+	const span = last.at - first.at;
+	if (span < MIN_EVENT_GAP_NS) {
+		return [last];
+	}
+
+	const out: HawkesTraceSample[] = [];
+	for (const sample of sorted) {
+		const tail = out.at(-1);
+		if (tail && tail.at === sample.at) {
+			out[out.length - 1] = sample;
+		} else {
+			out.push(sample);
+		}
+	}
+	return out;
+};
+
+/*
+orderTracePoints sorts λ(t) samples for drawing and merges duplicate times.
+*/
+export const orderTracePoints = (
+	points: HawkesTracePoint[],
+): HawkesTracePoint[] => {
+	const sorted = [...points].sort((left, right) =>
+		left.at < right.at ? -1 : left.at > right.at ? 1 : 0,
+	);
+	const out: HawkesTracePoint[] = [];
+	for (const point of sorted) {
+		const tail = out.at(-1);
+		if (tail && tail.at === point.at) {
+			out[out.length - 1] = point;
+		} else {
+			out.push(point);
+		}
+	}
+	return out;
 };

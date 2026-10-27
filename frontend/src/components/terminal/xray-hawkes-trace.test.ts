@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type HawkesTraceSample, hawkesTrace } from "./xray-hawkes-trace";
+import {
+	type HawkesTraceSample,
+	hawkesTrace,
+	orderTracePoints,
+	samplesForTrace,
+} from "./xray-hawkes-trace";
 
 const arrival = (at: bigint, intensity = 0.2): HawkesTraceSample => ({
 	at,
@@ -112,6 +117,29 @@ describe("hawkesTrace", () => {
 		expect(atArrival.every((point) => point.intensity <= extrapolated)).toBe(
 			true,
 		);
+	});
+
+	it("collapses aggregate ticks that share one frame timestamp", () => {
+		const stacked = Array.from({ length: 40 }, (_, index) =>
+			arrival(BigInt(index), 0.2 + index * 0.001),
+		);
+		expect(samplesForTrace(stacked)).toHaveLength(1);
+		const lastSample = stacked.at(-1);
+		expect(lastSample).toBeDefined();
+		if (!lastSample) return;
+		expect(samplesForTrace(stacked)[0]?.postArrival).toBeCloseTo(
+			lastSample.postArrival,
+		);
+	});
+
+	it("orders trace points in time for a monotonic fill path", () => {
+		const { points } = hawkesTrace([arrival(0n), arrival(1_000_000_000n)], 40);
+		const ordered = orderTracePoints(points);
+		for (let index = 1; index < ordered.length; index += 1) {
+			expect(ordered[index]?.at ?? 0n).toBeGreaterThanOrEqual(
+				ordered[index - 1]?.at ?? 0n,
+			);
+		}
 	});
 
 	it("scrolls events off-screen when viewportSpan is supplied", () => {

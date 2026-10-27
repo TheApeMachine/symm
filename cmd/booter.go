@@ -493,26 +493,6 @@ func (booter *Booter) startIngress(
 				) {
 					errnie.Error(err)
 				}
-
-				if booter.desk != nil && level3 != nil {
-					seen := map[string]struct{}{}
-
-					for _, entry := range level3.Data {
-						if entry.Symbol == "" {
-							continue
-						}
-
-						if _, ok := seen[entry.Symbol]; ok {
-							continue
-						}
-
-						seen[entry.Symbol] = struct{}{}
-
-						if booter.desk.Has(entry.Symbol, true) {
-							booter.desk.RepriceFromBook(entry.Symbol)
-						}
-					}
-				}
 			case "trade":
 				data.Tick.Add(1)
 

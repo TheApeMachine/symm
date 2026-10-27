@@ -24,12 +24,7 @@ func NewCache(ctx context.Context) *Cache {
 	}
 }
 
-/*
-All returns all positions in the cache, ordered by symbol so the
-published frame is deterministic: without the sort, sync.Map's random
-range order reshuffles the frontend's rows every tick.
-*/
-func (cache *Cache) All(open ...bool) []*Position {
+func (cache *Cache) AllPositions() []*Position {
 	positions := make([]*Position, 0)
 
 	cache.open.Range(func(key, value any) bool {
@@ -37,15 +32,36 @@ func (cache *Cache) All(open ...bool) []*Position {
 		return true
 	})
 
-	if len(open) == 0 || !open[0] {
-		cache.closed.Range(func(key, value any) bool {
-			positions = append(positions, value.(*Position))
-			return true
-		})
-	}
+	cache.closed.Range(func(key, value any) bool {
+		positions = append(positions, value.(*Position))
+		return true
+	})
 
-	slices.SortFunc(positions, func(a, b *Position) int {
-		return strings.Compare(a.Symbol, b.Symbol)
+	return positions
+}
+
+/*
+OpenPositions returns all positions in the cache, ordered by symbol so the
+published frame is deterministic: without the sort, sync.Map's random
+range order reshuffles the frontend's rows every tick.
+*/
+func (cache *Cache) OpenPositions() []*Position {
+	positions := make([]*Position, 0)
+
+	cache.open.Range(func(key, value any) bool {
+		positions = append(positions, value.(*Position))
+		return true
+	})
+
+	return positions
+}
+
+func (cache *Cache) ClosedPositions() []*Position {
+	positions := make([]*Position, 0)
+
+	cache.closed.Range(func(key, value any) bool {
+		positions = append(positions, value.(*Position))
+		return true
 	})
 
 	return positions

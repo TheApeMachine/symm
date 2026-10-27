@@ -40,17 +40,19 @@ func NewGrid(ctx context.Context) *Grid {
 /*
 Region is one confluence region's evidence in a frame. Deformation is the
 sum of |SNM| scaled by excitation (one plus that source's energy surprise).
-Counts is how many pinned metrics landed here. Brightness is that average,
-deformation divided by counts. Excitation can push it above 1. The JSON
-tags are the dashboard contract: the Impulse Map renders the grid's own
-accepted regions from the training frame's grid/regions layer.
+Counts is how many pinned metrics landed here. Brightness is the mean of the
+top two per-metric deformations (top-2 corroborated pooling), so crowded
+regions are not diluted by arithmetic averaging. Excitation can push it above
+1. The JSON tags are the dashboard contract: the Impulse Map renders the
+grid's own accepted regions from the training frame's grid/regions layer.
 */
 type Region struct {
-	Symbol      string  `json:"symbol"`
-	Key         uint8   `json:"key"`
-	Deformation float64 `json:"deformation"`
-	Brightness  float64 `json:"brightness"`
-	Counts      int     `json:"counts"`
+	Symbol       string    `json:"symbol"`
+	Key          uint8     `json:"key"`
+	Deformation  float64   `json:"deformation"`
+	Brightness   float64   `json:"brightness"`
+	Counts       int       `json:"counts"`
+	deformations []float64 `json:"-"`
 }
 
 type Signal struct {
@@ -103,11 +105,28 @@ func (grid *Grid) Observe(
 	}
 
 	for _, region := range regions {
-		if region == nil || region.Counts == 0 {
+		if region == nil || len(region.deformations) == 0 {
 			continue
 		}
 
-		region.Brightness = region.Deformation / float64(region.Counts)
+		slices.SortFunc(region.deformations, func(a, b float64) int {
+			switch {
+			case b > a:
+				return 1
+			case b < a:
+				return -1
+			default:
+				return 0
+			}
+		})
+
+		k := min(2, len(region.deformations))
+		sum := 0.0
+		for i := 0; i < k; i++ {
+			sum += region.deformations[i]
+		}
+
+		region.Brightness = sum / float64(k)
 	}
 
 	return regions, nil
@@ -204,7 +223,9 @@ func (grid *Grid) ingestSignal(
 				*regions = append(*regions, region)
 			}
 
-			region.Deformation += math.Abs(grid.SNM(&signal, idx)) * excitation
+			def := math.Abs(grid.SNM(&signal, idx)) * excitation
+			region.Deformation += def
+			region.deformations = append(region.deformations, def)
 			region.Counts++
 		}
 	}

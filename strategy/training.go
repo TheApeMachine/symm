@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"io"
 	"slices"
 	"strings"
 
@@ -12,7 +11,6 @@ import (
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -47,7 +45,7 @@ func NewTraining(
 
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, client),
+		model:     NewModel(ctx, desk, client, stage),
 		price:     price,
 		desk:      desk,
 		client:    client,
@@ -109,10 +107,6 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 	training.telemetry.PublishWalks()
 	training.telemetry.EndTick(training.model, training.desk)
-
-	if ui.UI != nil && ui.UI.Active() {
-		io.Copy(ui.UI, value)
-	}
 
 	return value
 }

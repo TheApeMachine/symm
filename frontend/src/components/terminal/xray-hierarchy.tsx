@@ -2,8 +2,12 @@ import { createRef } from "react";
 import { symbolScopeAliases } from "#/collections/app";
 import { heatColor } from "#/components/terminal/canvas";
 import { layerCellsFromState } from "#/components/terminal/xray-layers";
-import { xrayLayersFromResonance } from "#/components/terminal/xray-view";
-import { Value } from "#/types/value";
+import {
+	carrierScope,
+	resolveXrayCarrier,
+	xrayLayersFromResonance,
+} from "#/components/terminal/xray-view";
+import type { Value } from "#/types/value";
 import { Typography } from "@/components/ui/typography";
 
 const symbolRef = createRef<HTMLSpanElement>();
@@ -128,14 +132,9 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 		Array.isArray(value) ? value : value != null ? [value] : []
 	) as Array<Value | Record<string, unknown>>;
 
-	const aliases = new Set(symbolScopeAliases(focusSymbol));
-	const focused = frames.find((frame) => {
-		const scope = String(
-			frame instanceof Value ? frame.scope : frame.symbol ?? "",
-		);
-		return aliases.has(scope);
-	});
+	const focused = resolveXrayCarrier(frames, focusSymbol);
 	const layers = xrayLayersFromResonance(focused);
+	const carrierSymbol = focused ? carrierScope(focused) : "";
 
 	if (symbolRef.current !== null) {
 		symbolRef.current.textContent = focusSymbol;
@@ -145,10 +144,14 @@ export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	if (waitingRef.current !== null && rowsRef.current !== null) {
 		if (frames.length === 0) {
 			waitingRef.current.textContent = "waiting for resonance layers";
-		} else if (!focused) {
-			waitingRef.current.textContent = `no resonance carrier for ${focusSymbol}`;
 		} else if (layers.length === 0) {
 			waitingRef.current.textContent = `resonance carrier for ${focusSymbol} has no layer rows yet`;
+		} else if (
+			carrierSymbol !== "" &&
+			carrierSymbol !== focusSymbol &&
+			!symbolScopeAliases(focusSymbol).includes(carrierSymbol)
+		) {
+			waitingRef.current.textContent = `layers from ${carrierSymbol} · focus ${focusSymbol}`;
 		} else {
 			waitingRef.current.textContent = "";
 		}

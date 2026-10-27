@@ -52,7 +52,7 @@ describe("useImpulseData", () => {
 		const { result } = renderHook(() => useImpulseData(SYMBOL));
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
 		).toBe(0.8);
 
 		publish(
@@ -65,7 +65,7 @@ describe("useImpulseData", () => {
 		);
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
 		).toBe(0.8);
 		expect(
 			pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation,
@@ -94,7 +94,7 @@ describe("useImpulseData", () => {
 		);
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R02")?.activation,
+			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
 		).toBe(0);
 	});
 
@@ -144,7 +144,7 @@ describe("useImpulseData", () => {
 		expect(result.current.regions[4]?.strength).toBe(0.6);
 	});
 
-	it("lights hawkes background and decay pins from the workspace tick", () => {
+	it("does not create pins for hawkes metrics declared unpinned on the grid", () => {
 		publish(
 			frame([
 				{
@@ -155,19 +155,23 @@ describe("useImpulseData", () => {
 					key: "hawkes/BTC/USD/excitation_decay",
 					payload: [1.8],
 				},
+				{
+					key: "hawkes/BTC/USD/arrival_rate:buy",
+					payload: [0.4],
+				},
 			]),
 		);
 
 		const { result } = renderHook(() => useImpulseData(SYMBOL));
 
 		expect(
-			pin(result.current.data, "hawkes:background_rate:R07")?.activation,
-		).toBeCloseTo(0.62);
+			pin(result.current.data, "hawkes:background_rate:R07"),
+		).toBeUndefined();
 		expect(
-			pin(result.current.data, "hawkes:excitation_decay:R03")?.activation,
-		).toBe(1);
+			pin(result.current.data, "hawkes:excitation_decay:R03"),
+		).toBeUndefined();
 		expect(
-			pin(result.current.data, "hawkes:excitation_decay:R07")?.activation,
-		).toBe(1);
+			pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation,
+		).toBe(0.4);
 	});
 });

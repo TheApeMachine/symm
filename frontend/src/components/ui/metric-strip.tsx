@@ -1,6 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo, useRef } from "react";
-import { atoms, DEFAULT_KERNELS, signals } from "#/collections/app";
+import {
+	atoms,
+	DEFAULT_KERNELS,
+	kernelSymbolForAggregate,
+	signals,
+} from "#/collections/app";
 import type { Value } from "#/types/value";
 import { MetricRow, stickyKernelMeasurements } from "./metric";
 
@@ -15,17 +20,25 @@ export const KernelMetricStrip = () => {
 		(state) => state.aggregate,
 	);
 
-	const stickyRef = useRef<Record<string, Record<string, Value>>>({});
+	const stickyRef = useRef<{
+		byKernel: Record<string, Value>;
+		bySymbol: Record<string, Record<string, Value>>;
+	}>({ byKernel: {}, bySymbol: {} });
+
+	const querySymbol = useMemo(
+		() => kernelSymbolForAggregate(focusSymbol, aggregate),
+		[focusSymbol, aggregate],
+	);
 
 	const measurements = useMemo(
 		() =>
 			stickyKernelMeasurements(
 				stickyRef.current,
 				DEFAULT_KERNELS,
-				focusSymbol,
+				querySymbol,
 				aggregate,
 			),
-		[focusSymbol, aggregate],
+		[querySymbol, aggregate],
 	);
 
 	return (

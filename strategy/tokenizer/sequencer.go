@@ -71,11 +71,16 @@ func (sequencer *Sequencer) Reset() {
 }
 
 var (
-	flatRegime  = []uint8{6, 7, 8}
-	flatPosture = []uint8{0, 1, 2}
-	holdRegime  = []uint8{7, 8, 9}
-	holdPosture = []uint8{3, 4, 5}
-	riskRegions = []uint8{12, 13, 14}
+	// Regimes 6..11:
+	// 6: Compression, 7: Ignition, 8: Friction, 9: Starved/Dead,
+	// 10: Macro Recurrence, 11: Sentiment Recurrence
+	flatRegime  = []uint8{6, 7, 8, 9, 10, 11}
+	flatPosture = []uint8{0, 1, 2} // Enter postures: Spark, Support, Opposition
+
+	holdRegime  = []uint8{6, 7, 8, 9, 10, 11}
+	holdPosture = []uint8{3, 4, 5} // Exit postures: Stall, Evaporation, Reload
+
+	riskRegions = []uint8{12, 13, 14} // Veto: Friction Hurdle, Contagion, Capacity
 )
 
 /*

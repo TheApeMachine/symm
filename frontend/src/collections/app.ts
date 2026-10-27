@@ -123,6 +123,61 @@ export const positionsStore = signals.positions;
 export const workspaceFrame = (): Value | undefined =>
 	signals.workspace.state.aggregate;
 
+const kernelLayerSources = new Set<string>(DEFAULT_KERNELS);
+
+const symbolsOnAggregateCache = new WeakMap<Value, string[]>();
+
+/*
+symbolsOnAggregate lists desk symbols that appear on kernel or resonance
+layers this tick (same path convention as logic/resonance.symbolsOnTick).
+*/
+export const symbolsOnAggregate = (frame: Value | undefined): string[] => {
+	if (!frame) return [];
+
+	const cached = symbolsOnAggregateCache.get(frame);
+	if (cached) return cached;
+
+	const root = frame.prefix ? `${frame.prefix}/` : "";
+	const seen = new Set<string>();
+
+	for (const index of frame.index) {
+		if (root !== "" && !index.startsWith(root)) continue;
+
+		const rel = root !== "" ? index.slice(root.length) : index;
+		const parts = rel.split("/").filter(Boolean);
+		if (parts.length < 2) continue;
+
+		if (parts[0] === "resonance" && parts[1]) {
+			const scope = parts[1];
+			if (scope.includes("-")) {
+				const dash = scope.indexOf("-");
+				seen.add(`${scope.slice(0, dash)}/${scope.slice(dash + 1)}`);
+			} else {
+				seen.add(scope);
+			}
+			continue;
+		}
+
+		if (!kernelLayerSources.has(parts[0]) || parts.length < 3) continue;
+		seen.add(`${parts[1]}/${parts[2]}`);
+	}
+
+	const list = [...seen].sort();
+	symbolsOnAggregateCache.set(frame, list);
+	return list;
+};
+
+export const resonanceFrameForSymbol = (
+	state: Record<string, Value>,
+	symbol: string,
+): Value | undefined => {
+	for (const scope of symbolScopeAliases(symbol)) {
+		const hit = state[scope];
+		if (hit) return hit;
+	}
+	return undefined;
+};
+
 /*
 signalFor reads one kernel's layers for one symbol off the aggregate tick.
 The Go Append addressed them <kernel>/<symbol>/<metric> below the frame
@@ -170,6 +225,35 @@ const kernelCacheFor = (frame: Value): Map<string, KernelReading> => {
 readKernel scans one kernel's layers for one symbol once per frame. Later
 readers of that pair, including every pin on the same kernel, reuse it.
 */
+const ingestKernelLayer = (
+	metrics: Record<string, unknown>,
+	bytes: Map<string, Uint8Array>,
+	suffix: string,
+	payload: unknown,
+	raw: Uint8Array,
+) => {
+	const names = suffix.split("/").filter(Boolean);
+
+	if (Array.isArray(payload) && names.length > 0) {
+		const count = Math.min(names.length, payload.length);
+		for (let n = 0; n < count; n++) {
+			const slice = [payload[n]];
+			metrics[names[n]] = slice;
+			bytes.set(names[n], encodeJsonBytes(slice));
+		}
+		return;
+	}
+
+	if (names.length === 1) {
+		metrics[names[0]] = payload;
+		bytes.set(names[0], raw);
+		return;
+	}
+
+	metrics[suffix] = payload;
+	bytes.set(suffix, raw);
+};
+
 const readKernel = (
 	kernel: string,
 	symbol: string,
@@ -182,43 +266,87 @@ const readKernel = (
 
 	const metrics: Record<string, unknown> = {};
 	const bytes = new Map<string, Uint8Array>();
-	const address = `${frame.prefix}/${kernel}/${symbol}/`;
+	const root = frame.prefix ? `${frame.prefix}/` : "";
 
 	for (let i = 0; i < frame.index.length; i++) {
 		const index = frame.index[i];
-		if (!index.startsWith(address)) continue;
+		if (root !== "" && !index.startsWith(root)) continue;
+
+		const marker = `/${kernel}/${symbol}/`;
+		const searchFrom = frame.prefix ? frame.prefix.length : 0;
+		const at = index.indexOf(marker, searchFrom);
+		if (at < 0) continue;
 
 		const payload = tryDecodeJsonBytes(frame.layers[i]);
 		if (payload === undefined) continue;
 
-		/*
-		A kernel writes its metrics as one float array addressed by every
-		metric name: cvd/BTC/USD/midpoint_log_return/flow_aligned_... The
-		suffix splits into those names, one scalar array each, which is the
-		shape readers look up by metric.
-		*/
-		const suffix = index.slice(address.length);
-		const names = suffix.split("/").filter(Boolean);
-		if (
-			Array.isArray(payload) &&
-			names.length > 1 &&
-			names.length === payload.length
-		) {
-			for (let n = 0; n < names.length; n++) {
-				const slice = [payload[n]];
-				metrics[names[n]] = slice;
-				bytes.set(names[n], encodeJsonBytes(slice));
-			}
-			continue;
-		}
-
-		metrics[suffix] = payload;
-		bytes.set(suffix, frame.layers[i]);
+		const suffix = index.slice(at + marker.length);
+		ingestKernelLayer(metrics, bytes, suffix, payload, frame.layers[i]);
 	}
 
 	const reading = { metrics, bytes };
 	byKey.set(cacheKey, reading);
 	return reading;
+};
+
+const aggregateHasKernelLayers = (
+	frame: Value,
+	symbol: string,
+): boolean => {
+	for (const scope of symbolScopeAliases(symbol)) {
+		for (const kernel of DEFAULT_KERNELS) {
+			const marker = `/${kernel}/${scope}/`;
+			if (frame.index.some((idx) => idx.includes(marker))) {
+				return true;
+			}
+		}
+	}
+	return false;
+};
+
+const kernelQuerySticky = {
+	focus: "",
+	tick: 0n,
+	symbol: "",
+};
+
+/*
+kernelSymbolForAggregate keeps the dashboard focus when that symbol has
+kernel layers on the tick; otherwise it uses the first symbol on the tick
+that does (paper often trades alts while focus stays BTC/USD).
+*/
+export const kernelSymbolForAggregate = (
+	focus: string,
+	frame: Value | undefined,
+): string => {
+	if (!frame || !focus) return focus;
+
+	if (aggregateHasKernelLayers(frame, focus)) {
+		kernelQuerySticky.focus = focus;
+		kernelQuerySticky.tick = frame.tick;
+		kernelQuerySticky.symbol = focus;
+		return focus;
+	}
+
+	if (
+		kernelQuerySticky.focus === focus &&
+		kernelQuerySticky.tick === frame.tick
+	) {
+		return kernelQuerySticky.symbol;
+	}
+
+	for (const symbol of symbolsOnAggregate(frame)) {
+		if (aggregateHasKernelLayers(frame, symbol)) {
+			kernelQuerySticky.focus = focus;
+			kernelQuerySticky.tick = frame.tick;
+			kernelQuerySticky.symbol = symbol;
+			return symbol;
+		}
+	}
+
+	return kernelQuerySticky.focus === focus
+		? kernelQuerySticky.symbol
+		: focus;
 };
 
 export const signalFor = (
@@ -249,7 +377,18 @@ export const kernelMeasurement = (
 	const frame = aggregate ?? workspaceFrame();
 	if (!frame) return undefined;
 
-	const { metrics, bytes } = readKernel(kernel, symbol, frame);
+	let metrics: Record<string, unknown> = {};
+	let bytes = new Map<string, Uint8Array>();
+
+	for (const scope of symbolScopeAliases(symbol)) {
+		const reading = readKernel(kernel, scope, frame);
+		if (Object.keys(reading.metrics).length > 0) {
+			metrics = reading.metrics;
+			bytes = reading.bytes;
+			break;
+		}
+	}
+
 	const keys = Object.keys(metrics);
 	if (keys.length === 0) return undefined;
 

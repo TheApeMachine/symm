@@ -53,20 +53,22 @@ type Position struct {
 func NewPosition(
 	symbol string,
 	path string,
+	pathFound bool,
 	virtual bool,
 	price *Price,
 	transport Transport,
 	onSettled func(*Position),
 ) *Position {
 	return &Position{
-		price:       price,
-		transport:   transport,
-		onSettled:   onSettled,
-		ID:          uuid.NewString(),
-		Fills: make([]*kraken.ExecutionData, 0),
-		Symbol:      symbol,
-		EntryPath:   path,
-		Virtual:     virtual,
+		price:     price,
+		transport: transport,
+		onSettled: onSettled,
+		ID:        uuid.NewString(),
+		Fills:     make([]*kraken.ExecutionData, 0),
+		Symbol:    symbol,
+		EntryPath: path,
+		PathFound: pathFound,
+		Virtual:   virtual,
 	}
 }
 
@@ -86,7 +88,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.Mark = mark
 		position.repriceLocked()
 
-		if _, ok := position.shouldExitLocked(); ok {
+		if _, ok := position.ShouldExit(); ok {
 			path = position.ExitPath
 			closed = path != ""
 		}
@@ -109,10 +111,10 @@ func (position *Position) Update(mark *decimal.Decimal) {
 }
 
 /*
-Enter sizes from the book when qty is unset, records the buy, and for a
-virtual lot emulates the venue fill.
+Enter records the buy. qty must be a venue-valid size from Price.Allocate;
+when nil or non-positive, Allocate is called once inside Enter.
 */
-func (position *Position) Enter(path string) error {
+func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	if path == "" {
 		return errnie.Err(
 			errnie.NotFound,
@@ -121,10 +123,10 @@ func (position *Position) Enter(path string) error {
 		)
 	}
 
-	qty := position.Qty
-	if qty == nil {
+	if qty == nil || qty.Sign() <= 0 {
 		var why string
 		qty, why = position.price.Allocate(position.Symbol)
+
 		if qty == nil || qty.Sign() <= 0 {
 			msg := "[position.Enter] cannot size " + position.Symbol
 			if why != "" {
@@ -135,21 +137,15 @@ func (position *Position) Enter(path string) error {
 		}
 	}
 
-	if qty.Sign() <= 0 {
-		return errnie.Err(
-			errnie.NotFound,
-			"[position.Enter] non-positive quantity for "+position.Symbol,
-			nil,
-		)
-	}
-
 	vol := qty.String()
+
 	entryOrder := &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "buy",
 		Volume:    vol,
 	}
+
 	exitOrder := &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
@@ -166,11 +162,9 @@ func (position *Position) Enter(path string) error {
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
-	position.ExitPath = path
-	virtual := position.Virtual
 	position.mu.Unlock()
 
-	if virtual {
+	if position.Virtual {
 		fill, err := position.price.EntryCost(position.Symbol, qty)
 
 		if err != nil {
@@ -192,20 +186,12 @@ func (position *Position) Enter(path string) error {
 			FeeUsdEquiv: fill.EntryFee,
 			Timestamp:   time.Now().UTC(),
 		})
-
-		if err := position.rejectOpenBookDrag(); err != nil {
-			return err
-		}
 	}
 
 	return position.Send(entryOrder)
 }
 
 func (position *Position) rejectOpenBookDrag() error {
-	if position == nil || position.price == nil {
-		return nil
-	}
-
 	position.mu.RLock()
 	pnlPct := position.PnLPct
 	position.mu.RUnlock()
@@ -215,11 +201,13 @@ func (position *Position) rejectOpenBookDrag() error {
 	}
 
 	budget, ok := position.price.OpenDragBudgetPct(position.Symbol)
+
 	if !ok || budget == nil {
 		return nil
 	}
 
 	maxLoss := budget.Mul(decimal.NewFromInt64(-1))
+
 	if pnlPct.Cmp(maxLoss) >= 0 {
 		return nil
 	}
@@ -337,20 +325,13 @@ func (position *Position) repriceLocked() {
 		return
 	}
 
-	qty := position.Qty
-	if qty == nil || qty.Sign() <= 0 {
-		return
-	}
-
 	fee := position.price.Fee(position.Symbol)
-	symbol := position.Symbol
-	entry := position.EntryPrice
 
-	position.ExitVWAP = position.price.ExitVWAP(symbol, qty)
-	position.ExitRoom = position.price.ExitRoom(symbol, qty)
+	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, position.Qty)
+	position.ExitRoom = position.price.ExitRoom(position.Symbol, position.Qty)
 
-	newPnL := position.price.PnL(symbol, qty, entry, fee)
-	newPnLPct := position.price.PnLPct(symbol, qty, entry, fee)
+	newPnL := position.price.PnL(position.Symbol, position.Qty, position.EntryPrice, fee)
+	newPnLPct := position.price.PnLPct(position.Symbol, position.Qty, position.EntryPrice, fee)
 
 	if newPnL == nil {
 		return
@@ -380,12 +361,6 @@ ShouldExit checks two conditions:
 2. Upside: Upwards momentum exhausted, flatlined, or reversed once in profit.
 */
 func (position *Position) ShouldExit() (trigger string, ok bool) {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-	return position.shouldExitLocked()
-}
-
-func (position *Position) shouldExitLocked() (trigger string, ok bool) {
 	if position.PnL == nil || position.ClosedAt != nil {
 		return "", false
 	}

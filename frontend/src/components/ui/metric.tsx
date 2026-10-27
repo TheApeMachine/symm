@@ -1,6 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { memo, useMemo, useRef } from "react";
-import { atoms, kernelMeasurement, signals } from "#/collections/app";
+import {
+	atoms,
+	kernelMeasurement,
+	kernelSymbolForAggregate,
+	signals,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
@@ -15,7 +20,10 @@ import {
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
 
-type StickyKernelCache = Record<string, Record<string, Value>>;
+type StickyKernelCache = {
+	byKernel: Record<string, Value>;
+	bySymbol: Record<string, Record<string, Value>>;
+};
 
 const stickyKernelReading = (
 	cache: StickyKernelCache,
@@ -24,14 +32,19 @@ const stickyKernelReading = (
 	aggregate: Value | undefined,
 ): Value | null => {
 	const next = kernelMeasurement(kernel, symbol, aggregate);
-	if (!next) {
-		return cache[symbol]?.[kernel] ?? null;
+	if (next) {
+		cache.byKernel[kernel] = next;
+		const bySymbol = cache.bySymbol[symbol] ?? {};
+		bySymbol[kernel] = next;
+		cache.bySymbol[symbol] = bySymbol;
+		return next;
 	}
 
-	const byKernel = cache[symbol] ?? {};
-	byKernel[kernel] = next;
-	cache[symbol] = byKernel;
-	return next;
+	return (
+		cache.byKernel[kernel] ??
+		cache.bySymbol[symbol]?.[kernel] ??
+		null
+	);
 };
 
 /** Latest folded kernel reading; holds the last sample when ticks omit this kernel. */
@@ -41,11 +54,20 @@ export const useKernelReading = (kernel: string): Value | null => {
 		signals.workspace,
 		(state) => state.aggregate,
 	);
-	const stickyRef = useRef<StickyKernelCache>({});
+	const stickyRef = useRef<StickyKernelCache>({
+		byKernel: {},
+		bySymbol: {},
+	});
+
+	const querySymbol = useMemo(
+		() => kernelSymbolForAggregate(focusSymbol, aggregate),
+		[focusSymbol, aggregate],
+	);
 
 	return useMemo(
-		() => stickyKernelReading(stickyRef.current, kernel, focusSymbol, aggregate),
-		[kernel, focusSymbol, aggregate],
+		() =>
+			stickyKernelReading(stickyRef.current, kernel, querySymbol, aggregate),
+		[kernel, querySymbol, aggregate],
 	);
 };
 

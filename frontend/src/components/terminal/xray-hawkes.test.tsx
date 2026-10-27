@@ -72,6 +72,20 @@ describe("hawkesSample", () => {
 		).toBeNull();
 	});
 
+	it("draws aggregate ticks that publish excitation_decay zero before fit", () => {
+		const sample = hawkesSample(
+			hawkesReading({
+				"arrival_rate:buy": 0,
+				"arrival_rate:sell": 0.01,
+				excitation_decay: 0,
+				conditional_intensity: 0,
+			}),
+		);
+
+		expect(sample?.postArrival).toBeCloseTo(0.01);
+		expect(sample?.intensity).toBeLessThanOrEqual(sample?.postArrival ?? 0);
+	});
+
 	it("reports a malformed fitted event instead of guessing its mark", () => {
 		expect(() => hawkesSample(row("unknown"))).toThrow("buy/sell mark");
 	});
@@ -87,8 +101,8 @@ describe("hawkesSample", () => {
 			}),
 		);
 
-		expect(sample?.intensity).toBeCloseTo(2.42);
 		expect(sample?.postArrival).toBeCloseTo(2.42);
+		expect(sample?.intensity).toBeCloseTo(2.42);
 	});
 });
 
@@ -132,6 +146,8 @@ describe("XrayHawkesPanel market clock", () => {
 		);
 		const context = {
 			scale: vi.fn(),
+			setTransform: vi.fn(),
+			clearRect: vi.fn(),
 			setLineDash: vi.fn(),
 			beginPath: vi.fn(),
 			moveTo: vi.fn(),

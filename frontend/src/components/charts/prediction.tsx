@@ -1,6 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { type CSSProperties, useEffect, useRef } from "react";
-import { atoms, signals } from "#/collections/app";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
+import {
+	atoms,
+	kernelSymbolForAggregate,
+	resonanceFrameForSymbol,
+	signals,
+} from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { Value } from "#/types/value";
@@ -82,6 +87,117 @@ const finalizeResonanceData = (data: ResonanceData): ResonanceData => {
 	return data;
 };
 
+const vectorHasSignal = (values: number[] | undefined): boolean =>
+	values?.some((value) => Number.isFinite(value) && Math.abs(value) > 1e-9) ??
+	false;
+
+const layersHaveSignal = (layers: LayerData[] | undefined): boolean =>
+	layers?.some(
+		(layer) =>
+			vectorHasSignal(layer.state) ||
+			vectorHasSignal(layer.prediction) ||
+			(layer.errorNorm !== undefined &&
+				Number.isFinite(layer.errorNorm) &&
+				layer.errorNorm > 0),
+	) ?? false;
+
+export const resonanceHasContent = (data: ResonanceData | undefined): boolean => {
+	if (!data) return false;
+
+	if (layersHaveSignal(data.layers)) return true;
+	if (vectorHasSignal(data.latent)) return true;
+	if (vectorHasSignal(data.forwardCurve)) return true;
+
+	return (
+		data.taskRelativePrecision !== undefined ||
+		data.taskSkill !== undefined ||
+		data.confidence !== undefined ||
+		(data.energy !== undefined && Number.isFinite(data.energy)) ||
+		(data.surprise !== undefined && Number.isFinite(data.surprise)) ||
+		(data.supportedHorizon !== undefined && data.supportedHorizon > 0) ||
+		(data.resolvedSteps !== undefined && data.resolvedSteps > 0)
+	);
+};
+
+const keepScalar = (
+	next: number | undefined,
+	prev: number | undefined,
+): number | undefined => {
+	if (next === undefined) return prev;
+	if (
+		next === 0 &&
+		prev !== undefined &&
+		Number.isFinite(prev) &&
+		Math.abs(prev) > 1e-9
+	) {
+		return prev;
+	}
+	return next;
+};
+
+const keepOptional = <T,>(next: T | undefined, prev: T | undefined): T | undefined =>
+	next === undefined ? prev : next;
+
+const mergeResonanceData = (
+	prior: ResonanceData,
+	patch: ResonanceData,
+	mode: "full" | "workspace",
+): ResonanceData => {
+	const patchLayers = layersHaveSignal(patch.layers) ? patch.layers : undefined;
+	const patchLatent = vectorHasSignal(patch.latent) ? patch.latent : undefined;
+	const patchForward = vectorHasSignal(patch.forwardCurve)
+		? patch.forwardCurve
+		: undefined;
+
+	const layers =
+		mode === "full" && patchLayers
+			? patchLayers
+			: patchLayers && !layersHaveSignal(prior.layers)
+				? patchLayers
+				: (prior.layers ?? []);
+	const latent = patchLatent ?? prior.latent ?? [];
+	const forwardCurve = patchForward ?? prior.forwardCurve ?? [];
+
+	return finalizeResonanceData({
+		taskRelativePrecision: keepScalar(
+			patch.taskRelativePrecision,
+			prior.taskRelativePrecision,
+		),
+		taskSkill: keepScalar(patch.taskSkill, prior.taskSkill),
+		supportedHorizon: keepOptional(patch.supportedHorizon, prior.supportedHorizon),
+		resolvedSteps: keepOptional(patch.resolvedSteps, prior.resolvedSteps),
+		surprise:
+			mode === "workspace"
+				? keepScalar(patch.surprise, prior.surprise)
+				: keepOptional(patch.surprise, prior.surprise),
+		energy:
+			mode === "workspace"
+				? keepScalar(patch.energy, prior.energy)
+				: keepOptional(patch.energy, prior.energy),
+		confidence: keepOptional(patch.confidence, prior.confidence),
+		calibrated: keepOptional(patch.calibrated, prior.calibrated),
+		taskCalibration: keepOptional(patch.taskCalibration, prior.taskCalibration),
+		taskSkillStatus: keepOptional(patch.taskSkillStatus, prior.taskSkillStatus),
+		taskSkillReady: keepOptional(patch.taskSkillReady, prior.taskSkillReady),
+		forwardCurve,
+		dynamics:
+			Object.keys(patch.dynamics ?? {}).length > 0
+				? patch.dynamics
+				: prior.dynamics,
+		latent,
+		layers,
+	});
+};
+
+const resonanceSnapshotEqual = (
+	left: ResonanceData | undefined,
+	right: ResonanceData | undefined,
+): boolean => {
+	if (left === right) return true;
+	if (!left || !right) return false;
+	return JSON.stringify(left) === JSON.stringify(right);
+};
+
 const parseResonanceFromRow = (
 	row: Record<string, unknown>,
 ): ResonanceData | undefined => {
@@ -95,7 +211,8 @@ const parseResonanceFromRow = (
 			if (typeof name !== "string" || name === "") continue;
 			applyResonanceSuffix(data, name, raw);
 		}
-		return finalizeResonanceData(data);
+		const finalized = finalizeResonanceData(data);
+		return resonanceHasContent(finalized) ? finalized : undefined;
 	}
 
 	const hasRetained =
@@ -187,14 +304,18 @@ const applyResonanceSuffix = (
 			const prop = parts[2];
 			const idx = Number.parseInt(parts[3] ?? "", 10);
 
-			if (!Number.isNaN(layerId) && !Number.isNaN(idx) && data.layers) {
+			if (!Number.isNaN(layerId) && data.layers) {
 				if (!data.layers[layerId]) {
 					data.layers[layerId] = { state: [], prediction: [] };
 				}
 				const layer = data.layers[layerId];
-				if (prop === "state" && layer.state) layer.state[idx] = first;
-				else if (prop === "prediction" && layer.prediction)
-					layer.prediction[idx] = first;
+				if (prop === "error" || prop === "errorNorm") {
+					layer.errorNorm = first;
+				} else if (!Number.isNaN(idx)) {
+					if (prop === "state" && layer.state) layer.state[idx] = first;
+					else if (prop === "prediction" && layer.prediction)
+						layer.prediction[idx] = first;
+				}
 			}
 		}
 		return;
@@ -248,7 +369,8 @@ export const parseResonanceData = (
 		applyResonanceSuffix(data, suffix, payload);
 	}
 
-	return finalizeResonanceData(data);
+	const finalized = finalizeResonanceData(data);
+	return resonanceHasContent(finalized) ? finalized : undefined;
 };
 
 /*
@@ -299,18 +421,7 @@ export const parseResonanceFromWorkspace = (
 	}
 
 	const finalized = finalizeResonanceData(data);
-	const hasLayers = (finalized.layers?.length ?? 0) > 0;
-	const hasLatent = (finalized.latent?.length ?? 0) > 0;
-	const hasScalars =
-		finalized.energy !== undefined ||
-		finalized.surprise !== undefined ||
-		(finalized.forwardCurve?.length ?? 0) > 0;
-
-	if (!hasLayers && !hasLatent && !hasScalars) {
-		return undefined;
-	}
-
-	return finalized;
+	return resonanceHasContent(finalized) ? finalized : undefined;
 };
 
 export function* resonanceLayers(
@@ -334,33 +445,44 @@ export function* resonanceLayers(
 }
 
 const useArtifact = (): ResonanceData | undefined => {
-	const symbol = useSelector(atoms.focus);
-	/*
-	The workspace frame advances every tick: it is the render trigger, and
-	its resonance layers fold into the chart's history. The focused
-	resonance reading (its own frame) rides the resonance store.
-	*/
+	const focus = useSelector(atoms.focus);
 	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
-	const reading = useSelector(signals.resonance, (state) => state[symbol]);
+	const reading = useSelector(signals.resonance, (state) =>
+		resonanceFrameForSymbol(state, focus),
+	);
+	const [artifact, setArtifact] = useState<ResonanceData | undefined>(
+		undefined,
+	);
+	const held = useRef<ResonanceData | undefined>(undefined);
 
 	useEffect(() => {
+		const symbol = kernelSymbolForAggregate(focus, aggregate);
 		foldResonance(symbol, aggregate);
-	}, [symbol, aggregate]);
 
-	const held = useRef<{
-		symbol: string | undefined;
-		reading: Value | undefined;
-	}>({ symbol, reading: undefined });
+		let next = held.current;
+		const fromStore = parseResonanceData(reading);
+		if (fromStore && resonanceHasContent(fromStore)) {
+			next = next
+				? mergeResonanceData(next, fromStore, "full")
+				: fromStore;
+		}
 
-	if (held.current.symbol !== symbol) {
-		held.current = { symbol, reading: undefined };
-	}
+		for (const scope of [focus, symbol]) {
+			const fromWorkspace = parseResonanceFromWorkspace(scope, aggregate);
+			if (!fromWorkspace || !resonanceHasContent(fromWorkspace)) continue;
+			next = next
+				? mergeResonanceData(next, fromWorkspace, "workspace")
+				: fromWorkspace;
+			break;
+		}
 
-	if (reading !== undefined) {
-		held.current.reading = reading;
-	}
+		if (next && !resonanceSnapshotEqual(held.current, next)) {
+			held.current = next;
+			setArtifact(next);
+		}
+	}, [focus, reading, aggregate]);
 
-	return parseResonanceData(held.current.reading);
+	return artifact ?? held.current;
 };
 
 const taskCalibration = (res: ResonanceData | undefined): string => {

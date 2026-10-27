@@ -22,12 +22,15 @@ const hawkesValue = (
 ): Value => {
 	const key = side === "" ? metric : `${metric}:${side}`;
 	const ts = BigInt(Number(at) || 0) * 1_000_000_000n;
+	const prefix = "hawkes/signal/BTC-USD";
 	return new Value({
 		origin: "hawkes",
 		role: "signal",
 		scope: "BTC/USD",
+		prefix,
 		timestamp: ts,
-		metrics: [{ name: key, raw }],
+		index: [`${prefix}/${key}`],
+		layers: [new TextEncoder().encode(JSON.stringify([raw]))],
 	});
 };
 

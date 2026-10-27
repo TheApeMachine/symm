@@ -203,3 +203,95 @@ export class Value {
 		return found;
 	}
 }
+
+export const layerRelativeToPrefix = (
+	index: string,
+	prefix: string,
+): string | null => {
+	const root = `${prefix}/`;
+	if (!index.startsWith(root)) return null;
+	return index.slice(root.length);
+};
+
+/*
+mergeWorkspaceAggregate unions workspace aggregate layers by path below the
+frame prefix. Incoming layers win on conflict; prior layers stay until the
+same relative path appears on a later tick or sparse fan-out.
+*/
+export const mergeWorkspaceAggregate = (
+	prior: Value | undefined,
+	incoming: Value,
+): Value => {
+	if (!prior) return incoming;
+
+	/*
+	Same tick only: union layers when the hub fans out sparse then rich.
+	A new tick replaces the frame; UI sticky state holds the last paint.
+	*/
+	if (prior.tick !== incoming.tick) {
+		return incoming;
+	}
+
+	const byRelative = new Map<string, Uint8Array>();
+
+	for (let i = 0; i < prior.index.length; i++) {
+		const rel = layerRelativeToPrefix(prior.index[i], prior.prefix);
+		if (rel === null) continue;
+		byRelative.set(rel, prior.layers[i]);
+	}
+
+	for (let i = 0; i < incoming.index.length; i++) {
+		const rel = layerRelativeToPrefix(incoming.index[i], incoming.prefix);
+		if (rel === null) continue;
+		byRelative.set(rel, incoming.layers[i]);
+	}
+
+	if (byRelative.size === 0) return incoming;
+
+	const index: string[] = [];
+	const layers: Uint8Array[] = [];
+	for (const [rel, layer] of byRelative) {
+		index.push(`${incoming.prefix}/${rel}`);
+		layers.push(layer);
+	}
+
+	return new Value({
+		id: incoming.id,
+		epoch: incoming.epoch,
+		tick: incoming.tick,
+		seqIdx: incoming.seqIdx,
+		timestamp: incoming.timestamp,
+		origin: incoming.origin,
+		role: incoming.role,
+		scope: incoming.scope,
+		prefix: incoming.prefix,
+		index,
+		layers,
+	});
+};
+
+export const workspaceAggregateEqual = (
+	left: Value | undefined,
+	right: Value | undefined,
+): boolean => {
+	if (left === right) return true;
+	if (!left || !right) return false;
+	if (
+		left.tick !== right.tick ||
+		left.prefix !== right.prefix ||
+		left.index.length !== right.index.length
+	) {
+		return false;
+	}
+	for (let i = 0; i < left.index.length; i++) {
+		if (left.index[i] !== right.index[i]) return false;
+		const a = left.layers[i];
+		const b = right.layers[i];
+		if (a === b) continue;
+		if (!a || !b || a.byteLength !== b.byteLength) return false;
+		for (let j = 0; j < a.byteLength; j++) {
+			if (a[j] !== b[j]) return false;
+		}
+	}
+	return true;
+};
