@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/store";
+import { filterExploreKeys } from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { parseOneValue } from "#/types/decoder";
@@ -570,15 +571,30 @@ export const ingestS3Prefix = (value: Value) => {
 		thresholds[key] = threshold;
 	}
 
+	const keptKeys = filterExploreKeys(policyKeys, thresholds);
+	const keptThresholds: Record<string, number> = {};
+	for (const key of keptKeys) {
+		const threshold = thresholds[key];
+		if (threshold !== undefined) keptThresholds[key] = threshold;
+	}
+
 	const epoch =
 		value.epoch != null && value.epoch !== 0n ? String(value.epoch) : null;
 
 	cognitionStore.setState((state) => {
 		const nextEpoch = epoch ?? state.epoch;
+		const nextThresholds = { ...state.thresholds };
+		for (const key of Object.keys(nextThresholds)) {
+			if (key.startsWith("model/explore/")) {
+				delete nextThresholds[key];
+			}
+		}
+		Object.assign(nextThresholds, keptThresholds);
+
 		if (
 			nextEpoch === state.epoch &&
-			sameStringList(state.policyKeys, policyKeys) &&
-			sameThresholds(state.thresholds, thresholds)
+			sameStringList(state.policyKeys, keptKeys) &&
+			sameThresholds(state.thresholds, nextThresholds)
 		) {
 			return state;
 		}
@@ -586,8 +602,8 @@ export const ingestS3Prefix = (value: Value) => {
 		return {
 			...state,
 			epoch: nextEpoch,
-			policyKeys,
-			thresholds: { ...state.thresholds, ...thresholds },
+			policyKeys: keptKeys,
+			thresholds: nextThresholds,
 		};
 	});
 	return true;
@@ -602,10 +618,15 @@ export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
 		policyKeys.push(key);
 	}
 
+	const keptKeys = filterExploreKeys(
+		policyKeys,
+		cognitionStore.state.thresholds,
+	);
+
 	cognitionStore.setState((state) => ({
 		...state,
 		epoch: epoch && epoch !== "" ? epoch : state.epoch,
-		policyKeys,
+		policyKeys: keptKeys,
 	}));
 	return true;
 };
@@ -684,8 +705,11 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
 		const tree = payload as CognitionTreeFrame;
-		const policyKeys = [...tree.keys];
 		cognitionStore.setState((state) => {
+			const policyKeys = filterExploreKeys(
+				[...tree.keys],
+				state.thresholds,
+			);
 			const keysChanged = !sameStringList(state.policyKeys, policyKeys);
 			if (keysChanged) {
 				trySendCommand({ type: "s3", prefix: "model/explore" });
@@ -740,14 +764,31 @@ export const ingestPolicyLayers = (
 		if (threshold !== null) thresholds[key] = threshold;
 	}
 
-	if (keys.length === 0) return;
+	const keptKeys = filterExploreKeys(keys, thresholds);
+	const keptThresholds: Record<string, number> = {};
+	for (const key of keptKeys) {
+		const threshold = thresholds[key];
+		if (threshold !== undefined) keptThresholds[key] = threshold;
+	}
 
-	cognitionStore.setState((state) => ({
-		...state,
-		epoch: String(epoch),
-		policyKeys: keys,
-		thresholds: { ...state.thresholds, ...thresholds },
-	}));
+	if (keptKeys.length === 0) return;
+
+	cognitionStore.setState((state) => {
+		const nextThresholds = { ...state.thresholds };
+		for (const key of Object.keys(nextThresholds)) {
+			if (key.startsWith("model/explore/")) {
+				delete nextThresholds[key];
+			}
+		}
+		Object.assign(nextThresholds, keptThresholds);
+
+		return {
+			...state,
+			epoch: String(epoch),
+			policyKeys: keptKeys,
+			thresholds: nextThresholds,
+		};
+	});
 };
 
 const REJECT = "train/reject/";

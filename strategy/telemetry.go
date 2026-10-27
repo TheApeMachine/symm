@@ -5,6 +5,7 @@ import (
 	"io"
 	"sync"
 
+	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -148,10 +149,17 @@ func stepPolicyFromStep(
 	stored := false
 	if model != nil && pathKey != "" {
 		key := []byte(pathKey)
-		if _, ok := model.explore.Get(key); ok {
-			stored = true
-		} else if _, ok := model.policy.Get(key); ok {
-			stored = true
+		for _, role := range []string{"explore", "policy"} {
+			untyped, ok := model.tries.Load(role)
+			if !ok {
+				continue
+			}
+
+			trie := untyped.(*iradix.Tree[*data.Value])
+			if _, ok := trie.Get(key); ok {
+				stored = true
+				break
+			}
 		}
 	}
 

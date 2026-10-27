@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
+	"golang.org/x/sync/errgroup"
 )
 
 type Training struct {
@@ -66,25 +67,37 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return value
 	}
 
+	group, _ := errgroup.WithContext(training.Context())
+
 	for _, symbol := range symbols {
-		out := data.NewValue(
-			"training", "step", symbol,
-		)
-		out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
+		group.Go(func() error {
+			out := data.NewValue(
+				"training", "step", symbol,
+			)
+			
+			out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
 
-		training.model.sequencers.Store(symbol, training.stage.Sequencer(symbol))
+			training.model.sequencers.Store(symbol, training.stage.Sequencer(symbol))
 
-		var observed []*nmstore.Region
-		value.Lookup(&observed, strings.Join([]string{"stage", symbol, "regions"}, "/"))
+			var observed []*nmstore.Region
+			value.Lookup(&observed, strings.Join([]string{"stage", symbol, "regions"}, "/"))
 
-		training.model.Evaluate(out, observed, value)
+			training.model.Evaluate(out, observed, value)
 
-		training.telemetry.CompleteSymbolStep(
-			out,
-			training.stage.Sequencer(symbol),
-			training.model,
-		)
-		training.telemetry.NoteWalk(symbol, out)
+			training.telemetry.CompleteSymbolStep(
+				out,
+				training.stage.Sequencer(symbol),
+				training.model,
+			)
+
+			training.telemetry.NoteWalk(symbol, out)
+
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		training.Error(err)
 	}
 
 	training.telemetry.PublishWalks()

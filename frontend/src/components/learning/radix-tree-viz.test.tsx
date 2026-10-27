@@ -171,6 +171,26 @@ describe("RadixTreeViz", () => {
 		expect(container.textContent).not.toContain("R08");
 	});
 
+	it("omits explore paths pruned on the desk", () => {
+		const { container } = render(
+			<RadixTreeViz
+				keys={[
+					"model/explore/R01/R02/enter.bin",
+					"model/explore/R03/R04/enter.bin",
+				]}
+				thresholds={{
+					"model/explore/R01/R02/enter.bin": 0.55,
+					"model/explore/R03/R04/enter.bin": 0.85,
+				}}
+				symbols={{}}
+			/>,
+		);
+
+		expect(container.textContent).toContain("All (1)");
+		expect(container.textContent).toContain("R01");
+		expect(container.textContent).not.toContain("R03");
+	});
+
 	it("prints the threshold under a scored leaf and fades the branch", () => {
 		const { container } = render(
 			<RadixTreeViz

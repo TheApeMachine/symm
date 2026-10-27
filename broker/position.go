@@ -39,6 +39,7 @@ type Position struct {
 	ExitRoom     *decimal.Decimal        `json:"exit_room,omitempty"`
 	PnL          *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct       *decimal.Decimal        `json:"pnl_pct,omitempty"`
+	OpenPnL      *decimal.Decimal        `json:"open_pnl,omitempty"` // First mark-to-exit PnL after open
 	LastPnL      *decimal.Decimal        `json:"last_pnl,omitempty"` // Previous tick PnL for momentum checks
 	HoldNs       int64                   `json:"hold_ns,omitempty"`
 	Virtual      bool                    `json:"virtual"`
@@ -329,6 +330,10 @@ func (position *Position) repriceLocked() {
 		position.LastPnL = position.PnL
 	}
 
+	if position.OpenPnL == nil && position.ClosedAt == nil {
+		position.OpenPnL = newPnL
+	}
+
 	position.PnL = newPnL
 	position.PnLPct = newPnLPct
 
@@ -354,10 +359,9 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 	// 1. DOWNSIDE STOP:
 	// OpenPnL is negative (e.g. -$10). It needed +$10 to reach breakeven ($0).
 	// If it drops that same $10 downwards, it hits -$20 (2 * OpenPnL).
-	if position.PnL != nil && position.PnL.Sign() < 0 {
-		stopLoss := position.PnL.Mul(decimal.NewFromInt64(2))
-
-		if position.PnL.Cmp(stopLoss) <= 0 {
+	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
+		stop := position.OpenPnL.Mul(decimal.NewFromInt64(2))
+		if position.PnL.Cmp(stop) <= 0 {
 			return "symmetric stop", true
 		}
 	}

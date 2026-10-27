@@ -8,6 +8,10 @@ import {
 	type TreeNode,
 	updateRadixTreeHighlights,
 } from "./radix-tree-paint";
+import {
+	EXPLORE_BASE_THRESHOLD,
+	explorePathKept,
+} from "./explore-path";
 import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
 
 interface RadixTreeVizProps {
@@ -68,9 +72,6 @@ export const thresholdOpacity = (threshold: number): number => {
 	const towardPrune = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
 	return 1 - towardPrune * 0.72;
 };
-
-/** Desk baseline before any settled lot adjusts the leaf. */
-const EXPLORE_BASE_THRESHOLD = 0.5;
 
 const exploreLeafThreshold = (
 	rawKey: string,
@@ -285,20 +286,21 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			const extracted = extractPrefixes(data);
 			if (extracted.length > 0) resolved = extracted;
 		}
-		const total = resolved.length;
+		const kept = resolved.filter((key) => explorePathKept(key, thresholds));
+		const total = kept.length;
 		if (total > MAX_TRIE_KEYS) {
 			return {
-				allKeys: resolved.slice(0, MAX_TRIE_KEYS),
+				allKeys: kept.slice(0, MAX_TRIE_KEYS),
 				keysTruncated: true,
 				totalKeyCount: total,
 			};
 		}
 		return {
-			allKeys: resolved,
+			allKeys: kept,
 			keysTruncated: false,
 			totalKeyCount: total,
 		};
-	}, [keys, data]);
+	}, [keys, data, thresholds]);
 
 	const actionCounts = useMemo(() => {
 		let enter = 0;

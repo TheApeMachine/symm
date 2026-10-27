@@ -9,7 +9,8 @@ import (
 
 /*
 Token is one MDL segment over the region observation stream. Sequitur
- supplies rule labels (M1, …) for the same span when digrams compressed.
+
+	supplies rule labels (M1, …) for the same span when digrams compressed.
 */
 type Token struct {
 	Symbols    []string    `json:"symbols"`
@@ -46,14 +47,28 @@ func (token Token) String() string {
 
 type Tokens []Token
 
+func NewTokens() Tokens {
+	return make([]Token, 0)
+}
+
+func (tokens Tokens) Append(token Token) Tokens {
+	return append(tokens, token)
+}
+
 func (tokens Tokens) String() string {
 	parts := make([]string, 0, len(tokens))
+
 	for _, t := range tokens {
 		if s := t.String(); s != "" {
 			parts = append(parts, s)
 		}
 	}
+
 	return strings.Join(parts, "/")
+}
+
+func (tokens Tokens) Len() int {
+	return len(tokens)
 }
 
 func (tokens Tokens) StringList() []string {
