@@ -11,6 +11,7 @@ import (
 	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -95,39 +96,49 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 	}
 
 	bySymbol := SignalSourcesBySymbol(tick)
+
 	if len(bySymbol) == 0 {
 		return tick
 	}
 
-	ctx := stage.Context()
+	group, ctx := errgroup.WithContext(stage.Context())
 
 	for symbol, sources := range bySymbol {
-		observed, err := stage.grid.Observe(
-			symbol, sources, stage.desk.Has(symbol, true),
-		)
-		if err != nil {
-			stage.Error(err)
-			return tick
-		}
+		group.Go(func() error {
+			observed, err := stage.grid.Observe(
+				symbol, sources, stage.desk.Has(symbol, true),
+			)
 
-		tick.Append(observed, "stage", symbol, "regions")
+			if err != nil {
+				return stage.Error(err)
+			}
 
-		if parts := strings.Split(symbol, "/"); len(parts) == 2 {
-			tick.Append(observed, append([]string{"train", "regions"}, parts...)...)
-		}
+			tick.Append(observed, "stage", symbol, "regions")
 
-		holdingPaper := stage.desk.Has(symbol, false)
-		holdingVirtual := stage.desk.Has(symbol, true)
-		holding := holdingPaper || holdingVirtual
+			if parts := strings.Split(symbol, "/"); len(parts) == 2 {
+				tick.Append(observed, append([]string{"train", "regions"}, parts...)...)
+			}
 
-		sequencer := stage.Sequencer(symbol)
-		step := sequencer.Step(observed, holding)
-		tick.Append(step, "stage", symbol, "step")
-		tick.Append(step.Token, "stage", symbol, "cut")
+			holdingPaper := stage.desk.Has(symbol, false)
+			holdingVirtual := stage.desk.Has(symbol, true)
+			holding := holdingPaper || holdingVirtual
 
-		if len(step.Spell) > 0 && stage.client != nil {
-			sequencer.Persist(ctx, stage.client, symbol)
-		}
+			sequencer := stage.Sequencer(symbol)
+			step := sequencer.Step(observed, holding)
+
+			tick.Append(step, "stage", symbol, "step")
+			tick.Append(step.Token, "stage", symbol, "cut")
+
+			if len(step.Spell) > 0 && stage.client != nil {
+				sequencer.Persist(ctx, stage.client, symbol)
+			}
+
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		stage.Error(err)
 	}
 
 	return tick

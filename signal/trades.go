@@ -2,6 +2,7 @@ package signal
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/theapemachine/symm/kraken"
 	"golang.org/x/sync/errgroup"
@@ -61,7 +62,7 @@ func RunTrades(ctx context.Context, trades []kraken.TradeData, fn func(kraken.Tr
 	}
 
 	group, gctx := errgroup.WithContext(ctx)
-	group.SetLimit(WorkerLimit())
+	group.SetLimit(runtime.GOMAXPROCS(0))
 
 	for i := range trades {
 		trade := trades[i]
@@ -88,7 +89,7 @@ func RunSymbols(ctx context.Context, symbols []string, fn func(string)) error {
 	}
 
 	group, gctx := errgroup.WithContext(ctx)
-	group.SetLimit(WorkerLimit())
+	group.SetLimit(runtime.GOMAXPROCS(0))
 
 	for i := range symbols {
 		symbol := symbols[i]

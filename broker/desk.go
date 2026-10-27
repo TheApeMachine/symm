@@ -583,16 +583,6 @@ func (desk *Desk) Exit(
 		return err
 	}
 
-	// The outcome is final the moment the exit is recorded: settle it
-	// before the cache move can retire the row.
-	if virtual {
-		position.mu.Lock()
-		if len(position.OutcomeTriggers) == 0 {
-			position.OutcomeTriggers = []string{"desk exit"}
-		}
-		position.mu.Unlock()
-	}
-
 	// The exit is final: the position leaves the open cache. A paper
 	// position stays addressable on the closed side until the venue's sell
 	// executions land (Apply settles the lot wherever the position lives),

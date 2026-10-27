@@ -1,12 +1,12 @@
 package strategy
 
 import (
-	"maps"
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -14,1055 +14,382 @@ import (
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 )
 
-const exploreRadixSep = "\x00"
-
-func exploreRadixKey(pathKey, action string) []byte {
-	if action == "" {
-		return []byte(pathKey)
-	}
-	return []byte(pathKey + exploreRadixSep + action)
-}
-
 type Model struct {
-	*runtime.System `json:"-"`
-	desk            *broker.Desk
-	store           *store.Client
-	stage           *Stage
-	path            *Path
-	momentum        *Momentum
-	resonance       *Resonance
-	policy          *iradix.Tree[*data.Value]
-	explore         *iradix.Tree[*data.Value]
+	*runtime.System
+	mu         sync.RWMutex
+	desk       *broker.Desk
+	store      *store.Client
+	sequencers *sync.Map
+	path       *Path
+	policy     *iradix.Tree[*data.Value]
+	explore    *iradix.Tree[*data.Value]
 }
 
 func NewModel(
 	ctx context.Context,
 	desk *broker.Desk,
 	client *store.Client,
-	stage *Stage,
 ) *Model {
 	if client == nil {
 		client = store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 	}
 
 	model := &Model{
-		System:    runtime.NewSystem(ctx, "model"),
-		desk:      desk,
-		store:     client,
-		stage:     stage,
-		path:      NewPath(),
-		momentum:  NewMomentum(),
-		resonance: NewResonance(),
-		policy:    iradix.New[*data.Value](),
-		explore:   iradix.New[*data.Value](),
+		System:     runtime.NewSystem(ctx, "model"),
+		desk:       desk,
+		store:      client,
+		sequencers: &sync.Map{},
+		path:       NewPath(),
+		policy:     iradix.New[*data.Value](),
+		explore:    iradix.New[*data.Value](),
 	}
 
 	if client != nil {
-		model.loadPolicyFromStore()
-		model.loadExploreFromStore()
+		// Restore explore and policy tries from S3 storage
+		for _, role := range []string{"policy", "explore"} {
+			prefix := fmt.Sprintf("model/%s/", role)
+			tree := model.explore
+			if role == "policy" {
+				tree = model.policy
+			}
+
+			// Gap 6: ListKeys yields the actual S3 object keys
+			for s3Key := range model.store.ListKeys(prefix) {
+				val := model.store.Download(ctx, s3Key)
+				if val == nil {
+					continue
+				}
+
+				// Extract pathKey cleanly from S3 key if val.Scope is empty
+				pathKey := val.Scope
+				if pathKey == "" {
+					rel := strings.TrimPrefix(s3Key, prefix)
+					rel = strings.TrimSuffix(rel, "/enter.bin")
+					rel = strings.TrimSuffix(rel, "/exit.bin")
+					pathKey = rel
+				}
+
+				if pathKey != "" {
+					tree, _, _ = tree.Insert([]byte(pathKey), val)
+				}
+			}
+
+			if role == "policy" {
+				model.policy = tree
+			} else {
+				model.explore = tree
+			}
+		}
 	}
 
 	return model
 }
 
-/*
-Decide joins grammar path, policy/explore trie, resonance gates, and the desk.
-Virtual flow: prefer stored paths, else explore; on exit learn both paths.
-*/
-func (model *Model) Decide(out *data.Value, tick *data.Value) *data.Value {
-	if out == nil || tick == nil {
+func (model *Model) Evaluate(
+	out *data.Value,
+	observed []*nmstore.Region,
+	tick *data.Value, // Gap 1: Workspace tick containing solver/resonance layers
+) *data.Value {
+	symbol := out.Scope
+	enter := !model.desk.Has(symbol, true)
+
+	// Gap 1: Read coder layers from workspace tick if provided, fallback to out
+	source := out
+
+	if tick != nil {
+		source = tick
+	}
+	
+	coder := ReadCoder(source, symbol)
+
+	untypedSequencer, ok := model.sequencers.Load(symbol)
+	if !ok {
 		return out
 	}
-
-	symbol := out.Scope
-
-	var observed []*nmstore.Region
-	tick.Lookup(&observed, strings.Join([]string{"stage", symbol, "regions"}, "/"))
-
-	out.Append(observed, "train", "regions")
-
-	var step tokenizer.StepResult
-	tick.Lookup(&step, strings.Join([]string{"stage", symbol, "step"}, "/"))
-
-	var cut tokenizer.Token
-	tick.Lookup(&cut, strings.Join([]string{"stage", symbol, "cut"}, "/"))
-
-	frictionPass, frictionChecked := model.resonance.FrictionAllows(observed)
-	out.Append(map[string]any{
-		"frictionPass":    frictionPass,
-		"frictionChecked": frictionChecked,
-	}, "measurement")
+	sequencer := untypedSequencer.(*tokenizer.Sequencer)
 
 	out.Append(observed, "lit")
+	step := sequencer.Step(observed, enter)
+	cut := step.Token
 	out.Append(cut, "cut")
-	appendEmitReadout(out, step, len(observed) > 0)
 
-	var surprise []float64
-	tick.Lookup(&surprise, model.resonance.LayerKey(symbol, "surprise"))
-
-	if len(surprise) > 0 {
-		out.Append(surprise, "resonance", "surprise")
-	}
-
-	holdingPaper := model.desk.Has(symbol, false)
-	holdingVirtual := model.desk.Has(symbol, true)
-	enter := !holdingPaper && !holdingVirtual
-
-	var pathKey string
-
-	if len(step.Spell) > 0 {
-		pathKey = model.path.Follow(symbol, enter, step.Spell)
-	} else {
-		pathKey = model.path.After(model.path.PolicyLive(symbol, enter), cut)
-	
-		if cut.String() != "" {
-			if enter {
-				model.path.Append(symbol, cut)
-			} else {
-				model.path.AppendTrigger(symbol, cut)
-			}
-		}
-	}
-
+	pathKey := model.path.After(model.path.PolicyLive(symbol, enter), cut)
 	if pathKey != "" {
 		out.Append(pathKey, "path")
 	}
 
-	out.Append(model.path.Live(symbol), "livePath")
-	out.Append(model.path.TriggerLive(symbol), "triggerPath")
-	out.Append(pathKey, "policyPath")
-	out.Append(enter, "enter")
-
-	lit := cut.String() != ""
-	// Flat only: a virtual hold is still walking the path; silence is not disuse.
-	if pathKey != "" && !lit && enter && !holdingPaper && !holdingVirtual {
-		model.penalizeExploreInactivity(out, symbol, pathKey)
-	}
-
-	var paper bool
-	var values map[string]*data.Value
-	var disagree bool
-
-	if !enter {
-		paper, values, disagree = model.matchStoredPaths(
-			pathKey, enter, holdingPaper, holdingVirtual,
-		)
-	}
-
-	if holdingPaper || holdingVirtual {
-		if model.resonance != nil {
-			model.resonance.NoteHold(symbol, tick)
-		}
-
-		if holdingVirtual && model.tryMomentumExit(out, tick, symbol, pathKey, true) {
-			return out
-		}
-
-		if holdingVirtual && model.tryBookStopExit(out, tick, model.desk.Position(symbol, true)) {
-			return out
-		}
-
-		if holdingPaper && model.tryMomentumExit(out, tick, symbol, pathKey, false) {
-			return out
-		}
-
-		if model.resonance != nil && model.resonance.TryCliffExit(
-			model, out, tick, symbol, pathKey, holdingVirtual,
-		) {
-			return out
+	// Gap 2: Fixed inverted append (Append while flat, AppendTrigger while holding)
+	if cut.String() != "" {
+		if enter {
+			model.path.Append(symbol, cut)
+		} else {
+			model.path.AppendTrigger(symbol, cut)
 		}
 	}
 
-	if enter && pathKey != "" {
-		if model.tryExploreStoredEnter(out, symbol, pathKey) {
+	// =========================================================================
+	// 1. ENTRY EVALUATION (Flat)
+	// =========================================================================
+	if enter {
+		// Gap 3: Cannot enter without a valid grammar path
+		if pathKey == "" {
 			return out
 		}
 
-		if model.tryPolicyStoredEnter(
-			out, tick, symbol, pathKey, observed, frictionPass, frictionChecked,
-		) {
+		// Check if this path exists in policy or explore tries
+		_, inPolicy, inExplore := model.lookupPath(pathKey)
+		pathFound := inPolicy || inExplore
+
+		// Gate 1: Predictive coder forward curve must be bullish
+		if !coder.Bullish {
 			return out
 		}
-		
-		if model.exploreNewPath(symbol, pathKey) {
-			out.Append("enter submitted", "outcome")
+
+		// Gate 2: Open virtual lot
+		if err := model.desk.Enter(symbol, pathKey, true, pathFound); err != nil {
+			return out
 		}
-		
+
+		// Record entry surprise on position for cliff detection
+		if pos := model.desk.Position(symbol, true); pos != nil {
+			pos.OpenSurprise = coder.Surprise
+		}
+
+		model.path.Reset(symbol)
 		return out
 	}
 
-	if !disagree && len(values) > 0 && pathKey != "" && pathDepth(pathKey) >= system.Cfg.Learning.MinPathLength {
-		virtual := !paper
-		position := model.desk.Position(symbol, virtual)
-
-		if position != nil && pathKey == position.EntryPath {
-			// Exit sentence still on the entry prefix.
-		} else {
-			if position != nil {
-				if paper {
-					position.AppendOutcomeTrigger("policy exit")
-				} else {
-					position.AppendOutcomeTrigger("explore exit")
-				}
-			}
-
-			if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
-				return out
-			}
-
-			if paper {
-				model.path.Reset(symbol)
-				model.stage.ResetSequencer(symbol)
-
-				if model.resonance != nil {
-					model.resonance.ForgetHold(symbol)
-				}
-
-				out.Append("exit submitted", "outcome")
-				return out
-			}
-
-			if model.finishVirtualExplore(position, out) {
-				model.stage.ResetSequencer(symbol)
-				out.Append("exit submitted", "outcome")
-			}
-		}
-	}
-
-	return out
-}
-
-func (model *Model) penalizeExploreInactivity(
-	out *data.Value, symbol, pathKey string,
-) {
-	if model == nil || pathKey == "" || model.onPolicy(pathKey) {
-		return
-	}
-
-	penalty := exploreTemporalPenalty()
-
-	if penalty <= 0 {
-		return
-	}
-
-	for _, action := range []string{"enter", "exit"} {
-		if _, ok := model.exploreLeafAt(pathKey, action); !ok {
-			continue
-		}
-
-		model.bumpExploreLeaf(symbol, pathKey, action, penalty)
-		updated := model.exploreLeaf(pathKey, action, symbol)
-		model.noteExploreThreshold(out, pathKey, action, leafThreshold(updated))
-	}
-}
-
-func (model *Model) exploreLeafAt(pathKey, action string) (*data.Value, bool) {
-	if model == nil || model.explore == nil || pathKey == "" || action == "" {
-		return nil, false
-	}
-
-	leaf, ok := model.explore.Get(exploreRadixKey(pathKey, action))
-
-	if !ok || leaf == nil {
-		return nil, false
-	}
-
-	return leaf, true
-}
-
-func (model *Model) noteExploreThreshold(
-	out *data.Value, pathKey, action string, threshold float64,
-) {
-	if out == nil || pathKey == "" {
-		return
-	}
-
-	suffix := "enter.bin"
-
-	if action == "exit" {
-		suffix = "exit.bin"
-	}
-
-	key := "model/explore/" + pathKey + "/" + suffix
-
-	var prior map[string]float64
-	out.Lookup(&prior, "exploreThresholds")
-	next := map[string]float64{}
-
-	maps.Copy(next, prior)
-
-	next[key] = threshold
-	out.Append(next, "exploreThresholds")
-}
-
-func pathParentPrefixes(pathKey string) []string {
-	parts := strings.Split(pathKey, "/")
-
-	if len(parts) < 2 {
-		return nil
-	}
-
-	out := make([]string, 0, len(parts)-1)
-
-	for n := len(parts) - 1; n >= 1; n-- {
-		out = append(out, strings.Join(parts[:n], "/"))
-	}
-
-	return out
-}
-
-func (model *Model) exploreEnterAt(pathKey string) (*data.Value, bool) {
-	if model == nil || model.explore == nil || pathKey == "" {
-		return nil, false
-	}
-
-	if leaf, ok := model.exploreLeafAt(pathKey, "enter"); ok {
-		return leaf, true
-	}
-
-	for _, prefix := range pathParentPrefixes(pathKey) {
-		if pathDepth(prefix) < system.Cfg.Learning.MinPathLength {
-			continue
-		}
-
-		if leaf, ok := model.exploreLeafAt(prefix, "enter"); ok {
-			return leaf, true
-		}
-	}
-
-	return nil, false
-}
-
-func (model *Model) policyEnterAt(pathKey string) (*data.Value, bool) {
-	if model == nil || model.policy == nil || pathKey == "" {
-		return nil, false
-	}
-
-	leaf, ok := model.policy.Get([]byte(pathKey))
-
-	if !ok || leaf == nil {
-		return nil, false
-	}
-
-	var action string
-	leaf.Lookup(&action, "action")
-
-	if action != "enter" {
-		return nil, false
-	}
-
-	return leaf, true
-}
-
-func (model *Model) tryExploreStoredEnter(
-	out *data.Value, symbol, pathKey string,
-) bool {
-	if _, ok := model.exploreEnterAt(pathKey); !ok {
-		return false
-	}
-
-	if err := model.desk.Enter(symbol, pathKey, true, true); err != nil {
-		return false
-	}
-
-	model.path.Reset(symbol)
-
-	if model.resonance != nil {
-		model.resonance.ForgetHold(symbol)
-	}
-
-	if out != nil {
-		out.Append("enter submitted", "outcome")
-	}
-
-	return true
-}
-
-func (model *Model) tryPolicyStoredEnter(
-	out *data.Value,
-	tick *data.Value,
-	symbol, pathKey string,
-	observed []*nmstore.Region,
-	frictionPass, frictionChecked bool,
-) bool {
-	if _, ok := model.policyEnterAt(pathKey); !ok {
-		return false
-	}
-
-	if frictionChecked && !frictionPass {
-		if out != nil {
-			out.Append("friction", "blockedReason")
-		}
-
-		return false
-	}
-
-	if model.resonance != nil && !model.resonance.AllowsEntry(tick, symbol, observed) {
-		if out != nil {
-			out.Append("resonance veto", "blockedReason")
-		}
-
-		return false
-	}
-
-	if !model.paperRoom() {
-		return false
-	}
-
-	if err := model.desk.Enter(symbol, pathKey, false, true); err != nil {
-		return false
-	}
-
-	model.path.Reset(symbol)
-
-	if model.resonance != nil {
-		model.resonance.ForgetHold(symbol)
-	}
-
-	return true
-}
-
-func pathDepth(pathKey string) int {
-	if pathKey == "" {
-		return 0
-	}
-
-	return strings.Count(pathKey, "/") + 1
-}
-
-/*
-matchStoredPaths walks every stored leaf under pathKey and acts only when
-they all agree on one action (all enter or all exit). Mixed actions set
-disagree and block the desk step.
-*/
-func (model *Model) matchStoredPaths(
-	pathKey string,
-	enter, holdingPaper, holdingVirtual bool,
-) (paper bool, values map[string]*data.Value, disagree bool) {
-	values = make(map[string]*data.Value)
-
-	if pathKey == "" || model == nil {
-		return false, values, false
-	}
-
-	trees := []*iradix.Tree[*data.Value]{model.policy, model.explore}
-	onPaper := []bool{true, false}
-
-	if holdingVirtual {
-		trees = []*iradix.Tree[*data.Value]{model.explore}
-		onPaper = []bool{false}
-	} else if holdingPaper {
-		trees = []*iradix.Tree[*data.Value]{model.policy}
-		onPaper = []bool{true}
-	}
-
-	want := "exit"
-
-	if enter {
-		want = "enter"
-	}
-
-	for i, tree := range trees {
-		seen := make(map[string]struct{})
-		tree.Root().WalkPrefix([]byte(pathKey), func(k []byte, v *data.Value) bool {
-			if v == nil {
-				return false
-			}
-
-			var stored string
-			v.Lookup(&stored, "action")
-
-			if stored != "enter" && stored != "exit" {
-				return false
-			}
-
-			seen[stored] = struct{}{}
-			values[string(k)] = v
-
-			return false
-		})
-
-		if len(seen) == 0 {
-			values = make(map[string]*data.Value)
-			continue
-		}
-
-		if len(seen) > 1 {
-			disagree = true
-			break
-		}
-
-		if _, ok := seen[want]; !ok {
-			disagree = true
-			break
-		}
-
-		return onPaper[i], values, false
-	}
-
-	if disagree {
-		values = make(map[string]*data.Value)
-	}
-
-	return false, values, disagree
-}
-
-// exploreNewPath opens a virtual lot when no explore enter leaf exists at pathKey.
-func (model *Model) exploreNewPath(symbol, pathKey string) bool {
-	if pathKey == "" {
-		return false
-	}
-
-	if _, ok := model.exploreEnterAt(pathKey); ok {
-		return false
-	}
-	
-	if err := model.desk.Enter(symbol, pathKey, true, false); err != nil {
-		return false
-	}
-	
-	model.path.Reset(symbol)
-	return true
-}
-
-// finishVirtualExplore adjusts thresholds, prunes/promotes, persists both paths (3–5).
-func (model *Model) finishVirtualExplore(
-	position *broker.Position, out *data.Value,
-) bool {
-	if model == nil || position == nil {
-		return false
-	}
-
-	if !position.TrySettleExplore() {
-		return true
-	}
-
-	if !position.VirtualExploreCloseTeaches() {
-		if model.path != nil {
-			model.path.Reset(position.Symbol)
-		}
-
-		return true
-	}
-
-	// Reused paths walk thresholds on win/loss. New paths persist at desk 0.5.
-	if position.PathFound {
-		model.adjustVirtualPair(position)
-		model.reconcileVirtualPair(position)
-	}
-
-	written := model.writePaths(position)
-	model.publishExplorePairThresholds(out, position)
-	model.refreshExploreUI()
-	
-	if model.stage != nil {
-		model.stage.PersistSequencer(model.Context(), position.Symbol)
-	}
-	
-	return written
-}
-
-func (model *Model) adjustVirtualPair(position *broker.Position) {
-	step := explorePnLStep(position)
-
-	if position.EntryPath != "" {
-		model.bumpExploreLeaf(position.Symbol, position.EntryPath, "enter", step)
-	}
-	
-	if position.ExitPath != "" {
-		model.bumpExploreLeaf(position.Symbol, position.ExitPath, "exit", step)
-	}
-}
-
-func (model *Model) reconcileVirtualPair(position *broker.Position) {
-	entryKey := position.EntryPath
-	exitKey := position.ExitPath
-	
-	if entryKey == "" && exitKey == "" {
-		return
-	}
-
-	entryT := leafThreshold(model.exploreLeaf(entryKey, "enter", position.Symbol))
-	exitT := leafThreshold(model.exploreLeaf(exitKey, "exit", position.Symbol))
-
-	if entryT > 0.8 || exitT > 0.8 {
-		model.pruneExplorePair(entryKey, exitKey)
-		return
-	}
-
-	if (entryKey != "" && entryT < 0.2) || (exitKey != "" && exitT < 0.2) {
-		model.promoteExplorePair(entryKey, exitKey, position.Symbol)
-	}
-}
-
-func (model *Model) pruneExplorePair(entryKey, exitKey string) {
-	for _, spec := range []struct{ key, action string }{
-		{entryKey, "enter"},
-		{exitKey, "exit"},
-	} {
-		if spec.key == "" {
-			continue
-		}
-	
-		model.store.DeletePrefix("model/explore/" + spec.key + "/")
-		model.explore, _ = model.explore.DeletePrefix([]byte(spec.key))
-	}
-}
-
-func (model *Model) promoteExplorePair(entryKey, exitKey, symbol string) {
-	for _, spec := range []struct{ key, action string }{
-		{entryKey, "enter"},
-		{exitKey, "exit"},
-	} {
-		if spec.key == "" {
-			continue
-		}
-	
-		leaf := model.exploreLeaf(spec.key, spec.action, symbol)
-	
-		if leaf == nil {
-			continue
-		}
-
-		suffix := "enter.bin"
-	
-		if spec.action == "exit" {
-			suffix = "exit.bin"
-		}
-
-		model.store.WriteAtPrefix("model/policy/"+spec.key+"/"+suffix, leaf.Bytes())
-		model.policy, _, _ = model.policy.Insert([]byte(spec.key), leaf)
-		model.store.DeletePrefix("model/explore/" + spec.key + "/")
-		model.explore, _ = model.explore.DeletePrefix([]byte(spec.key))
-	}
-}
-
-func (model *Model) bumpExploreLeaf(symbol, pathKey, action string, step float64) {
-	if model.onPolicy(pathKey) {
-		return
-	}
-	
-	leaf := model.exploreLeaf(pathKey, action, symbol)
-	leaf.Append(step, "threshold")
-	model.explore, _, _ = model.explore.Insert(exploreRadixKey(pathKey, action), leaf)
-	model.store.WriteAtPrefix("model/explore/"+pathKey+"/"+action+".bin", leaf.Bytes())
-}
-
-func (model *Model) publishExplorePairThresholds(
-	out *data.Value, position *broker.Position,
-) {
+	// =========================================================================
+	// 2. EXIT EVALUATION (Holding)
+	// =========================================================================
+	position := model.desk.Position(symbol, true)
 	if position == nil {
-		return
-	}
-	
-	if position.EntryPath != "" {
-		leaf := model.exploreLeaf(position.EntryPath, "enter", position.Symbol)
-		model.noteExploreThreshold(out, position.EntryPath, "enter", leafThreshold(leaf))
-	}
-	
-	if position.ExitPath != "" {
-		leaf := model.exploreLeaf(position.ExitPath, "exit", position.Symbol)
-		model.noteExploreThreshold(out, position.ExitPath, "exit", leafThreshold(leaf))
-	}
-}
-
-func (model *Model) refreshExploreUI() {
-	if ui.UI != nil && ui.UI.Active() {
-		ui.UI.ListPrefix("model/explore")
-	}
-}
-
-func (model *Model) exploreLeaf(pathKey, action, symbol string) *data.Value {
-	if model == nil || pathKey == "" || action == "" {
-		return nil
+		return out
 	}
 
-	if leaf, ok := model.explore.Get(exploreRadixKey(pathKey, action)); ok && leaf != nil {
-		return leaf
+	shouldExit := false
+
+	// Trigger A: Informational Cliff (Model surprise doubled)
+	if position.OpenSurprise > 0 && coder.Surprise >= 2*position.OpenSurprise {
+		shouldExit = true
 	}
 
-	if leaf, ok := model.explore.Get([]byte(pathKey)); ok && leaf != nil {
-		var stored string
-		leaf.Lookup(&stored, "action")
-		if stored == action || stored == "" {
-			return leaf
-		}
-	}
-
-	storeKey := "model/explore/" + pathKey + "/" + action + ".bin"
-	
-	if model.store != nil && model.System != nil {
-		if leaf := model.store.Download(model.Context(), storeKey); leaf != nil {
-			return leaf
-		}
-	}
-
-	return data.NewValue("model", "explore", symbol).Append(action, "action")
-}
-
-func exploreTemporalPenalty() float64 {
-	if system.Cfg != nil && system.Cfg.Learning != nil {
-		return system.Cfg.Learning.ExploreTemporalPenalty
-	}
-	
-	return 0
-}
-
-func leafThreshold(leaf *data.Value) float64 {
-	if leaf == nil {
-		return system.Cfg.Learning.ThresholdStart
-	}
-
-	threshold := system.Cfg.Learning.ThresholdStart
-
-	for idx, index := range leaf.Index {
-		if strings.Contains(index, "threshold") {
-			var v float64
-			leaf.At(&v, idx)
-			threshold += v
-		}
-	}
-
-	return threshold
-}
-
-func explorePnLStep(position *broker.Position) float64 {
-	win := position != nil && position.VirtualExploreWin()
-	step := 0.05
-
-	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.ThresholdStep > 0 {
-		step = system.Cfg.Learning.ThresholdStep
-	}
-
-	if !win {
-		return step
-	}
-
-	pnlPct := 0.0
-
-	if position.PnLPct != nil {
-		pnlPct = position.PnLPct.Float64()
-	}
-
-	switch {
-	case pnlPct >= 5.0:
-		return -0.20
-	case pnlPct >= 2.0:
-		return -0.10
-	default:
-		return -step
-	}
-}
-
-func (model *Model) writePaths(position *broker.Position) bool {
-	if position == nil || model == nil || model.store == nil {
-		return false
-	}
-
-	if position.EntryPath == "" && position.ExitPath == "" {
-		errnie.Error(errnie.Err(
-			errnie.NotFound, "[model.writePaths] missing entry and exit path", nil,
-		))
-
-		return false
-	}
-
-	if position.EntryPath != "" {
-		leaf := model.exploreLeaf(position.EntryPath, "enter", position.Symbol)
-		model.saveExploreLeaf(position.EntryPath, "enter", leaf)
-	}
-
-	if position.ExitPath != "" {
-		leaf := model.exploreLeaf(position.ExitPath, "exit", position.Symbol)
-		model.saveExploreLeaf(position.ExitPath, "exit", leaf)
-	}
-
-	model.path.Reset(position.Symbol)
-	return true
-}
-
-func (model *Model) saveExploreLeaf(pathKey, action string, leaf *data.Value) {
-	if leaf == nil || model.onPolicy(pathKey) {
-		return
-	}
-
-	model.explore, _, _ = model.explore.Insert(exploreRadixKey(pathKey, action), leaf)
-	model.store.WriteAtPrefix("model/explore/"+pathKey+"/"+action+".bin", leaf.Bytes())
-}
-
-func (model *Model) tryBookStopExit(
-	out *data.Value,
-	tick *data.Value,
-	position *broker.Position,
-) bool {
-	if model == nil || position == nil || tick == nil || !position.Virtual {
-		return false
-	}
-
-	trigger, shouldExit := position.ShouldExit()
-
-	if !shouldExit || trigger == "" {
-		return false
-	}
-
-	symbol := position.Symbol
-	pathKey := position.EntryPath
-
-	if pathKey == "" {
-		pathKey = model.path.PolicyLive(symbol, false)
-	}
-
-	position.AppendOutcomeTrigger(trigger)
-	exitPath := model.emergencyExitPath(symbol, pathKey, position)
-
-	if err := model.desk.Exit(symbol, exitPath, true); err != nil {
-		return false
-	}
-
-	model.momentum.forget(position)
-
-	if model.resonance != nil {
-		model.resonance.ForgetHold(symbol)
-	}
-
-	if model.finishVirtualExplore(position, out) {
-		model.stage.ResetSequencer(symbol)
-
-		if out != nil {
-			out.Append(trigger, "outcome")
-			out.Append("exit submitted", "outcome")
-		}
-	}
-
-	return true
-}
-
-func (model *Model) tryMomentumExit(
-	out *data.Value,
-	tick *data.Value,
-	symbol string,
-	pathKey string,
-	virtual bool,
-) bool {
-	position := model.desk.Position(symbol, virtual)
-
-	if position == nil || tick == nil {
-		return false
-	}
-
-	trigger, shouldExit := model.momentum.trigger(model.resonance, tick, symbol, position)
-
+	// Trigger B: Order-book momentum stop or reversal
 	if !shouldExit {
-		model.momentum.advance(model.resonance, tick, symbol, position)
-		return false
-	}
-
-	exitPath := model.emergencyExitPath(symbol, pathKey, position)
-	position.AppendOutcomeTrigger(trigger)
-
-	if err := model.desk.Exit(symbol, exitPath, virtual); err != nil {
-		return false
-	}
-
-	model.momentum.forget(position)
-	model.resonance.ForgetHold(symbol)
-
-	if model.finishVirtualExplore(position, out) {
-		model.stage.ResetSequencer(symbol)
-	
-		if out != nil {
-			out.Append(trigger, "outcome")
-			out.Append("exit submitted", "outcome")
+		if _, ok := position.ShouldExit(); ok {
+			shouldExit = true
 		}
 	}
 
-	return true
+	// Trigger C: Exit Path Matched in Radix Trie
+	if !shouldExit && pathKey != "" {
+		if val, inPolicy, inExplore := model.lookupPath(pathKey); inPolicy || inExplore {
+			var action string
+			val.Lookup(&action, "action")
+			if action == "exit" {
+				shouldExit = true
+			}
+		}
+	}
+
+	// If no exit triggered, keep holding
+	if !shouldExit {
+		return out
+	}
+
+	// Gap 5: Resolve exit path (pathKey is now the valid trigger path)
+	exitPath := pathKey
+	if exitPath == "" {
+		exitPath = model.path.TriggerLive(symbol)
+	}
+	if exitPath == "" {
+		exitPath = position.EntryPath
+	}
+
+	// Execute Exit
+	if err := model.desk.Exit(symbol, exitPath, true); err != nil {
+		return out
+	}
+
+	// Gap 4 & Gap 7: Unified reinforcement learning
+	model.RecordExploreClose(position)
+
+	model.path.Reset(symbol)
+	return out
 }
 
-func (model *Model) sweepMomentum(tick *data.Value) {
-	if tick == nil {
-		return
-	}
+// -----------------------------------------------------------------------------
+// UI & Manual Close Hooks (Booter Contract)
+// -----------------------------------------------------------------------------
 
-	for _, position := range model.desk.OpenPositions(true) {
-		if position == nil || position.Symbol == "" {
-			continue
-		}
-
-		if model.tryBookStopExit(nil, tick, position) {
-			continue
-		}
-
-		pathKey := position.EntryPath
-	
-		if pathKey == "" {
-			pathKey = model.path.PolicyLive(position.Symbol, false)
-		}
-
-		model.tryMomentumExit(nil, tick, position.Symbol, pathKey, true)
-	}
-}
-
-func (model *Model) RecordExploreClose(position *broker.Position) bool {
-	if position == nil {
-		return false
-	}
-	
-	if position.Virtual {
-		return model.finishVirtualExplore(position, nil)
-	}
-	
-	return model.writePaths(position)
-}
-
+// Gap 7: DeskExitPath resolves the path for manual dashboard exits
 func (model *Model) DeskExitPath(symbol string, position *broker.Position) string {
-	if position == nil {
-		return ""
+	if position != nil && position.ExitPath != "" {
+		return position.ExitPath
 	}
-	
-	return model.emergencyExitPath(symbol, "", position)
-}
-
-func (model *Model) emergencyExitPath(
-	symbol string,
-	pathKey string,
-	position *broker.Position,
-) string {
-	if position == nil {
-		return pathKey
-	}
-
-	if pathKey != "" && pathKey != position.EntryPath {
-		return pathKey
-	}
-
-	if trigger := model.path.TriggerLive(symbol); trigger != "" {
-		return trigger
-	}
-
-	if live := model.path.Live(symbol); live != "" && live != position.EntryPath {
+	live := model.path.TriggerLive(symbol)
+	if live != "" {
 		return live
 	}
-
-	if position.EntryPath != "" {
-		return position.EntryPath + "/R03"
+	if position != nil && position.EntryPath != "" {
+		return position.EntryPath
 	}
-
-	return pathKey
+	return symbol
 }
 
-func (model *Model) paperRoom() bool {
-	if model == nil || model.desk == nil || system.Cfg == nil || system.Cfg.Learning == nil {
-		return true
-	}
-
-	max := system.Cfg.Learning.MaxVenuePositions
-	
-	if max <= 0 {
-		return true
-	}
-
-	return len(model.desk.OpenPositions(false)) < max
-}
-
-func (model *Model) onPolicy(pathKey string) bool {
-	if model == nil || model.policy == nil || pathKey == "" {
-		return false
-	}
-	
-	_, ok := model.policy.Get([]byte(pathKey))
-	return ok
-}
-
-func (model *Model) loadPolicyFromStore() {
-	if model == nil || model.store == nil || system.Cfg.Learning == nil {
+// Gap 7: RecordExploreClose updates thresholds or mints exploration paths
+func (model *Model) RecordExploreClose(position *broker.Position) {
+	if model == nil || position == nil {
 		return
 	}
 
-	cfg := system.Cfg.Learning
-	prefixes := []string{"model/policy/"}
-	
-	if cfg.PolicyPrefix != "" && cfg.PolicyPrefix != "model/policy/" {
-		prefixes = append(prefixes, cfg.PolicyPrefix)
+	isProfitable := position.PnL != nil && position.PnL.Sign() > 0
+	exitPath := position.ExitPath
+	if exitPath == "" {
+		exitPath = model.path.TriggerLive(position.Symbol)
 	}
 
-	for _, prefix := range prefixes {
-		model.loadPolicyPrefix(prefix, cfg.EnterSuffix, cfg.ExitSuffix)
-	}
-}
-
-func (model *Model) loadPolicyPrefix(prefix, enterSuffix, exitSuffix string) {
-	for objectKey := range model.store.ListKeys(prefix) {
-		pathKey, action, ok := trieObjectKey(objectKey, prefix, enterSuffix, exitSuffix)
-	
-		if !ok {
-			continue
+	if position.PathFound {
+		// A. Existing path: update thresholds based on win/loss
+		model.updatePathThreshold(position.EntryPath, isProfitable)
+		if exitPath != "" && exitPath != position.EntryPath {
+			model.updatePathThreshold(exitPath, isProfitable)
 		}
-
-		value := model.store.Download(model.Context(), objectKey)
-	
-		if value == nil {
-			continue
+	} else if isProfitable {
+		// Gap 4: Only mint new exploration paths if the first run won!
+		if position.EntryPath != "" {
+			model.savePath("explore", position.EntryPath, "enter", 0.5)
 		}
-
-		var stored string
-		value.Lookup(&stored, "action")
-	
-		if stored == "" {
-			value.Append(action, "action")
+		if exitPath != "" {
+			model.savePath("explore", exitPath, "exit", 0.5)
 		}
-
-		model.policy, _, _ = model.policy.Insert([]byte(pathKey), value)
 	}
 }
 
-func (model *Model) loadExploreFromStore() {
-	if model == nil || model.store == nil || system.Cfg.Learning == nil {
+// -----------------------------------------------------------------------------
+// Trie & Storage Helpers
+// -----------------------------------------------------------------------------
+
+func (model *Model) lookupPath(pathKey string) (val *data.Value, inPolicy bool, inExplore bool) {
+	if pathKey == "" {
+		return nil, false, false
+	}
+
+	model.mu.RLock()
+	defer model.mu.RUnlock()
+
+	key := []byte(pathKey)
+	if v, ok := model.policy.Get(key); ok {
+		return v, true, false
+	}
+	if v, ok := model.explore.Get(key); ok {
+		return v, false, true
+	}
+
+	return nil, false, false
+}
+
+func (model *Model) updatePathThreshold(pathKey string, profitable bool) {
+	if pathKey == "" {
 		return
 	}
 
-	cfg := system.Cfg.Learning
+	val, inPolicy, inExplore := model.lookupPath(pathKey)
+	if !inPolicy && !inExplore {
+		return
+	}
 
-	for objectKey := range model.store.ListKeys("model/explore/") {
-		pathKey, action, ok := trieObjectKey(objectKey, "model/explore/", cfg.EnterSuffix, cfg.ExitSuffix)
-	
-		if !ok {
-			continue
+	currentRole := "explore"
+	if inPolicy {
+		currentRole = "policy"
+	}
+
+	action := "enter"
+	if val != nil {
+		val.Lookup(&action, "action")
+	}
+
+	threshold := getThreshold(val)
+
+	// Profitable lowers threshold (closer to promotion); loss raises threshold
+	if profitable {
+		threshold -= 0.05
+	} else {
+		threshold += 0.05
+	}
+
+	// Prune if threshold exceeds 0.8
+	if threshold > 0.8 {
+		model.deletePath(currentRole, pathKey)
+		return
+	}
+
+	// Promote from explore to policy if threshold < 0.2
+	if threshold < 0.2 {
+		if currentRole == "explore" {
+			model.deletePath("explore", pathKey)
 		}
-
-		value := model.store.Download(model.Context(), objectKey)
-	
-		if value == nil {
-			continue
+		if threshold < 0.05 {
+			threshold = 0.05 // floor
 		}
+		model.savePath("policy", pathKey, action, threshold)
+		return
+	}
 
-		var stored string
-		value.Lookup(&stored, "action")
-	
-		if stored == "" {
-			value.Append(action, "action")
-		}
+	// Update existing path in place
+	model.savePath(currentRole, pathKey, action, threshold)
+}
 
-		model.explore, _, _ = model.explore.Insert(exploreRadixKey(pathKey, action), value)
+func (model *Model) savePath(role, pathKey, action string, threshold float64) {
+	value := data.NewValue("model", role, pathKey)
+	value.Append(action, "action")
+	value.Append(threshold, "threshold")
+
+	// Persist to S3
+	s3Key := fmt.Sprintf("model/%s/%s/%s.bin", role, pathKey, action)
+	if model.store != nil {
+		model.store.WriteAtPrefix(s3Key, value.Bytes())
+	}
+
+	// Update in-memory immutable radix tree
+	model.mu.Lock()
+	defer model.mu.Unlock()
+
+	key := []byte(pathKey)
+	if role == "policy" {
+		model.policy, _, _ = model.policy.Insert(key, value)
+	} else {
+		model.explore, _, _ = model.explore.Insert(key, value)
 	}
 }
 
-func trieObjectKey(objectKey, prefix, enterSuffix, exitSuffix string) (pathKey, action string, ok bool) {
-	if !strings.HasPrefix(objectKey, prefix) {
-		return "", "", false
+func (model *Model) deletePath(role, pathKey string) {
+	s3Prefix := fmt.Sprintf("model/%s/%s/", role, pathKey)
+	if model.store != nil {
+		model.store.DeletePrefix(s3Prefix)
 	}
 
-	rest := strings.TrimPrefix(objectKey, prefix)
+	model.mu.Lock()
+	defer model.mu.Unlock()
 
-	switch {
-	case strings.HasSuffix(rest, enterSuffix):
-		return strings.TrimSuffix(rest, enterSuffix), "enter", true
-	case strings.HasSuffix(rest, exitSuffix):
-		return strings.TrimSuffix(rest, exitSuffix), "exit", true
-	default:
-		return "", "", false
+	key := []byte(pathKey)
+	if role == "policy" {
+		model.policy, _, _ = model.policy.Delete(key)
+	} else {
+		model.explore, _, _ = model.explore.Delete(key)
 	}
+}
+
+func getThreshold(val *data.Value) float64 {
+	if val == nil {
+		return 0.5
+	}
+	var threshold float64
+	val.Lookup(&threshold, "threshold")
+	if threshold == 0 {
+		return 0.5
+	}
+	return threshold
 }

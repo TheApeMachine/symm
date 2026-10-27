@@ -15,43 +15,35 @@ import (
 )
 
 type Position struct {
-	mu          sync.RWMutex
-	price       *Price
-	ID          string                  `json:"id"`
-	EntryPath   string                  `json:"entry_path"`
-	ExitPath    string                  `json:"exit_path"`
-	Symbol      string                  `json:"symbol"`
-	OpenedAt    time.Time               `json:"opened_at"`
-	ClosedAt    *time.Time              `json:"closed_at"`
-	PolicyEpoch uint64                  `json:"policy_epoch,omitempty"`
-	EntryTick   uint64                  `json:"entry_tick,omitempty"`
-	ExitTick    uint64                  `json:"exit_tick,omitempty"`
-	EntryOrders []*spot.OrderRequest    `json:"entry_orders,omitempty"`
-	ExitOrders  []*spot.OrderRequest    `json:"exit_orders,omitempty"`
-	Fills       []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty         *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice  *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice   *decimal.Decimal        `json:"exit_price,omitempty"` // venue fill or close snapshot; not the live book walk
-	EntryFee    *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee     *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark        *decimal.Decimal        `json:"mark,omitempty"`      // headline bid (or ask fallback)
-	ExitVWAP    *decimal.Decimal        `json:"exit_vwap,omitempty"` // full-size sell through bids while open
-	ExitRoom    *decimal.Decimal        `json:"exit_room,omitempty"`
-	PnL         *decimal.Decimal        `json:"pnl,omitempty"`
-	PnLPct      *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL     *decimal.Decimal        `json:"open_pnl,omitempty"` // first mark after virtual enter
-	OpenPnLPct  float64                 `json:"open_pnl_pct,omitempty"`
-	HoldNs      int64                   `json:"hold_ns,omitempty"`
-	Virtual     bool                    `json:"virtual"`
-	// PathFound is set when enter matched a stored explore or policy prefix,
-	// not on the first virtual step that mints a new explore node.
-	PathFound       bool     `json:"path_found,omitempty"`
-	OutcomeTriggers []string `json:"outcome_triggers,omitempty"`
-	EntryTradeRate  float64  `json:"entry_trade_rate,omitempty"`
-	HoldTicks       int      `json:"hold_ticks,omitempty"`
-	PeakOpenPnLPct  float64  `json:"peak_open_pnl_pct,omitempty"`
-	// ExploreSettled is true after virtual explore thresholds and paths were persisted.
-	ExploreSettled bool `json:"explore_settled,omitempty"`
+	mu           sync.RWMutex
+	price        *Price
+	ID           string                  `json:"id"`
+	EntryPath    string                  `json:"entry_path"`
+	ExitPath     string                  `json:"exit_path"`
+	Symbol       string                  `json:"symbol"`
+	OpenedAt     time.Time               `json:"opened_at"`
+	ClosedAt     *time.Time              `json:"closed_at"`
+	PolicyEpoch  uint64                  `json:"policy_epoch,omitempty"`
+	EntryTick    uint64                  `json:"entry_tick,omitempty"`
+	ExitTick     uint64                  `json:"exit_tick,omitempty"`
+	EntryOrders  []*spot.OrderRequest    `json:"entry_orders,omitempty"`
+	ExitOrders   []*spot.OrderRequest    `json:"exit_orders,omitempty"`
+	Fills        []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty          *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice   *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice    *decimal.Decimal        `json:"exit_price,omitempty"`
+	EntryFee     *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee      *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark         *decimal.Decimal        `json:"mark,omitempty"`
+	ExitVWAP     *decimal.Decimal        `json:"exit_vwap,omitempty"`
+	ExitRoom     *decimal.Decimal        `json:"exit_room,omitempty"`
+	PnL          *decimal.Decimal        `json:"pnl,omitempty"`
+	PnLPct       *decimal.Decimal        `json:"pnl_pct,omitempty"`
+	LastPnL      *decimal.Decimal        `json:"last_pnl,omitempty"` // Previous tick PnL for momentum checks
+	HoldNs       int64                   `json:"hold_ns,omitempty"`
+	Virtual      bool                    `json:"virtual"`
+	PathFound    bool                    `json:"path_found,omitempty"`
+	OpenSurprise float64                 `json:"open_surprise,omitempty"`
 }
 
 func NewPosition(
@@ -85,8 +77,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 
 /*
 Enter sizes from the book when qty is unset, records the buy, and for a
-virtual lot emulates the venue fill. After a successful Enter the position
-fields reflect the entry.
+virtual lot emulates the venue fill.
 */
 func (position *Position) Enter(path string) (*spot.OrderRequest, error) {
 	if path == "" {
@@ -214,8 +205,7 @@ func (position *Position) rejectOpenBookDrag() error {
 }
 
 /*
-Exit records the sell and reprices from the bid book. After Exit the
-position carries exit economics (venue fills may still arrive via Apply).
+Exit records the sell and reprices from the bid book.
 */
 func (position *Position) Exit(path string) (*spot.OrderRequest, error) {
 	if path == "" {
@@ -326,124 +316,33 @@ func (position *Position) repriceLocked() {
 
 	position.ExitVWAP = position.price.ExitVWAP(symbol, qty)
 	position.ExitRoom = position.price.ExitRoom(symbol, qty)
-	position.PnL = position.price.PnL(symbol, qty, entry, fee)
-	position.PnLPct = position.price.PnLPct(symbol, qty, entry, fee)
 
-	if position.Virtual && position.ClosedAt == nil && position.OpenPnL == nil &&
-		position.PnL != nil {
-		position.OpenPnL = position.PnL
-		if position.PnLPct != nil {
-			position.OpenPnLPct = position.PnLPct.Float64()
-		}
+	newPnL := position.price.PnL(symbol, qty, entry, fee)
+	newPnLPct := position.price.PnLPct(symbol, qty, entry, fee)
+
+	if newPnL == nil {
+		return
 	}
 
-	if position.ClosedAt == nil && position.PnLPct != nil {
-		pct := position.PnLPct.Float64()
-		if pct > position.PeakOpenPnLPct {
-			position.PeakOpenPnLPct = pct
-		}
+	// Save the previous tick's PnL to detect momentum stalls
+	if position.PnL != nil {
+		position.LastPnL = position.PnL
+	}
+
+	position.PnL = newPnL
+	position.PnLPct = newPnLPct
+
+	// Establish entry baseline PnL (initial fee & spread drag)
+	if position.ClosedAt == nil && position.LastPnL == nil {
+		position.LastPnL = position.PnL
 	}
 }
 
 /*
-ShouldExit is true when a virtual lot should close on book economics:
-trailing giveback after profit, breakeven protection, or down by enough
-to exceed initial friction with buffer against bid-ask bounce.
+ShouldExit checks two conditions:
+1. Downside: PnL dropped as much as it needed to gain to reach breakeven (2 * OpenPnL).
+2. Upside: Upwards momentum exhausted, flatlined, or reversed once in profit.
 */
-func (position *Position) SetEntryTradeRate(rate float64) {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if rate > 0 {
-		position.EntryTradeRate = rate
-	}
-}
-
-func (position *Position) TickHold() {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if position.ClosedAt != nil {
-		return
-	}
-
-	position.HoldTicks++
-
-	if position.PnLPct == nil {
-		return
-	}
-
-	pct := position.PnLPct.Float64()
-
-	if pct > position.PeakOpenPnLPct {
-		position.PeakOpenPnLPct = pct
-	}
-}
-
-func (position *Position) GivebackFromPeak() float64 {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	if position.PnLPct == nil || position.PeakOpenPnLPct <= 0 {
-		return 0
-	}
-
-	pct := position.PnLPct.Float64()
-	if pct >= position.PeakOpenPnLPct {
-		return 0
-	}
-
-	return (position.PeakOpenPnLPct - pct) / position.PeakOpenPnLPct
-}
-
-func (position *Position) Winning() bool {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.PnL != nil && position.PnL.Sign() > 0
-}
-
-// TrySettleExplore marks the virtual explore learning pass done; false if already settled.
-func (position *Position) TrySettleExplore() bool {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if position.ExploreSettled {
-		return false
-	}
-	position.ExploreSettled = true
-	return true
-}
-
-func (position *Position) closedInProfit() bool {
-	return position.PnL != nil && position.PnL.Sign() >= 0
-}
-
-/*
-VirtualExploreCloseTeaches: reused path → always update thresholds. First time
-on this path → only if the close made money; the path is saved at desk 0.5.
-*/
-func (position *Position) VirtualExploreCloseTeaches() bool {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	if !position.Virtual {
-		return true
-	}
-	if position.PathFound {
-		return true
-	}
-	return position.closedInProfit()
-}
-
-// VirtualExploreWin: at exit, win means PnL is zero or positive.
-func (position *Position) VirtualExploreWin() bool {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
-	return position.closedInProfit()
-}
-
 func (position *Position) ShouldExit() (trigger string, ok bool) {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
@@ -452,56 +351,22 @@ func (position *Position) ShouldExit() (trigger string, ok bool) {
 		return "", false
 	}
 
-	// Virtual winners exit via strategy momentum; book layer handles losers only.
-	if !position.Virtual && position.PeakOpenPnLPct > 0 {
-		pct := 0.0
-		if position.PnLPct != nil {
-			pct = position.PnLPct.Float64()
-		}
+	// 1. DOWNSIDE STOP:
+	// OpenPnL is negative (e.g. -$10). It needed +$10 to reach breakeven ($0).
+	// If it drops that same $10 downwards, it hits -$20 (2 * OpenPnL).
+	if position.PnL != nil && position.PnL.Sign() < 0 {
+		stopLoss := position.PnL.Mul(decimal.NewFromInt64(2))
 
-		if pct <= 0.0 {
-			return "breakeven protect", true
-		}
-
-		if position.PeakOpenPnLPct >= 0.5 {
-			giveback := (position.PeakOpenPnLPct - pct) / position.PeakOpenPnLPct
-			if giveback >= 0.30 {
-				return "trailing profit", true
-			}
+		if position.PnL.Cmp(stopLoss) <= 0 {
+			return "symmetric stop", true
 		}
 	}
 
-	if position.OpenPnL != nil && position.OpenPnL.Sign() < 0 {
-		if position.Virtual && position.OpenPnLPct < 0 && position.PnLPct != nil {
-			stopPct := 2 * position.OpenPnLPct
-			if position.PnLPct.Float64() <= stopPct {
-				return "symmetric book stop", true
-			}
-			return "", false
-		}
-
-		stop := position.OpenPnL.Mul(decimal.NewFromInt64(3))
-		if position.PnL.Cmp(stop) <= 0 {
-			return "friction dip", true
-		}
+	// 2. UPSIDE MOMENTUM EXIT:
+	// Only triggers once the position has shown upward momentum into profit.
+	if position.PnL.Sign() > 0 && position.PnL.Cmp(position.LastPnL) <= 0 {
+		return "momentum exit", true
 	}
 
 	return "", false
-}
-
-func (position *Position) SetOutcomeTriggers(triggers []string) {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	position.OutcomeTriggers = triggers
-}
-
-func (position *Position) AppendOutcomeTrigger(trigger string) {
-	if position == nil || trigger == "" {
-		return
-	}
-
-	position.mu.Lock()
-	position.OutcomeTriggers = append(position.OutcomeTriggers, trigger)
-	position.mu.Unlock()
 }
