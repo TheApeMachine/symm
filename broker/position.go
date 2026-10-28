@@ -430,10 +430,18 @@ func (position *Position) repriceLocked() {
 	position.PnLPct = newPnLPct
 
 	if position.PnLPct != nil {
-		if position.PeakPnLPct == nil || position.PnLPct.Cmp(position.PeakPnLPct) > 0 {
+		// Excursions are measured from the entry baseline, even if the first
+		// executable mark arrives already green or already red.
+		if position.PeakPnLPct == nil {
+			position.PeakPnLPct = decimal.NewFromInt64(0)
+		}
+		if position.LowestPnLPct == nil {
+			position.LowestPnLPct = decimal.NewFromInt64(0)
+		}
+		if position.PnLPct.Cmp(position.PeakPnLPct) > 0 {
 			position.PeakPnLPct = position.PnLPct
 		}
-		if position.LowestPnLPct == nil || position.PnLPct.Cmp(position.LowestPnLPct) < 0 {
+		if position.PnLPct.Cmp(position.LowestPnLPct) < 0 {
 			position.LowestPnLPct = position.PnLPct
 		}
 	}
