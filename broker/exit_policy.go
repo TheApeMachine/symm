@@ -3,7 +3,6 @@ package broker
 import (
 	"fmt"
 	"math"
-
 )
 
 // AdaptiveExitConfig defines the starting adaptive policy. Thresholds are
