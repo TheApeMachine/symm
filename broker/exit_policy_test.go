@@ -41,7 +41,7 @@ func TestAdaptivePolicyProtectsAgainstAdverseMove(t *testing.T) {
 func TestAdaptivePolicyAllowsNoiseThenTrailsRunner(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(5, 1)
+	policy := newTestAdaptivePolicy(5)
 	for _, pnl := range []float64{0, 1, 2, 3, 4, 3} {
 		decision := observeExitPolicy(policy, pnl, 1)
 		if decision.Exit {
@@ -60,7 +60,7 @@ func TestAdaptivePolicyAllowsNoiseThenTrailsRunner(t *testing.T) {
 func TestAdaptivePolicyLiquidityStressCanExitBeforeTrail(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(5, 1)
+	policy := newTestAdaptivePolicy(5)
 	for _, pnl := range []float64{0, 1, 2, 3, 4} {
 		decision := observeExitPolicy(policy, pnl, 1)
 		if decision.Exit {
@@ -85,7 +85,7 @@ func TestAdaptivePolicyLiquidityStressCanExitBeforeTrail(t *testing.T) {
 func TestAdaptivePolicyDoesNotTreatUnknownExitRoomAsZero(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(5, 1)
+	policy := newTestAdaptivePolicy(5)
 	for _, pnl := range []float64{0, 1, 2, 3, 4} {
 		_ = observeExitPolicy(policy, pnl, 1)
 	}
@@ -121,7 +121,7 @@ func TestAdaptivePolicyHardLossLimitCapsStepBasedRiskFloor(t *testing.T) {
 func TestAdaptivePolicyFloorOnlyMovesUpAfterTrailingArms(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(5, 1)
+	policy := newTestAdaptivePolicy(5)
 	for _, pnl := range []float64{0, 1, 2, 3, 4} {
 		_ = observeExitPolicy(policy, pnl, 1)
 	}
