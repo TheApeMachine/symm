@@ -2,7 +2,11 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { bookAtom } from "#/collections/book";
-import { ingestPositionFrame, resetLifecycles } from "#/lib/lifecycle";
+import {
+	ingestPositionFrame,
+	resetClosedHistoryRequest,
+	resetLifecycles,
+} from "#/lib/lifecycle";
 import { LifecycleView } from "./lifecycle-view";
 
 const base = {
@@ -75,6 +79,7 @@ const deliver = (frames: unknown[]) =>
 afterEach(() => {
 	cleanup();
 	resetLifecycles();
+	resetClosedHistoryRequest();
 	bookAtom.set("paper");
 });
 
@@ -94,12 +99,12 @@ describe("LifecycleView", () => {
 	it("omits open paper positions from the list until they close", () => {
 		const { container } = render(<LifecycleView />);
 		expect(container.textContent).toContain(
-			"No closed positions this session yet.",
+			"No closed positions yet",
 		);
 
 		deliver([...entered, mark]);
 		expect(container.textContent).toContain(
-			"No closed positions this session yet.",
+			"No closed positions yet",
 		);
 		expect(container.textContent).not.toContain("SUI/USD · holding");
 	});
@@ -192,7 +197,7 @@ describe("LifecycleView", () => {
 		]);
 
 		expect(container.textContent).toContain(
-			"No closed positions this session yet.",
+			"No closed positions yet",
 		);
 		expect(container.textContent).not.toContain("TEL/USD · holding");
 		expect(container.textContent).toContain("virtual outcome");

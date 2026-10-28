@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { DeskPosition } from "#/collections/types";
 import { Value } from "#/types/value";
 import { resetOpenChoices } from "./open-choice-trail";
-import { OpenPositions, positionRows } from "./open-positions";
+import { lotInProfit, OpenPositions, positionRows } from "./open-positions";
 
 const lotFrame = (row: DeskPosition) => {
 	const value = new Value({
@@ -109,6 +109,20 @@ describe("OpenPositions", () => {
 		expect(view.getAllByText("ZEUS/USD").length).toBeGreaterThan(0);
 	});
 
+	it("filters to in-profit lots when that switch is selected", () => {
+		ingest(
+			lot({ id: "up", symbol: "RLC/USD", pnl_pct: 5 }),
+			lot({ id: "down", symbol: "ETH/USD", pnl: -0.1, pnl_pct: -2 }),
+		);
+		const view = render(<OpenPositions />);
+		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
+		expect(view.getAllByText("ETH/USD").length).toBeGreaterThan(0);
+
+		fireEvent.click(view.getByRole("button", { name: /In profit/i }));
+		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
+		expect(view.queryByText("ETH/USD")).toBeNull();
+	});
+
 	it("keeps a virtual lot off the paper book", () => {
 		ingest(
 			lot({ symbol: "BTC/USD" }),
@@ -123,6 +137,14 @@ describe("OpenPositions", () => {
 		const virtual = render(<OpenPositions />);
 		expect(virtual.getAllByText("ETH/USD").length).toBeGreaterThan(0);
 		expect(virtual.queryByText("BTC/USD")).toBeNull();
+	});
+});
+
+describe("lotInProfit", () => {
+	it("uses close-now return after fees", () => {
+		expect(lotInProfit(lot({ pnl_pct: 0.1 }))).toBe(true);
+		expect(lotInProfit(lot({ pnl_pct: 0 }))).toBe(false);
+		expect(lotInProfit(lot({ pnl_pct: -1 }))).toBe(false);
 	});
 });
 

@@ -1,6 +1,8 @@
 package kraken
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +66,33 @@ func NewExecution(buf []byte) (*Execution, error) {
 	return frame, nil
 }
 
+func floatField(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return 0
+		}
+		return parsed
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
 func (execution *Execution) MarshalJSON() ([]byte, error) {
 	type alias Execution
 	return sonic.Marshal((*alias)(execution))
@@ -111,6 +140,15 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 				orderStatus = "canceled"
 			}
 		}
+
+		if action == "market_order_filled" {
+			if execType == "" {
+				execType = "trade"
+			}
+			if orderStatus == "" {
+				orderStatus = "filled"
+			}
+		}
 	}
 
 	orderID, _ := model["order_id"].(string)
@@ -123,10 +161,10 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 
 	pair, _ := model["pair"].(string)
 	side, _ := model["side"].(string)
-	volume, _ := model["volume"].(float64)
-	price, _ := model["price"].(float64)
-	cost, _ := model["cost"].(float64)
-	fee, _ := model["fee"].(float64)
+	volume := floatField(model["volume"])
+	price := floatField(model["price"])
+	cost := floatField(model["cost"])
+	fee := floatField(model["fee"])
 
 	var timestamp time.Time
 
@@ -191,4 +229,3 @@ func (execution *Execution) ToValue(epochs ...int64) *data.Value {
 	val.Append(execution)
 	return val
 }
-

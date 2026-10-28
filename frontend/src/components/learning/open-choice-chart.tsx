@@ -1,13 +1,16 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { positionReadout } from "#/components/book-readout";
 import { cn } from "#/lib/utils";
 import {
+	CHOICE_WINDOW_MS,
 	type ChoiceSample,
+	choiceWindow,
 	dropOpenChoices,
 	extendToNow,
 	meanPath,
 	noteOpenChoice,
 	openChoiceTrail,
+	samplesInWindow,
 } from "./open-choice-trail";
 
 const STROKES = [
@@ -21,6 +24,15 @@ const STROKES = [
 ];
 
 const lotId = (row: Record<string, unknown>) => String(row.id ?? row.symbol);
+
+/* Color follows the lot, so a neighbor arriving or leaving does not repaint the line. */
+const strokeFor = (id: string) => {
+	let hash = 0;
+	for (let i = 0; i < id.length; i++) {
+		hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+	}
+	return STROKES[hash % STROKES.length];
+};
 
 const pctText = (value: number) => {
 	const digits = Math.abs(value) >= 10 ? 0 : 1;
@@ -50,6 +62,7 @@ export const OpenChoiceChart = ({
 	const plotRef = useRef<HTMLDivElement>(null);
 	const [plotSize, setPlotSize] = useState({ w: 0, h: 168 });
 	const [legendOpen, setLegendOpen] = useState(false);
+	const clipId = useId().replace(/:/g, "");
 
 	useEffect(() => {
 		const live = new Set<string>();
@@ -68,7 +81,7 @@ export const OpenChoiceChart = ({
 		return () => window.clearInterval(timer);
 	}, []);
 
-	const series = lots.map((row, index) => {
+	const series = lots.map((row) => {
 		const id = lotId(row);
 		const readout = positionReadout(row);
 		return {
@@ -76,7 +89,7 @@ export const OpenChoiceChart = ({
 			symbol: String(row.symbol ?? id),
 			pnl: readout.returnPctDisplay,
 			samples: openChoiceTrail(id),
-			stroke: STROKES[index % STROKES.length],
+			stroke: strokeFor(id),
 		};
 	});
 	void revision;
@@ -112,16 +125,16 @@ export const OpenChoiceChart = ({
 	const pad = { l: 52, r: 12, t: 16, b: 22 };
 	const plotW = width - pad.l - pad.r;
 	const plotH = height - pad.t - pad.b;
-	const times = drawn.flatMap((item) => item.samples.map((sample) => sample.t));
-	const values = drawn.flatMap((item) =>
-		item.samples.map((sample) => sample.pnl),
-	);
-	const t0 = times.length > 0 ? Math.min(...times) : now;
-	const t1 = Math.max(
-		now,
-		...(times.length > 0 ? [Math.max(...times)] : [now]),
-	);
-	const span = Math.max(t1 - t0, 1);
+	const { from: t0, span } = choiceWindow(now, CHOICE_WINDOW_MS);
+	const shown = drawn.map((item) => ({
+		...item,
+		samples: samplesInWindow(item.samples, t0),
+	}));
+	const meanShown = samplesInWindow(mean, t0);
+	const values = [
+		...shown.flatMap((item) => item.samples.map((sample) => sample.pnl)),
+		...meanShown.map((sample) => sample.pnl),
+	];
 	const dataMin = values.length > 0 ? Math.min(...values) : 0;
 	const dataMax = values.length > 0 ? Math.max(...values) : 0;
 	const rawSpan = Math.max(dataMax, 0) - Math.min(dataMin, 0) || 1;
@@ -184,88 +197,95 @@ export const OpenChoiceChart = ({
 						role="img"
 						aria-label="Close-now return of open positions"
 					>
-					<title>Close-now return of open positions</title>
-					<line
-						x1={pad.l}
-						x2={width - pad.r}
-						y1={yZero}
-						y2={yZero}
-						stroke="var(--f4)"
-						strokeDasharray="4 4"
-					/>
-					<text
-						x={pad.l - 6}
-						y={yZero}
-						fill="var(--f4)"
-						fontSize={9}
-						textAnchor="end"
-						dominantBaseline="middle"
-					>
-						0
-					</text>
-					{dataMax > 0.05 && yOf(0) - yOf(dataMax) > 14 && (
-						<text
-							x={pad.l - 6}
-							y={yOf(dataMax)}
-							fill="var(--f4)"
-							fontSize={9}
-							textAnchor="end"
-							dominantBaseline="middle"
-						>
-							{pctText(dataMax)}
-						</text>
-					)}
-					{dataMin < -0.05 && yOf(dataMin) - yOf(0) > 14 && (
-						<text
-							x={pad.l - 6}
-							y={yOf(dataMin)}
-							fill="var(--f4)"
-							fontSize={9}
-							textAnchor="end"
-							dominantBaseline="middle"
-						>
-							{pctText(dataMin)}
-						</text>
-					)}
-					<text x={pad.l} y={height - 4} fill="var(--f4)" fontSize={9}>
-						watched
-					</text>
-					<text
-						x={width - pad.r}
-						y={height - 4}
-						fill="var(--f4)"
-						fontSize={9}
-						textAnchor="end"
-					>
-						now
-					</text>
-					{drawn.map((item) => {
-						const last = item.samples[item.samples.length - 1];
-						return (
-							<g key={item.id}>
-								<path
-									d={lineOf(item.samples, xOf, yOf)}
-									fill="none"
-									stroke={item.stroke}
-									strokeWidth={1.6}
-								/>
-								<circle
-									cx={xOf(last.t)}
-									cy={yOf(last.pnl)}
-									r={3}
-									fill={item.stroke}
-								/>
-							</g>
-						);
-					})}
-					{mean.length > 1 && (
-						<path
-							d={lineOf(mean, xOf, yOf)}
-							fill="none"
-							stroke="var(--f1)"
-							strokeWidth={2.2}
+						<title>Close-now return of open positions</title>
+						<defs>
+							<clipPath id={clipId}>
+								<rect x={pad.l} y={0} width={width - pad.l} height={height} />
+							</clipPath>
+						</defs>
+						<line
+							x1={pad.l}
+							x2={width - pad.r}
+							y1={yZero}
+							y2={yZero}
+							stroke="var(--f4)"
+							strokeDasharray="4 4"
 						/>
-					)}
+						<text
+							x={pad.l - 6}
+							y={yZero}
+							fill="var(--f4)"
+							fontSize={9}
+							textAnchor="end"
+							dominantBaseline="middle"
+						>
+							0
+						</text>
+						{dataMax > 0.05 && yOf(0) - yOf(dataMax) > 14 && (
+							<text
+								x={pad.l - 6}
+								y={yOf(dataMax)}
+								fill="var(--f4)"
+								fontSize={9}
+								textAnchor="end"
+								dominantBaseline="middle"
+							>
+								{pctText(dataMax)}
+							</text>
+						)}
+						{dataMin < -0.05 && yOf(dataMin) - yOf(0) > 14 && (
+							<text
+								x={pad.l - 6}
+								y={yOf(dataMin)}
+								fill="var(--f4)"
+								fontSize={9}
+								textAnchor="end"
+								dominantBaseline="middle"
+							>
+								{pctText(dataMin)}
+							</text>
+						)}
+						<text x={pad.l} y={height - 4} fill="var(--f4)" fontSize={9}>
+							{Math.round(CHOICE_WINDOW_MS / 60000)}m ago
+						</text>
+						<text
+							x={width - pad.r}
+							y={height - 4}
+							fill="var(--f4)"
+							fontSize={9}
+							textAnchor="end"
+						>
+							now
+						</text>
+						<g clipPath={`url(#${clipId})`}>
+							{shown.map((item) => {
+								const last = item.samples[item.samples.length - 1];
+								return (
+									<g key={item.id}>
+										<path
+											d={lineOf(item.samples, xOf, yOf)}
+											fill="none"
+											stroke={item.stroke}
+											strokeWidth={1.6}
+										/>
+										<circle
+											cx={xOf(last.t)}
+											cy={yOf(last.pnl)}
+											r={3}
+											fill={item.stroke}
+										/>
+									</g>
+								);
+							})}
+							{meanShown.length > 1 && (
+								<path
+									d={lineOf(meanShown, xOf, yOf)}
+									fill="none"
+									stroke="var(--f1)"
+									strokeWidth={2.2}
+								/>
+							)}
+						</g>
 					</svg>
 				</div>
 			) : (

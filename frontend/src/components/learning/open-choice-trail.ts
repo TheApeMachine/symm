@@ -1,5 +1,40 @@
 export type ChoiceSample = { t: number; pnl: number };
 
+/*
+The plot keeps this much time. Now stays on the right; anything older
+leaves on the left. Fitting the whole open life into the width squeezes
+the trace instead.
+*/
+export const CHOICE_WINDOW_MS = 1 * 60 * 1000;
+
+export const choiceWindow = (now: number, windowMs = CHOICE_WINDOW_MS) => ({
+	from: now - windowMs,
+	through: now,
+	span: windowMs,
+});
+
+/*
+samplesInWindow keeps the point just before `from` so the segment still
+crosses the left edge, then every sample inside the window.
+*/
+export const samplesInWindow = (
+	samples: ChoiceSample[],
+	from: number,
+): ChoiceSample[] => {
+	if (samples.length === 0) return [];
+
+	let firstInside = samples.length;
+	for (let i = 0; i < samples.length; i++) {
+		if (samples[i].t >= from) {
+			firstInside = i;
+			break;
+		}
+	}
+
+	if (firstInside === samples.length) return samples.slice(-1);
+	return samples.slice(firstInside === 0 ? 0 : firstInside - 1);
+};
+
 const trails = new Map<string, ChoiceSample[]>();
 const MAX_SAMPLES = 180;
 

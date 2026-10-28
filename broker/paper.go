@@ -686,6 +686,27 @@ func paperExecutionStillOpen(execution *kraken.Execution) bool {
 	return false
 }
 
+/*
+ResumeOpenOrder continues a venue order that was still working when the
+process stopped. The fill watcher does not survive a restart on its own.
+*/
+func (paper *Paper) ResumeOpenOrder(orderID, clientOrderID, pair, side string) {
+	if paper == nil || orderID == "" {
+		return
+	}
+
+	paper.watchOpenExecution(&kraken.Execution{
+		Data: []kraken.ExecutionData{{
+			OrderID:       orderID,
+			ClientOrderID: clientOrderID,
+			Symbol:        pair,
+			Side:          side,
+			OrderStatus:   "open",
+			ExecType:      "new",
+		}},
+	})
+}
+
 func (paper *Paper) watchOpenExecution(execution *kraken.Execution) {
 	if paper == nil || execution == nil {
 		return
@@ -842,9 +863,43 @@ func (paper *Paper) placeOrder(
 		))
 	}
 
+	stampPaperAck(model, symbol, side, clientOrderID)
+	return model, nil
+}
+
+/*
+stampPaperAck puts the request identity on the CLI ack. A market fill often
+has price and size but no side; without side the desk ignores the execution
+and the lot never gets an entry price.
+*/
+func stampPaperAck(model datura.Map[any], symbol, side, clientOrderID string) {
+	if model == nil {
+		return
+	}
+
 	model["pair"] = symbol
 	model["cl_ord_id"] = clientOrderID
-	return model, nil
+
+	if side != "" {
+		model["side"] = strings.ToLower(side)
+	}
+
+	action, _ := model["action"].(string)
+	if action != "market_order_filled" {
+		return
+	}
+
+	if _, ok := model["exec_type"]; !ok {
+		model["exec_type"] = "trade"
+	}
+
+	if _, ok := model["status"]; !ok {
+		model["status"] = "filled"
+	}
+
+	if _, ok := model["order_status"]; !ok {
+		model["order_status"] = "filled"
+	}
 }
 
 /*

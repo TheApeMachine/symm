@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bookAtom } from "#/collections/book";
 import {
 	cognitionStore,
 	ingestCognitionFrame,
@@ -135,7 +136,7 @@ describe("CognitiveTree", () => {
 		vi.stubGlobal("fetch", fetchMock);
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"waiting for model/explore",
+			"waiting for model/policy",
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
@@ -152,7 +153,7 @@ describe("CognitiveTree", () => {
 		});
 		render(<CognitiveTree />);
 		expect(screen.getByTestId("cognitive-tree-empty").textContent).toContain(
-			"no explore paths yet",
+			"no paper paths yet",
 		);
 	});
 
@@ -213,6 +214,7 @@ describe("CognitiveTree", () => {
 	});
 
 	it("keeps the trie on the stored policy when live tokens move", () => {
+		bookAtom.set("virtual");
 		ingestPolicyLayers(1n, [
 			{
 				index: "model/explore/R01/R02/enter.bin",

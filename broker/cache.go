@@ -37,6 +37,7 @@ func (cache *Cache) AllPositions() []*Position {
 		return true
 	})
 
+	sortPositions(positions)
 	return positions
 }
 
@@ -53,6 +54,7 @@ func (cache *Cache) OpenPositions() []*Position {
 		return true
 	})
 
+	sortPositions(positions)
 	return positions
 }
 
@@ -64,6 +66,7 @@ func (cache *Cache) ClosedPositions() []*Position {
 		return true
 	})
 
+	sortPositions(positions)
 	return positions
 }
 
@@ -167,11 +170,33 @@ func (cache *Cache) Closed() []*Position {
 		return true
 	})
 
-	slices.SortFunc(positions, func(a, b *Position) int {
-		return strings.Compare(a.Symbol, b.Symbol)
-	})
-
+	sortPositions(positions)
 	return positions
+}
+
+/*
+sortPositions orders a published book by symbol, then id. sync.Map's range
+order is not stable, and a reshuffled frame reorders the rows on the page.
+*/
+func sortPositions(positions []*Position) {
+	slices.SortFunc(positions, func(a, b *Position) int {
+		if a == nil || b == nil {
+			switch {
+			case a == nil && b == nil:
+				return 0
+			case a == nil:
+				return 1
+			default:
+				return -1
+			}
+		}
+
+		if cmp := strings.Compare(a.Symbol, b.Symbol); cmp != 0 {
+			return cmp
+		}
+
+		return strings.Compare(a.ID, b.ID)
+	})
 }
 
 func (cache *Cache) Remove(symbol string) bool {

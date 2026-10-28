@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"iter"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
@@ -50,6 +51,40 @@ func (history *History) Store(value *data.Value) error {
 	}
 
 	return nil
+}
+
+/*
+ReplaceOpen stores this snapshot and deletes every other open object for the
+same lot. A restart used to leave the previous epoch's object in place, so
+one symbol showed two open records.
+*/
+func (history *History) ReplaceOpen(value *data.Value) error {
+	if history == nil || history.store == nil || value == nil {
+		return nil
+	}
+
+	if err := history.store.DeleteOtherKeys(openDir(value.Prefix), value.Prefix); err != nil {
+		errnie.Error(err)
+	}
+
+	return history.Store(value)
+}
+
+func (history *History) Drop(prefix string) error {
+	if history == nil || history.store == nil || prefix == "" {
+		return nil
+	}
+
+	return history.store.DeleteOtherKeys(prefix, "")
+}
+
+func openDir(prefix string) string {
+	parts := strings.Split(prefix, "/")
+	if len(parts) < 3 {
+		return prefix
+	}
+
+	return strings.Join(parts[:len(parts)-2], "/") + "/"
 }
 
 /*

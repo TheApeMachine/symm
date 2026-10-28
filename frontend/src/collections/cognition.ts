@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/store";
+import { triePrefix } from "#/collections/book";
 import { filterExploreKeys } from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
@@ -244,7 +245,10 @@ const policyKeyFromIndex = (
 		const key = s3KeyFromIndex(framePrefix, index);
 		if (key) return key;
 	}
-	if (index.startsWith("model/explore/")) {
+	if (
+		index.startsWith("model/explore/") ||
+		index.startsWith("model/policy/")
+	) {
 		return index;
 	}
 	const match = index.match(/model\/current\/(.+\/(?:enter|exit))\.bin/);
@@ -462,8 +466,50 @@ const layerNumber = (raw: unknown): number | null => {
 };
 
 /*
+A number inside [0.05, 0.95] is an older snapshot of the whole book.
+Steps written now are ±0.01 and sit outside that band. Adding the
+snapshots together pushed a twice-scored path past the prune line, so
+the tree only kept the paths that had been scored once.
+*/
+const absoluteThreshold = (step: number): boolean =>
+	step >= 0.05 && step <= 0.95;
+
+const sumExploreThresholdSteps = (steps: number[]): number | null => {
+	if (steps.length === 0) return null;
+
+	let book = 0.5;
+	for (const step of steps) {
+		if (absoluteThreshold(step)) {
+			book = step;
+			continue;
+		}
+		book += step;
+	}
+
+	return book;
+};
+
+const thresholdStepsFromStored = (
+	names: unknown[],
+	layers: unknown[],
+): number[] => {
+	const steps: number[] = [];
+
+	for (let i = 0; i < names.length; i++) {
+		const name = names[i];
+		if (typeof name !== "string" || !name.includes("threshold")) continue;
+
+		const step = layerNumber(layers[i]);
+		if (step === null) continue;
+
+		steps.push(step);
+	}
+
+	return steps;
+};
+
+/*
 thresholdFromStored reads the path book off a stored explore value.
-The desk starts the sum at 0.50 and each settled lot appends its step.
 A value with no threshold layer has not been scored.
 */
 export const thresholdFromStored = (payload: unknown): number | null => {
@@ -479,21 +525,9 @@ export const thresholdFromStored = (payload: unknown): number | null => {
 	const layers = Array.isArray(body.Layers) ? body.Layers : body.layers;
 	if (!Array.isArray(names) || !Array.isArray(layers)) return null;
 
-	let sum = 0.5;
-	let found = false;
-
-	for (let i = 0; i < names.length; i++) {
-		const name = names[i];
-		if (typeof name !== "string" || !name.includes("threshold")) continue;
-
-		const step = layerNumber(layers[i]);
-		if (step === null) continue;
-
-		sum += step;
-		found = true;
-	}
-
-	return found ? sum : null;
+	return sumExploreThresholdSteps(
+		thresholdStepsFromStored(names, layers),
+	);
 };
 
 /*
@@ -510,8 +544,7 @@ export const thresholdFromExploreBytes = (
 	const nested = parseOneValue(bytes);
 	if (!nested) return null;
 
-	let sum = 0.5;
-	let found = false;
+	const steps: number[] = [];
 
 	for (let i = 0; i < nested.index.length; i++) {
 		if (!nested.index[i].includes("threshold")) continue;
@@ -519,11 +552,10 @@ export const thresholdFromExploreBytes = (
 		const step = layerNumber(tryDecodeJsonBytes(nested.layers[i]));
 		if (step === null) continue;
 
-		sum += step;
-		found = true;
+		steps.push(step);
 	}
 
-	return found ? sum : null;
+	return sumExploreThresholdSteps(steps);
 };
 
 const sameStringList = (left: string[], right: string[]): boolean =>
@@ -552,19 +584,23 @@ export const ingestS3Prefix = (value: Value) => {
 		return false;
 	}
 
-	if (value.scope !== "model/explore") {
+	if (value.scope !== "model/explore" && value.scope !== "model/policy") {
+		return true;
+	}
+
+	if (value.scope !== triePrefix()) {
 		return true;
 	}
 
 	const policyKeys = value.index
 		.map((index) => s3KeyFromIndex(value.prefix, index))
-		.filter((key): key is string => key != null)
+		.filter((key): key is string => key != null && key.startsWith(`${value.scope}/`))
 		.sort();
 
 	const thresholds: Record<string, number> = {};
 	for (let i = 0; i < value.index.length; i++) {
 		const key = s3KeyFromIndex(value.prefix, value.index[i]);
-		if (key === null || !key.startsWith("model/explore/")) continue;
+		if (key === null || !key.startsWith(`${value.scope}/`)) continue;
 
 		const threshold = thresholdFromExploreBytes(value.layers[i]);
 		if (threshold === null) continue;
@@ -585,7 +621,7 @@ export const ingestS3Prefix = (value: Value) => {
 		const nextEpoch = epoch ?? state.epoch;
 		const nextThresholds = { ...state.thresholds };
 		for (const key of Object.keys(nextThresholds)) {
-			if (key.startsWith("model/explore/")) {
+			if (key.startsWith(`${value.scope}/`)) {
 				delete nextThresholds[key];
 			}
 		}
@@ -612,11 +648,14 @@ export const ingestS3Prefix = (value: Value) => {
 export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
 	if (!Array.isArray(keys)) return false;
 
+	const prefix = `${triePrefix()}/`;
 	const policyKeys: string[] = [];
 	for (const key of keys) {
-		if (typeof key !== "string" || key === "") continue;
+		if (typeof key !== "string" || !key.startsWith(prefix)) continue;
 		policyKeys.push(key);
 	}
+
+	if (policyKeys.length === 0) return false;
 
 	const keptKeys = filterExploreKeys(
 		policyKeys,
@@ -688,7 +727,7 @@ export const ingestPathWalks = (tick: number, payload: unknown): boolean => {
 	});
 
 	if (exited) {
-		trySendCommand({ type: "s3", prefix: "model/explore" });
+		trySendCommand({ type: "s3", prefix: triePrefix() });
 	}
 
 	return true;
@@ -712,7 +751,7 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 			);
 			const keysChanged = !sameStringList(state.policyKeys, policyKeys);
 			if (keysChanged) {
-				trySendCommand({ type: "s3", prefix: "model/explore" });
+				trySendCommand({ type: "s3", prefix: triePrefix() });
 			}
 			return {
 				epoch: tree.epoch,
@@ -753,12 +792,12 @@ export const ingestPolicyLayers = (
 	const keys: string[] = [];
 	const thresholds: Record<string, number> = {};
 
+	const active = `${triePrefix()}/`;
+
 	for (const layer of layers) {
 		const key = policyKeyFromIndex(layer.index);
-		if (!key || keys.includes(key)) continue;
+		if (!key || !key.startsWith(active) || keys.includes(key)) continue;
 		keys.push(key);
-
-		if (!key.startsWith("model/explore/")) continue;
 
 		const threshold = thresholdFromExploreBytes(layer.bytes);
 		if (threshold !== null) thresholds[key] = threshold;
@@ -774,9 +813,10 @@ export const ingestPolicyLayers = (
 	if (keptKeys.length === 0) return;
 
 	cognitionStore.setState((state) => {
+		const active = `${triePrefix()}/`;
 		const nextThresholds = { ...state.thresholds };
 		for (const key of Object.keys(nextThresholds)) {
-			if (key.startsWith("model/explore/")) {
+			if (key.startsWith(active)) {
 				delete nextThresholds[key];
 			}
 		}

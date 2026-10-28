@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { bookAtom } from "#/collections/book";
 import { Value } from "#/types/value";
 import {
 	cognitionStore,
 	ingestPathWalks,
 	ingestPolicyKeys,
 	ingestS3Prefix,
-	thresholdFromStored,
 	ingestTrainRegions,
 	parseTrainRegionsIndex,
 	regionHistoryStore,
+	thresholdFromStored,
 } from "./cognition";
 
 const enc = new TextEncoder();
@@ -61,19 +62,48 @@ describe("stored thresholds", () => {
 		).toBeCloseTo(0.4);
 	});
 
+	it("reads a legacy absolute book before delta steps", () => {
+		const encode = (value: unknown) => btoa(JSON.stringify(value));
+
+		expect(
+			thresholdFromStored({
+				Index: ["model/explore/SYM/threshold", "model/explore/SYM/threshold"],
+				Layers: [encode(0.49), encode(-0.01)],
+			}),
+		).toBeCloseTo(0.48);
+	});
+
+	it("keeps the last legacy snapshot instead of adding them", () => {
+		const encode = (value: unknown) => btoa(JSON.stringify(value));
+
+		expect(
+			thresholdFromStored({
+				Index: [
+					"model/explore/SYM/threshold",
+					"model/explore/SYM/threshold",
+					"model/explore/SYM/threshold",
+				],
+				Layers: [encode(0.51), encode(0.52), encode(0.52)],
+			}),
+		).toBeCloseTo(0.52);
+	});
+
 	it("leaves an unscored value without a threshold", () => {
-		expect(thresholdFromStored({ Index: ["action"], Layers: [btoa(JSON.stringify("enter"))] })).toBeNull();
+		expect(
+			thresholdFromStored({
+				Index: ["action"],
+				Layers: [btoa(JSON.stringify("enter"))],
+			}),
+		).toBeNull();
 	});
 });
 
 describe("policy tree keys", () => {
 	it("stores cognition/keys strings unchanged", () => {
+		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		ingestPolicyKeys(
-			[
-				"model/explore/R01/R02/enter.bin",
-				"model/explore/R01/R02/exit.bin",
-			],
+			["model/explore/R01/R02/enter.bin", "model/explore/R01/R02/exit.bin"],
 			"1",
 		);
 		expect(cognitionStore.state.policyKeys).toEqual([
@@ -83,6 +113,7 @@ describe("policy tree keys", () => {
 	});
 
 	it("reads S3 keys from index suffixes after the frame prefix", () => {
+		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		const framePrefix =
 			"s3/prefix/model/explore/0000000000000000001/0000000000000000002";
@@ -112,6 +143,7 @@ describe("policy tree keys", () => {
 	});
 
 	it("reads a threshold off the stored value body", () => {
+		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		const framePrefix = "s3/prefix/model/explore/1/2";
 		const key = "model/explore/R01/R02/exit.bin";
@@ -153,11 +185,49 @@ describe("policy tree keys", () => {
 	});
 
 	it("replaces the list on the next publish", () => {
+		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		ingestPolicyKeys(["model/explore/R01/R02/enter.bin"], "1");
 		ingestPolicyKeys(["model/explore/R03/R04/exit.bin"], "2");
 		expect(cognitionStore.state.policyKeys).toEqual([
 			"model/explore/R03/R04/exit.bin",
+		]);
+	});
+
+	it("keeps the paper trie when the virtual catalog arrives", () => {
+		bookAtom.set("paper");
+		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
+		const framePrefix = "s3/prefix/model/policy/1/2";
+		const layer = enc.encode(JSON.stringify("enter"));
+		ingestS3Prefix(
+			new Value({
+				origin: "s3",
+				role: "prefix",
+				scope: "model/policy",
+				prefix: framePrefix,
+				epoch: 4n,
+				index: [`${framePrefix}/model/policy/R08.R01/R07.R00/enter.bin`],
+				layers: [layer],
+			}),
+		);
+		ingestS3Prefix(
+			new Value({
+				origin: "s3",
+				role: "prefix",
+				scope: "model/explore",
+				prefix: "s3/prefix/model/explore/1/2",
+				epoch: 5n,
+				index: [
+					"s3/prefix/model/explore/1/2/model/explore/R01/R02/enter.bin",
+				],
+				layers: [layer],
+			}),
+		);
+		expect(ingestPolicyKeys(["model/explore/R01/R02/enter.bin"], "6")).toBe(
+			false,
+		);
+		expect(cognitionStore.state.policyKeys).toEqual([
+			"model/policy/R08.R01/R07.R00/enter.bin",
 		]);
 	});
 });

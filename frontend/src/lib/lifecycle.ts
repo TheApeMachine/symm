@@ -1,12 +1,16 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
+import { framePositionRows } from "#/collections/positions";
 import { positionReadout } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
+import { trySendCommand } from "#/lib/hub-socket";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
+import { parseOneValue } from "#/types/decoder";
+import type { Value } from "#/types/value";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -64,6 +68,8 @@ export type Lifecycle = {
 	path_found?: boolean;
 	/** Set when this row was copied from a desk lot snapshot. */
 	desk?: boolean;
+	/** Set when this closed row was restored from S3 history. */
+	history?: boolean;
 	/**
 	Tape ticks the closed round trip covered, carried on the desk position's
 	own run epoch: A some prints before the entry, B the entry, C the exit.
@@ -102,9 +108,18 @@ type PositionFrame = {
 
 type Snapshot = { report: LifecycleReport };
 
-const LIFECYCLE_LIMIT = 200;
+const SESSION_LIFECYCLE_LIMIT = 200;
+const HISTORY_LIFECYCLE_CAP = 10_000;
 const lives = new Map<string, Lifecycle>();
 const listeners = new Set<() => void>();
+
+type HistoryStamp = {
+	epoch: bigint;
+	tick: bigint;
+	timestamp: bigint;
+};
+
+const historyStamp = new Map<string, HistoryStamp>();
 
 const countsTowardPerformance = (life: Lifecycle): boolean =>
 	(life.book ?? "paper") !== "virtual" || life.path_found === true;
@@ -112,9 +127,7 @@ const countsTowardPerformance = (life: Lifecycle): boolean =>
 const summarize = (all: Lifecycle[]): LifecycleReport => {
 	const closed = all.filter(
 		(life) =>
-			life.status === "closed" &&
-			life.outcome &&
-			countsTowardPerformance(life),
+			life.status === "closed" && life.outcome && countsTowardPerformance(life),
 	);
 	const returns = closed.map((life) => (life.outcome as LifeOutcome).pnl);
 	const wins = closed.filter((life) => (life.outcome as LifeOutcome).pnl > 0);
@@ -161,15 +174,20 @@ const isSnapshot = (frame: unknown): frame is Lifecycle => {
 	);
 };
 
-const deskLifeChanged = (prev: Lifecycle | undefined, next: Lifecycle): boolean => {
+const deskLifeChanged = (
+	prev: Lifecycle | undefined,
+	next: Lifecycle,
+): boolean => {
 	if (!prev) return true;
 	if (prev.status !== next.status) return true;
 	if (prev.closed_at !== next.closed_at) return true;
 	if (prev.mark?.bid !== next.mark?.bid) return true;
-	if (prev.mark?.unrealized_return !== next.mark?.unrealized_return) return true;
+	if (prev.mark?.unrealized_return !== next.mark?.unrealized_return)
+		return true;
 	if (prev.outcome?.pnl !== next.outcome?.pnl) return true;
 	if (prev.outcome?.pnl_pct !== next.outcome?.pnl_pct) return true;
 	if ((prev.marks?.length ?? 0) !== (next.marks?.length ?? 0)) return true;
+	if ((prev.events?.length ?? 0) !== (next.events?.length ?? 0)) return true;
 	return false;
 };
 
@@ -182,16 +200,29 @@ const storeLife = (life: Lifecycle): boolean => {
 	lives.delete(life.id);
 	lives.set(life.id, life);
 
-	while (lives.size > LIFECYCLE_LIMIT) {
-		let evict: string | undefined;
+	const sessionCount = () =>
+		[...lives.values()].filter((entry) => !entry.history).length;
+	const historyCount = () =>
+		[...lives.values()].filter((entry) => entry.history).length;
+
+	const evictClosed = (historyOnly: boolean) => {
 		for (const [id, entry] of lives) {
+			if (historyOnly !== !!entry.history) continue;
 			if (entry.status === "closed" || entry.status === "abandoned") {
-				evict = id;
-				break;
+				lives.delete(id);
+				historyStamp.delete(id);
+				return true;
 			}
 		}
-		if (evict === undefined) break;
-		lives.delete(evict);
+		return false;
+	};
+
+	while (!life.history && sessionCount() > SESSION_LIFECYCLE_LIMIT) {
+		if (!evictClosed(false)) break;
+	}
+
+	while (life.history && historyCount() > HISTORY_LIFECYCLE_CAP) {
+		if (!evictClosed(true)) break;
 	}
 
 	return true;
@@ -337,7 +368,9 @@ export const ingestDeskSnapshot = () => {
 	ingestDeskClosedLots(positionRows(appSignals.positions.state));
 };
 
-const deskRowFromClosedLife = (life: Lifecycle): Record<string, unknown> | null => {
+const deskRowFromClosedLife = (
+	life: Lifecycle,
+): Record<string, unknown> | null => {
 	if (life.status !== "closed" || !life.outcome) {
 		return null;
 	}
@@ -389,8 +422,114 @@ export const deskRowsForStats = (): Record<string, unknown>[] => {
 /* resetLifecycles empties the store (tests). */
 export const resetLifecycles = () => {
 	lives.clear();
+	historyStamp.clear();
 	snapshot = { report: summarize([]) };
 	for (const listener of listeners) listener();
+};
+
+const historyFrameIsNewer = (next: Value, prev: HistoryStamp): boolean => {
+	if (next.epoch !== prev.epoch) return next.epoch > prev.epoch;
+	if (next.tick !== prev.tick) return next.tick > prev.tick;
+	return next.timestamp > prev.timestamp;
+};
+
+/*
+ingestHistoryClosedFrame folds one stored desk lot (position/closed or
+virtual/closed on S3) into the lifecycle archive.
+*/
+export const ingestHistoryClosedFrame = (frame: Value) => {
+	if (frame.role !== "closed") return;
+	if (frame.origin !== "position" && frame.origin !== "virtual") return;
+
+	const row = framePositionRows(frame)[0];
+	if (!row || typeof row.id !== "string" || row.id === "") return;
+
+	const existing = lives.get(row.id);
+	if (existing && !existing.history) {
+		return;
+	}
+
+	const prior = historyStamp.get(row.id);
+	const stamp: HistoryStamp = {
+		epoch: frame.epoch ?? 0n,
+		tick: frame.tick ?? 0n,
+		timestamp: frame.timestamp ?? 0n,
+	};
+	if (prior && !historyFrameIsNewer(frame, prior)) {
+		return;
+	}
+	historyStamp.set(row.id, stamp);
+
+	const life = lifecycleFromDeskClosed(row);
+	if (!life) return;
+
+	life.history = true;
+	life.desk = true;
+
+	const merged: Lifecycle = {
+		...life,
+		policy_epoch: life.policy_epoch ?? existing?.policy_epoch,
+		marks_a: life.marks_a ?? existing?.marks_a,
+		marks_b: life.marks_b ?? existing?.marks_b,
+		marks_c: life.marks_c ?? existing?.marks_c,
+		path: life.path ?? existing?.path,
+		path_found: life.path_found ?? existing?.path_found,
+		events: existing?.events?.length ? existing.events : life.events,
+		outcome: life.outcome ?? existing?.outcome ?? null,
+		mark: life.mark ?? existing?.mark ?? null,
+		marks: existing?.marks?.length ? existing.marks : life.marks,
+	};
+
+	if (storeLife(merged)) {
+		publish();
+	}
+};
+
+/*
+ingestS3PositionHistory applies a hub ListPrefix frame for position/closed or
+virtual/closed. Each layer is a stored data.Value blob.
+*/
+export const ingestS3PositionHistory = (value: Value): boolean => {
+	if (value.origin !== "s3" || value.role !== "prefix") {
+		return false;
+	}
+
+	if (
+		value.scope !== "position/closed" &&
+		value.scope !== "virtual/closed" &&
+		!value.scope.startsWith("position/closed/") &&
+		!value.scope.startsWith("virtual/closed/")
+	) {
+		return false;
+	}
+
+	for (let i = 0; i < value.layers.length; i++) {
+		const nested = parseOneValue(value.layers[i]);
+		if (nested) {
+			ingestHistoryClosedFrame(nested);
+		}
+	}
+
+	return true;
+};
+
+let closedHistoryRequested = false;
+
+/*
+requestClosedPositionHistory asks the hub to list every closed paper and
+virtual lot in S3. ListPrefix returns one frame per book prefix.
+*/
+export const requestClosedPositionHistory = () => {
+	if (closedHistoryRequested) return;
+	closedHistoryRequested = true;
+
+	trySendCommand({ type: "s3", prefix: "position/closed" });
+	trySendCommand({ type: "s3", prefix: "virtual/closed" });
+};
+
+/** Tests reset the one-shot S3 history request guard. */
+export const resetClosedHistoryRequest = () => {
+	closedHistoryRequested = false;
 };
 
 const subscribe = (listener: () => void) => {
@@ -426,6 +565,7 @@ export const useLifecycles = (): Snapshot => {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		ensureDeskLifecycleFeed();
+		requestClosedPositionHistory();
 	}, []);
 
 	return useSyncExternalStore(

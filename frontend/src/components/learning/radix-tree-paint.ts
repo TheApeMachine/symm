@@ -24,9 +24,7 @@ export const formatTrieLinkToken = (token: string): string => {
 };
 
 const thresholdOpacity = (threshold: number): number => {
-	const span = 0.95 - 0.05;
-	const towardPrune = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
-	return 1 - towardPrune * 0.72;
+	return 1 - threshold;
 };
 
 export type TreeNode = d3.HierarchyPointNode<TrieNodeData>;
@@ -263,10 +261,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 
 	linkGroups.exit().remove();
 
-	const linkEnter = linkGroups
-		.enter()
-		.append("g")
-		.attr("class", "trie-link");
+	const linkEnter = linkGroups.enter().append("g").attr("class", "trie-link");
 
 	linkEnter.append("path").attr("class", "trie-link-path");
 	const label = linkEnter.append("g").attr("class", "trie-link-label");
@@ -303,10 +298,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			.select("path.trie-link-path")
 			.attr("d", pathD ?? "")
 			.attr("fill", "none")
-			.attr(
-				"stroke",
-				linkStroke(isRejected, isSymbolLink, branchThreshold),
-			)
+			.attr("stroke", linkStroke(isRejected, isSymbolLink, branchThreshold))
 			.attr("stroke-width", isRejected || isSymbolLink ? 2.5 : 1.2)
 			.attr("stroke-opacity", isRejected || isSymbolLink ? 1 : 0.6)
 			.attr("stroke-dasharray", isRejected || isSymbolLink ? null : "4 2")
@@ -331,10 +323,9 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 		const midY = (s.y + t.y) / 2;
 		const labelY = projection === "vertical" ? midY - 6 : midY - 8;
 
-		labelG.style("display", null).attr(
-			"transform",
-			`translate(${midX}, ${labelY})`,
-		);
+		labelG
+			.style("display", null)
+			.attr("transform", `translate(${midX}, ${labelY})`);
 		labelG
 			.select("rect")
 			.attr("x", -18)
@@ -345,11 +336,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			.attr("fill", "var(--surface)")
 			.attr(
 				"stroke",
-				isRejected
-					? "var(--warn)"
-					: isSymbolLink
-						? "#38bdf8"
-						: "var(--line2)",
+				isRejected ? "var(--warn)" : isSymbolLink ? "#38bdf8" : "var(--line2)",
 			)
 			.attr("stroke-width", isRejected || isSymbolLink ? 1.5 : 1)
 			.attr("opacity", 0.95);
@@ -358,7 +345,10 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			.select("text")
 			.attr("x", 0)
 			.attr("y", 3.5)
-			.attr("fill", isRejected ? "var(--warn)" : isSymbolLink ? "#38bdf8" : "var(--acc)")
+			.attr(
+				"fill",
+				isRejected ? "var(--warn)" : isSymbolLink ? "#38bdf8" : "var(--acc)",
+			)
 			.attr("font-size", "9px")
 			.attr("text-anchor", "middle")
 			.attr("font-weight", 600)
@@ -428,9 +418,9 @@ const paintNodeContents = (
 			.text("ROOT");
 	} else if (isTerminal) {
 		if (typeof nodeData.threshold === "number") {
-			group.append("title").text(
-				`threshold ${formatExploreThreshold(nodeData.threshold)}`,
-			);
+			group
+				.append("title")
+				.text(`threshold ${formatExploreThreshold(nodeData.threshold)}`);
 		}
 		const hasSymbol = !!(symbolsAtNode && symbolsAtNode.length > 0);
 		group
@@ -467,9 +457,9 @@ const paintNodeContents = (
 		}
 	} else {
 		if (typeof nodeData.threshold === "number") {
-			group.append("title").text(
-				`threshold ${formatExploreThreshold(nodeData.threshold)}`,
-			);
+			group
+				.append("title")
+				.text(`threshold ${formatExploreThreshold(nodeData.threshold)}`);
 		}
 		group
 			.append("rect")
@@ -479,7 +469,14 @@ const paintNodeContents = (
 			.attr("height", INBETWEEN_HEIGHT)
 			.attr("rx", 3)
 			.attr("fill", "var(--surface)")
-			.attr("stroke", isSymbolOnPath ? "#38bdf8" : isCollapsed ? "var(--acc)" : "var(--line2)")
+			.attr(
+				"stroke",
+				isSymbolOnPath
+					? "#38bdf8"
+					: isCollapsed
+						? "var(--acc)"
+						: "var(--line2)",
+			)
 			.attr("stroke-width", isSymbolOnPath || isCollapsed ? 2 : 1);
 	}
 
@@ -505,10 +502,7 @@ const paintNodeContents = (
 			.attr("stroke-width", 1.5);
 	}
 
-	group.attr(
-		"cursor",
-		hasChildren ? "pointer" : "default",
-	);
+	group.attr("cursor", hasChildren ? "pointer" : "default");
 };
 
 const paintNodes = (input: RadixTreeSceneInput, paintActivity: boolean) => {
@@ -637,9 +631,7 @@ export const updateRadixTreeHighlights = (input: RadixTreeHighlightInput) => {
 		);
 };
 
-export const paintRadixTreeStructure = (
-	input: RadixTreeSceneInput,
-) => {
+export const paintRadixTreeStructure = (input: RadixTreeSceneInput) => {
 	if (!input.zoomRoot) return;
 	ensureLayers(input.zoomRoot);
 	paintLinks(input, false);

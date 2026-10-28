@@ -3,6 +3,10 @@ import { memo, useEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
+	comparePositionRows,
+	framePositionRows,
+} from "#/collections/positions";
+import {
 	exploreExitGaugeMarks,
 	onBook,
 	pnlGaugeValue,
@@ -22,9 +26,9 @@ import { cn } from "#/lib/utils";
 import { sendCommand } from "#/providers/websocket";
 
 /*
-Open positions are the desk's per-lot frames: one Value per symbol on the
-positions store, whose "position" layer carries the row — entry, mark, fee
-and the sale return from broker/price.go.
+Open positions are the desk's per-lot frames. The connect snapshot and each
+later mark tick land on the positions store; a tick names only the lots
+that moved, and the book keeps every lot that tick did not mention.
 */
 
 const trails = new Map<string, number[]>();
@@ -72,20 +76,14 @@ export const positionRows = (
 	for (const frame of Object.values(state)) {
 		const tick = frame.tick ?? 0n;
 
-		for (const layer of frame.lookup(["position"])) {
-			if (Array.isArray(layer)) {
-				for (const row of layer) {
-					if (row && typeof row === "object" && !Array.isArray(row)) {
-						take(row as Record<string, unknown>, tick);
-					}
-				}
-			} else if (layer && typeof layer === "object") {
-				take(layer as Record<string, unknown>, tick);
-			}
+		for (const row of framePositionRows(frame)) {
+			take(row, tick);
 		}
 	}
 
-	return [...Array.from(byID.values(), (held) => held.row), ...anon];
+	const rows = [...Array.from(byID.values(), (held) => held.row), ...anon];
+	rows.sort(comparePositionRows);
+	return rows;
 };
 
 /** Cheap fingerprint so cards re-render when lot marks move, not on unrelated scopes. */
@@ -105,6 +103,12 @@ export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 		.filter((row) => !positionReadout(row).closed && onBook(row, book))
 		.map((row) => row.symbol)
 		.sort();
+
+/** Close-now return after fees; used for the in-profit filter on this page. */
+export const lotInProfit = (row: Record<string, unknown>) => {
+	const pct = positionReadout(row).returnPct;
+	return pct !== null && pct > 0;
+};
 
 const duration = (seconds?: number) => {
 	if (seconds === undefined) return "—";
@@ -203,41 +207,41 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 			</Flex.Row>
 
 			<Flex.Row gap={1} wrap="wrap">
-					<Gauge
-						value={pnlGaugeValue(pnlPct)}
-						tone={pnlTone}
-						marks={pnlMarks}
-						label={
-							pnlPct === undefined ? undefined : (
-								<span style={{ color: `var(--${pnlTone})` }}>
-									{formatValue(pnlPct, "pct")}
-								</span>
-							)
-						}
-						caption="P&L"
-					/>
-					<Gauge
-						value={
-							room === undefined
-								? undefined
-								: Math.max(
-										0,
-										Math.min(
-											1,
-											Math.log10(Math.max(room, 1e-3) * 10) / Math.log10(200),
-										),
-									)
-						}
-						tone={roomTone}
-						ticks={[Math.log10(10) / Math.log10(200)]}
-						label={
-							room === undefined
-								? undefined
-								: `${room >= 100 ? Math.round(room) : room.toFixed(1)}×`
-						}
-						caption="exit room"
-					/>
-				</Flex.Row>
+				<Gauge
+					value={pnlGaugeValue(pnlPct)}
+					tone={pnlTone}
+					marks={pnlMarks}
+					label={
+						pnlPct === undefined ? undefined : (
+							<span style={{ color: `var(--${pnlTone})` }}>
+								{formatValue(pnlPct, "pct")}
+							</span>
+						)
+					}
+					caption="P&L"
+				/>
+				<Gauge
+					value={
+						room === undefined
+							? undefined
+							: Math.max(
+									0,
+									Math.min(
+										1,
+										Math.log10(Math.max(room, 1e-3) * 10) / Math.log10(200),
+									),
+								)
+					}
+					tone={roomTone}
+					ticks={[Math.log10(10) / Math.log10(200)]}
+					label={
+						room === undefined
+							? undefined
+							: `${room >= 100 ? Math.round(room) : room.toFixed(1)}×`
+					}
+					caption="exit room"
+				/>
+			</Flex.Row>
 			<div className="w-full min-w-0">
 				<Trail values={pnlTrail} height={GAUGE_SIZE} className="w-full" />
 				<span className="-mt-3 block text-[10px] text-(--f3) leading-tight">
@@ -294,12 +298,17 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const positionsState = useSelector(signals.positions, (state) => state);
+	const [profitOnly, setProfitOnly] = useState(false);
 	const held = useMemo(
 		() =>
 			positionRows(positionsState)
 				.filter((row) => !positionReadout(row).closed && onBook(row, book))
-				.sort((a, b) => String(a.symbol).localeCompare(String(b.symbol))),
+				.sort(comparePositionRows),
 		[book, positionsState],
+	);
+	const shown = useMemo(
+		() => (profitOnly ? held.filter(lotInProfit) : held),
+		[held, profitOnly],
 	);
 
 	if (held.length === 0) {
@@ -325,12 +334,72 @@ export const OpenPositions = () => {
 
 	return (
 		<Flex.Column className="flex-1 min-h-0 w-full min-w-0 overflow-auto">
-			<OpenChoiceChart lots={held} />
-			<div className="grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
-				{held.map((row) => (
-					<PositionCard key={String(row.id ?? row.symbol)} row={row} />
-				))}
-			</div>
+			<Flex.Row
+				align="center"
+				justify="between"
+				gap={2}
+				className="shrink-0 border-b border-(--line) bg-(--surface) px-3 py-1.5"
+			>
+				<span className="text-[10px] uppercase tracking-wider text-(--f4)">
+					Show
+				</span>
+				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
+					<legend className="sr-only">Open position filter</legend>
+					<button
+						type="button"
+						data-l="positions-filter-all"
+						aria-pressed={!profitOnly}
+						onClick={() => setProfitOnly(false)}
+						className={cn(
+							"rounded px-2.5 py-0.5 text-[11px] transition-colors cursor-pointer",
+							!profitOnly
+								? "bg-(--raised) font-bold text-(--f1) shadow-xs"
+								: "text-(--f3) hover:text-(--f1)",
+						)}
+					>
+						All
+						<span className="ml-1 tabular-nums text-(--f4)">{held.length}</span>
+					</button>
+					<button
+						type="button"
+						data-l="positions-filter-profit"
+						aria-pressed={profitOnly}
+						onClick={() => setProfitOnly(true)}
+						className={cn(
+							"rounded px-2.5 py-0.5 text-[11px] transition-colors cursor-pointer",
+							profitOnly
+								? "bg-(--raised) font-bold text-(--up) shadow-xs"
+								: "text-(--f3) hover:text-(--f1)",
+						)}
+					>
+						In profit
+						<span className="ml-1 tabular-nums text-(--f4)">
+							{held.filter(lotInProfit).length}
+						</span>
+					</button>
+				</fieldset>
+			</Flex.Row>
+			<OpenChoiceChart lots={shown} />
+			{shown.length === 0 ? (
+				<Flex.Column
+					align="center"
+					justify="center"
+					gap={2}
+					className="flex-1 px-3 py-10 text-(--f3)"
+				>
+					<span className="text-sm">No lots ahead after fees</span>
+					<span className="max-w-sm text-center text-[10px] text-(--f4)">
+						Every open lot is flat or behind on close-now P&amp;L. Switch to All
+						to see them.
+					</span>
+				</Flex.Column>
+			) : (
+				<div className="grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
+					{shown.map((row) => (
+						<PositionCard key={String(row.id ?? row.symbol)} row={row} />
+					))}
+				</div>
+			)}
 		</Flex.Column>
 	);
 };

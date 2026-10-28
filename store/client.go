@@ -9,6 +9,8 @@ import (
 	"iter"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -38,7 +40,15 @@ type Client struct {
 	bucket   string
 	transfer *transfermanager.Client
 	queue    *lf.Queue[Record]
+	mu       sync.Mutex
+	closing  atomic.Bool
+	stopped  chan struct{}
 }
+
+var (
+	liveClientsMu sync.Mutex
+	liveClients   []*Client
+)
 
 func NewClient(ctx context.Context, bucket string) *Client {
 	ctx, cancel := context.WithCancel(ctx)
@@ -96,28 +106,97 @@ func NewClient(ctx context.Context, bucket string) *Client {
 		bucket:   bucket,
 		transfer: transfermanager.New(client),
 		queue:    lf.NewQueue[Record](),
+		stopped:  make(chan struct{}),
 	}
 
+	registerClient(storeClient)
 	go storeClient.Run()
 
 	return storeClient
 }
 
-func (client *Client) Run() {
-	for {
-		select {
-		case <-client.ctx.Done():
-			return
-		default:
-			record, ok := client.queue.Dequeue()
+func registerClient(client *Client) {
+	if client == nil {
+		return
+	}
 
-			if !ok {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
+	liveClientsMu.Lock()
+	liveClients = append(liveClients, client)
+	liveClientsMu.Unlock()
+}
 
-			client.writeFromQueue(record.Key, record.Value)
+/*
+FlushAll writes every queued object before a restart. The upload loop shares
+the process lifetime, so a return from Run would otherwise drop the tail.
+*/
+func FlushAll() {
+	liveClientsMu.Lock()
+	clients := append([]*Client(nil), liveClients...)
+	liveClientsMu.Unlock()
+
+	for _, client := range clients {
+		if client == nil {
+			continue
 		}
+
+		client.closing.Store(true)
+	}
+
+	for _, client := range clients {
+		if client == nil || client.stopped == nil {
+			continue
+		}
+
+		select {
+		case <-client.stopped:
+		case <-time.After(45 * time.Second):
+			errnie.Warn("[store] timed out waiting to flush uploads")
+		}
+
+		client.Flush()
+	}
+}
+
+func (client *Client) Run() {
+	defer close(client.stopped)
+	defer client.Flush()
+
+	for {
+		if client.ctx.Err() != nil || client.closing.Load() {
+			return
+		}
+
+		record, ok := client.queue.Dequeue()
+
+		if !ok {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+
+		client.writeFromQueue(client.ctx, record.Key, record.Value)
+	}
+}
+
+func (client *Client) Flush() {
+	if client == nil || client.queue == nil {
+		return
+	}
+
+	client.closing.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	for {
+		record, ok := client.queue.Dequeue()
+		if !ok {
+			return
+		}
+
+		client.upload(ctx, record.Key, record.Value)
 	}
 }
 
@@ -334,7 +413,16 @@ func (client *Client) Write(p []byte) (int, error) {
 
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 	if key == "" {
-		return client.writeFromQueue("", value)
+		return client.writeFromQueue(client.ctx, "", value)
+	}
+
+	if client.closing.Load() {
+		ctx := client.ctx
+		if ctx == nil || ctx.Err() != nil {
+			ctx = context.Background()
+		}
+
+		return client.writeFromQueue(ctx, key, value)
 	}
 
 	if client.queue == nil {
@@ -350,14 +438,30 @@ func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 /*
 WriteAtPrefix uploads p at prefix. An empty prefix is refused.
 */
-func (client *Client) writeFromQueue(prefix string, p []byte) (int, error) {
+func (client *Client) writeFromQueue(ctx context.Context, prefix string, p []byte) (int, error) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if ctx != nil && ctx.Err() != nil {
+		client.queue.Enqueue(Record{Key: prefix, Value: p})
+		return len(p), nil
+	}
+
+	return client.upload(ctx, prefix, p)
+}
+
+func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int, error) {
 	if prefix == "" {
 		return 0, errnie.Error(errnie.Err(
 			errnie.Validation, "[store.client] upload key is empty", nil,
 		))
 	}
 
-	_, err := client.transfer.UploadObject(client.ctx, &transfermanager.UploadObjectInput{
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	_, err := client.transfer.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket: aws.String(client.bucket),
 		Key:    aws.String(prefix),
 		Body:   bytes.NewReader(p),
@@ -387,6 +491,43 @@ func (client *Client) DeletePrefix(prefix string) error {
 				Key:    aws.String(*object.Key),
 			})
 
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO, "[store.client] delete object error", err,
+				))
+			}
+		}
+	}
+
+	return nil
+}
+
+/*
+DeleteOtherKeys deletes every object under prefix except keep.
+keep may be empty to delete the whole prefix.
+*/
+func (client *Client) DeleteOtherKeys(prefix, keep string) error {
+	if client == nil || client.S3Client == nil || prefix == "" {
+		return nil
+	}
+
+	pages, err := client.listPages(prefix)
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] list objects error", err,
+		))
+	}
+
+	for _, page := range pages {
+		for _, object := range page.Contents {
+			if object.Key == nil || *object.Key == keep {
+				continue
+			}
+
+			_, err := client.S3Client.DeleteObject(client.ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(client.bucket),
+				Key:    aws.String(*object.Key),
+			})
 			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.IO, "[store.client] delete object error", err,

@@ -248,10 +248,9 @@ func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
 }
 
 /*
-Friction is the round-trip cost hurdle: relative spread plus both taker
-fee legs, as a fraction of mid (same units as PnL/cost).
+spreadFraction is the bid-ask spread as a fraction of mid.
 */
-func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
+func (price *Price) spreadFraction(symbol string) (*decimal.Decimal, bool) {
 	bid, ask := price.Touch(symbol)
 
 	if bid == nil || ask == nil || bid.Sign() <= 0 || ask.Sign() <= 0 || ask.Cmp(bid) <= 0 {
@@ -264,13 +263,37 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
+	return ask.Sub(bid).Div(mid), true
+}
+
+/*
+SpreadPct is the bid-ask spread in percent of mid, the same units as PnLPct.
+*/
+func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
+	spread, ok := price.spreadFraction(symbol)
+	if !ok || spread == nil {
+		return nil, false
+	}
+
+	return spread.Mul(decimalHundred), true
+}
+
+/*
+Friction is the round-trip cost hurdle: relative spread plus both taker
+fee legs, as a fraction of mid (same units as PnL/cost).
+*/
+func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
+	spread, ok := price.spreadFraction(symbol)
+	if !ok || spread == nil {
+		return nil, false
+	}
+
 	fee := price.Fee(symbol)
 
 	if fee == nil || fee.Sign() < 0 {
 		return nil, false
 	}
 
-	spread := ask.Sub(bid).Div(mid)
 	twoLegFee := fee.Mul(decimalPercent).Mul(decimal.NewFromInt64(2))
 	hurdle := spread.Add(twoLegFee)
 
@@ -284,7 +307,7 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 /*
 OpenDragBudgetPct is the most negative close-now PnLPct still allowed at
 entry: three times the round-trip friction hurdle, matching the virtual
-stop buffer in ShouldExit.
+stop buffer in StopLoss.Evaluate.
 */
 func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 	friction, ok := price.Friction(symbol)

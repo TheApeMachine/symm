@@ -1,7 +1,10 @@
 import { signals } from "#/collections/app";
+import { triePrefix } from "#/collections/book";
 import {
+	cognitionStore,
 	ingestCognitionFrame,
 	ingestPathWalks,
+	ingestPolicyKeys,
 	ingestS3Prefix,
 	ingestTrainRegions,
 } from "#/collections/cognition";
@@ -17,7 +20,7 @@ import {
 	ingestTrainingStep,
 } from "#/collections/sequitur";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
-import { ingestDeskSnapshot } from "#/lib/lifecycle";
+import { ingestDeskSnapshot, ingestS3PositionHistory } from "#/lib/lifecycle";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
 import type { Value } from "#/types/value";
 
@@ -88,6 +91,7 @@ watchScopes(signals.cognition, (value) => {
 });
 
 watchScopes(signals.s3, (value) => {
+	if (ingestS3PositionHistory(value)) return;
 	ingestS3Prefix(value);
 });
 
@@ -114,6 +118,23 @@ watchScopes(signals.training, (value) => {
 		decodeLayers(value, (payload) =>
 			ingestPathWalks(Number(value.tick), payload),
 		);
+		return;
+	}
+	if (value.role === "explore" && value.scope === "catalog") {
+		if (triePrefix() !== "model/explore") return;
+		const keys = value.reading("exploreKeys") as string[] | undefined;
+		if (Array.isArray(keys) && keys.length > 0) {
+			ingestPolicyKeys(keys, String(value.epoch));
+		}
+		const thresholds = value.reading("exploreThresholds") as
+			| Record<string, number>
+			| undefined;
+		if (thresholds && typeof thresholds === "object") {
+			cognitionStore.setState((state) => ({
+				...state,
+				thresholds: { ...state.thresholds, ...thresholds },
+			}));
+		}
 		return;
 	}
 	if (value.role === "step") {

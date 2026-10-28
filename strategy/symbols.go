@@ -10,14 +10,6 @@ import (
 )
 
 /*
-symbolScope is the desk and dashboard scope for a pair (BTC/USD → BTC-USD).
-Signal and resonance layers on the workspace tick use this form.
-*/
-func symbolScope(symbol string) string {
-	return strings.ReplaceAll(symbol, "/", "-")
-}
-
-/*
 SymbolsOnTick lists every pair touched on this workspace tick: trade prints
 first, then any signal layer keyed under source/symbol/….
 */

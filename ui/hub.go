@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -46,6 +48,18 @@ type Hub struct {
 	streams    map[string]context.CancelFunc
 	streamGen  map[string]uint64
 	nextStream uint64
+}
+
+/*
+UseStore replaces the hub object store. Call after config load so ListPrefix
+reads the same bucket the model writes (ui init runs before Viper).
+*/
+func (hub *Hub) UseStore(client *store.Client) {
+	if hub == nil || client == nil {
+		return
+	}
+
+	hub.store = client
 }
 
 /*
@@ -178,16 +192,19 @@ func (hub *Hub) wsHandler() fiber.Handler {
 					continue
 				}
 
+				maxBytes := system.Cfg.UI.WebSocket.MaxMessageBytes
+				if maxBytes > 0 && len(p) > maxBytes {
+					errnie.Warn(fmt.Sprintf(
+						"[hub] dropping frame (%d bytes > max %d)",
+						len(p), maxBytes,
+					))
+					continue
+				}
+
 				err := conn.WriteMessage(websocket.BinaryMessage, p)
 
 				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						fmt.Sprintf("[hub] websocket write failed (%d bytes)", len(p)),
-						err,
-					))
-					conn.Close()
-					hub.connected.Store(false)
+					hub.retireConnection(conn, err, len(p))
 					return
 				}
 			}
@@ -215,6 +232,26 @@ func (hub *Hub) wsHandler() fiber.Handler {
 	}, websocket.Config{
 		Origins: []string{"*"},
 	})
+}
+
+func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameBytes int) {
+	if hub.conn.Load() != conn {
+		return
+	}
+
+	if writeErr != nil && !disconnect.Expected(writeErr) {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("[hub] websocket write failed (%d bytes)", frameBytes),
+			writeErr,
+		))
+	}
+
+	_ = conn.Close()
+
+	if hub.conn.CompareAndSwap(conn, nil) {
+		hub.connected.Store(false)
+	}
 }
 
 /*
@@ -342,7 +379,7 @@ func (hub *Hub) ListPrefix(prefix string) {
 			continue
 		}
 
-		value.Append(out, key)
+		value.AppendBytes(out.Bytes(), key)
 	}
 
 	hub.Write(value.Bytes())
@@ -420,8 +457,11 @@ func (hub *Hub) handleCommand(payload []byte) error {
 
 		hub.cancelStream("s3")
 
-		// One aggregated frame for explore keys the cognition tree reads.
-		if request.Prefix == "model/explore" {
+		// One aggregated frame for large prefix listings (trie books, closed lots).
+		if request.Prefix == "model/explore" ||
+			request.Prefix == "model/policy" ||
+			strings.HasPrefix(request.Prefix, "position/closed") ||
+			strings.HasPrefix(request.Prefix, "virtual/closed") {
 			hub.ListPrefix(request.Prefix)
 			break
 		}

@@ -2,12 +2,15 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
@@ -31,10 +34,8 @@ type Desk struct {
 	positions      *Cache
 	virtuals       *Cache
 	virtualArchive *sync.Map
-	pendingTrain   *sync.Map
+	pending        *sync.Map
 }
-
-const helloMinGap = 250 * time.Millisecond
 
 func NewDesk(
 	ctx context.Context,
@@ -50,60 +51,223 @@ func NewDesk(
 		positions:      NewCache(ctx),
 		virtuals:       NewCache(ctx),
 		virtualArchive: &sync.Map{},
-		pendingTrain:   &sync.Map{},
+		pending:        &sync.Map{},
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
 
-	for key, val := range map[string]*Cache{
+	for key, cache := range map[string]*Cache{
 		"position": desk.positions,
 		"virtual":  desk.virtuals,
 	} {
-		for value := range desk.history.Restore(key) {
-			fields := strings.Split(value.Prefix, "/")
-			if len(fields) < 5 {
-				continue
-			}
+		desk.restoreCache(key, cache)
+	}
 
-			role := fields[1]
+	desk.resumePaperOrders()
+	desk.reconcilePaperFills()
+	desk.retireFlatPaper()
+	desk.Transition(runtime.READY)
+	return desk
+}
 
-			position := &Position{}
-			value.Lookup(position, key)
+type historyHit struct {
+	role     string
+	position *Position
+	value    *data.Value
+}
 
-			if value.Err != nil {
-				// A frame that does not decode is already recorded on the
-				// value; report it and keep restoring the rest.
+/*
+readHistory decodes one stored lot. The layer name is always "position";
+the book (paper or virtual) is the object prefix, not the layer.
+*/
+func readHistory(value *data.Value) (historyHit, bool) {
+	if value == nil {
+		return historyHit{}, false
+	}
+
+	fields := strings.Split(value.Prefix, "/")
+	if len(fields) < 5 {
+		return historyHit{}, false
+	}
+
+	role := fields[1]
+	if role != "open" && role != "closed" {
+		return historyHit{}, false
+	}
+
+	position := &Position{}
+	value.Lookup(position, "position")
+
+	if value.Err != nil || position.Symbol == "" {
+		return historyHit{}, false
+	}
+
+	return historyHit{role: role, position: position, value: value}, true
+}
+
+func keepHistory(into map[string]historyHit, key string, hit historyHit) {
+	if into == nil || key == "" {
+		return
+	}
+
+	prev, exists := into[key]
+	if exists && !laterHistory(hit.value, prev.value) {
+		return
+	}
+
+	into[key] = hit
+}
+
+func prepareRestored(position *Position) {
+	if position == nil || position.ExitPath != "" {
+		return
+	}
+
+	position.ExitPath = position.EntryPath
+}
+
+func laterHistory(next, prev *data.Value) bool {
+	if next == nil {
+		return false
+	}
+
+	if prev == nil {
+		return true
+	}
+
+	if next.Epoch != prev.Epoch {
+		return next.Epoch > prev.Epoch
+	}
+
+	if next.Tick != prev.Tick {
+		return next.Tick > prev.Tick
+	}
+
+	return next.Timestamp > prev.Timestamp
+}
+
+func (desk *Desk) restoreCache(cacheKey string, cache *Cache) {
+	if desk == nil || desk.history == nil || cache == nil {
+		return
+	}
+
+	open := map[string]historyHit{}
+	closed := map[string]historyHit{}
+	settled := map[string]historyHit{}
+
+	for value := range desk.history.Restore(cacheKey) {
+		hit, ok := readHistory(value)
+		if !ok {
+			if value != nil && value.Err != nil {
 				desk.Error(value.Err)
+			}
+
+			continue
+		}
+
+		switch hit.role {
+		case "open":
+			prev, existed := open[hit.position.Symbol]
+			keepHistory(open, hit.position.Symbol, hit)
+			if existed {
+				desk.dropStaleOpen(prev, hit, open[hit.position.Symbol])
+			}
+		case "closed":
+			if hit.position.ID == "" {
 				continue
 			}
 
-			if position.Symbol == "" {
+			if cacheKey == "virtual" {
+				keepHistory(closed, hit.position.ID, hit)
 				continue
 			}
 
-			// History JSON does not carry the live price book. Without it,
-			// later marks never reprice and a lot in profit never exits.
-			position.price = desk.price
-			position.transport = desk.transport
-			position.onSettled = desk.onPositionSettled
-
-			switch role {
-			case "open":
-				if position.ClosedAt != nil && !position.ClosedAt.IsZero() {
-					continue
-				}
-
-				val.Restore(position)
-			case "closed":
-				if key == "virtual" && position.ID != "" {
-					desk.virtualArchive.Store(position.ID, position)
-				}
-			}
+			keepHistory(settled, hit.position.ID, hit)
 		}
 	}
 
-	desk.Transition(runtime.READY)
-	return desk
+	for _, hit := range open {
+		if !restoreOpen(hit, settled) {
+			if hit.value != nil {
+				_ = desk.history.Drop(hit.value.Prefix)
+			}
+			continue
+		}
+
+		desk.bind(hit.position)
+		prepareRestored(hit.position)
+		cache.Restore(hit.position)
+	}
+
+	for _, hit := range closed {
+		desk.bind(hit.position)
+		desk.virtualArchive.Store(hit.position.ID, hit.position)
+	}
+}
+
+func (desk *Desk) dropStaleOpen(prev, next, kept historyHit) {
+	if desk == nil || desk.history == nil || prev.value == nil || next.value == nil || kept.value == nil {
+		return
+	}
+
+	if prev.value.Prefix == "" || prev.value.Prefix == kept.value.Prefix {
+		if next.value.Prefix != kept.value.Prefix {
+			_ = desk.history.Drop(next.value.Prefix)
+		}
+		return
+	}
+
+	_ = desk.history.Drop(prev.value.Prefix)
+}
+
+func restoreOpen(hit historyHit, settled map[string]historyHit) bool {
+	if hit.position == nil {
+		return false
+	}
+
+	if hit.position.ClosedAt != nil && !hit.position.ClosedAt.IsZero() {
+		return false
+	}
+
+	if hit.position.ID == "" {
+		return true
+	}
+
+	_, done := settled[hit.position.ID]
+	return !done
+}
+
+func (desk *Desk) bind(position *Position) {
+	if desk == nil || position == nil {
+		return
+	}
+
+	// History JSON does not carry the live price book. Without it,
+	// later marks never reprice and a lot in profit never exits.
+	position.price = desk.price
+	position.transport = desk.transport
+	position.onSettled = desk.onPositionSettled
+	if position.stopLoss == nil {
+		position.stopLoss = NewStopLoss()
+	}
+}
+
+func (desk *Desk) snapshotOpen(position *Position) error {
+	if desk == nil || desk.history == nil || position == nil || position.Symbol == "" {
+		return nil
+	}
+
+	if position.ClosedAt != nil && !position.ClosedAt.IsZero() {
+		return nil
+	}
+
+	_, key := desk.cacheFor(position.Virtual)
+
+	return desk.history.ReplaceOpen(data.NewValue(
+		key, "open", position.Symbol,
+	).Append(
+		position, "position",
+	))
 }
 
 /*
@@ -112,7 +276,10 @@ connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
+	// The snapshot replaces the book. A mark tick publishes one lot at a
+	// time and must not reuse this frame, or the page drops every lot that
+	// did not move.
+	io.Copy(ui.UI, data.NewValue("positions", "snapshot", "all").Append(
 		append(
 			desk.positions.AllPositions(),
 			desk.virtuals.AllPositions()...,
@@ -158,15 +325,15 @@ func (desk *Desk) ClosedVirtuals() []*Position {
 }
 
 /*
-TakePendingTrain returns a virtual lot closed on a mark exit since the last
+Takepending returns a virtual lot closed on a mark exit since the last
 take. Evaluate consumes it for path threshold updates.
 */
-func (desk *Desk) TakePendingTrain(symbol string) (*Position, bool) {
+func (desk *Desk) Takepending(symbol string) (*Position, bool) {
 	if desk == nil || symbol == "" {
 		return nil, false
 	}
 
-	val, ok := desk.pendingTrain.LoadAndDelete(symbol)
+	val, ok := desk.pending.LoadAndDelete(symbol)
 	if !ok {
 		return nil, false
 	}
@@ -176,16 +343,16 @@ func (desk *Desk) TakePendingTrain(symbol string) (*Position, bool) {
 }
 
 /*
-PendingTrainSymbols lists pairs waiting for Evaluate to score a mark exit.
+pendingSymbols lists pairs waiting for Evaluate to score a mark exit.
 */
-func (desk *Desk) PendingTrainSymbols() []string {
+func (desk *Desk) pendingSymbols() []string {
 	if desk == nil {
 		return nil
 	}
 
 	out := make([]string, 0)
 
-	desk.pendingTrain.Range(func(key, _ any) bool {
+	desk.pending.Range(func(key, _ any) bool {
 		if symbol, ok := key.(string); ok && symbol != "" {
 			out = append(out, symbol)
 		}
@@ -215,13 +382,20 @@ Update marks open positions against the trade price. Called from the workspace
 tick handler — the desk sits off the trade ingress path, so this is where
 marks become live.
 
-The trade batch is the changed set. Those lots are the ones published. Every
-other open lot is repriced from the book so an exit still sees a live mark,
-and that reprice stays on the desk.
+The trade batch is the changed set. Those lots are the ones published. Open lots
+whose book mark actually moved are also updated so exits see a live mark.
+Unchanged, non-traded lots are skipped to prevent false momentum stalls.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
 	if len(trades) == 0 {
 		return
+	}
+
+	traded := make(map[string]struct{}, len(trades))
+	for _, t := range trades {
+		if t.Symbol != "" {
+			traded[t.Symbol] = struct{}{}
+		}
 	}
 
 	changed := make([]*Position, 0)
@@ -232,16 +406,68 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 				continue
 			}
 
-			if mark := desk.price.CurrentMark(position.Symbol); mark != nil {
-				position.Update(mark)
-				changed = append(changed, position)
+			mark := desk.price.CurrentMark(position.Symbol)
+			if mark == nil {
+				continue
 			}
+
+			_, isTraded := traded[position.Symbol]
+			position.mu.RLock()
+			markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
+			watchProfit := profitLockArmed(position) || watchGreenBook(position)
+			position.mu.RUnlock()
+
+			// Skip idle lots. A green lot is still repriced when the touch
+			// price is unchanged: ExitRoom is size, and a size pull is an
+			// exit input. Identical replays are not this symbol's tape.
+			if !isTraded && markUnchanged && !watchProfit {
+				continue
+			}
+
+			position.Update(mark)
+			changed = append(changed, position)
 		}
 	}
 
-	io.Copy(ui.UI, data.NewValue("positions", "update", "all").Append(
-		changed, "positions",
-	))
+	if len(changed) > 0 {
+		// One frame per lot. Publishing this sparse set as scope "all"
+		// replaces the connect snapshot, so the page drops every lot that
+		// did not move on this tick and the open count jumps with it.
+		for _, frame := range lotUpdates(changed) {
+			io.Copy(ui.UI, frame)
+		}
+	}
+}
+
+/*
+lotUpdates addresses each lot on its own scope. The connect snapshot stays
+put under "all"; a later tick only replaces the lots it names.
+*/
+func lotUpdates(lots []*Position) []*data.Value {
+	ordered := slices.Clone(lots)
+	sortPositions(ordered)
+
+	frames := make([]*data.Value, 0, len(ordered))
+
+	for _, position := range ordered {
+		if position == nil || position.Symbol == "" {
+			continue
+		}
+
+		scope := position.ID
+		if scope == "" {
+			scope = position.Symbol
+			if position.Virtual {
+				scope = "virtual:" + scope
+			}
+		}
+
+		frames = append(frames, data.NewValue("positions", "update", scope).Append(
+			position, "position",
+		))
+	}
+
+	return frames
 }
 
 /*
@@ -286,12 +512,428 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 
 		position.Apply(execution)
 
-		// A paper lot whose sell filled is fully settled: retire it from
-		// the desk so it cannot shadow the next position on the symbol.
+		// A filled sell is closed. releaseLocked retires the open objects.
+		// Removing the lot here skips that and a restart opens it again.
 		if !position.Virtual && position.ClosedAt != nil {
-			desk.positions.Remove(position.Symbol)
+			continue
+		}
+
+		// The entry snapshot is taken before a paper fill arrives. Rewrite
+		// the open record so a restart comes back with the fill and order id.
+		if err := desk.snapshotOpen(position); err != nil {
+			errnie.Error(err)
 		}
 	}
+}
+
+type resumedOrder struct {
+	orderID       string
+	clientOrderID string
+	pair          string
+	side          string
+}
+
+type paperOrderBook interface {
+	OpenOrders() (spot.OpenOrdersResult, error)
+	ResumeOpenOrder(orderID, clientOrderID, pair, side string)
+}
+
+func (desk *Desk) resumePaperOrders() {
+	if desk == nil || desk.transport == nil || len(desk.positions.OpenPositions()) == 0 {
+		return
+	}
+
+	book, ok := desk.transport.(paperOrderBook)
+	if !ok {
+		return
+	}
+
+	open, err := book.OpenOrders()
+	if err != nil {
+		errnie.Warn("[desk] paper open orders were not restored: " + err.Error())
+		return
+	}
+
+	for _, position := range desk.positions.OpenPositions() {
+		for _, order := range ordersToResume(position, open) {
+			book.ResumeOpenOrder(order.orderID, order.clientOrderID, order.pair, order.side)
+		}
+	}
+}
+
+/*
+reconcilePaperFills copies venue buys onto open paper lots restored
+without an entry price. Close-now PnL is empty until that price is on the lot.
+*/
+func (desk *Desk) reconcilePaperFills() {
+	if desk == nil || desk.transport == nil || desk.positions == nil {
+		return
+	}
+
+	ledger, ok := desk.transport.(interface {
+		TradesHistory() (spot.TradesHistoryResult, error)
+	})
+	if !ok {
+		return
+	}
+
+	history, err := ledger.TradesHistory()
+	if err != nil {
+		errnie.Warn("[desk] paper fills were not restored: " + err.Error())
+		return
+	}
+
+	used := map[string]struct{}{}
+
+	for _, position := range desk.positions.OpenPositions() {
+		if position == nil || position.Virtual || filledSide(position, "buy") {
+			continue
+		}
+
+		id, trade, matched := matchPaperBuy(position, history.Trades, used)
+		if !matched {
+			continue
+		}
+
+		used[id] = struct{}{}
+		position.Apply(executionFromPaperTrade(position.Symbol, id, trade))
+
+		if err := desk.snapshotOpen(position); err != nil {
+			errnie.Error(err)
+		}
+	}
+}
+
+/*
+retireFlatPaper drops restored lots the paper wallet does not hold.
+A restart was reopening APR and XMN from leftover open objects after the
+venue had already sold them, so the desk showed positions with no balance.
+*/
+func (desk *Desk) retireFlatPaper() {
+	if desk == nil || desk.transport == nil || desk.positions == nil {
+		return
+	}
+
+	ledger, ok := desk.transport.(interface {
+		Balances() (*kraken.Balance, error)
+		OpenOrders() (spot.OpenOrdersResult, error)
+	})
+	if !ok {
+		return
+	}
+
+	wallet, err := ledger.Balances()
+	if err != nil {
+		errnie.Warn("[desk] paper balances were not read, so flat lots stayed open: " + err.Error())
+		return
+	}
+
+	resting, err := ledger.OpenOrders()
+	if err != nil {
+		errnie.Warn("[desk] paper open orders were not read, so flat lots stayed open: " + err.Error())
+		return
+	}
+
+	var trades map[string]spot.Trade
+	if history, ok := desk.transport.(interface {
+		TradesHistory() (spot.TradesHistoryResult, error)
+	}); ok {
+		if book, err := history.TradesHistory(); err == nil {
+			trades = book.Trades
+		}
+	}
+
+	for _, position := range desk.positions.OpenPositions() {
+		if !flatAtVenue(position, holding(wallet, baseAsset(position.Symbol)), restingOn(position, resting)) {
+			continue
+		}
+
+		if !filledSide(position, "sell") {
+			if id, trade, matched := matchPaperSell(position, trades); matched {
+				position.Apply(executionFromPaperTrade(position.Symbol, id, trade))
+				if at := paperTradeTime(trade); !at.IsZero() {
+					closed := at
+					position.ClosedAt = &closed
+				}
+			}
+		}
+
+		errnie.Warn("[desk] " + position.Symbol + " is open on the desk and flat in the paper wallet; closing the lot")
+		desk.settleFlat(position)
+	}
+}
+
+func (desk *Desk) settleFlat(position *Position) {
+	if position == nil {
+		return
+	}
+
+	if position.ClosedAt == nil || position.ClosedAt.IsZero() {
+		now := time.Now().UTC()
+		position.ClosedAt = &now
+	}
+
+	position.exiting.Store(true)
+
+	if desk.history == nil {
+		desk.positions.Remove(position.Symbol)
+		return
+	}
+
+	desk.mu.Lock()
+	defer desk.mu.Unlock()
+
+	if err := desk.releaseLocked(position); err != nil {
+		errnie.Error(err)
+	}
+}
+
+func flatAtVenue(position *Position, held *decimal.Decimal, resting bool) bool {
+	if position == nil || position.Virtual || resting {
+		return false
+	}
+
+	return held == nil || held.Sign() <= 0
+}
+
+func baseAsset(symbol string) string {
+	base, _, _ := strings.Cut(symbol, "/")
+	return base
+}
+
+func holding(wallet *kraken.Balance, asset string) *decimal.Decimal {
+	if wallet == nil || asset == "" {
+		return nil
+	}
+
+	for _, row := range wallet.Data {
+		if !strings.EqualFold(row.Asset, asset) {
+			continue
+		}
+
+		if row.Balance != nil {
+			return row.Balance
+		}
+
+		return row.Available
+	}
+
+	return nil
+}
+
+func restingOn(position *Position, open spot.OpenOrdersResult) bool {
+	if position == nil || len(open.Open) == 0 {
+		return false
+	}
+
+	for _, row := range open.Open {
+		if row.ClOrdID != "" && position.EntryOrder != nil && row.ClOrdID == position.EntryOrder.ClOrdId {
+			return true
+		}
+
+		if row.ClOrdID != "" && position.ExitOrder != nil && row.ClOrdID == position.ExitOrder.ClOrdId {
+			return true
+		}
+
+		if row.Description != nil && sameVenuePair(row.Description.Pair, position.Symbol) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchPaperSell(
+	position *Position,
+	trades map[string]spot.Trade,
+) (string, spot.Trade, bool) {
+	if position == nil {
+		return "", spot.Trade{}, false
+	}
+
+	var (
+		bestID string
+		best   spot.Trade
+		bestAt time.Time
+		have   bool
+	)
+
+	for id, trade := range trades {
+		if !strings.EqualFold(trade.Type, "sell") || !sameVenuePair(trade.Pair, position.Symbol) {
+			continue
+		}
+
+		at := paperTradeTime(trade)
+		if !position.OpenedAt.IsZero() && !at.IsZero() && at.Before(position.OpenedAt) {
+			continue
+		}
+
+		if !have || at.After(bestAt) {
+			best, bestID, bestAt, have = trade, id, at, true
+		}
+	}
+
+	return bestID, best, have
+}
+
+func executionFromPaperTrade(symbol, id string, trade spot.Trade) kraken.ExecutionData {
+	when := time.Time{}
+	if trade.Time != nil {
+		sec := trade.Time.Float64()
+		when = time.Unix(0, int64(sec*1e9)).UTC()
+	}
+
+	side := trade.Type
+	if side == "" {
+		side = "buy"
+	}
+
+	return kraken.ExecutionData{
+		OrderID:     trade.OrderID,
+		ExecID:      id,
+		ExecType:    "trade",
+		Symbol:      symbol,
+		Side:        side,
+		LastQty:     trade.Volume,
+		CumQty:      trade.Volume,
+		LastPrice:   trade.Price,
+		AvgPrice:    trade.Price,
+		Cost:        trade.Cost,
+		FeeUsdEquiv: trade.Fee,
+		OrderStatus: "filled",
+		Timestamp:   when,
+	}
+}
+
+func matchPaperBuy(
+	position *Position,
+	trades map[string]spot.Trade,
+	used map[string]struct{},
+) (string, spot.Trade, bool) {
+	if position == nil {
+		return "", spot.Trade{}, false
+	}
+
+	var (
+		bestID    string
+		best      spot.Trade
+		bestDelta time.Duration
+		have      bool
+	)
+
+	for id, trade := range trades {
+		if _, taken := used[id]; taken || !paperBuyFor(position, trade) {
+			continue
+		}
+
+		at := paperTradeTime(trade)
+
+		if position.OpenedAt.IsZero() {
+			if !have || at.After(paperTradeTime(best)) {
+				best, bestID, have = trade, id, true
+			}
+			continue
+		}
+
+		delta := at.Sub(position.OpenedAt)
+		if delta < 0 {
+			delta = -delta
+		}
+
+		if delta > 5*time.Minute {
+			continue
+		}
+
+		if !have || delta < bestDelta {
+			best, bestID, bestDelta, have = trade, id, delta, true
+		}
+	}
+
+	return bestID, best, have
+}
+
+func paperBuyFor(position *Position, trade spot.Trade) bool {
+	if position == nil || !strings.EqualFold(trade.Type, "buy") {
+		return false
+	}
+
+	if !sameVenuePair(trade.Pair, position.Symbol) {
+		return false
+	}
+
+	return trade.Volume != nil && trade.Volume.Sign() > 0 &&
+		trade.Price != nil && trade.Price.Sign() > 0
+}
+
+func paperTradeTime(trade spot.Trade) time.Time {
+	if trade.Time == nil {
+		return time.Time{}
+	}
+
+	sec := trade.Time.Float64()
+	return time.Unix(0, int64(sec*1e9)).UTC()
+}
+
+func sameVenuePair(left, right string) bool {
+	norm := func(symbol string) string {
+		symbol = strings.ToUpper(strings.ReplaceAll(symbol, "/", ""))
+		return strings.ReplaceAll(symbol, "XBT", "BTC")
+	}
+
+	return norm(left) == norm(right)
+}
+
+func ordersToResume(position *Position, open spot.OpenOrdersResult) []resumedOrder {
+	if position == nil || position.Virtual || len(open.Open) == 0 {
+		return nil
+	}
+
+	out := make([]resumedOrder, 0, 2)
+
+	for _, leg := range []struct {
+		request *spot.OrderRequest
+		side    string
+	}{
+		{position.EntryOrder, "buy"},
+		{position.ExitOrder, "sell"},
+	} {
+		if leg.request == nil || leg.request.ClOrdId == "" || filledSide(position, leg.side) {
+			continue
+		}
+
+		for orderID, row := range open.Open {
+			if row.ClOrdID != leg.request.ClOrdId {
+				continue
+			}
+
+			out = append(out, resumedOrder{
+				orderID:       orderID,
+				clientOrderID: leg.request.ClOrdId,
+				pair:          position.Symbol,
+				side:          leg.side,
+			})
+		}
+	}
+
+	return out
+}
+
+func filledSide(position *Position, side string) bool {
+	if position == nil {
+		return false
+	}
+
+	for _, fill := range position.Fills {
+		if fill == nil || !strings.EqualFold(fill.Side, side) {
+			continue
+		}
+
+		if fill.LastQty != nil && fill.LastQty.Sign() > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
@@ -333,19 +975,17 @@ func (desk *Desk) Enter(
 		desk.onPositionSettled,
 	)
 
-	err := position.Enter(path, qty)
+	// Register before Send. Paper publish blocks until the private ingress
+	// reads the fill, and that read calls Apply. The lot has to already be
+	// in the cache or the entry price is dropped and close-now PnL stays empty.
+	cache.Add(position.Symbol, position)
 
-	if err != nil {
+	if err := position.Enter(path, qty); err != nil {
+		cache.Drop(position.Symbol)
 		return err
 	}
 
-	// The desk owns the position from the moment it enters: register it in
-	// the right cache so ticks mark it and Hello publishes it immediately.
-	// Without this only a restart (history restore) would ever surface a
-	// live entry.
-	cache.Add(position.Symbol, position)
-
-	if err := desk.history.Store(data.NewValue(
+	if err := desk.history.ReplaceOpen(data.NewValue(
 		key, "open", symbol,
 	).Append(
 		position, "position",
@@ -386,6 +1026,10 @@ func (desk *Desk) Exit(
 	}
 
 	if err := position.Exit(path); err != nil {
+		if errors.Is(err, ErrExitInProgress) {
+			return nil
+		}
+
 		return err
 	}
 
@@ -400,17 +1044,19 @@ func (desk *Desk) releaseLocked(position *Position) error {
 		return nil
 	}
 
-	cache, key := desk.cacheFor(position.Virtual)
-
-	if !cache.Has(position.Symbol) {
+	if !position.settleOnce() {
 		return nil
 	}
 
-	if position.Virtual {
-		desk.virtuals.Remove(position.Symbol)
-		desk.pendingTrain.Store(position.Symbol, position)
-	} else {
-		desk.positions.Remove(position.Symbol)
+	cache, key := desk.cacheFor(position.Virtual)
+
+	if cache.Has(position.Symbol) {
+		if position.Virtual {
+			desk.virtuals.Remove(position.Symbol)
+			desk.pending.Store(position.Symbol, position)
+		} else {
+			desk.positions.Remove(position.Symbol)
+		}
 	}
 
 	value := data.NewValue(
@@ -434,4 +1080,26 @@ func (desk *Desk) releaseLocked(position *Position) error {
 	))
 
 	return nil
+}
+
+func (desk *Desk) TakePending(symbol string) (*Position, bool) {
+	if desk == nil || symbol == "" {
+		return nil, false
+	}
+
+	val, ok := desk.pending.LoadAndDelete(symbol)
+	if !ok {
+		return nil, false
+	}
+
+	position, ok := val.(*Position)
+	return position, ok && position != nil
+}
+
+func (desk *Desk) Pending() []string {
+	if desk == nil {
+		return nil
+	}
+
+	return desk.pendingSymbols()
 }

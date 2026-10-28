@@ -13,6 +13,39 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+func (value *Value) GetString(key string) string {
+	var str string
+	value.Lookup(&str, key)
+	return str
+}
+
+func (value *Value) GetFloat64(key string) float64 {
+	var f float64
+	value.Lookup(&f, key)
+	return f
+}
+
+func Get[T any](value *Value, key string) T {
+	var t T
+	value.Lookup(&t, key)
+	return t
+}
+
+/*
+GetTotal returns the sum of all values for the given key.
+*/
+func (value *Value) GetTotal(key string) float64 {
+	total := 0.0
+	var values []float64
+	value.All(&values, key)
+
+	for _, value := range values {
+		total += value
+	}
+
+	return total
+}
+
 /*
 Append stores layers on value as one gob blob, addressed by keys.
 The address is value.Prefix followed by keys, joined with "/".
@@ -39,6 +72,55 @@ func (value *Value) Append(layers any, keys ...string) *Value {
 	value.mu.Unlock()
 
 	return value
+}
+
+/*
+AppendBytes stores an already-encoded layer without re-marshaling (S3 list frames).
+*/
+func (value *Value) AppendBytes(layer []byte, keys ...string) *Value {
+	if len(layer) == 0 {
+		return value
+	}
+
+	value.mu.Lock()
+	value.Layers = append(value.Layers, append([]byte(nil), layer...))
+	value.Index = append(value.Index, strings.Join(append(
+		[]string{value.Prefix}, keys...), "/",
+	))
+	value.mu.Unlock()
+
+	return value
+}
+
+/*
+Set sets the value at the given key to the given value.
+*/
+func (value *Value) Set(layer any, keys ...string) {
+	found := false
+	target := strings.Join([]string{value.Prefix, strings.Join(keys, "/")}, "/")
+	buffer, err := sonic.Marshal(layer)
+
+	if err != nil {
+		value.Err = errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.Set] value does not encode",
+			err,
+		))
+	}
+
+	for i, index := range value.Index {
+		if index != target {
+			continue
+		}
+
+		value.Layers[i] = buffer
+		found = true
+	}
+
+	if !found {
+		value.Index = append(value.Index, target)
+		value.Layers = append(value.Layers, buffer)
+	}
 }
 
 /*
@@ -93,6 +175,30 @@ func (value *Value) Lookup(projector any, key string) {
 		value.Err = errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[data.Lookup] "+key+" does not decode",
+			err,
+		))
+	}
+}
+
+/*
+All returns all layers addressed by key.
+*/
+func (value *Value) All(projector any, key string) {
+	all := make([][]byte, 0)
+	target := strings.Join([]string{value.Prefix, key}, "/")
+
+	for i, index := range value.Index {
+		if index != target && !strings.HasPrefix(index, target+"/") {
+			continue
+		}
+
+		all = append(all, value.Layers[i])
+	}
+
+	if err := sonic.Unmarshal(bytes.Join(all, []byte("\n")), projector); err != nil {
+		value.Err = errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[data.All] layer does not decode",
 			err,
 		))
 	}

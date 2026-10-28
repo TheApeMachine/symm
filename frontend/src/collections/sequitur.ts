@@ -1,7 +1,8 @@
 import { createStore } from "@tanstack/store";
+import { triePrefix } from "#/collections/book";
 import { trySendCommand } from "#/lib/hub-socket";
 import type { Value } from "#/types/value";
-import { cognitionStore } from "./cognition";
+import { cognitionStore, ingestPolicyKeys } from "./cognition";
 
 /*
 The live Sequitur feed: strategy.SequiturFrame values the hub streams as
@@ -322,6 +323,15 @@ export const ingestTrainingStep = (value: Value, now = Date.now()) => {
 
 	const ok = ingestSequiturFrame(frame, now);
 
+	const exploreKeys = value.reading("exploreKeys") as string[] | undefined;
+	if (
+		triePrefix() === "model/explore" &&
+		Array.isArray(exploreKeys) &&
+		exploreKeys.length > 0
+	) {
+		ingestPolicyKeys(exploreKeys, String(value.epoch));
+	}
+
 	const exploreThresholds = value.reading("exploreThresholds") as
 		| Record<string, number>
 		| undefined;
@@ -333,7 +343,7 @@ export const ingestTrainingStep = (value: Value, now = Date.now()) => {
 	}
 
 	if (value.reading("outcome") === "exit submitted") {
-		trySendCommand({ type: "s3", prefix: "model/explore" });
+		trySendCommand({ type: "s3", prefix: triePrefix() });
 	}
 
 	return ok;

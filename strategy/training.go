@@ -31,6 +31,13 @@ func (training *Training) Model() *Model {
 	return training.model
 }
 
+func (training *Training) Store() *store.Client {
+	if training == nil {
+		return nil
+	}
+	return training.client
+}
+
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
@@ -45,7 +52,7 @@ func NewTraining(
 
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, client, stage),
+		model:     NewModel(ctx, desk, stage),
 		price:     price,
 		desk:      desk,
 		client:    client,
@@ -61,7 +68,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 	symbols := SymbolsOnTick(value)
 
-	for _, symbol := range training.desk.PendingTrainSymbols() {
+	for _, symbol := range training.desk.Pending() {
 		if !slices.Contains(symbols, symbol) {
 			symbols = append(symbols, symbol)
 		}

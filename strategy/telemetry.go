@@ -5,7 +5,6 @@ import (
 	"io"
 	"sync"
 
-	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -146,22 +145,8 @@ func stepPolicyFromStep(
 		action = "exit"
 	}
 
-	stored := false
-	if model != nil && pathKey != "" {
-		key := []byte(pathKey)
-		for _, role := range []string{"explore", "policy"} {
-			untyped, ok := model.tries.Load(role)
-			if !ok {
-				continue
-			}
-
-			trie := untyped.(*iradix.Tree[*data.Value])
-			if _, ok := trie.Get(key); ok {
-				stored = true
-				break
-			}
-		}
-	}
+	// Checked directly against the unified Tree
+	stored := model != nil && model.tree != nil && model.tree.Has(pathKey)
 
 	phase := policyPath
 	if phase == "" {
@@ -349,6 +334,7 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	var blockedReason string
 	var lit []*nmstore.Region
 	var outcome string
+	var paperOutcome string
 
 	out.Lookup(&gate, "gate")
 	out.Lookup(&policy, "policy")
@@ -356,6 +342,7 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	out.Lookup(&blockedReason, "blockedReason")
 	out.Lookup(&lit, "lit")
 	out.Lookup(&outcome, "outcome")
+	out.Lookup(&paperOutcome, "paperOutcome")
 
 	telemetry.rollupMu.Lock()
 	defer telemetry.rollupMu.Unlock()
@@ -391,8 +378,14 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	case "enter submitted":
 		telemetry.rollup.OutcomeEnter++
 		telemetry.rollup.ExploreEnter++
+	case "paper enter submitted":
+		telemetry.rollup.OutcomeEnter++
 	case "exit submitted":
 		telemetry.rollup.OutcomeExit++
+	}
+
+	if paperOutcome == "paper enter submitted" && outcome != "paper enter submitted" {
+		telemetry.rollup.OutcomeEnter++
 	}
 }
 
@@ -409,9 +402,22 @@ func (telemetry *Telemetry) enrichLedger(desk *broker.Desk) {
 }
 
 func (telemetry *Telemetry) noteLearning(model *Model) {
-	if telemetry == nil || model == nil {
+	if telemetry == nil || model == nil || model.tree == nil || !uiActive() {
 		return
 	}
+
+	keys, thresholds := model.tree.Catalog()
+	if len(keys) == 0 {
+		return
+	}
+
+	value := data.NewValue("training", "explore", "catalog")
+	value.Append(keys, "exploreKeys")
+	if len(thresholds) > 0 {
+		value.Append(thresholds, "exploreThresholds")
+	}
+
+	io.Copy(ui.UI, value)
 }
 
 func grammarRules(sequencer *tokenizer.Sequencer) []map[string]any {

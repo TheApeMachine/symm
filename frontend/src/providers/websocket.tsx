@@ -3,9 +3,15 @@ import { useEffect } from "react";
 import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
+import { mergePositionBook } from "#/collections/positions";
 import { syncEngineTelemetry } from "#/lib/engine-telemetry";
 import { hubWsUrl } from "#/lib/hub";
 import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
+import {
+	ingestHistoryClosedFrame,
+	requestClosedPositionHistory,
+	resetClosedHistoryRequest,
+} from "#/lib/lifecycle";
 import { parseValues } from "#/types/decoder";
 import {
 	mergeWorkspaceAggregate,
@@ -45,6 +51,17 @@ const advanceMarketTick = (value: Value) => {
 
 const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
 	for (const [store, scopes] of pending) {
+		if (store === signals.positions) {
+			store.setState((prev) => {
+				let next = prev;
+				for (const frame of scopes.values()) {
+					next = mergePositionBook(next, frame);
+				}
+				return next;
+			});
+			continue;
+		}
+
 		store.setState((prev) => {
 			let next: Record<string, Value> | null = null;
 
@@ -85,6 +102,14 @@ export const ingest = (values: Value[]) => {
 
 			if (atom) {
 				atom.set(value);
+				continue;
+			}
+
+			if (
+				(value.origin === "position" || value.origin === "virtual") &&
+				value.role === "closed"
+			) {
+				ingestHistoryClosedFrame(value);
 				continue;
 			}
 
@@ -147,6 +172,8 @@ export const WsFeed = () => {
 
 				if (data.status === "ONLINE") {
 					atoms.online.set("ONLINE");
+					resetClosedHistoryRequest();
+					requestClosedPositionHistory();
 				}
 
 				if (data.status === "CONNECTING") {

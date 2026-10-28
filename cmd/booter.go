@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
@@ -29,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -152,6 +154,7 @@ func (booter *Booter) Run() error {
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
+	store.FlushAll()
 	return nil
 }
 
@@ -296,6 +299,11 @@ func (booter *Booter) initPipeline() error {
 			return err
 		}
 
+		ui.UI.UseStore(booter.training.Store())
+		ui.UI.RegisterCallback(func() {
+			ui.UI.ListPrefix("model/explore")
+			ui.UI.ListPrefix("model/policy")
+		})
 		booter.training.Transition(nmruntime.READY)
 		strategyNodes = append(strategyNodes, booter.training)
 	}
@@ -395,9 +403,13 @@ func (booter *Booter) startPrivateIngress() {
 					return
 				}
 
-				errnie.Error(errnie.Err(
-					errnie.IO, "[booter] private ingress read failed", err,
-				))
+				if disconnect.Expected(err) {
+					errnie.Warn("[booter] private ingress disconnected, retrying read")
+				} else {
+					errnie.Error(errnie.Err(
+						errnie.IO, "[booter] private ingress read failed", err,
+					))
+				}
 
 				continue
 			}
@@ -466,11 +478,15 @@ func (booter *Booter) startIngress(
 			buf, err := client.Read()
 
 			if err != nil {
-				booter.Error(errnie.Err(
-					errnie.IO,
-					"[booter] ingress read failed",
-					err,
-				))
+				if disconnect.Expected(err) {
+					errnie.Warn("[booter] ingress disconnected, retrying read")
+				} else {
+					booter.Error(errnie.Err(
+						errnie.IO,
+						"[booter] ingress read failed",
+						err,
+					))
+				}
 
 				continue
 			}

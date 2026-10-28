@@ -53,6 +53,39 @@ func TestPublishPlaceSoftFailsBalance(t *testing.T) {
 	})
 }
 
+func TestStampPaperAckGivesMarketFillASide(t *testing.T) {
+	t.Parallel()
+
+	model := map[string]any{
+		"action":   "market_order_filled",
+		"order_id": "PAPER-00001",
+		"volume":   "0.03",
+		"price":    "1290.78",
+		"cost":     "38.7234",
+		"fee":      "0.3097872",
+	}
+
+	stampPaperAck(model, "ZEC/USD", "buy", "cl-1")
+	exec := kraken.NewExecutionFromMap(model)
+
+	if len(exec.Data) != 1 {
+		t.Fatal("expected one execution")
+	}
+
+	row := exec.Data[0]
+	if row.Side != "buy" || row.Symbol != "ZEC/USD" || row.OrderStatus != "filled" {
+		t.Fatalf("row = %+v", row)
+	}
+
+	if row.LastQty == nil || row.LastQty.Float64() != 0.03 {
+		t.Fatalf("qty = %v", row.LastQty)
+	}
+
+	if row.AvgPrice == nil || row.AvgPrice.Float64() != 1290.78 {
+		t.Fatalf("price = %v", row.AvgPrice)
+	}
+}
+
 // TestAddOrderMessageCarriesOrderQty proves the WS add_order payload uses
 // order_qty (not REST "volume"), so paper's unmarshal fills a non-empty size.
 func TestAddOrderMessageCarriesOrderQty(t *testing.T) {

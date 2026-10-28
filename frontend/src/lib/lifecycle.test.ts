@@ -1,15 +1,19 @@
 // @vitest-environment jsdom
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { summarizeBook } from "#/collections/longtail";
 import { signals } from "#/collections/app";
+import { summarizeBook } from "#/collections/longtail";
 import type { DeskPosition } from "#/collections/types";
+import { encodeJsonBytes } from "#/lib/json-bytes";
 import { Value } from "#/types/value";
 import {
 	deskRowsForStats,
 	ingestDeskClosedLots,
 	ingestDeskSnapshot,
+	ingestHistoryClosedFrame,
 	ingestPositionFrame,
+	ingestS3PositionHistory,
+	resetClosedHistoryRequest,
 	resetLifecycles,
 	selectBook,
 	useLifecycles,
@@ -36,8 +40,39 @@ const snapshotOf = () => renderHook(() => useLifecycles()).result.current;
 
 afterEach(() => {
 	resetLifecycles();
+	resetClosedHistoryRequest();
 	vi.restoreAllMocks();
 });
+
+const deskClosedRow = (id: string, virtual = false) => ({
+	id,
+	symbol: "BTC/USD",
+	virtual,
+	path_found: virtual ? true : undefined,
+	opened_at: "2026-10-18T08:00:00Z",
+	closed_at: "2026-10-18T09:00:00Z",
+	qty: "1",
+	entry_price: "1",
+	mark: "1.05",
+	pnl: 0.05,
+	pnl_pct: 5,
+});
+
+const closedHistoryFrame = (
+	row: Record<string, unknown>,
+	tick: bigint,
+	origin: "position" | "virtual" = "position",
+) => {
+	const value = new Value({
+		origin,
+		role: "closed",
+		scope: String(row.symbol).replace(/\//g, "-"),
+		tick,
+	});
+	value.layers = [encodeJsonBytes(row)];
+	value.index = [`${value.prefix}/position`];
+	return value;
+};
 
 describe("lifecycle store", () => {
 	it("folds frames into round trips, newest first, with paper performance", () => {
@@ -201,6 +236,7 @@ describe("lifecycle store", () => {
 			id: "closed-up",
 			symbol: "UP/USD",
 			virtual: true,
+			path_found: true,
 			opened_at: "2026-10-18T08:00:00Z",
 			closed_at: "2026-10-18T09:00:00Z",
 			pnl: 0.002,
@@ -237,5 +273,61 @@ describe("lifecycle store", () => {
 		expect(selectBook(report, "paper").lifecycles).toHaveLength(1);
 		expect(selectBook(report, "virtual").lifecycles).toHaveLength(1);
 		expect(selectBook(report, "virtual").open_count).toBe(1);
+	});
+});
+
+describe("S3 closed position history", () => {
+	it("installs a closed paper lot from a stored value frame", () => {
+		ingestHistoryClosedFrame(
+			closedHistoryFrame(deskClosedRow("hist-paper"), 3n),
+		);
+
+		const report = snapshotOf().report;
+		expect(report.performance.closed).toBe(1);
+		expect(report.lifecycles[0]?.id).toBe("hist-paper");
+		expect(report.lifecycles[0]?.history).toBe(true);
+		expect(report.lifecycles[0]?.book).toBe("paper");
+	});
+
+	it("keeps the newer snapshot when the same lot id appears twice", () => {
+		ingestHistoryClosedFrame(
+			closedHistoryFrame({ ...deskClosedRow("dup"), pnl_pct: 1 }, 2n),
+		);
+		ingestHistoryClosedFrame(
+			closedHistoryFrame({ ...deskClosedRow("dup"), pnl_pct: 9 }, 5n),
+		);
+
+		const life = snapshotOf().report.lifecycles.find((row) => row.id === "dup");
+		expect(life?.outcome?.pnl_pct).toBe(9);
+	});
+
+	it("recognizes position/closed ListPrefix frames", () => {
+		const list = new Value({
+			origin: "s3",
+			role: "prefix",
+			scope: "position/closed",
+			prefix: "s3/prefix/position/closed/0/1",
+			index: [],
+			layers: [],
+		});
+		expect(ingestS3PositionHistory(list)).toBe(true);
+		expect(
+			ingestS3PositionHistory(
+				new Value({
+					origin: "s3",
+					role: "prefix",
+					scope: "model/explore",
+				}),
+			),
+		).toBe(false);
+	});
+
+	it("virtual closed lots land on the virtual book", () => {
+		ingestHistoryClosedFrame(
+			closedHistoryFrame(deskClosedRow("virt-hist", true), 1n, "virtual"),
+		);
+		const virtual = selectBook(snapshotOf().report, "virtual");
+		expect(virtual.performance.closed).toBe(1);
+		expect(virtual.lifecycles[0]?.book).toBe("virtual");
 	});
 });

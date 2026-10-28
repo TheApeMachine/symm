@@ -14,6 +14,13 @@ export const EXIT_TRIGGER_LABEL: Record<string, string> = {
 	"cleared friction": "PROFIT HURDLE",
 	"friction dip": "STOP HURDLE",
 	"exit branch": "EXIT BRANCH",
+	"volatility floor breached": "VOL FLOOR",
+	"pct profit floor": "PCT FLOOR",
+	"profit stagnation": "PROFIT STALL",
+	"bid floor evaporated": "BID PULL",
+	"spike retrace": "SPIKE RETRACE",
+	"statistical invalidation stop": "STAT STOP",
+	"entry drag exceeded": "DRAG STOP",
 };
 
 export const formatExitTrigger = (trigger: string): string =>

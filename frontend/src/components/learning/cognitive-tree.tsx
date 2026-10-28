@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo } from "react";
+import { bookAtom, triePrefix } from "#/collections/book";
 import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
 import { sendCommand } from "#/providers/websocket";
 import { ModelProblem } from "./model-problem";
@@ -13,9 +14,7 @@ export const progressOf = (match: CognitionMatch): SymbolProgress => {
 		match.livePath ||
 		match.tokens.join("/");
 	const tokens =
-		match.tokens.length > 0
-			? match.tokens
-			: phase.split("/").filter(Boolean);
+		match.tokens.length > 0 ? match.tokens : phase.split("/").filter(Boolean);
 
 	return {
 		symbol: match.symbol,
@@ -40,6 +39,8 @@ export const CognitiveTree = () => {
 		(state): boolean | undefined => state.tree?.trading,
 	);
 	const gate = useSelector(cognitionStore, (state) => state.tree?.gate ?? null);
+	const book = useSelector(bookAtom, (state) => state);
+	const prefix = triePrefix(book);
 	const tradingLabel =
 		trading === true
 			? "paper trading"
@@ -48,12 +49,18 @@ export const CognitiveTree = () => {
 				: "trading unknown";
 
 	useEffect(() => {
+		const other = prefix === "model/policy" ? "model/explore/" : "model/policy/";
+		cognitionStore.setState((state) => ({
+			...state,
+			policyKeys: state.policyKeys.filter((key) => !key.startsWith(other)),
+		}));
+
 		try {
-			sendCommand({ type: "s3", prefix: "model/explore" });
+			sendCommand({ type: "s3", prefix });
 		} catch (err) {
 			console.error(err);
 		}
-	}, []);
+	}, [prefix]);
 
 	const symbols = useMemo(() => {
 		const next: Record<string, SymbolProgress> = {};
@@ -74,8 +81,8 @@ export const CognitiveTree = () => {
 					<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 					<span className="text-sm">
 						{epoch !== "0"
-							? "no explore paths yet (model/explore/…/enter.bin or exit.bin)"
-							: "waiting for model/explore"}
+							? `no ${book} paths yet (${prefix}/…/enter.bin or exit.bin)`
+							: `waiting for ${prefix}`}
 					</span>
 				</div>
 			</div>

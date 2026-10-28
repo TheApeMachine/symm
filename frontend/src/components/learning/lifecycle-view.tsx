@@ -28,7 +28,6 @@ import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import { hubBaseUrl } from "#/lib/hub";
-import { formatExitTrigger } from "#/lib/trigger-labels";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -39,6 +38,7 @@ import {
 	signedMoney,
 	useLifecycles,
 } from "#/lib/lifecycle";
+import { formatExitTrigger } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
 /*
@@ -613,9 +613,7 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 
 	const entryPath = entryMatch?.fields?.path;
 	const path =
-		typeof entryPath === "string" && entryPath !== ""
-			? entryPath
-			: life.path;
+		typeof entryPath === "string" && entryPath !== "" ? entryPath : life.path;
 	const confidence = entryMatch?.fields?.confidence as number | undefined;
 	const candidates = entryMatch?.fields?.candidates as number | undefined;
 
@@ -1094,7 +1092,8 @@ export const LifecycleView = () => {
 				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r bg-(--surface)/40 max-lg:w-full">
 					{lifecycles.length === 0 ? (
 						<Typography.Mono size="s" tone="f3" className="p-3">
-							No closed positions this session yet.
+							No closed positions yet. History loads from S3 when the hub is
+							connected.
 						</Typography.Mono>
 					) : (
 						lifecycles.map((life) => {

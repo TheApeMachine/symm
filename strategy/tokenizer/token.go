@@ -67,6 +67,16 @@ func (tokens Tokens) String() string {
 	return strings.Join(parts, "/")
 }
 
+func (tokens Tokens) Brightness() float64 {
+	brightness := 0.0
+
+	for _, t := range tokens {
+		brightness += t.Brightness
+	}
+
+	return brightness
+}
+
 func (tokens Tokens) Len() int {
 	return len(tokens)
 }
