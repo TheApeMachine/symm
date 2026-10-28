@@ -48,7 +48,7 @@ type ExitObservation struct {
 	// FrictionPct is the round-trip spread + fees, in percentage points.
 	FrictionPct float64
 	// ExitRoom is best-bid quantity / position quantity.
-	ExitRoom float64
+	ExitRoom    float64
 	HasExitRoom bool
 }
 
