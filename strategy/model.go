@@ -35,7 +35,7 @@ func NewModel(
 		desk:   desk,
 		stage:  stage,
 		store:  client,
-		tree:   NewTree(ctx, "model"),
+		tree:   NewTree(ctx, "model/paths/"),
 		gate:   NewGate(ctx, desk, client),
 	}
 }
@@ -185,7 +185,7 @@ func (model *Model) completeExit(
 	if position.EntryPath != "" {
 		model.tree.UpdateResistance(position.EntryPath, ActionEnter, returnFraction)
 	}
-	
+
 	if position.ExitPath != "" && position.ExitPath != position.EntryPath {
 		model.tree.UpdateResistance(position.ExitPath, ActionExit, returnFraction)
 	}

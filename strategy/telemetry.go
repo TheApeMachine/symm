@@ -3,7 +3,6 @@ package strategy
 import (
 	"context"
 	"io"
-	"sync"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
@@ -58,9 +57,7 @@ type pathWalk struct {
 
 type Telemetry struct {
 	*runtime.System
-	rollupMu  sync.Mutex
 	rollup    TickMetrics
-	walkMu    sync.Mutex
 	walks     []pathWalk
 	lastPhase map[string]string
 }
@@ -72,9 +69,7 @@ func NewTelemetry(ctx context.Context) *Telemetry {
 }
 
 func (telemetry *Telemetry) ResetTick() {
-	telemetry.rollupMu.Lock()
 	telemetry.rollup = TickMetrics{}
-	telemetry.rollupMu.Unlock()
 }
 
 func (telemetry *Telemetry) Publish() {
@@ -82,10 +77,8 @@ func (telemetry *Telemetry) Publish() {
 		return
 	}
 
-	telemetry.rollupMu.Lock()
 	rollup := telemetry.rollup
 	telemetry.rollup = TickMetrics{}
-	telemetry.rollupMu.Unlock()
 
 	value := data.NewValue("training", "longtail", "aggregate")
 	value.Append(rollup, "longtail")
@@ -213,9 +206,6 @@ func (telemetry *Telemetry) NoteWalk(symbol string, out *data.Value) {
 		phase = live
 	}
 
-	telemetry.walkMu.Lock()
-	defer telemetry.walkMu.Unlock()
-
 	if telemetry.lastPhase == nil {
 		telemetry.lastPhase = map[string]string{}
 	}
@@ -245,17 +235,13 @@ func (telemetry *Telemetry) PublishWalks() {
 		return
 	}
 
-	telemetry.walkMu.Lock()
 	rows := telemetry.walks
 	telemetry.walks = nil
 
 	if !uiActive() {
 		telemetry.lastPhase = nil
-		telemetry.walkMu.Unlock()
 		return
 	}
-
-	telemetry.walkMu.Unlock()
 
 	if len(rows) == 0 {
 		return
@@ -344,9 +330,6 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	out.Lookup(&outcome, "outcome")
 	out.Lookup(&paperOutcome, "paperOutcome")
 
-	telemetry.rollupMu.Lock()
-	defer telemetry.rollupMu.Unlock()
-
 	telemetry.rollup.Symbols++
 	telemetry.rollup.GateTotal++
 	if len(lit) > 0 {
@@ -393,9 +376,6 @@ func (telemetry *Telemetry) enrichLedger(desk *broker.Desk) {
 	if telemetry == nil || desk == nil {
 		return
 	}
-
-	telemetry.rollupMu.Lock()
-	defer telemetry.rollupMu.Unlock()
 
 	telemetry.rollup.VenueOpen = len(desk.OpenPositions(false))
 	telemetry.rollup.VirtualExcursion = len(desk.OpenPositions(true))

@@ -301,8 +301,7 @@ func (booter *Booter) initPipeline() error {
 
 		ui.UI.UseStore(booter.training.Store())
 		ui.UI.RegisterCallback(func() {
-			ui.UI.ListPrefix("model/explore")
-			ui.UI.ListPrefix("model/policy")
+			ui.UI.ListPrefix("model/paths/")
 		})
 		booter.training.Transition(nmruntime.READY)
 		strategyNodes = append(strategyNodes, booter.training)

@@ -25,16 +25,15 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
 	books  *broker.Book
-	states map[string]*symbolState
+	states *sync.Map
 	keys   []string
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
-		states: make(map[string]*symbolState),
+		states: &sync.Map{},
 		keys: []string{
 			"retreat_fraction:bid",
 			"net_withdrawal_rate:bid",
@@ -83,9 +82,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	atNano := float64(value.Timestamp)
 
 	var (
-		retreatFraction  float64
-		withdrawalRate   float64
-		appendMetrics    bool
+		retreatFraction float64
+		withdrawalRate  float64
+		appendMetrics   bool
 	)
 
 	// The `books.Book` callback is synchronous; the book is present only if
@@ -101,15 +100,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		bid := bestBid.Price.Float64()
 		bidQty := bestBid.Quantity.Float64()
 
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-
-		state, exists := signal.states[trade.Symbol]
-
-		if !exists {
-			state = &symbolState{}
-			signal.states[trade.Symbol] = state
-		}
+		untypedState, _ := signal.states.LoadOrStore(trade.Symbol, &symbolState{})
+		state := untypedState.(*symbolState)
 
 		if !state.hasPrev {
 			state.observe(bid, bidQty, atNano)

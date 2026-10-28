@@ -235,13 +235,50 @@ func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
 	var touch *decimal.Decimal
 
 	price.Books.Book(symbol, func(managed *book.Book) {
-		if managed == nil || managed.BestBid() == nil {
+		if managed == nil || managed.BestBid() == nil || managed.BestBid().Price == nil {
 			return
 		}
 
-		if managed.BestBid().Quantity != nil && managed.BestBid().Quantity.Sign() > 0 {
-			touch = managed.BestBid().Quantity
+		bestBid := managed.BestBid()
+		if bestBid.Quantity == nil || bestBid.Quantity.Sign() <= 0 {
+			return
 		}
+
+		// Start with the top bid quantity
+		totalDepth := bestBid.Quantity
+
+		// Micro-pennying filter: cluster bids within the immediate touch band
+		// (within the spread or pair tick size of the best bid) so a 0.001 bot order
+		// does not mask the real wall sitting directly behind it.
+		bestPrice := bestBid.Price
+		var maxDrop *decimal.Decimal
+
+		if managed.BestAsk() != nil && managed.BestAsk().Price != nil {
+			// Tolerance is at most half the bid-ask spread
+			spread := managed.BestAsk().Price.Sub(bestPrice)
+			if spread.Sign() > 0 {
+				maxDrop = spread.Div(decimal.NewFromInt64(2))
+			}
+		}
+
+		cursor := bestBid.Lower
+		for count := 0; count < 3 && cursor != nil && cursor.Price != nil; count++ {
+			if cursor.Quantity == nil || cursor.Quantity.Sign() <= 0 {
+				cursor = cursor.Lower
+				continue
+			}
+
+			// If this level is within the immediate touch cluster, include its depth
+			drop := bestPrice.Sub(cursor.Price)
+			if maxDrop != nil && drop.Cmp(maxDrop) > 0 {
+				break
+			}
+
+			totalDepth = totalDepth.Add(cursor.Quantity)
+			cursor = cursor.Lower
+		}
+
+		touch = totalDepth
 	})
 
 	return touch
@@ -306,8 +343,9 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 
 /*
 OpenDragBudgetPct is the most negative close-now PnLPct still allowed at
-entry: three times the round-trip friction hurdle, matching the virtual
-stop buffer in StopLoss.Evaluate.
+entry: three times the round-trip friction hurdle. It is the entry-side
+counterpart of the stop's loss budget, which starts at that same friction
+hurdle and then widens to the symbol's own worst realized loss.
 */
 func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 	friction, ok := price.Friction(symbol)

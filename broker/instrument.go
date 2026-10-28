@@ -27,13 +27,13 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public       Transport
-	snapshot     *kraken.Instrument
-	Level3       *sync.Map
-	cache        *sync.Map
-	quote        string
-	symbols      []string
-	auth *kraken.Auth
+	public   Transport
+	snapshot *kraken.Instrument
+	Level3   *sync.Map
+	cache    *sync.Map
+	quote    string
+	symbols  []string
+	auth     *kraken.Auth
 }
 
 // Level3 wires book stale marking and per-socket ingress for SubscribeBooks.

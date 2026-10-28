@@ -93,16 +93,15 @@ type focalState struct {
 
 type Signal struct {
 	*runtime.System
-	mu      sync.Mutex
-	members map[string]*memberState
-	focals  map[string]*focalState
+	members *sync.Map
+	focals  *sync.Map
 	keys    []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		members: make(map[string]*memberState),
-		focals:  make(map[string]*focalState),
+		members: &sync.Map{},
+		focals:  &sync.Map{},
 		keys: []string{
 			"breadth",
 			"same_direction_peer_count",
@@ -145,17 +144,12 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	atNano := float64(value.Timestamp)
 	symbol := trade.Symbol
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
+	untypedMem, _ := signal.members.LoadOrStore(symbol, &memberState{
+		lastPrice:    price,
+		lastChangeAt: atNano,
+	})
 
-	mem, found := signal.members[symbol]
-	if !found {
-		mem = &memberState{
-			lastPrice:    price,
-			lastChangeAt: atNano,
-		}
-		signal.members[symbol] = mem
-	}
+	mem := untypedMem.(*memberState)
 
 	if len(mem.observations) == 0 {
 		mem.lastPrice = price
@@ -178,11 +172,12 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	mem.retain()
 
 	var cadences []float64
-	for _, member := range signal.members {
-		if len(member.spacings) > 0 {
-			cadences = append(cadences, median(member.spacings))
+	signal.members.Range(func(memberSymbol, member any) bool {
+		if len(member.(*memberState).spacings) > 0 {
+			cadences = append(cadences, median(member.(*memberState).spacings))
 		}
-	}
+		return true
+	})
 
 	if len(cadences) == 0 {
 		// Nothing is computable yet: the tick carries no layer for it
@@ -206,22 +201,25 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 	var valid []memberReturn
 
-	for memberSymbol, member := range signal.members {
+	signal.members.Range(func(memberSymbol, untypedMember any) bool {
+		member := untypedMember.(*memberState)
+
 		atObs, hasAt := member.asOf(atNano)
 		fromObs, hasFrom := member.asOf(fromNano)
 
 		if !hasAt || !hasFrom || atObs.price <= 0 || fromObs.price <= 0 {
-			continue
+			return true
 		}
 		if atNano-atObs.at > float64(15*time.Minute) {
-			continue
+			return true
 		}
 
 		valid = append(valid, memberReturn{
-			symbol: memberSymbol,
+			symbol: memberSymbol.(string),
 			ret:    math.Log(atObs.price / fromObs.price),
 		})
-	}
+		return true
+	})
 
 	validCount := float64(len(valid))
 	if validCount == 0 {
@@ -268,11 +266,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 	}
 
-	focal, found := signal.focals[symbol]
-	if !found {
-		focal = &focalState{}
-		signal.focals[symbol] = focal
-	}
+	untypedFocal, _ := signal.focals.LoadOrStore(symbol, &focalState{})
+	focal := untypedFocal.(*focalState)
 
 	_, _, _, hasBZ, bZScore := focal.breadthEstimator.Step(breadth)
 	var breadthVelocity float64

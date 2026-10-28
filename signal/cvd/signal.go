@@ -27,16 +27,15 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
 	books  *broker.Book
-	states map[string]*symbolState
+	states *sync.Map
 	keys   []string
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
-		states: make(map[string]*symbolState),
+		states: &sync.Map{},
 		keys: []string{
 			"midpoint_log_return",
 			"flow_aligned_midpoint_return",
@@ -108,15 +107,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 		midpoint := (bid.Price.Float64() + ask.Price.Float64()) / 2.0
 
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-
-		state, found := signal.states[trade.Symbol]
-
-		if !found {
-			state = &symbolState{}
-			signal.states[trade.Symbol] = state
-		}
+		untypedState, _ := signal.states.LoadOrStore(trade.Symbol, &symbolState{})
+		state := untypedState.(*symbolState)
 
 		tick := state.clock.Step(price, qty, float64(value.Timestamp), midpoint)
 

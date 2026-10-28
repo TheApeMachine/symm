@@ -4,7 +4,7 @@ export const EXPLORE_BASE_THRESHOLD = 0.5;
 /** Matches strategy Model.updatePathThreshold: threshold > 0.8 is deleted. */
 export const EXPLORE_PRUNE_THRESHOLD = 0.8;
 
-const PATH_BOOKS = ["model/explore/", "model/policy/"] as const;
+const PATH_BOOKS = ["model/path/"] as const;
 
 export const isPathBookKey = (key: string) =>
 	PATH_BOOKS.some((prefix) => key.startsWith(prefix));

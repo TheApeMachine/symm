@@ -245,10 +245,7 @@ const policyKeyFromIndex = (
 		const key = s3KeyFromIndex(framePrefix, index);
 		if (key) return key;
 	}
-	if (
-		index.startsWith("model/explore/") ||
-		index.startsWith("model/policy/")
-	) {
+	if (index.startsWith("model/path/")) {
 		return index;
 	}
 	const match = index.match(/model\/current\/(.+\/(?:enter|exit))\.bin/);

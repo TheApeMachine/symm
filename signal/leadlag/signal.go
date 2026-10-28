@@ -4,19 +4,18 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"unsafe"
-
 	"sync"
+	"unsafe"
 
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/transport"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 const (
@@ -29,15 +28,14 @@ Signal is the asynchronous price-path lead-lag instrument.
 */
 type Signal struct {
 	*runtime.System
-	mu      sync.Mutex
-	paths   map[string][]temporal.Price
+	paths   *sync.Map
 	leadlag core.Primitive
 	keys    []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		paths:   make(map[string][]temporal.Price),
+		paths:   &sync.Map{},
 		leadlag: nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()),
 		keys: []string{
 			"defined_peer_count",
@@ -72,9 +70,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
-
 	price := trade.Price.Float64()
 	if price <= 0 {
 		return value
@@ -83,7 +78,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	atNano := int64(value.Timestamp)
 	symbol := trade.Symbol
 
-	currentPath := signal.paths[symbol]
+	untypedCurrentPath, _ := signal.paths.LoadOrStore(symbol, []temporal.Price{})
+	currentPath := untypedCurrentPath.([]temporal.Price)
 
 	if len(currentPath) > 0 {
 		last := currentPath[len(currentPath)-1].At
@@ -92,7 +88,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 		if atNano == last {
 			currentPath[len(currentPath)-1] = temporal.Price{At: atNano, Value: price}
-			signal.paths[symbol] = currentPath
+			signal.paths.Store(symbol, currentPath)
 		}
 	}
 
@@ -101,15 +97,16 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 			currentPath = currentPath[1:]
 		}
 		currentPath = append(currentPath, temporal.Price{At: atNano, Value: price})
-		signal.paths[symbol] = currentPath
+		signal.paths.Store(symbol, currentPath)
 	}
 
-	candidateSymbols := make([]string, 0, len(signal.paths))
-	for peerSymbol, peerPath := range signal.paths {
-		if peerSymbol != symbol && len(peerPath) >= 3 && len(currentPath) >= 3 {
-			candidateSymbols = append(candidateSymbols, peerSymbol)
+	candidateSymbols := make([]string, 0)
+	signal.paths.Range(func(peerSymbol, peerPath any) bool {
+		if peerSymbol != symbol && len(peerPath.([]temporal.Price)) >= 3 && len(currentPath) >= 3 {
+			candidateSymbols = append(candidateSymbols, peerSymbol.(string))
 		}
-	}
+		return true
+	})
 
 	slices.SortFunc(candidateSymbols, func(a, b string) int {
 		rankA := leaderRank(a)
@@ -126,7 +123,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	readings := make([]nmcorrelation.LeadLagReading, 0, len(candidateSymbols))
 	for _, peerSymbol := range candidateSymbols {
-		peerPath := signal.paths[peerSymbol]
+		untypedPeerPath, _ := signal.paths.Load(peerSymbol)
+		peerPath := untypedPeerPath.([]temporal.Price)
 		input := nmcorrelation.LagProfileInput{Left: peerPath, Right: currentPath}
 		reading := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](signal.leadlag, &input)
 		if reading.Defined {

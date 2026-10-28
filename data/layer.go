@@ -35,12 +35,23 @@ func Get[T any](value *Value, key string) T {
 GetTotal returns the sum of all values for the given key.
 */
 func (value *Value) GetTotal(key string) float64 {
-	total := 0.0
-	var values []float64
-	value.All(&values, key)
+	if value == nil {
+		return 0
+	}
 
-	for _, value := range values {
-		total += value
+	total := 0.0
+	target := strings.Join([]string{value.Prefix, key}, "/")
+
+	for i, index := range value.Index {
+		if index != target && !strings.HasPrefix(index, target+"/") {
+			continue
+		}
+
+		var f float64
+
+		if err := sonic.Unmarshal(value.Layers[i], &f); err == nil {
+			total += f
+		}
 	}
 
 	return total
@@ -53,6 +64,9 @@ Layer reads it back with T set to the same slice type, as in
 Layer[[]Trade](value, "trade") after Append(value, []Trade{...}, "trade").
 */
 func (value *Value) Append(layers any, keys ...string) *Value {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+
 	buffer, err := sonic.Marshal(layers)
 
 	if err != nil {
@@ -64,12 +78,10 @@ func (value *Value) Append(layers any, keys ...string) *Value {
 		return value
 	}
 
-	value.mu.Lock()
 	value.Layers = append(value.Layers, buffer)
 	value.Index = append(value.Index, strings.Join(append(
 		[]string{value.Prefix}, keys...), "/",
 	))
-	value.mu.Unlock()
 
 	return value
 }
@@ -78,16 +90,17 @@ func (value *Value) Append(layers any, keys ...string) *Value {
 AppendBytes stores an already-encoded layer without re-marshaling (S3 list frames).
 */
 func (value *Value) AppendBytes(layer []byte, keys ...string) *Value {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+
 	if len(layer) == 0 {
 		return value
 	}
 
-	value.mu.Lock()
 	value.Layers = append(value.Layers, append([]byte(nil), layer...))
 	value.Index = append(value.Index, strings.Join(append(
 		[]string{value.Prefix}, keys...), "/",
 	))
-	value.mu.Unlock()
 
 	return value
 }
@@ -96,6 +109,9 @@ func (value *Value) AppendBytes(layer []byte, keys ...string) *Value {
 Set sets the value at the given key to the given value.
 */
 func (value *Value) Set(layer any, keys ...string) {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+
 	found := false
 	target := strings.Join([]string{value.Prefix, strings.Join(keys, "/")}, "/")
 	buffer, err := sonic.Marshal(layer)
@@ -127,6 +143,9 @@ func (value *Value) Set(layer any, keys ...string) {
 At
 */
 func (value *Value) At(projector any, index int) {
+	value.mu.RLock()
+	defer value.mu.RUnlock()
+
 	if err := sonic.Unmarshal(value.Layers[index], projector); err != nil {
 		value.Err = errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -145,6 +164,9 @@ as policyPath must not match Lookup(..., "policy"); use LookupPrefix when
 you need every descendant under a path segment.
 */
 func (value *Value) Lookup(projector any, key string) {
+	value.mu.RLock()
+	defer value.mu.RUnlock()
+
 	var buf []byte
 
 	target := strings.Join([]string{value.Prefix, key}, "/")
@@ -158,16 +180,7 @@ func (value *Value) Lookup(projector any, key string) {
 		break
 	}
 
-	// An absent layer is not a decode failure: the projector stays as the
-	// caller left it and no error is recorded. Only a layer that is present
-	// and does not decode is an error.
-	if buf == nil {
-		return
-	}
-
-	// An empty payload is not JSON: sonic reports a syntax error, but an
-	// empty read into the projector is not a corrupt value.
-	if len(bytes.TrimSpace(buf)) == 0 {
+	if buf == nil || len(bytes.TrimSpace(buf)) == 0 {
 		return
 	}
 
@@ -184,6 +197,9 @@ func (value *Value) Lookup(projector any, key string) {
 All returns all layers addressed by key.
 */
 func (value *Value) All(projector any, key string) {
+	value.mu.RLock()
+	defer value.mu.RUnlock()
+
 	all := make([][]byte, 0)
 	target := strings.Join([]string{value.Prefix, key}, "/")
 
@@ -208,6 +224,9 @@ func (value *Value) All(projector any, key string) {
 Merged returns the value's layers keyed by index. The value is not changed.
 */
 func (value *Value) Merged() map[string][]byte {
+	value.mu.RLock()
+	defer value.mu.RUnlock()
+
 	merged := make(map[string][]byte, len(value.Index))
 
 	for i, index := range value.Index {
@@ -280,16 +299,17 @@ For example, LookupPrefix("cvd") returns each CVD layer,
 with keys such as "BTC/USD/midpoint_log_return/...".
 */
 func (value *Value) LookupPrefix(key string) []LayerEntry {
+	value.mu.RLock()
+	defer value.mu.RUnlock()
+
 	if value == nil {
 		return nil
 	}
 
-	value.mu.Lock()
 	index := append([]string(nil), value.Index...)
 	layers := make([][]byte, len(value.Layers))
 	copy(layers, value.Layers)
 	prefix := value.Prefix
-	value.mu.Unlock()
 
 	target := prefix
 	if key != "" {

@@ -107,7 +107,7 @@ func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision
 
 	tree.root.Root().WalkPrefix([]byte(prefix), func(key []byte, value *data.Value) bool {
 		if value == nil {
-			return true
+			return false
 		}
 
 		// Read the action attached to this stored path
@@ -116,7 +116,7 @@ func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision
 		// If sub-paths disagree on Enter vs Exit, consensus is broken
 		if action != ActionNone && action != nodeAction {
 			action = ActionNone
-			return false
+			return true
 		}
 
 		action = nodeAction
@@ -131,7 +131,7 @@ func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision
 		totalResistance += resistance
 		matchCount++
 
-		return true
+		return false
 	})
 
 	if matchCount == 0 || action == ActionNone {
@@ -190,12 +190,12 @@ func (tree *Tree) UpdateResistance(
 	// Walk all paths under this prefix that co-signed the action
 	tree.root.Root().WalkPrefix(prefix, func(key []byte, value *data.Value) bool {
 		if value == nil {
-			return true
+			return false
 		}
 
 		// Only update paths that actually voted for this action
 		if NewAction(value.GetString("action")) != action {
-			return true
+			return false
 		}
 
 		// Append the trade outcome delta to this path's event log
@@ -209,7 +209,7 @@ func (tree *Tree) UpdateResistance(
 		}
 
 		updatedCount++
-		return true
+		return false
 	})
 
 	// If no existing paths existed (this was a first-time exploration),

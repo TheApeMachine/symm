@@ -2,8 +2,8 @@ package broker
 
 import (
 	"errors"
+	"math"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,8 +16,15 @@ import (
 	"github.com/theapemachine/symm/kraken"
 )
 
+/*
+positionTraceCap bounds one lot's net percent path. The path is the episode
+the exit policy learns from, and a lot that runs for days would otherwise
+grow it without end. The oldest marks are the ones a settled round trip no
+longer needs.
+*/
+const positionTraceCap = 4096
+
 type Position struct {
-	mu              sync.RWMutex
 	stopLoss        *StopLoss
 	exiting         atomic.Bool
 	settled         atomic.Bool
@@ -49,11 +56,16 @@ type Position struct {
 	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
 	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"` // First mark-to-exit PnL after open
-	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"` // Previous tick PnL for momentum checks
+	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"`  // First mark-to-exit PnL after open
+	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"`  // Previous tick PnL for momentum checks
+	PnLTrace        []float64               `json:"pnl_trace,omitempty"` // Net percent, one entry per reprice
 	PeakPnLPct      *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
-	PeakStep        *decimal.Decimal        `json:"peak_step,omitempty"` // Largest green up-step, in PnL percent
-	Impulse         bool                    `json:"impulse,omitempty"`   // True explosive spike detected
+	PeakStep        *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
+	Impulse         bool                    `json:"impulse,omitempty"`           // True explosive spike detected
+	ExitPullbackPct *decimal.Decimal        `json:"exit_pullback_pct,omitempty"` // Learned trailing giveback from peak
+	NurseryCutPct   *decimal.Decimal        `json:"nursery_cut_pct,omitempty"`   // Learned invalidation cut
+	MaxLifetimeNs   int64                   `json:"max_lifetime_ns,omitempty"`   // Empirical duration limit for unignited trades
+	WorstPct        *decimal.Decimal        `json:"worst_pct,omitempty"`
 	paceKnown       bool
 	spreadPct       *decimal.Decimal
 	frictionPct     *decimal.Decimal
@@ -95,8 +107,6 @@ its own goroutine so the trade ingress can publish the next tick.
 func (position *Position) Update(mark *decimal.Decimal) {
 	var path string
 
-	position.mu.Lock()
-
 	if position.ClosedAt == nil && !position.exiting.Load() {
 		position.Mark = mark
 		position.repriceLocked()
@@ -112,8 +122,6 @@ func (position *Position) Update(mark *decimal.Decimal) {
 			}
 		}
 	}
-
-	position.mu.Unlock()
 
 	if path == "" {
 		return
@@ -200,7 +208,6 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	}
 
 	now := time.Now().UTC()
-	position.mu.Lock()
 	position.Qty = qty
 	position.EntryOrder = entryOrder
 	position.ExitOrder = exitOrder
@@ -211,7 +218,6 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	if position.ExitPath == "" {
 		position.ExitPath = path
 	}
-	position.mu.Unlock()
 
 	if position.Virtual {
 		fill, err := position.price.EntryCost(position.Symbol, qty)
@@ -269,11 +275,9 @@ func (position *Position) Exit(path string) error {
 		return ErrExitInProgress
 	}
 
-	position.mu.Lock()
 	if position.ExitTrigger == "" {
 		position.recordExitTriggerLocked("policy exit match " + path)
 	}
-	position.mu.Unlock()
 
 	if err := position.exitClaimed(path); err != nil {
 		if errors.Is(err, ErrVenueFlat) {
@@ -288,17 +292,13 @@ func (position *Position) Exit(path string) error {
 }
 
 func (position *Position) exitClaimed(path string) error {
-	position.mu.Lock()
-
 	if position.ExitOrder == nil {
-		position.mu.Unlock()
 		return errnie.Err(
 			errnie.NotFound, "[position.Exit] no exit order for "+position.Symbol, nil,
 		)
 	}
 
 	if position.ClosedAt != nil {
-		position.mu.Unlock()
 		return nil
 	}
 
@@ -318,16 +318,13 @@ func (position *Position) exitClaimed(path string) error {
 	position.ExitTick = data.Tick.Load()
 	position.repriceLocked()
 	order := position.ExitOrder
-	position.mu.Unlock()
 
 	if err := position.Send(order); err != nil {
 		if venueFlat(err) {
 			return ErrVenueFlat
 		}
 
-		position.mu.Lock()
 		position.ClosedAt = nil
-		position.mu.Unlock()
 		return err
 	}
 
@@ -335,9 +332,6 @@ func (position *Position) exitClaimed(path string) error {
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
 	position.Fills = append(position.Fills, &execution)
 
 	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
@@ -394,6 +388,15 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 }
 
 func (position *Position) repriceLocked() {
+	// The mark is the round trip, so it goes into the lot's own net percent
+	// path before anything else can bail out of this reprice. A lot restored
+	// without a price book, or one whose book cannot fill its size, still
+	// settled marks, and those marks are the episode the exit policy learns
+	// from.
+	if position.PnLPct != nil {
+		position.recordTraceLocked(position.PnLPct.Float64())
+	}
+
 	if position.price == nil {
 		return
 	}
@@ -436,6 +439,30 @@ func (position *Position) repriceLocked() {
 
 	if position.ClosedAt == nil && position.LastPnL == nil {
 		position.LastPnL = position.PnL
+	}
+}
+
+/*
+recordTraceLocked appends one mark to the lot's own net percent path. The
+trace is the episode: it is what the exit policy learns from once the lot
+settles, so it is written on every reprice, virtual and paper alike.
+
+The path is bounded. A lot that runs for hours would otherwise grow the
+record without end, and the oldest marks are the ones a settled episode no
+longer needs: the recent path is what says how this market gives back.
+*/
+func (position *Position) recordTraceLocked(value float64) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+
+	position.PnLTrace = append(position.PnLTrace, value)
+
+	if len(position.PnLTrace) > positionTraceCap {
+		position.PnLTrace = append(
+			[]float64(nil),
+			position.PnLTrace[len(position.PnLTrace)-positionTraceCap:]...,
+		)
 	}
 }
 

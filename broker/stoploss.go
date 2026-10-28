@@ -4,189 +4,140 @@ import (
 	"fmt"
 	"math"
 	"time"
-
-	"github.com/theapemachine/errnie"
 )
-
-// ExitState represents the lifecycle stage of an active position.
-type ExitState uint8
-
-const (
-	// StateNursery: Precursor incubation. No trailing stops; give the trade breathing room.
-	StateNursery ExitState = iota
-
-	// StateIgnited: Move confirmed (> +5%). Floor locked at break-even (+1.5%).
-	StateIgnited
-
-	// StateSurfing: Parabolic expansion (> +15%). Ratchet ladder preserves the big move.
-	StateSurfing
-
-	// StateEvaporating: High alert. Bids are dissolving underneath the position.
-	StateEvaporating
-)
-
-func (s ExitState) String() string {
-	switch s {
-	case StateNursery:
-		return "NURSERY"
-	case StateIgnited:
-		return "IGNITED"
-	case StateSurfing:
-		return "SURFING"
-	case StateEvaporating:
-		return "EVAPORATING"
-	default:
-		return "UNKNOWN"
-	}
-}
 
 type StopLoss struct {
-	state            ExitState
+	initialized      bool
+	entryPnLPct      float64
 	peakPnLPct       float64
 	lowestPnLPct     float64
-	lastPeakTime     time.Time
-	evaporationTicks int
 	tickCount        int
+	evaporationTicks int
 }
 
 func NewStopLoss() *StopLoss {
-	return &StopLoss{
-		state: StateNursery,
-	}
+	return &StopLoss{}
 }
 
-// Evaluate acts as the Single Source of Truth for position exits.
+/*
+Evaluate is the single source of truth for position exits.
+It executes four checks:
+ 1. Physical Book Liquidity: ExitRoom < 1.0 means our order cannot be absorbed at the touch.
+ 2. Invalidation Stop: Cut loss when PnL crosses the Causal MCTS learned cut threshold.
+ 3. Trailing Profit Stop: Exit when giveback from peak crosses the Causal MCTS learned trailing threshold.
+ 4. Empirical Move Expiry: Exit if position duration exceeds the empirical winning excursion horizon without clearing costs.
+*/
 func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool) {
 	if position == nil || position.PnL == nil || position.PnLPct == nil || position.ClosedAt != nil {
 		return "", false
 	}
 
-	stoploss.tickCount++
-	now := time.Now().UTC()
 	currentPct := position.PnLPct.Float64()
 
-	// Track peak and trough percentages
+	if !stoploss.initialized {
+		stoploss.initialized = true
+		stoploss.entryPnLPct = currentPct
+		stoploss.peakPnLPct = currentPct
+		stoploss.lowestPnLPct = currentPct
+		return "", false
+	}
+
+	stoploss.tickCount++
+
 	if currentPct > stoploss.peakPnLPct {
 		stoploss.peakPnLPct = currentPct
-		stoploss.lastPeakTime = now
 	}
 	if currentPct < stoploss.lowestPnLPct {
 		stoploss.lowestPnLPct = currentPct
 	}
-	if stoploss.lastPeakTime.IsZero() {
-		stoploss.lastPeakTime = position.OpenedAt
-	}
 
 	friction := frictionPts(position)
-	if friction <= 0 {
-		friction = 1.6 // Default ~0.8% taker fee per leg
+
+	learnedCut := position.NurseryCutPct
+	learnedTrail := position.ExitPullbackPct
+	maxLifetimeNs := position.MaxLifetimeNs
+
+	// ------------------------------------------------------------------------
+	// 1. CAUSAL MCTS LEARNED INVALIDATION STOP
+	// ------------------------------------------------------------------------
+	cutTolerance := friction
+	if learnedCut != nil && learnedCut.Sign() > 0 {
+		cutTolerance = math.Max(friction, learnedCut.Float64())
+	}
+
+	adverseMove := stoploss.entryPnLPct - currentPct
+	if adverseMove >= cutTolerance {
+		return fmt.Sprintf("invalidation stop: adverse drop %.2f%% exceeded causal cut threshold %.2f%% (current PnL %.2f%%)",
+			adverseMove, cutTolerance, currentPct), true
 	}
 
 	// ------------------------------------------------------------------------
-	// STATE 1: StateNursery (Precursor Incubation)
+	// 2. REAL PHYSICAL LIQUIDITY EVAPORATION
+	// Evaluated via full-lot Executable VWAP slippage, not fleeting micro-orders:
+	// A. Book depth is physically incapable of filling our lot (ExitVWAP == nil).
+	// B. Slippage to exit our full lot exceeds the venue friction hurdle.
+	// C. Sustained across multiple ticks while in profit.
 	// ------------------------------------------------------------------------
-	if stoploss.state == StateNursery {
-		// Hard invalidation: If the trade drops beyond the noise hurdle, cut it cleanly.
-		maxLoss := math.Max(4.5, friction*2.2)
-		if currentPct <= -maxLoss {
-			return fmt.Sprintf("nursery invalidation: loss reached %.2f%% (max allowed -%.2f%%)", currentPct, maxLoss), true
-		}
+	if stoploss.peakPnLPct > 0 && position.Mark != nil && position.Mark.Sign() > 0 {
+		evaporated := false
+		var reason string
 
-		// Stagnation timeout: If entered 30m ago and hasn't ignited (> +3%), exit gracefully.
-		if now.Sub(position.OpenedAt) > 30*time.Minute && stoploss.peakPnLPct < 3.0 {
-			return "nursery timeout: precursor failed to ignite within 30m", true
-		}
+		if position.ExitVWAP == nil || position.ExitVWAP.Sign() <= 0 {
+			// The bids in the book literally cannot fill our lot size
+			evaporated = true
+			reason = "order book depth cannot fill lot size"
+		} else {
+			markVal := position.Mark.Float64()
+			vwapVal := position.ExitVWAP.Float64()
 
-		// Ignition transition: Once PnL clears +5.0%, the move is active.
-		ignitionThreshold := math.Max(5.0, friction*2.5)
-		if currentPct >= ignitionThreshold {
-			stoploss.state = StateIgnited
-			errnie.Info(fmt.Sprintf("[stoploss] %s: NURSERY -> IGNITED (PnL: +%.2f%%)", position.Symbol, currentPct))
-		}
+			// Full-lot liquidation slippage in percent
+			slippagePct := ((markVal - vwapVal) / markVal) * 100.0
 
-		return "", false
-	}
-
-	// ------------------------------------------------------------------------
-	// STATE 2: StateIgnited (Spark Confirmed, Protect Principal)
-	// ------------------------------------------------------------------------
-	if stoploss.state == StateIgnited {
-		// Break-even lock: Capital is safe (+1.5% fee coverage).
-		breakEvenFloor := math.Max(1.2, friction)
-		if currentPct <= breakEvenFloor {
-			return fmt.Sprintf("ignited break-even stop: fell back to +%.2f%%", currentPct), true
-		}
-
-		// Surfing transition: Breakout past +15% enters the parabolic ratchet ladder.
-		if stoploss.peakPnLPct >= 15.0 {
-			stoploss.state = StateSurfing
-			stoploss.lastPeakTime = now
-			errnie.Info(fmt.Sprintf("[stoploss] %s: IGNITED -> SURFING (Peak: +%.2f%%)", position.Symbol, stoploss.peakPnLPct))
-		}
-
-		return "", false
-	}
-
-	// ------------------------------------------------------------------------
-	// STATE 3 & 4: StateSurfing & StateEvaporating (The Parabolic Ratchet)
-	// ------------------------------------------------------------------------
-	if stoploss.state == StateSurfing || stoploss.state == StateEvaporating {
-		// A. LIQUIDITY EVAPORATION / DISSOLVING BOOK CHECK
-		// If bids drop below what is required to lift our lot while price pulls back:
-		if position.ExitRoom != nil {
-			room := position.ExitRoom.Float64()
-			if room < 0.75 && currentPct < (stoploss.peakPnLPct-2.0) {
-				stoploss.evaporationTicks++
-				if stoploss.evaporationTicks >= 3 {
-					stoploss.state = StateEvaporating
-					return fmt.Sprintf("liquidity evaporation: bid exit room dissolved to %.2f (peak was +%.1f%%)", room, stoploss.peakPnLPct), true
-				}
-			} else {
-				stoploss.evaporationTicks = 0
+			// If slippage to exit exceeds round-trip friction, exiting walks into a hollow book
+			if slippagePct > friction && currentPct < stoploss.peakPnLPct {
+				evaporated = true
+				reason = fmt.Sprintf("full-lot slippage %.2f%% exceeds friction %.2f%%", slippagePct, friction)
 			}
 		}
 
-		// B. MOMENTUM STALL TIMEOUT
-		// If in surfing mode and no new peak has been reached for 20m, harvest the gain.
-		if now.Sub(stoploss.lastPeakTime) > 20*time.Minute && stoploss.peakPnLPct >= 20.0 {
-			return fmt.Sprintf("momentum stall: 20m without new high (peak +%.1f%%, current +%.1f%%)", stoploss.peakPnLPct, currentPct), true
+		if evaporated {
+			stoploss.evaporationTicks++
+			// Require persistence: genuine book pulls remain across ticks; bot flickers clear in 1 tick
+			if stoploss.evaporationTicks >= 3 {
+				return fmt.Sprintf("liquidity evaporation: %s (peak +%.2f%%, current PnL %.2f%%)",
+					reason, stoploss.peakPnLPct, currentPct), true
+			}
+		} else {
+			stoploss.evaporationTicks = 0
 		}
+	}
 
-		// C. THE RATCHET LADDER
-		var floorPct float64
+	// ------------------------------------------------------------------------
+	// 3. CAUSAL MCTS LEARNED TRAILING PROFIT STOP
+	// ------------------------------------------------------------------------
+	if stoploss.peakPnLPct > 0 && learnedTrail != nil && learnedTrail.Sign() > 0 {
+		trail := learnedTrail.Float64()
+		giveback := stoploss.peakPnLPct - currentPct
 
-		switch {
-		case stoploss.peakPnLPct >= 60.0:
-			// Moonshot Tier (e.g. EVAA climbing towards +140%)
-			// Allow 25% giveback from peak, guaranteeing at least +45%.
-			giveback := stoploss.peakPnLPct * 0.25
-			floorPct = math.Max(45.0, stoploss.peakPnLPct-giveback)
-
-		case stoploss.peakPnLPct >= 30.0:
-			// Strong Expansion Tier
-			// Allow 30% giveback from peak, guaranteeing at least +20%.
-			giveback := stoploss.peakPnLPct * 0.30
-			floorPct = math.Max(20.0, stoploss.peakPnLPct-giveback)
-
-		default:
-			// Initial Surfing Tier (+15% to +30%)
-			// Allow 35% giveback from peak, guaranteeing at least +8%.
-			giveback := stoploss.peakPnLPct * 0.35
-			floorPct = math.Max(8.0, stoploss.peakPnLPct-giveback)
+		if giveback >= trail {
+			return fmt.Sprintf("trailing profit stop: peak +%.2f%%, giveback %.2f%% reached causal trail %.2f%% (net PnL %.2f%%)",
+				stoploss.peakPnLPct, giveback, trail, currentPct), true
 		}
+	}
 
-		if currentPct <= floorPct {
-			return fmt.Sprintf("surfing ratchet stop: peak +%.1f%%, floor +%.1f%%, current +%.1f%%",
-				stoploss.peakPnLPct, floorPct, currentPct), true
+	// ------------------------------------------------------------------------
+	// 4. EMPIRICAL MOVE EXPIRY
+	// ------------------------------------------------------------------------
+	if maxLifetimeNs > 0 && !position.OpenedAt.IsZero() {
+		elapsed := time.Since(position.OpenedAt).Nanoseconds()
+		if elapsed > maxLifetimeNs && stoploss.peakPnLPct <= 0 {
+			return fmt.Sprintf("move expired: elapsed %s exceeded empirical winning horizon without reaching profit",
+				time.Duration(elapsed).Round(time.Second)), true
 		}
 	}
 
 	return "", false
 }
-
-// ----------------------------------------------------------------------------
-// Helpers consumed by broker/desk.go
-// ----------------------------------------------------------------------------
 
 func profitLockArmed(position *Position) bool {
 	if position == nil || position.PeakPnLPct == nil {
@@ -205,7 +156,7 @@ func watchGreenBook(position *Position) bool {
 
 func frictionPts(position *Position) float64 {
 	if position == nil || position.frictionPct == nil {
-		return 1.6
+		return 0
 	}
 	return position.frictionPct.Float64() * 100
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -23,7 +22,6 @@ the subscription and the private stream (executions, balances) goes dark.
 const TokenReuse = 10 * time.Minute
 
 type Auth struct {
-	mu       sync.Mutex
 	token    string
 	issuedAt time.Time
 	now      func() time.Time
@@ -200,9 +198,6 @@ func (auth *Auth) Token(ctx context.Context) (string, error) {
 			nil,
 		))
 	}
-
-	auth.mu.Lock()
-	defer auth.mu.Unlock()
 
 	now := auth.now
 	if now == nil {

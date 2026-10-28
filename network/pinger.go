@@ -3,7 +3,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -14,7 +13,6 @@ import (
 type Pinger struct {
 	*runtime.System
 	client *WebsocketClient
-	mu     sync.Mutex
 	stop   chan struct{}
 }
 
@@ -25,9 +23,6 @@ func NewPinger(ctx context.Context, client *WebsocketClient) *Pinger {
 }
 
 func (pinger *Pinger) Start() {
-	pinger.mu.Lock()
-	defer pinger.mu.Unlock()
-
 	if pinger.stop != nil {
 		close(pinger.stop)
 		pinger.stop = nil
@@ -41,9 +36,6 @@ func (pinger *Pinger) Start() {
 }
 
 func (pinger *Pinger) Stop() {
-	pinger.mu.Lock()
-	defer pinger.mu.Unlock()
-
 	if pinger.stop == nil {
 		return
 	}

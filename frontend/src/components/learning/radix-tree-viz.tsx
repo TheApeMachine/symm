@@ -41,7 +41,7 @@ Paper policy paths are model/policy/<path>/{enter,exit}.bin.
 Legacy explored paths are policy/explored/<action>/<path>.bin.
 */
 export function grammarKey(key: string): string {
-	for (const prefix of ["model/explore/", "model/policy/"]) {
+	for (const prefix of ["model/path/"]) {
 		if (key.startsWith(prefix)) {
 			return key.slice(prefix.length);
 		}
@@ -83,10 +83,7 @@ const exploreLeafThreshold = (
 	if (typeof threshold === "number" && Number.isFinite(threshold)) {
 		return threshold;
 	}
-	if (
-		rawKey.startsWith("model/explore/") ||
-		rawKey.startsWith("model/policy/")
-	) {
+	if (rawKey.startsWith("model/path/")) {
 		return EXPLORE_BASE_THRESHOLD;
 	}
 	return undefined;

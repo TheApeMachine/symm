@@ -2,7 +2,6 @@ package tokenizer
 
 import (
 	"math"
-	"sync"
 
 	"github.com/theapemachine/symm/system"
 )
@@ -15,7 +14,6 @@ const (
 )
 
 type Calibrator struct {
-	mu               sync.RWMutex
 	sensitivityPop   float64
 	sensitivityPhase float64
 	window           *FastWindow
@@ -43,9 +41,6 @@ func (calibrator *Calibrator) state() calibratorState {
 		return calibratorState{Pop: 1, Phase: 1}
 	}
 
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
-
 	return calibratorState{
 		Pop:         calibrator.sensitivityPop,
 		Phase:       calibrator.sensitivityPhase,
@@ -58,9 +53,6 @@ func (calibrator *Calibrator) restore(state calibratorState) {
 	if calibrator == nil {
 		return
 	}
-
-	calibrator.mu.Lock()
-	defer calibrator.mu.Unlock()
 
 	if state.Pop > 0 {
 		calibrator.sensitivityPop = state.Pop
@@ -83,26 +75,18 @@ func (calibrator *Calibrator) restore(state calibratorState) {
 }
 
 func (calibrator *Calibrator) SensitivityPop() float64 {
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
 	return calibrator.sensitivityPop
 }
 
 func (calibrator *Calibrator) SensitivityPhase() float64 {
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
 	return calibrator.sensitivityPhase
 }
 
 func (calibrator *Calibrator) SetSensitivityPop(v float64) {
-	calibrator.mu.Lock()
-	defer calibrator.mu.Unlock()
 	calibrator.sensitivityPop = v
 }
 
 func (calibrator *Calibrator) SetSensitivityPhase(v float64) {
-	calibrator.mu.Lock()
-	defer calibrator.mu.Unlock()
 	calibrator.sensitivityPhase = v
 }
 
@@ -111,9 +95,6 @@ WindowStats returns (mean, stddev) for the density window.
 Zero if window is nil or not warmed.
 */
 func (calibrator *Calibrator) WindowStats() (mean, stddev float64) {
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
-
 	if calibrator.window == nil || !calibrator.window.Warmed() {
 		return 0, 0
 	}
@@ -126,9 +107,6 @@ func (calibrator *Calibrator) FeedbackChunk(
 	primeCoherence float64,
 	phaseCoherence float64,
 ) {
-	calibrator.mu.Lock()
-	defer calibrator.mu.Unlock()
-
 	if calibrator.window == nil {
 		return
 	}
@@ -172,9 +150,6 @@ func (calibrator *Calibrator) FeedbackChunk(
 func (calibrator *Calibrator) ObservePhase(
 	delta float64,
 ) {
-	calibrator.mu.Lock()
-	defer calibrator.mu.Unlock()
-
 	if calibrator.phaseWindow == nil {
 		return
 	}
@@ -185,9 +160,6 @@ func (calibrator *Calibrator) ObservePhase(
 func (calibrator *Calibrator) DensityCeiling(
 	fallback float64,
 ) float64 {
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
-
 	return calibrator.dynamicLimit(
 		calibrator.window, calibrator.sensitivityPop, fallback,
 	)
@@ -196,9 +168,6 @@ func (calibrator *Calibrator) DensityCeiling(
 func (calibrator *Calibrator) PhaseLimit(
 	fallback float64,
 ) float64 {
-	calibrator.mu.RLock()
-	defer calibrator.mu.RUnlock()
-
 	return calibrator.dynamicLimit(
 		calibrator.phaseWindow,
 		calibrator.sensitivityPhase,

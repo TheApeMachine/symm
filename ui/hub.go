@@ -6,7 +6,6 @@ import (
 	"net"
 	neturl "net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +43,6 @@ type Hub struct {
 	commit     atomic.Value
 	store      *store.Client
 	exiter     Exiter
-	streamMu   sync.Mutex
 	streams    map[string]context.CancelFunc
 	streamGen  map[string]uint64
 	nextStream uint64
@@ -293,9 +291,6 @@ func (hub *Hub) Exiter(exiter Exiter) {
 }
 
 func (hub *Hub) cancelStream(kind string) {
-	hub.streamMu.Lock()
-	defer hub.streamMu.Unlock()
-
 	if cancel := hub.streams[kind]; cancel != nil {
 		cancel()
 		delete(hub.streams, kind)
@@ -303,9 +298,6 @@ func (hub *Hub) cancelStream(kind string) {
 }
 
 func (hub *Hub) startStream(kind string, run func(context.Context)) {
-	hub.streamMu.Lock()
-	defer hub.streamMu.Unlock()
-
 	if cancel := hub.streams[kind]; cancel != nil {
 		cancel()
 	}
@@ -318,12 +310,10 @@ func (hub *Hub) startStream(kind string, run func(context.Context)) {
 
 	go func() {
 		run(ctx)
-		hub.streamMu.Lock()
 		if hub.streamGen[kind] == gen {
 			delete(hub.streams, kind)
 			delete(hub.streamGen, kind)
 		}
-		hub.streamMu.Unlock()
 	}()
 }
 
@@ -458,8 +448,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		hub.cancelStream("s3")
 
 		// One aggregated frame for large prefix listings (trie books, closed lots).
-		if request.Prefix == "model/explore" ||
-			request.Prefix == "model/policy" ||
+		if request.Prefix == "model/path/" ||
 			strings.HasPrefix(request.Prefix, "position/closed") ||
 			strings.HasPrefix(request.Prefix, "virtual/closed") {
 			hub.ListPrefix(request.Prefix)

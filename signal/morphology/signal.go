@@ -27,16 +27,15 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
 	books  *broker.Book
-	states map[string]*symbolState
+	states *sync.Map
 	keys   []string
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
-		states: make(map[string]*symbolState),
+		states: &sync.Map{},
 		keys: []string{
 			"book_shape_distance",
 			"book_shape_ks",
@@ -99,6 +98,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		for _, level := range b.Bids.Levels {
 			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
 		}
+		
 		for _, level := range b.Asks.Levels {
 			asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 		}
@@ -224,12 +224,8 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 		currentBook = append(currentBook, point{pos: pt.pos, weight: pt.weight * 0.5})
 	}
 
-	signal.mu.Lock()
-	state, exists := signal.states[stateKey]
-	if !exists {
-		state = &symbolState{}
-		signal.states[stateKey] = state
-	}
+	untypedState, _ := signal.states.LoadOrStore(stateKey, &symbolState{})
+	state := untypedState.(*symbolState)
 
 	var morphChange float64
 	hasMorphChange := state.hasPrev
@@ -239,7 +235,6 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 
 	state.hasPrev = true
 	state.prevBook = currentBook
-	signal.mu.Unlock()
 
 	res := []float64{shapeDist, ks, concBid, concAsk, entropyBid, entropyAsk}
 	if hasMorphChange {

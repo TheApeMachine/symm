@@ -4,7 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 const rulePrefix = "\x00rule:"
@@ -68,7 +67,6 @@ The grammar operates on the flat token stream: each tick's regions are
 individual terminals that the grammar may group into rules.
 */
 type Sequitur struct {
-	mu           sync.Mutex
 	nextID       int
 	rules        map[int]*Rule
 	digrams      map[[2]Symbol]*Node
@@ -101,9 +99,6 @@ replacement after each one, and records the most recently created rule.
 Returns the created rule (or nil) and whether a structural event occurred.
 */
 func (sequitur *Sequitur) Analyze(tokens []string) (*Rule, bool) {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	sequitur.lastKind = ""
 	var created *Rule
 
@@ -133,9 +128,6 @@ A rule reference is rendered as its RuleRef (M1, M2, …); a terminal is
 itself. This is what the Sequencer feeds to MDL after each Analyze call.
 */
 func (sequitur *Sequitur) Tail(n int) []string {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	if n <= 0 || sequitur.length == 0 {
 		return nil
 	}
@@ -174,8 +166,6 @@ func (sequitur *Sequitur) Tail(n int) []string {
 LastRule is the most recently created production, or nil.
 */
 func (sequitur *Sequitur) LastRule() *Rule {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	return sequitur.lastRule
 }
 
@@ -183,8 +173,6 @@ func (sequitur *Sequitur) LastRule() *Rule {
 Symbols is how many distinct symbols the grammar holds, rules included.
 */
 func (sequitur *Sequitur) Symbols() int {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	return len(sequitur.rules) + 1
 }
 
@@ -193,9 +181,6 @@ Rules lists every production with its right-hand side as display strings.
 The dashboard's rulebook and the SequiturFrame's rules field use this.
 */
 func (sequitur *Sequitur) Rules() [][]string {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	productions := make([][]string, 0, len(sequitur.rules))
 
 	for _, rule := range sequitur.rules {
@@ -218,9 +203,6 @@ RootSequence returns the full root as display strings, oldest first.
 Used for the SequiturFrame's `start` field.
 */
 func (sequitur *Sequitur) RootSequence() []string {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	out := make([]string, 0, sequitur.length)
 	for node := sequitur.sentinel.Next; node != nil && node != sequitur.sentinel; node = node.Next {
 		if id, ok := ruleID(node.Val); ok {
@@ -237,8 +219,6 @@ func (sequitur *Sequitur) RootSequence() []string {
 RootLength is the number of symbols currently in the root sequence.
 */
 func (sequitur *Sequitur) RootLength() int {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	return sequitur.length
 }
 
@@ -249,9 +229,6 @@ func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {
 	if sequitur == nil || rule == nil || rule.Head == nil {
 		return nil
 	}
-
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 
 	names := make([]string, 0, rule.Count)
 	sequitur.collectTerminalNames(rule, &names)
@@ -283,9 +260,7 @@ func (sequitur *Sequitur) TerminalsForRef(ref string) []string {
 			return nil
 		}
 
-		sequitur.mu.Lock()
 		rule := sequitur.rules[id]
-		sequitur.mu.Unlock()
 
 		if rule == nil {
 			return nil
@@ -302,9 +277,6 @@ Flush reports whether there are tokens since the last boundary and resets
 the pending counter.
 */
 func (sequitur *Sequitur) Flush() bool {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	hasPending := sequitur.pendingLen > 0
 	sequitur.pendingLen = 0
 	return hasPending
@@ -316,9 +288,6 @@ minted, "reuse" when an existing rule absorbed the digram, and "append"
 when the tick only extended the root.
 */
 func (sequitur *Sequitur) LastKind() string {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	if sequitur.lastKind == "" {
 		return "append"
 	}
@@ -343,9 +312,6 @@ type RuleView struct {
 RuleViews lists every production with its real id, use count, and depth.
 */
 func (sequitur *Sequitur) RuleViews() []RuleView {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
-
 	views := make([]RuleView, 0, len(sequitur.rules))
 
 	for _, rule := range sequitur.rules {
@@ -410,12 +376,8 @@ func (sequitur *Sequitur) ruleDepth(id int, stack map[int]bool) int {
 RuleCount returns the number of discovered grammar rules.
 */
 func (sequitur *Sequitur) RuleCount() int {
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	return len(sequitur.rules)
 }
-
-// --- internal (caller must hold mu) ---
 
 func (sequitur *Sequitur) appendNode(n *Node) {
 	last := sequitur.sentinel.Prev
@@ -569,8 +531,6 @@ func (sequitur *Sequitur) Sentence() {
 		return
 	}
 
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	sequitur.clearRootLocked()
 }
 
@@ -606,9 +566,6 @@ func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
 	if sequitur == nil || id <= 0 || len(symbols) == 0 {
 		return
 	}
-
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 
 	if existing := sequitur.rules[id]; existing != nil {
 		if count > existing.Count {
@@ -651,8 +608,6 @@ func (sequitur *Sequitur) RestoreRoot(symbols []string) {
 		return
 	}
 
-	sequitur.mu.Lock()
-	defer sequitur.mu.Unlock()
 	sequitur.clearRootLocked()
 
 	var prev *Node

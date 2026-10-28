@@ -9,7 +9,6 @@ import (
 	"iter"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,14 +39,12 @@ type Client struct {
 	bucket   string
 	transfer *transfermanager.Client
 	queue    *lf.Queue[Record]
-	mu       sync.Mutex
 	closing  atomic.Bool
 	stopped  chan struct{}
 }
 
 var (
-	liveClientsMu sync.Mutex
-	liveClients   []*Client
+	liveClients []*Client
 )
 
 func NewClient(ctx context.Context, bucket string) *Client {
@@ -120,9 +117,7 @@ func registerClient(client *Client) {
 		return
 	}
 
-	liveClientsMu.Lock()
 	liveClients = append(liveClients, client)
-	liveClientsMu.Unlock()
 }
 
 /*
@@ -130,9 +125,7 @@ FlushAll writes every queued object before a restart. The upload loop shares
 the process lifetime, so a return from Run would otherwise drop the tail.
 */
 func FlushAll() {
-	liveClientsMu.Lock()
 	clients := append([]*Client(nil), liveClients...)
-	liveClientsMu.Unlock()
 
 	for _, client := range clients {
 		if client == nil {
@@ -186,9 +179,6 @@ func (client *Client) Flush() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
 
 	for {
 		record, ok := client.queue.Dequeue()
@@ -439,9 +429,6 @@ func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
 WriteAtPrefix uploads p at prefix. An empty prefix is refused.
 */
 func (client *Client) writeFromQueue(ctx context.Context, prefix string, p []byte) (int, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	if ctx != nil && ctx.Err() != nil {
 		client.queue.Enqueue(Record{Key: prefix, Value: p})
 		return len(p), nil

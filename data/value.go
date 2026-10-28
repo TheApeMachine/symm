@@ -10,6 +10,7 @@ import (
 )
 
 type Value struct {
+	mu        sync.RWMutex
 	ID        [16]byte
 	Err       error
 	Prefix    string
@@ -22,8 +23,6 @@ type Value struct {
 	Scope     string
 	Layers    [][]byte
 	Index     []string
-
-	mu sync.Mutex
 }
 
 func NewValue(
@@ -33,6 +32,7 @@ func NewValue(
 	tick := Tick.Load()
 
 	value := &Value{
+		mu: sync.RWMutex{},
 		ID: uuid.New(),
 		Prefix: strings.Join([]string{
 			origin,
@@ -59,5 +59,7 @@ func NewValue(
 New returns a zeroed Value ready for deserialization.
 */
 func New() *Value {
-	return &Value{}
+	return &Value{
+		mu: sync.RWMutex{},
+	}
 }

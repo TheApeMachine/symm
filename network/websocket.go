@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
@@ -22,9 +21,7 @@ while status != READY ("client is not ready").
 */
 type WebsocketClient struct {
 	*runtime.System
-	mu           sync.Mutex
-	readMu       sync.Mutex
-	writeMu      sync.Mutex
+
 	conn         *gorilla.Conn
 	url          string
 	pinger       *Pinger
@@ -63,8 +60,6 @@ and runs the hook again, so a resubscribe that fails for a while (a token the
 venue refuses until a nonce recovers) does not end the stream for good.
 */
 func (client *WebsocketClient) OnReconnect(hook func() error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
 	client.onReconnect = hook
 }
 
@@ -75,17 +70,13 @@ any redial). Consumers whose state is only valid while the stream is live
 the whole backoff window. Nil clears the hook.
 */
 func (client *WebsocketClient) OnDisconnect(hook func()) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
 	client.onDisconnect = hook
 }
 
 func (client *WebsocketClient) Open(url string) error {
-	client.mu.Lock()
 	client.url = url
 	err := client.dialLocked()
 	hook := client.onReconnect
-	client.mu.Unlock()
 
 	if err != nil {
 		return err
@@ -107,9 +98,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 	hookErr := hook()
 
 	if hookErr == nil {
-		client.mu.Lock()
 		client.hookBackoff = 0
-		client.mu.Unlock()
 
 		return nil
 	}
@@ -120,7 +109,6 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 		hookErr,
 	)
 
-	client.mu.Lock()
 	client.closeConnLocked()
 
 	switch client.Status() {
@@ -129,7 +117,6 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 	}
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
-	client.mu.Unlock()
 
 	errnie.Error(cause)
 
@@ -170,9 +157,6 @@ Read returns the next text frame. On disconnect it drops to WAITING and
 returns a soft error so ingress can retry without System.Error floods.
 */
 func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
-	client.readMu.Lock()
-	defer client.readMu.Unlock()
-
 	defer func() {
 		if r := recover(); r != nil {
 			err = client.softDown(fmt.Errorf("[network.websocket] read panic: %v", r))
@@ -183,9 +167,7 @@ func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
 		return nil, err
 	}
 
-	client.mu.Lock()
 	conn := client.conn
-	client.mu.Unlock()
 
 	if conn == nil {
 		return nil, client.softDown(errnie.Error(errnie.Err(
@@ -216,12 +198,7 @@ func (client *WebsocketClient) Write(message []byte) error {
 		return err
 	}
 
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
-
-	client.mu.Lock()
 	conn := client.conn
-	client.mu.Unlock()
 
 	if conn == nil {
 		return client.softDown(errnie.Error(errnie.Err(
@@ -241,13 +218,8 @@ func (client *WebsocketClient) Write(message []byte) error {
 }
 
 func (client *WebsocketClient) writePing() error {
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
-
-	client.mu.Lock()
 	conn := client.conn
 	ready := client.Status() == runtime.READY
-	client.mu.Unlock()
 
 	if !ready || conn == nil {
 		return errnie.Error(errnie.Err(
@@ -275,14 +247,11 @@ func (client *WebsocketClient) ensureReady() error {
 		return err
 	}
 
-	client.mu.Lock()
 	if client.Status() == runtime.READY && client.conn != nil {
-		client.mu.Unlock()
 		return nil
 	}
 
 	if client.url == "" {
-		client.mu.Unlock()
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[network.websocket] not open",
@@ -292,17 +261,13 @@ func (client *WebsocketClient) ensureReady() error {
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
 
-	client.mu.Unlock()
-
 	select {
 	case <-client.Context().Done():
 		return client.Context().Err()
 	case <-time.After(wait):
 	}
 
-	client.mu.Lock()
 	if client.Status() == runtime.READY && client.conn != nil {
-		client.mu.Unlock()
 		return nil
 	}
 
@@ -317,11 +282,8 @@ func (client *WebsocketClient) ensureReady() error {
 				client.backoff = 30 * time.Second
 			}
 		}
-		client.mu.Unlock()
 		return err
 	}
-
-	client.mu.Unlock()
 
 	return client.runHook(hook)
 }
@@ -332,8 +294,6 @@ without canceling its context, so subsequent Read operations trigger redial
 with backoff. It invokes the OnDisconnect hook if the connection was live.
 */
 func (client *WebsocketClient) SoftDown(cause error) error {
-	client.mu.Lock()
-
 	wasLive := client.conn != nil
 	hook := client.onDisconnect
 
@@ -346,7 +306,6 @@ func (client *WebsocketClient) SoftDown(cause error) error {
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 	client.warnOnce("disconnected: " + cause.Error())
-	client.mu.Unlock()
 
 	if wasLive && hook != nil {
 		hook()
@@ -390,8 +349,6 @@ func (client *WebsocketClient) warnOnce(message string) {
 Close shuts the socket and cancels the client context.
 */
 func (client *WebsocketClient) Close() error {
-	client.mu.Lock()
 	client.closeConnLocked()
-	client.mu.Unlock()
 	return client.System.Close()
 }

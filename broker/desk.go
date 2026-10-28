@@ -26,7 +26,6 @@ fills beside their shadow fills, and reports each completed round trip.
 */
 type Desk struct {
 	*runtime.System
-	mu             sync.Mutex
 	transport      Transport
 	price          *Price
 	balance        *Balance
@@ -35,6 +34,7 @@ type Desk struct {
 	virtuals       *Cache
 	virtualArchive *sync.Map
 	pending        *sync.Map
+	policies       *sync.Map
 }
 
 func NewDesk(
@@ -52,6 +52,7 @@ func NewDesk(
 		virtuals:       NewCache(ctx),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
+		policies:       &sync.Map{},
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
@@ -165,6 +166,13 @@ func (desk *Desk) restoreCache(cacheKey string, cache *Cache) {
 			continue
 		}
 
+		// A closed paper lot is a round trip this market actually paid for,
+		// whether or not its open record survived the restart. Fold it in
+		// before the settled map can drop it.
+		if hit.role == "closed" && cacheKey == "position" {
+			desk.observePolicy(hit.position)
+		}
+
 		switch hit.role {
 		case "open":
 			prev, existed := open[hit.position.Symbol]
@@ -196,13 +204,19 @@ func (desk *Desk) restoreCache(cacheKey string, cache *Cache) {
 
 		desk.bind(hit.position)
 		prepareRestored(hit.position)
+		desk.teachPolicy(hit.position)
 		cache.Restore(hit.position)
 	}
 
 	for _, hit := range closed {
 		desk.bind(hit.position)
 		desk.virtualArchive.Store(hit.position.ID, hit.position)
+		desk.observePolicy(hit.position)
 	}
+
+	// Every symbol that settled something gets a policy before its next lot
+	// opens, so the first entry after a restart is already taught.
+	desk.refreshPolicies()
 }
 
 func (desk *Desk) dropStaleOpen(prev, next, kept historyHit) {
@@ -369,9 +383,6 @@ func (desk *Desk) onPositionSettled(position *Position) {
 		return
 	}
 
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
-
 	if err := desk.releaseLocked(position); err != nil {
 		errnie.Error(err)
 	}
@@ -412,10 +423,8 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 			}
 
 			_, isTraded := traded[position.Symbol]
-			position.mu.RLock()
 			markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
 			watchProfit := profitLockArmed(position) || watchGreenBook(position)
-			position.mu.RUnlock()
 
 			// Skip idle lots. A green lot is still repriced when the touch
 			// price is unchanged: ExitRoom is size, and a size pull is an
@@ -679,9 +688,6 @@ func (desk *Desk) settleFlat(position *Position) {
 		desk.positions.Remove(position.Symbol)
 		return
 	}
-
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
 
 	if err := desk.releaseLocked(position); err != nil {
 		errnie.Error(err)
@@ -975,6 +981,12 @@ func (desk *Desk) Enter(
 		desk.onPositionSettled,
 	)
 
+	// Search on this symbol's settled record, then push what it learned onto
+	// the lot. The stop reads the pullback off the lot, so the policy has to
+	// be on it before the first mark reprices it.
+	desk.refreshPolicy(symbol)
+	desk.teachPolicy(position)
+
 	// Register before Send. Paper publish blocks until the private ingress
 	// reads the fill, and that read calls Apply. The lot has to already be
 	// in the cache or the entry price is dropped and close-now PnL stays empty.
@@ -1033,9 +1045,6 @@ func (desk *Desk) Exit(
 		return err
 	}
 
-	desk.mu.Lock()
-	defer desk.mu.Unlock()
-
 	return desk.releaseLocked(position)
 }
 
@@ -1058,6 +1067,10 @@ func (desk *Desk) releaseLocked(position *Position) error {
 			desk.positions.Remove(position.Symbol)
 		}
 	}
+
+	// The round trip is over. Its trace is now an episode, and this symbol's
+	// learned exit moment is one step closer to being worth trusting.
+	desk.observePolicy(position)
 
 	value := data.NewValue(
 		key, "closed", position.Symbol,

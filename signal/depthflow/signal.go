@@ -25,16 +25,15 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
 	books  *broker.Book
-	states map[string]*symbolState
+	states *sync.Map
 	keys   []string
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
-		states: make(map[string]*symbolState),
+		states: &sync.Map{},
 		keys: []string{
 			"book_imbalance",
 			"touch_notional:bid",
@@ -73,25 +72,18 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		return value
 	}
 
-	signal.mu.Lock()
-	state, found := signal.states[symbol]
-	if !found {
-		state = &symbolState{
-			prevBids: make(map[float64]float64),
-			prevAsks: make(map[float64]float64),
-		}
-		signal.states[symbol] = state
-	}
-	signal.mu.Unlock()
+	untypedState, _ := signal.states.LoadOrStore(symbol, &symbolState{
+		prevBids: make(map[float64]float64),
+		prevAsks: make(map[float64]float64),
+	})
+
+	state := untypedState.(*symbolState)
 
 	// The `books.Book` callback is synchronous; the book is present only if
 	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
 	// invalid (venue checksum mismatch / absent level) symbols skip the
 	// callback and the tick carries book_error/<symbol> instead.
 	signal.books.Book(symbol, func(b *spotbook.Book) {
-		signal.mu.Lock()
-		defer signal.mu.Unlock()
-
 		bids := ladder(b.Bids, true)
 		asks := ladder(b.Asks, false)
 

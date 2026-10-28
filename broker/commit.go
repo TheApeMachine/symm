@@ -78,9 +78,6 @@ func (desk *Desk) ClosedFill(symbol string, entry, exit uint64) (ClosedFill, err
 }
 
 func fillOf(position *Position) (ClosedFill, error) {
-	position.mu.RLock()
-	defer position.mu.RUnlock()
-
 	if position.EntryPrice == nil || position.EntryPrice.Sign() <= 0 {
 		return ClosedFill{}, errnie.Err(
 			errnie.UnprocessableContent,

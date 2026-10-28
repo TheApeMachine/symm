@@ -63,9 +63,12 @@ func (history *History) ReplaceOpen(value *data.Value) error {
 		return nil
 	}
 
-	if err := history.store.DeleteOtherKeys(openDir(value.Prefix), value.Prefix); err != nil {
-		errnie.Error(err)
-	}
+	// Run cleanup in background so trading tick is never blocked by S3 latency
+	go func(prefix, keep string) {
+		if err := history.store.DeleteOtherKeys(prefix, keep); err != nil {
+			errnie.Error(err)
+		}
+	}(openDir(value.Prefix), value.Prefix)
 
 	return history.Store(value)
 }

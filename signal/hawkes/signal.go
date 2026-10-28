@@ -8,9 +8,9 @@ import (
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/core"
-	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	parent "github.com/theapemachine/symm/signal"
 )
 
 type symbolModel struct {
@@ -22,14 +22,13 @@ type symbolModel struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
-	models map[string]*symbolModel
+	models *sync.Map
 	keys   []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		models: make(map[string]*symbolModel),
+		models: &sync.Map{},
 		keys: []string{
 			"arrival_rate:buy",
 			"arrival_rate:sell",
@@ -92,21 +91,21 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	signal.mu.Lock()
-	state, exists := signal.models[trade.Symbol]
+	untypedState, _ := signal.models.LoadOrStore(trade.Symbol, &symbolModel{
+		estimator: nmhawkes.NewHawkes(),
+	})
 
-	if !exists {
-		state = &symbolModel{
-			estimator: nmhawkes.NewHawkes(),
-		}
-		signal.models[trade.Symbol] = state
-	}
+	state := untypedState.(*symbolModel)
 
 	res, _, err := state.estimator.Step(mark, atSec)
 
 	if err != nil {
-		signal.mu.Unlock()
-		errnie.Error(errnie.Err(errnie.Internal, "[hawkes] estimator step failed for "+trade.Symbol, err))
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[hawkes] estimator step failed for "+trade.Symbol,
+			err,
+		))
+
 		return value
 	}
 
@@ -130,8 +129,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		state.prevAtSec = atSec
 		state.hasPrev = true
 	}
-
-	signal.mu.Unlock()
 
 	keys := []string{
 		signal.Name(),

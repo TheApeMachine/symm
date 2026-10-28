@@ -5,6 +5,7 @@ import (
 	"math"
 	"sync"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
@@ -12,7 +13,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/volumeclock"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 )
 
 type causalEstimator struct {
@@ -45,8 +45,7 @@ type symbolState struct {
 
 type Signal struct {
 	*runtime.System
-	mu     sync.Mutex
-	states map[string]*symbolState
+	states *sync.Map
 	keys   []string
 	books  *broker.Book
 }
@@ -54,7 +53,7 @@ type Signal struct {
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
-		states: make(map[string]*symbolState),
+		states: &sync.Map{},
 		keys: []string{
 			"spread_ratio",
 			"volume_rate",
@@ -120,14 +119,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	atNanos := float64(value.Timestamp)
 	midpoint := 0.0
 
-	signal.mu.Lock()
-	defer signal.mu.Unlock()
-
-	state, found := signal.states[trade.Symbol]
-	if !found {
-		state = &symbolState{}
-		signal.states[trade.Symbol] = state
-	}
+	untypedState, _ := signal.states.LoadOrStore(trade.Symbol, &symbolState{})
+	state := untypedState.(*symbolState)
 
 	var spreadRatio float64
 	if hasTouch {

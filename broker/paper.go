@@ -47,10 +47,11 @@ type paperWatch struct {
 /*
 NewPaper opens the paper private transport.
 */
-func NewPaper(
-	ctx context.Context,
-) *Paper {
-	paper := &Paper{frames: make(chan []byte)}
+func NewPaper(ctx context.Context) *Paper {
+	paper := &Paper{
+		frames: make(chan []byte, 4096),
+	}
+
 	paper.System = runtime.NewSystem(ctx, "paper", paper)
 
 	gate := make(chan struct{}, 1)
