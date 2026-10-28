@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/theapemachine/symm/system"
 )
 
 // AdaptiveExitConfig defines the starting adaptive policy. Thresholds are
@@ -227,18 +226,3 @@ func (policy *AdaptiveExitPolicy) Evaluate(observation ExitObservation) ExitDeci
 	return decision
 }
 
-// newDefaultAdaptiveExitPolicy wires the configured per-position loss budget.
-// If the planner's max loss is 2% of capital and max allocation is 20%, for
-// example, the corresponding full-allocation position limit is 10% of position
-// value. This is a conservative cap: smaller allocations would lose less capital.
-func newDefaultAdaptiveExitPolicy() *AdaptiveExitPolicy {
-	config := DefaultAdaptiveExitConfig()
-	if system.Cfg != nil && system.Cfg.Planner != nil &&
-		system.Cfg.Planner.MaxAllocationFraction > 0 &&
-		system.Cfg.Planner.MaxLossFraction > 0 {
-		config.HardLossLimitPct = 100 *
-			system.Cfg.Planner.MaxLossFraction /
-			system.Cfg.Planner.MaxAllocationFraction
-	}
-	return NewAdaptiveExitPolicy(config)
-}
