@@ -44,11 +44,11 @@ func DefaultAdaptiveExitConfig() AdaptiveExitConfig {
 // ExitObservation is one mark-to-liquidation observation from a position.
 type ExitObservation struct {
 	// PnLPct is net PnL in percentage points, as supplied by Position.PnLPct.
-	PnLPct float64
+	PnLPct      float64
 	// FrictionPct is the round-trip spread + fees, in percentage points.
 	FrictionPct float64
 	// ExitRoom is best-bid quantity / position quantity.
-	ExitRoom float64
+	ExitRoom    float64
 	HasExitRoom bool
 }
 
