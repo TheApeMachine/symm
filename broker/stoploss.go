@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/system"
 )
 
 // ExitState represents the lifecycle stage of an active position.
