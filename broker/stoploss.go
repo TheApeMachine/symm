@@ -58,6 +58,20 @@ func NewStopLoss() *StopLoss {
 	}
 }
 
+func newDefaultAdaptiveExitPolicy() *AdaptiveExitPolicy {
+	config := DefaultAdaptiveExitConfig()
+	if system.Cfg != nil && system.Cfg.Planner != nil &&
+		system.Cfg.Planner.MaxAllocationFraction > 0 &&
+		system.Cfg.Planner.MaxLossFraction > 0 {
+		// Translate the configured account-level loss budget into the loss
+		// percentage for a position sized at the maximum allocation.
+		config.HardLossLimitPct = 100 *
+			system.Cfg.Planner.MaxLossFraction /
+			system.Cfg.Planner.MaxAllocationFraction
+	}
+	return NewAdaptiveExitPolicy(config)
+}
+
 // Evaluate routes virtual positions through the experimental adaptive policy.
 // Paper positions keep the incumbent policy so outcomes can be compared safely.
 func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool) {
