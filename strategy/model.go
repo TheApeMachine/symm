@@ -158,13 +158,16 @@ func (model *Model) Evaluate(
 	case ActionExit:
 		out.Append(false, "enter")
 
-		// If an exit is indicated, close open positions for this symbol
-		for _, virtual := range []bool{false, true} {
-			if model.desk.Has(symbol, virtual) {
-				if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
-					errnie.Error(err)
-				}
+		// Paper positions continue to use the incumbent Tree exit decision.
+		// Virtual positions are the experiment cohort: do not let the Tree
+		// censor their outcomes; let the adaptive StopLoss own their exits.
+		if model.desk.Has(symbol, false) {
+			if err := model.desk.Exit(symbol, pathKey, false); err != nil {
+				errnie.Error(err)
 			}
+		}
+		if model.desk.Has(symbol, true) {
+			out.Append("adaptive virtual exit under evaluation", "virtualExitMode")
 		}
 	}
 
