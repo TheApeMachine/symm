@@ -60,14 +60,16 @@ func NewStopLoss() *StopLoss {
 
 func newDefaultAdaptiveExitPolicy() *AdaptiveExitPolicy {
 	config := DefaultAdaptiveExitConfig()
-	if system.Cfg != nil && system.Cfg.Planner != nil &&
-		system.Cfg.Planner.MaxAllocationFraction > 0 &&
+	if system.Cfg != nil && system.Cfg.Risk != nil &&
+		system.Cfg.Risk.MaxFraction != nil &&
+		system.Cfg.Risk.MaxFraction.Sign() > 0 &&
+		system.Cfg.Planner != nil &&
 		system.Cfg.Planner.MaxLossFraction > 0 {
-		// Translate the configured account-level loss budget into the loss
-		// percentage for a position sized at the maximum allocation.
+		// Price.Allocate sizes from Risk.MaxFraction, so use the same budget
+		// when converting account-level loss into a position-level PnL cap.
 		config.HardLossLimitPct = 100 *
 			system.Cfg.Planner.MaxLossFraction /
-			system.Cfg.Planner.MaxAllocationFraction
+			system.Cfg.Risk.MaxFraction.Float64()
 	}
 	return NewAdaptiveExitPolicy(config)
 }
