@@ -448,7 +448,10 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		hub.cancelStream("s3")
 
 		// One aggregated frame for large prefix listings (trie books, closed lots).
-		if request.Prefix == "model/path/" ||
+		// model/paths matches with or without a trailing slash: the S3 key is
+		// always "model/paths/<tokens>/<action>.bin" but the dashboard may send
+		// either form.
+		if strings.HasPrefix(request.Prefix, "model/paths") ||
 			strings.HasPrefix(request.Prefix, "position/closed") ||
 			strings.HasPrefix(request.Prefix, "virtual/closed") {
 			hub.ListPrefix(request.Prefix)

@@ -49,7 +49,7 @@ export const CognitiveTree = () => {
 				: "trading unknown";
 
 	useEffect(() => {
-		const other = "model/path/";
+		const other = "model/paths";
 		cognitionStore.setState((state) => ({
 			...state,
 			policyKeys: state.policyKeys.filter((key) => !key.startsWith(other)),

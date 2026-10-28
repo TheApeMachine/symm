@@ -17,6 +17,7 @@ import (
 type Model struct {
 	*runtime.System
 	desk  *broker.Desk
+	price *broker.Price
 	stage *Stage
 	store *store.Client
 	tree  *Tree
@@ -26,6 +27,7 @@ type Model struct {
 func NewModel(
 	ctx context.Context,
 	desk *broker.Desk,
+	price *broker.Price,
 	stage *Stage,
 ) *Model {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
@@ -33,10 +35,11 @@ func NewModel(
 	return &Model{
 		System: runtime.NewSystem(ctx, "model"),
 		desk:   desk,
+		price:  price,
 		stage:  stage,
 		store:  client,
 		tree:   NewTree(ctx, "model/paths/"),
-		gate:   NewGate(ctx, desk, client),
+		gate:   NewGate(ctx, desk, price, client),
 	}
 }
 
@@ -120,8 +123,8 @@ func (model *Model) Evaluate(
 	case ActionEnter:
 		out.Append(true, "enter")
 
-		// Physical & environmental checks
-		gateDec := model.gate.Evaluate(symbol, observed, coder)
+		// Physical & environmental checks for ENTERS
+		gateDec := model.gate.EvaluateEnter(symbol, observed, coder)
 
 		if !gateDec.Allowed {
 			out.Append(true, "blocked")
@@ -155,12 +158,21 @@ func (model *Model) Evaluate(
 		if model.stage != nil {
 			model.stage.ResetSequencer(symbol)
 		}
+
 	case ActionExit:
 		out.Append(false, "enter")
 
-		// If an exit is indicated, close open positions for this symbol
+		// Physical & environmental checks for EXITS
 		for _, virtual := range []bool{false, true} {
-			if model.desk.Has(symbol, virtual) {
+			if pos := model.desk.Position(symbol, virtual); pos != nil {
+				gateDec := model.gate.EvaluateExit(symbol, observed, coder, pos)
+
+				if !gateDec.Allowed {
+					out.Append(true, "blocked")
+					out.Append(gateDec.Reason, "blockedReason")
+					continue
+				}
+
 				if err := model.desk.Exit(symbol, pathKey, virtual); err != nil {
 					errnie.Error(err)
 				}

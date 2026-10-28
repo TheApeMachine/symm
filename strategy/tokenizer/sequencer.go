@@ -93,26 +93,75 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 		return StepResult{Silence: StepSilenceEmpty}
 	}
 
-	regimeKeys, postureKeys := flatRegime, flatPosture
+	regimeKeys := flatRegime
 	if holding {
-		regimeKeys, postureKeys = holdRegime, holdPosture
+		regimeKeys = holdRegime
 	}
 
 	_, regime, regimeOK := brightest(lit, regimeKeys)
-	postureBrightness, posture, postureOK := brightest(lit, postureKeys)
 
-	if !regimeOK || !postureOK {
-		return StepResult{Silence: StepSilenceEmpty, Peak: postureBrightness}
+	var detector, support, opposition float64
+	var detKey, supKey, oppKey uint8
+
+	if holding {
+		// EXIT POSTURES
+		// R03: Exit Detector (Rejection wick, stall, arrival deceleration)
+		// R04: Exit Support (Support evaporation, bid withdrawal, spread blowout)
+		// R05: Exit Opposition (Absorption reload, trickle flow, steadfast makers)
+		detKey, supKey, oppKey = 3, 4, 5
+	} else {
+		// ENTER POSTURES
+		// R00: Enter Detector (Volume burst, tick in buyer arrival)
+		// R01: Enter Support (Limit bids stepping up, vanguard leader)
+		// R02: Enter Opposition (Ask wall, spoof trap, helper trap)
+		detKey, supKey, oppKey = 0, 1, 2
 	}
 
-	if risk, _, riskOK := brightest(lit, riskRegions); riskOK && risk > postureBrightness {
+	for _, r := range lit {
+		if r == nil {
+			continue
+		}
+		switch r.Key {
+		case detKey:
+			detector = r.Brightness
+		case supKey:
+			support = r.Brightness
+		case oppKey:
+			opposition = r.Brightness
+		}
+	}
+
+	// ------------------------------------------------------------------------
+	// NET FORCE VECTOR: (Detector + Support) - Opposition
+	// This physical impulse is passed directly to the Tree to fight Resistance.
+	// ------------------------------------------------------------------------
+	netBrightness := (detector + support) - opposition
+
+	// The token label still needs the dominant region to describe the state to the grammar
+	posture := detKey
+	maxVal := detector
+	if support > maxVal {
+		maxVal = support
+		posture = supKey
+	}
+	if opposition > maxVal {
+		maxVal = opposition
+		posture = oppKey
+	}
+
+	if !regimeOK || maxVal <= 0 {
+		return StepResult{Silence: StepSilenceEmpty, Peak: netBrightness}
+	}
+
+	// Risk Oracle (R12, R13, R14) vetoes the cognitive sequence
+	if risk, _, riskOK := brightest(lit, riskRegions); riskOK && risk > netBrightness {
 		return StepResult{Silence: StepSilenceVeto, Peak: risk}
 	}
 
 	label := fmt.Sprintf("%s.%s", RegionLabel(regime), RegionLabel(posture))
 
 	if label == sequencer.lastEmitted {
-		return StepResult{Silence: StepSilenceDuplicate, Peak: postureBrightness}
+		return StepResult{Silence: StepSilenceDuplicate, Peak: netBrightness}
 	}
 
 	active := sequencer.sentence(holding)
@@ -140,9 +189,9 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 	sequencer.active = active
 
 	return StepResult{
-		Token: NewToken([]string{label}, postureBrightness, meta),
+		Token: NewToken([]string{label}, netBrightness, meta),
 		Spell: spell,
-		Peak:  postureBrightness,
+		Peak:  netBrightness,
 	}
 }
 

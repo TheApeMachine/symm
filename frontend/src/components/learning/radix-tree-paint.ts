@@ -27,6 +27,39 @@ const thresholdOpacity = (threshold: number): number => {
 	return 1 - threshold;
 };
 
+/*
+thresholdSaturation maps the threshold to a CSS saturate() factor.
+A branch at 0.05 (solid, profitable) is fully saturated.
+A branch at 0.95 (faint, pruning) is nearly grayscale.
+Linear: 0.05→1.0, 0.95→0.15
+*/
+const thresholdSaturation = (threshold: number): number => {
+	const span = 0.95 - 0.05;
+	const normalized = (Math.min(0.95, Math.max(0.05, threshold)) - 0.05) / span;
+	return 1 - normalized * 0.85;
+};
+
+/*
+branchFilter builds a CSS filter string combining drop-shadow and saturation.
+A high threshold desaturates the color, making it look more grayscale.
+*/
+const branchFilter = (
+	isRejected: boolean,
+	isSymbolLink: boolean,
+	threshold: number | undefined,
+): string => {
+	const shadow = isRejected
+		? "drop-shadow(0 0 3px rgba(230, 160, 60, 0.55))"
+		: isSymbolLink
+			? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
+			: "";
+
+	const sat = typeof threshold === "number" ? `saturate(${thresholdSaturation(threshold).toFixed(3)})` : "";
+
+	const parts = [shadow, sat].filter(Boolean);
+	return parts.length > 0 ? parts.join(" ") : "none";
+};
+
 export type TreeNode = d3.HierarchyPointNode<TrieNodeData>;
 export type TreeLink = d3.HierarchyPointLink<TrieNodeData>;
 
@@ -302,14 +335,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 			.attr("stroke-width", isRejected || isSymbolLink ? 2.5 : 1.2)
 			.attr("stroke-opacity", isRejected || isSymbolLink ? 1 : 0.6)
 			.attr("stroke-dasharray", isRejected || isSymbolLink ? null : "4 2")
-			.style(
-				"filter",
-				isRejected
-					? "drop-shadow(0 0 3px rgba(230, 160, 60, 0.55))"
-					: isSymbolLink
-						? "drop-shadow(0 0 3px rgba(56, 189, 248, 0.5))"
-						: "none",
-			);
+			.style("filter", branchFilter(isRejected, isSymbolLink, branchThreshold));
 
 		const token = link.target.data.token;
 		const labelG = group.select<SVGGElement>("g.trie-link-label");
@@ -423,6 +449,10 @@ const paintNodeContents = (
 				.text(`threshold ${formatExploreThreshold(nodeData.threshold)}`);
 		}
 		const hasSymbol = !!(symbolsAtNode && symbolsAtNode.length > 0);
+		const termSat =
+			typeof nodeData.threshold === "number"
+					? `saturate(${thresholdSaturation(nodeData.threshold).toFixed(3)})`
+					: null;
 		group
 			.append("rect")
 			.attr("x", -TERMINAL_WIDTH / 2)
@@ -434,7 +464,8 @@ const paintNodeContents = (
 			.attr("stroke", terminalStroke(action))
 			.attr("stroke-width", hasSymbol ? 2.5 : 1.2)
 			.attr("stroke-dasharray", hasSymbol ? null : "3 2")
-			.attr("opacity", hasSymbol ? 1 : 0.75);
+			.attr("opacity", hasSymbol ? 1 : 0.75)
+			.style("filter", termSat);
 		group
 			.append("text")
 			.attr("x", 0)

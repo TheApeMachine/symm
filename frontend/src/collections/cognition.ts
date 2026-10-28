@@ -245,7 +245,7 @@ const policyKeyFromIndex = (
 		const key = s3KeyFromIndex(framePrefix, index);
 		if (key) return key;
 	}
-	if (index.startsWith("model/path/")) {
+	if (index.startsWith("model/paths")) {
 		return index;
 	}
 	const match = index.match(/model\/current\/(.+\/(?:enter|exit))\.bin/);
@@ -471,12 +471,19 @@ the tree only kept the paths that had been scored once.
 const absoluteThreshold = (step: number): boolean =>
 	step >= 0.05 && step <= 0.95;
 
-const sumExploreThresholdSteps = (steps: number[]): number | null => {
+const sumExploreThresholdSteps = (
+	steps: number[],
+	names?: unknown[],
+	layers?: unknown[],
+): number | null => {
 	if (steps.length === 0) return null;
 
 	let book = 0.5;
-	for (const step of steps) {
-		if (absoluteThreshold(step)) {
+
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		// Only legacy "threshold"-named layers can be absolute snapshots.
+		if (names && layers && isLegacyAbsoluteThreshold(names, i) && absoluteThreshold(step)) {
 			book = step;
 			continue;
 		}
@@ -494,7 +501,10 @@ const thresholdStepsFromStored = (
 
 	for (let i = 0; i < names.length; i++) {
 		const name = names[i];
-		if (typeof name !== "string" || !name.includes("threshold")) continue;
+		if (typeof name !== "string") continue;
+		// The backend writes the book under "resistance" (strategy/tree.go).
+		// Older values used "threshold"; accept both.
+		if (!name.includes("threshold") && !name.includes("resistance")) continue;
 
 		const step = layerNumber(layers[i]);
 		if (step === null) continue;
@@ -503,6 +513,15 @@ const thresholdStepsFromStored = (
 	}
 
 	return steps;
+};
+
+/*
+Legacy "threshold" layers may be absolute snapshots in [0.05, 0.95].
+"resistance" layers are always deltas (−returnFraction) and are small.
+*/
+const isLegacyAbsoluteThreshold = (names: unknown[], index: number): boolean => {
+	const name = names[index];
+	return typeof name === "string" && name.includes("threshold") && !name.includes("resistance");
 };
 
 /*
@@ -524,6 +543,8 @@ export const thresholdFromStored = (payload: unknown): number | null => {
 
 	return sumExploreThresholdSteps(
 		thresholdStepsFromStored(names, layers),
+		names,
+		layers,
 	);
 };
 
@@ -542,17 +563,33 @@ export const thresholdFromExploreBytes = (
 	if (!nested) return null;
 
 	const steps: number[] = [];
+	const indices: string[] = [];
 
 	for (let i = 0; i < nested.index.length; i++) {
-		if (!nested.index[i].includes("threshold")) continue;
+		const idx = nested.index[i];
+		if (!idx.includes("threshold") && !idx.includes("resistance")) continue;
 
 		const step = layerNumber(tryDecodeJsonBytes(nested.layers[i]));
 		if (step === null) continue;
 
 		steps.push(step);
+		indices.push(idx);
 	}
 
-	return sumExploreThresholdSteps(steps);
+	if (steps.length === 0) return null;
+
+	let book = 0.5;
+	for (let i = 0; i < steps.length; i++) {
+		// Only "threshold"-named layers can be absolute snapshots.
+		// "resistance" layers are always small deltas.
+		if (indices[i].includes("threshold") && !indices[i].includes("resistance") && absoluteThreshold(steps[i])) {
+			book = steps[i];
+			continue;
+		}
+		book += steps[i];
+	}
+
+	return book;
 };
 
 const sameStringList = (left: string[], right: string[]): boolean =>
@@ -581,7 +618,7 @@ export const ingestS3Prefix = (value: Value) => {
 		return false;
 	}
 
-	if (value.scope !== "model/explore" && value.scope !== "model/policy") {
+	if (value.scope !== "model/paths") {
 		return true;
 	}
 

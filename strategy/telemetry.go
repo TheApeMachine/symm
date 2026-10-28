@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/data"
@@ -59,12 +60,13 @@ type Telemetry struct {
 	*runtime.System
 	rollup    TickMetrics
 	walks     []pathWalk
-	lastPhase map[string]string
+	lastPhase *sync.Map
 }
 
 func NewTelemetry(ctx context.Context) *Telemetry {
 	return &Telemetry{
-		System: runtime.NewSystem(ctx, "telemetry"),
+		System:    runtime.NewSystem(ctx, "telemetry"),
+		lastPhase: &sync.Map{},
 	}
 }
 
@@ -207,14 +209,15 @@ func (telemetry *Telemetry) NoteWalk(symbol string, out *data.Value) {
 	}
 
 	if telemetry.lastPhase == nil {
-		telemetry.lastPhase = map[string]string{}
+		telemetry.lastPhase = &sync.Map{}
 	}
 
-	if outcome == "" && telemetry.lastPhase[symbol] == phase {
+	lastPhase, _ := telemetry.lastPhase.LoadOrStore(symbol, phase)
+	if outcome == "" && lastPhase == phase {
 		return
 	}
 
-	telemetry.lastPhase[symbol] = phase
+	telemetry.lastPhase.Store(symbol, phase)
 	telemetry.walks = append(telemetry.walks, pathWalk{
 		Symbol:  symbol,
 		Phase:   phase,

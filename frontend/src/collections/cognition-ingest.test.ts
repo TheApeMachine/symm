@@ -62,6 +62,35 @@ describe("stored thresholds", () => {
 		).toBeCloseTo(0.4);
 	});
 
+	it("sums resistance steps on top of the 0.50 start (backend key name)", () => {
+		const encode = (value: unknown) => btoa(JSON.stringify(value));
+
+		// The Go backend writes value.Append(-returnFraction, "resistance")
+		// so the index is <prefix>/resistance
+		expect(
+			thresholdFromStored({
+				Index: [
+					"model/paths/R01/R02/resistance",
+					"model/paths/R01/R02/resistance",
+				],
+				Layers: [encode(-0.05), encode(-0.03)],
+			}),
+		).toBeCloseTo(0.42);
+	});
+
+	it("treats a 0.05 resistance delta as a delta, not an absolute threshold", () => {
+		const encode = (value: unknown) => btoa(JSON.stringify(value));
+
+		// A 5% loss produces resistance = +0.05. This must be added to 0.50,
+		// not treated as an absolute threshold.
+		expect(
+			thresholdFromStored({
+				Index: ["model/paths/R01/R02/resistance"],
+				Layers: [encode(0.05)],
+			}),
+		).toBeCloseTo(0.55);
+	});
+
 	it("reads a legacy absolute book before delta steps", () => {
 		const encode = (value: unknown) => btoa(JSON.stringify(value));
 

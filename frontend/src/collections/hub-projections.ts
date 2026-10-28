@@ -121,7 +121,7 @@ watchScopes(signals.training, (value) => {
 		return;
 	}
 	if (value.role === "explore" && value.scope === "catalog") {
-		if (triePrefix() !== "model/explore") return;
+		if (triePrefix() !== "model/paths") return;
 		const keys = value.reading("exploreKeys") as string[] | undefined;
 		if (Array.isArray(keys) && keys.length > 0) {
 			ingestPolicyKeys(keys, String(value.epoch));

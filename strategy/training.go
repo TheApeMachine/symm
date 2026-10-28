@@ -52,7 +52,7 @@ func NewTraining(
 
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, stage),
+		model:     NewModel(ctx, desk, price, stage),
 		price:     price,
 		desk:      desk,
 		client:    client,

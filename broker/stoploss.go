@@ -47,6 +47,7 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 	if currentPct > stoploss.peakPnLPct {
 		stoploss.peakPnLPct = currentPct
 	}
+
 	if currentPct < stoploss.lowestPnLPct {
 		stoploss.lowestPnLPct = currentPct
 	}
@@ -61,15 +62,27 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 	// 1. CAUSAL MCTS LEARNED INVALIDATION STOP
 	// ------------------------------------------------------------------------
 	cutTolerance := friction
+
 	if learnedCut != nil && learnedCut.Sign() > 0 {
 		cutTolerance = math.Max(friction, learnedCut.Float64())
 	}
 
 	adverseMove := stoploss.entryPnLPct - currentPct
+
 	if adverseMove >= cutTolerance {
 		return fmt.Sprintf("invalidation stop: adverse drop %.2f%% exceeded causal cut threshold %.2f%% (current PnL %.2f%%)",
 			adverseMove, cutTolerance, currentPct), true
 	}
+
+	// Calculate how close the trade came to being wiped out before bouncing
+	maxAdverseMove := stoploss.entryPnLPct - stoploss.lowestPnLPct
+	damageRatio := 0.0
+
+	if cutTolerance > 0 {
+		damageRatio = maxAdverseMove / cutTolerance
+	}
+
+	isDamaged := damageRatio >= 0.75 // Consumed 75% or more of its risk budget
 
 	// ------------------------------------------------------------------------
 	// 2. REAL PHYSICAL LIQUIDITY EVAPORATION
@@ -104,8 +117,10 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 			stoploss.evaporationTicks++
 			// Require persistence: genuine book pulls remain across ticks; bot flickers clear in 1 tick
 			if stoploss.evaporationTicks >= 3 {
-				return fmt.Sprintf("liquidity evaporation: %s (peak +%.2f%%, current PnL %.2f%%)",
-					reason, stoploss.peakPnLPct, currentPct), true
+				return fmt.Sprintf(
+					"liquidity evaporation: %s (peak +%.2f%%, current PnL %.2f%%)",
+					reason, stoploss.peakPnLPct, currentPct,
+				), true
 			}
 		} else {
 			stoploss.evaporationTicks = 0
@@ -116,12 +131,32 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 	// 3. CAUSAL MCTS LEARNED TRAILING PROFIT STOP
 	// ------------------------------------------------------------------------
 	if stoploss.peakPnLPct > 0 && learnedTrail != nil && learnedTrail.Sign() > 0 {
-		trail := learnedTrail.Float64()
 		giveback := stoploss.peakPnLPct - currentPct
+		baseTrail := math.Max(friction, learnedTrail.Float64())
 
-		if giveback >= trail {
-			return fmt.Sprintf("trailing profit stop: peak +%.2f%%, giveback %.2f%% reached causal trail %.2f%% (net PnL %.2f%%)",
-				stoploss.peakPnLPct, giveback, trail, currentPct), true
+		// If the trade almost died but miraculously went green, the premise is broken.
+		// We exit on the very first sign of momentum faltering.
+		if isDamaged {
+			survivalMargin := math.Max(0.0, 1.0-damageRatio)
+			baseTrail = friction + ((baseTrail - friction) * survivalMargin)
+		}
+
+		// --- PARABOLIC PROFIT RATCHET ---
+		// Compresses the allowed giveback from the base trail down towards the
+		// friction floor using an inverse-square curve based on peak multiples.
+		compression := math.Max(1.0, stoploss.peakPnLPct/baseTrail)
+		dynamicTrail := friction + ((baseTrail - friction) / math.Sqrt(compression))
+
+		if giveback >= dynamicTrail {
+			reason := "ratcheted trailing stop"
+			
+			if isDamaged {
+				reason = "damaged recovery ratcheted stop"
+			}
+
+			return fmt.Sprintf("%s: peak +%.2f%%, giveback %.2f%% reached dynamic trail %.2f%% (base %.2f%%, net PnL %.2f%%)",
+				reason, stoploss.peakPnLPct, giveback, dynamicTrail, baseTrail, currentPct,
+			), true
 		}
 	}
 
@@ -131,8 +166,10 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 	if maxLifetimeNs > 0 && !position.OpenedAt.IsZero() {
 		elapsed := time.Since(position.OpenedAt).Nanoseconds()
 		if elapsed > maxLifetimeNs && stoploss.peakPnLPct <= 0 {
-			return fmt.Sprintf("move expired: elapsed %s exceeded empirical winning horizon without reaching profit",
-				time.Duration(elapsed).Round(time.Second)), true
+			return fmt.Sprintf(
+				"move expired: elapsed %s exceeded empirical winning horizon without reaching profit",
+				time.Duration(elapsed).Round(time.Second),
+			), true
 		}
 	}
 

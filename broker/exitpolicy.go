@@ -242,11 +242,15 @@ func (desk *Desk) Policy(symbol string) (exitPullbackPct float64, worstPct float
 // ----------------------------------------------------------------------------
 
 func extractDrawdownQuantiles(episodes []episode) []float64 {
-	var drawdowns []float64
+	var winningDips []float64
+
 	for _, ep := range episodes {
-		if len(ep.trace) == 0 {
+		// ONLY learn cuts from trades that actually went on to profit!
+		// Never learn holding tolerance from duds that tanked and died.
+		if ep.banked <= 0 || len(ep.trace) == 0 {
 			continue
 		}
+
 		minVal := ep.trace[0]
 		for _, v := range ep.trace {
 			if v < minVal {
@@ -254,11 +258,15 @@ func extractDrawdownQuantiles(episodes []episode) []float64 {
 			}
 		}
 		if minVal < 0 {
-			drawdowns = append(drawdowns, math.Abs(minVal))
+			winningDips = append(winningDips, math.Abs(minVal))
 		}
 	}
 
-	return computeQuantileGrid(drawdowns)
+	if len(winningDips) == 0 {
+		return nil
+	}
+
+	return computeQuantileGrid(winningDips)
 }
 
 func extractPullbackQuantiles(episodes []episode) []float64 {

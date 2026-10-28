@@ -325,7 +325,7 @@ export const ingestTrainingStep = (value: Value, now = Date.now()) => {
 
 	const exploreKeys = value.reading("exploreKeys") as string[] | undefined;
 	if (
-		triePrefix() === "model/explore" &&
+		triePrefix() === "model/paths" &&
 		Array.isArray(exploreKeys) &&
 		exploreKeys.length > 0
 	) {

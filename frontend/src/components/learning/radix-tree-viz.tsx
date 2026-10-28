@@ -36,12 +36,12 @@ export const MAX_TRIE_KEYS = 1_500;
 grammarKey drops the store location so the tree is the token path.
 Confirmed paths are policy/current/<path>/<action>.bin. Enter paths end
 precursor A→B; exit paths are a separate holding B→C walk from root.
-Virtual explore paths are model/explore/<path>/{enter,exit}.bin.
+Virtual explore paths are model/paths/<path>/{enter,exit}.bin.
 Paper policy paths are model/policy/<path>/{enter,exit}.bin.
 Legacy explored paths are policy/explored/<action>/<path>.bin.
 */
 export function grammarKey(key: string): string {
-	for (const prefix of ["model/path/"]) {
+	for (const prefix of ["model/paths"]) {
 		if (key.startsWith(prefix)) {
 			return key.slice(prefix.length);
 		}
@@ -83,7 +83,7 @@ const exploreLeafThreshold = (
 	if (typeof threshold === "number" && Number.isFinite(threshold)) {
 		return threshold;
 	}
-	if (rawKey.startsWith("model/path/")) {
+	if (rawKey.startsWith("model/paths")) {
 		return EXPLORE_BASE_THRESHOLD;
 	}
 	return undefined;
