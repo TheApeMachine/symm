@@ -69,10 +69,10 @@ func TestAdaptivePolicyLiquidityStressCanExitBeforeTrail(t *testing.T) {
 	}
 
 	decision := policy.Evaluate(ExitObservation{
-		PnLPct:       3,
-		FrictionPct:  1,
-		ExitRoom:     0.5,
-		HasExitRoom:  true,
+		PnLPct:      3,
+		FrictionPct: 1,
+		ExitRoom:    0.5,
+		HasExitRoom: true,
 	})
 	if !decision.Exit || !decision.LiquidityStress {
 		t.Fatalf("expected liquidity stress exit, got %+v", decision)
