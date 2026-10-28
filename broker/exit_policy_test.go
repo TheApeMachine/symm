@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func newTestAdaptivePolicy(hardLoss, friction float64) *AdaptiveExitPolicy {
+func newTestAdaptivePolicy(hardLoss float64) *AdaptiveExitPolicy {
 	config := DefaultAdaptiveExitConfig()
 	config.HardLossLimitPct = hardLoss
 	return NewAdaptiveExitPolicy(config)
@@ -21,7 +21,7 @@ func observeExitPolicy(policy *AdaptiveExitPolicy, pnl, friction float64) ExitDe
 func TestAdaptivePolicyProtectsAgainstAdverseMove(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(5, 1)
+	policy := newTestAdaptivePolicy(5)
 	for _, pnl := range []float64{0, 0.5, 1.0} {
 		decision := observeExitPolicy(policy, pnl, 1)
 		if decision.Exit {
@@ -102,7 +102,7 @@ func TestAdaptivePolicyDoesNotTreatUnknownExitRoomAsZero(t *testing.T) {
 func TestAdaptivePolicyHardLossLimitCapsStepBasedRiskFloor(t *testing.T) {
 	t.Parallel()
 
-	policy := newTestAdaptivePolicy(4, 3)
+	policy := newTestAdaptivePolicy(4)
 	for _, pnl := range []float64{-1, 2} {
 		decision := observeExitPolicy(policy, pnl, 3)
 		if decision.Exit {
