@@ -3,6 +3,7 @@ package broker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 )
@@ -25,6 +26,7 @@ func TestVirtualPositionUsesAdaptiveExitWhilePaperKeepsBaseline(t *testing.T) {
 
 	paper := &Position{
 		Symbol:      "TEST/USD",
+		OpenedAt:    time.Now(),
 		Virtual:     false,
 		PnL:         decimal.NewFromFloat64(-3),
 		PnLPct:      decimal.NewFromFloat64(-3),
