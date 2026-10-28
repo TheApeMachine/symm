@@ -10,21 +10,21 @@ import (
 type AdaptiveExitConfig struct {
 	// HardLossLimitPct is the absolute maximum loss allowed for a position.
 	// Zero disables this cap; production wiring derives it from risk config.
-	HardLossLimitPct      float64
+	HardLossLimitPct float64
 
 	// LossFrictionMultiple is the minimum risk floor in round-trip friction units.
-	LossFrictionMultiple  float64
+	LossFrictionMultiple float64
 	// LossStepMultiple scales observed positive PnL step size into a risk floor.
-	LossStepMultiple      float64
+	LossStepMultiple float64
 	// TrailFrictionMultiple is the minimum trailing distance in friction units.
 	TrailFrictionMultiple float64
 	// TrailStepMultiple scales observed positive PnL steps into trailing distance.
-	TrailStepMultiple     float64
+	TrailStepMultiple float64
 	// LiquidityStepMultiple determines how much pullback is tolerated when the
 	// best bid alone cannot absorb the full position.
 	LiquidityStepMultiple float64
 	// StepAlpha controls how quickly the observed positive-step estimate adapts.
-	StepAlpha             float64
+	StepAlpha float64
 }
 
 // DefaultAdaptiveExitConfig provides an initial, deliberately small parameter
@@ -44,11 +44,11 @@ func DefaultAdaptiveExitConfig() AdaptiveExitConfig {
 // ExitObservation is one mark-to-liquidation observation from a position.
 type ExitObservation struct {
 	// PnLPct is net PnL in percentage points, as supplied by Position.PnLPct.
-	PnLPct      float64
+	PnLPct float64
 	// FrictionPct is the round-trip spread + fees, in percentage points.
 	FrictionPct float64
 	// ExitRoom is best-bid quantity / position quantity.
-	ExitRoom    float64
+	ExitRoom float64
 	HasExitRoom bool
 }
 
