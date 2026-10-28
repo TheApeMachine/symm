@@ -3,6 +3,8 @@ package broker
 import (
 	"fmt"
 	"math"
+
+	"github.com/theapemachine/symm/system"
 )
 
 // AdaptiveExitConfig defines the starting adaptive policy. Thresholds are
