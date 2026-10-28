@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/system"
 )
 
 // ExitState represents the lifecycle stage of an active position.
@@ -41,6 +42,7 @@ func (s ExitState) String() string {
 }
 
 type StopLoss struct {
+	adaptive         *AdaptiveExitPolicy
 	state            ExitState
 	peakPnLPct       float64
 	lowestPnLPct     float64
@@ -51,12 +53,66 @@ type StopLoss struct {
 
 func NewStopLoss() *StopLoss {
 	return &StopLoss{
-		state: StateNursery,
+		state:    StateNursery,
+		adaptive: newDefaultAdaptiveExitPolicy(),
 	}
 }
 
-// Evaluate acts as the Single Source of Truth for position exits.
+// Evaluate routes virtual positions through the experimental adaptive policy.
+// Paper positions keep the incumbent policy so outcomes can be compared safely.
 func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool) {
+	if stoploss == nil || position == nil || position.PnL == nil || position.PnLPct == nil || position.ClosedAt != nil {
+		return "", false
+	}
+
+	if position.Virtual {
+		return stoploss.evaluateAdaptive(position)
+	}
+
+	return stoploss.evaluateLegacy(position)
+}
+
+func (stoploss *StopLoss) evaluateAdaptive(position *Position) (string, bool) {
+	if stoploss.adaptive == nil {
+		stoploss.adaptive = newDefaultAdaptiveExitPolicy()
+	}
+
+	currentPct := position.PnLPct.Float64()
+	friction := frictionPts(position)
+	observation := ExitObservation{
+		PnLPct:      currentPct,
+		FrictionPct: friction,
+	}
+	if position.ExitRoom != nil {
+		observation.ExitRoom = position.ExitRoom.Float64()
+		observation.HasExitRoom = true
+	}
+
+	decision := stoploss.adaptive.Evaluate(observation)
+	stoploss.tickCount++
+	stoploss.peakPnLPct = decision.PeakPnLPct
+	stoploss.lowestPnLPct = decision.LowestPnLPct
+
+	switch {
+	case decision.Exit && decision.LiquidityStress:
+		stoploss.state = StateEvaporating
+	case decision.TrailArmed:
+		stoploss.state = StateSurfing
+	case currentPct >= friction:
+		stoploss.state = StateIgnited
+	default:
+		stoploss.state = StateNursery
+	}
+
+	if decision.Exit {
+		return decision.Reason, true
+	}
+
+	return "", false
+}
+
+// evaluateLegacy is retained only for paper positions during the experiment.
+func (stoploss *StopLoss) evaluateLegacy(position *Position) (trigger string, ok bool) {
 	if position == nil || position.PnL == nil || position.PnLPct == nil || position.ClosedAt != nil {
 		return "", false
 	}
