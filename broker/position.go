@@ -52,6 +52,7 @@ type Position struct {
 	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"` // First mark-to-exit PnL after open
 	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"` // Previous tick PnL for momentum checks
 	PeakPnLPct      *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
+	LowestPnLPct    *decimal.Decimal        `json:"lowest_pnl_pct,omitempty"` // Worst observed net PnL (MAE)
 	PeakStep        *decimal.Decimal        `json:"peak_step,omitempty"` // Largest green up-step, in PnL percent
 	Impulse         bool                    `json:"impulse,omitempty"`   // True explosive spike detected
 	paceKnown       bool
@@ -431,6 +432,9 @@ func (position *Position) repriceLocked() {
 	if position.PnLPct != nil {
 		if position.PeakPnLPct == nil || position.PnLPct.Cmp(position.PeakPnLPct) > 0 {
 			position.PeakPnLPct = position.PnLPct
+		}
+		if position.LowestPnLPct == nil || position.PnLPct.Cmp(position.LowestPnLPct) < 0 {
+			position.LowestPnLPct = position.PnLPct
 		}
 	}
 
