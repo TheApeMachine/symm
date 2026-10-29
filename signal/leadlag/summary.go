@@ -3,21 +3,31 @@ package leadlag
 import (
 	"math"
 	"slices"
-
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 )
+
+/*
+leadLagReading is one peer's cross-lag result: the lag between the peer
+(reference) and the focal (measured) path, the correlation at that lag, and the
+gain over the zero-lag baseline.
+*/
+type leadLagReading struct {
+	lagSeconds  float64
+	corr        float64
+	leads       bool
+	gain        float64
+	gainDefined bool
+}
 
 /*
 summarize reduces the focal symbol's defined pair readings to robust
 cross-peer statistics, so the output has a fixed set of keys however many
 peers exist. Each reading is the peer (reference) path searched against the
 focal (measured) path, so a negative best lag means the focal path precedes
-the peer. Gains are covariance-score gains (|score at the selected lag| -
-|score at zero lag|) over the readings whose zero-lag score is defined; they
-are absent when no reading has one. With no defined reading there is no
-evidence and summarize returns no keys at all.
+the peer. Gains are correlation magnitudes at the selected lag over the
+readings whose lag is defined; they are absent when no reading has one. With
+no defined reading there is no evidence and summarize returns no keys at all.
 */
-func summarize(readings []nmcorrelation.LeadLagReading) map[string]float64 {
+func summarize(readings []leadLagReading) map[string]float64 {
 	if len(readings) == 0 {
 		return nil
 	}
@@ -27,13 +37,13 @@ func summarize(readings []nmcorrelation.LeadLagReading) map[string]float64 {
 	led := 0.0
 
 	for _, reading := range readings {
-		lags = append(lags, reading.X)
+		lags = append(lags, reading.lagSeconds)
 
-		if reading.GainDefined {
-			gains = append(gains, reading.AbsoluteGain)
+		if reading.gainDefined {
+			gains = append(gains, reading.gain)
 		}
 
-		if reading.Leads && reading.X < 0 {
+		if reading.leads && reading.lagSeconds < 0 {
 			led++
 		}
 	}

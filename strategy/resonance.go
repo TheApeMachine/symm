@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/system"
 )
 

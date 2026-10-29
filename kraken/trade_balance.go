@@ -2,7 +2,7 @@ package kraken
 
 import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 )
 
 /*
@@ -89,4 +89,3 @@ func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...i
 	}
 	return val
 }
-

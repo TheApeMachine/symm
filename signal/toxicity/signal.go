@@ -6,11 +6,10 @@ import (
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
 )
 
@@ -119,7 +118,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 
 		dt := (atNano - state.prevAtNano) / 1e9
-		rated := core.Resolvable(dt)
+		rated := dt > 0 && !math.IsInf(dt, 0)
 
 		fill := math.Min(state.pendingMatchedBid, state.prevBidQty)
 		unfilled := state.prevBidQty - fill

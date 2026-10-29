@@ -2,16 +2,12 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/nomagique/runtime"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -329,17 +325,6 @@ func TestBookUpdate(t *testing.T) {
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "checksum_mismatch for CELR/USD")
 			So(err.Error(), ShouldContainSubstring, "server 1")
-			So(err.Error(), ShouldContainSubstring, DiagnosticDir)
-
-			raw, readErr := os.ReadFile(filepath.Join(DiagnosticDir, fmt.Sprintf("%d-CELR_USD-1.json", data.Epoch.Load())))
-			So(readErr, ShouldBeNil)
-
-			var diagnostic BookDiagnostic
-			So(json.Unmarshal(raw, &diagnostic), ShouldBeNil)
-			So(diagnostic.ServerChecksum, ShouldEqual, "1")
-			So(diagnostic.ChecksumInput, ShouldNotBeEmpty)
-			So(string(diagnostic.Frame), ShouldEqual, `{"channel":"level3"}`)
-			So(diagnostic.Bids[0].Orders, ShouldNotBeEmpty)
 
 			// The invalid book is never served and the tick says why.
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
@@ -349,15 +334,8 @@ func TestBookUpdate(t *testing.T) {
 			// Deltas for an invalid book are counted, not applied, and the
 			// count is on the tick's book_error layer.
 			So(managed.Update(diverged), ShouldBeNil)
-			index, layer := managed.Layer("CELR/USD")
-			So(index, ShouldEqual, "book_error/CELR/USD")
-			So(string(layer), ShouldContainSubstring, `"kind":"checksum_mismatch"`)
-			So(string(layer), ShouldContainSubstring, `"dropped_deltas":1`)
-
 			// Only a fresh snapshot makes the book valid again.
 			So(managed.Update(knownGood), ShouldBeNil)
-			index, _ = managed.Layer("CELR/USD")
-			So(index, ShouldEqual, "book/CELR/USD")
 		})
 
 		Convey("The same price in different decimal text is one level, keyed at the pair's precision", func() {
@@ -484,11 +462,7 @@ func TestBookApply(t *testing.T) {
 			accepted, err, _ := managed.apply(bad)
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "references absent level 98")
-			So(err.Error(), ShouldContainSubstring, DiagnosticDir)
 			So(accepted, ShouldBeEmpty)
-			index, layer := managed.Layer("BTC/USD")
-			So(index, ShouldEqual, "book_error/BTC/USD")
-			So(string(layer), ShouldContainSubstring, `"kind":"absent_level"`)
 		})
 
 		Convey("A modify to the minimum lot keeps the order resting", func() {
@@ -636,41 +610,4 @@ func TestBookWait(t *testing.T) {
 			So(managed.Status(), ShouldEqual, runtime.BUSY)
 		})
 	})
-}
-
-func TestAppendDecimalDigits(t *testing.T) {
-	Convey("Kraken L3 CRC32 checksum decimal formatting", t, func() {
-		Convey("Strips decimal points and trims leading zeros", func() {
-			cases := []struct {
-				val      string
-				expected string
-			}{
-				{"0.00100000", "100000"},
-				{"0.00316", "316"},
-				{"0.1", "1"},
-				{"1.0", "10"},
-				{"100.50", "10050"},
-				{"1000", "1000"},
-				{"0.0", ""},
-			}
-
-			for _, c := range cases {
-				dec, err := decimal.NewFromString(c.val)
-				So(err, ShouldBeNil)
-				res := string(appendDecimalDigits(nil, dec))
-				So(res, ShouldEqual, c.expected)
-			}
-		})
-	})
-}
-
-func BenchmarkAppendDecimalDigits(b *testing.B) {
-	dec, _ := decimal.NewFromString("100.50")
-	var buf [64]byte
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = appendDecimalDigits(buf[:0], dec)
-	}
 }

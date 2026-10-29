@@ -657,7 +657,7 @@
 			"id": "cross-section/change",
 			"source": "cross-section",
 			"metric": "change",
-			"package": "github.com/theapemachine/symm/nomagique/crosssection",
+			"package": "github.com/theapemachine/nomagique/crosssection",
 			"file": "nomagique/crosssection/cross_section.go",
 			"line": 136,
 			"consumers": [],
@@ -2834,13 +2834,13 @@
 			"reason": "Labelled node wraps a reporter whose readings are not statically known"
 		},
 		{
-			"package": "github.com/theapemachine/symm/nomagique/cognition",
+			"package": "github.com/theapemachine/nomagique/cognition",
 			"file": "nomagique/cognition/engine.go",
 			"line": 841,
 			"reason": "Labelled node wraps a reporter whose readings are not statically known"
 		},
 		{
-			"package": "github.com/theapemachine/symm/nomagique/cognition",
+			"package": "github.com/theapemachine/nomagique/cognition",
 			"file": "nomagique/cognition/engine.go",
 			"line": 904,
 			"reason": "Labelled node wraps a reporter whose readings are not statically known"

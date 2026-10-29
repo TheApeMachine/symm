@@ -12,9 +12,9 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -389,6 +389,54 @@ func (desk *Desk) onPositionSettled(position *Position) {
 }
 
 /*
+Refresh reprices open positions against the current book without a trade.
+Called from the Level 3 ingress so the stoploss sees book changes (exit
+VWAP slippage, depth pulls) between volume-clock ticks. Without this, the
+evaporation check only fires on the next trade for that symbol, which can
+be minutes away on a thin alt.
+*/
+func (desk *Desk) Refresh(symbols []string) {
+	if len(symbols) == 0 {
+		return
+	}
+
+	traded := make(map[string]struct{}, len(symbols))
+	for _, s := range symbols {
+		if s != "" {
+			traded[s] = struct{}{}
+		}
+	}
+
+	changed := make([]*Position, 0)
+
+	for _, cache := range []*Cache{desk.positions, desk.virtuals} {
+		for _, position := range cache.OpenPositions() {
+			if position == nil || position.Symbol == "" {
+				continue
+			}
+
+			if _, ok := traded[position.Symbol]; !ok {
+				continue
+			}
+
+			mark := desk.price.CurrentMark(position.Symbol)
+			if mark == nil {
+				continue
+			}
+
+			position.Update(mark)
+			changed = append(changed, position)
+		}
+	}
+
+	if len(changed) > 0 {
+		for _, frame := range lotUpdates(changed) {
+			io.Copy(ui.UI, frame)
+		}
+	}
+}
+
+/*
 Update marks open positions against the trade price. Called from the workspace
 tick handler — the desk sits off the trade ingress path, so this is where
 marks become live.
@@ -424,7 +472,7 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 
 			_, isTraded := traded[position.Symbol]
 			markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
-			watchProfit := profitLockArmed(position) || watchGreenBook(position)
+			watchProfit := position.stopLoss.ProfitLocked(position) || position.PnL.Sign() > 0
 
 			// Skip idle lots. A green lot is still repriced when the touch
 			// price is unchanged: ExitRoom is size, and a size pull is an
@@ -682,7 +730,7 @@ func (desk *Desk) settleFlat(position *Position) {
 		position.ClosedAt = &now
 	}
 
-	position.exiting.Store(true)
+	position.System.Transition(runtime.BUSY)
 
 	if desk.history == nil {
 		desk.positions.Remove(position.Symbol)
@@ -972,6 +1020,7 @@ func (desk *Desk) Enter(
 	}
 
 	position := NewPosition(
+		desk.Context(),
 		symbol,
 		path,
 		pathFound,
@@ -984,7 +1033,6 @@ func (desk *Desk) Enter(
 	// Search on this symbol's settled record, then push what it learned onto
 	// the lot. The stop reads the pullback off the lot, so the policy has to
 	// be on it before the first mark reprices it.
-	desk.refreshPolicy(symbol)
 	desk.teachPolicy(position)
 
 	// Register before Send. Paper publish blocks until the private ingress
@@ -1053,10 +1101,6 @@ func (desk *Desk) releaseLocked(position *Position) error {
 		return nil
 	}
 
-	if !position.settleOnce() {
-		return nil
-	}
-
 	cache, key := desk.cacheFor(position.Virtual)
 
 	if cache.Has(position.Symbol) {
@@ -1071,6 +1115,7 @@ func (desk *Desk) releaseLocked(position *Position) error {
 	// The round trip is over. Its trace is now an episode, and this symbol's
 	// learned exit moment is one step closer to being worth trusting.
 	desk.observePolicy(position)
+	go desk.refreshPolicy(position.Symbol)
 
 	value := data.NewValue(
 		key, "closed", position.Symbol,

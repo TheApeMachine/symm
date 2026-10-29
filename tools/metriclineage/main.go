@@ -620,7 +620,7 @@ reportingPackage is the package whose composite nodes form a reporting
 pipeline. A reporter reached through one of these publishes; a reporter held
 anywhere else is just state the kernel keeps.
 */
-const reportingPackage = "github.com/theapemachine/symm/nomagique/types"
+const reportingPackage = "github.com/theapemachine/nomagique/types"
 
 /*
 isReportingNode reports whether a composite literal is one of the pipeline
@@ -771,10 +771,10 @@ Readings method; a type absent here makes the Labelled unresolvable, which the
 scanner reports rather than guessing at.
 */
 var readingsByType = map[string][]string{
-	"github.com/theapemachine/symm/nomagique/equation.CausalResidual": {
+	"github.com/theapemachine/nomagique/equation.CausalResidual": {
 		"baseline", "mean", "divergence", "zscore",
 	},
-	"github.com/theapemachine/symm/nomagique/equation.MultivariateDivergence": {
+	"github.com/theapemachine/nomagique/equation.MultivariateDivergence": {
 		"touch_notional_baseline:bid",
 		"touch_notional_baseline:ask",
 		"spread_baseline",
@@ -987,7 +987,7 @@ func declaredSelector(
 	selectorType, ok := pkg.TypesInfo.TypeOf(literal.Type).(*types.Named)
 
 	if !ok || selectorType.Obj().Pkg() == nil ||
-		selectorType.Obj().Pkg().Path() != "github.com/theapemachine/symm/nomagique/relation" ||
+		selectorType.Obj().Pkg().Path() != "github.com/theapemachine/nomagique/relation" ||
 		selectorType.Obj().Name() != "Selector" {
 		return consumerEdge{}, false
 	}
@@ -1138,7 +1138,7 @@ func classifyParam(paramType string) (kind string, kernel string) {
 	inner := strings.TrimPrefix(paramType, "*")
 
 	// go/types formats a generic instantiation as
-	// "github.com/theapemachine/symm/nomagique/data.Measurement";
+	// "github.com/theapemachine/nomagique/data.Measurement";
 	// go/ast's own selector formatting gives the short form
 	// "data.Measurement". Reduce both to (lastPkgSegment, typeName).
 	base := inner

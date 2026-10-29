@@ -4,10 +4,10 @@ import (
 	"context"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
 )
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/store"
 )
 

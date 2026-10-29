@@ -1,6 +1,9 @@
 import { createStore } from "@tanstack/store";
 import { triePrefix } from "#/collections/book";
-import { filterExploreKeys } from "#/components/learning/explore-path";
+import {
+	EXPLORE_BASE_THRESHOLD,
+	filterExploreKeys,
+} from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { parseOneValue } from "#/types/decoder";
@@ -541,11 +544,46 @@ export const thresholdFromStored = (payload: unknown): number | null => {
 	const layers = Array.isArray(body.Layers) ? body.Layers : body.layers;
 	if (!Array.isArray(names) || !Array.isArray(layers)) return null;
 
+	const fromNew = thresholdFromNewModelValue(
+		names as unknown[],
+		layers as unknown[],
+	);
+	if (fromNew !== null) return fromNew;
+
 	return sumExploreThresholdSteps(
 		thresholdStepsFromStored(names, layers),
 		names,
 		layers,
 	);
+};
+
+/*
+thresholdFromNewModelValue reads the path book the current strategy/tree.go
+persists: a data.Value whose `threshold` layer is an absolute [0,1] book
+(0.5 seeded, profit pulls it toward 0, loss toward 1). That absolute book is
+exactly the value the cognitive tree renders, so it is returned verbatim.
+
+The layer is recognized by an exact `threshold` suffix that is not the old
+resistance-delta key. A book in-band (0.05–0.95) is real; an out-of-band or
+zero snapshot is not, so those fall through to the legacy path (which
+defaults unscored leaves to the 0.50 desk baseline).
+*/
+const thresholdFromNewModelValue = (
+	names: unknown[],
+	layers: unknown[],
+): number | null => {
+	for (let i = 0; i < names.length; i++) {
+		const name = names[i];
+		if (typeof name !== "string") continue;
+		if (!name.endsWith("/threshold")) continue;
+		if (name.includes("resistance")) continue;
+
+		const value = layerNumber(layers[i]);
+		if (value === null) continue;
+		if (absoluteThreshold(value)) return value;
+	}
+
+	return null;
 };
 
 /*
@@ -561,6 +599,9 @@ export const thresholdFromExploreBytes = (
 
 	const nested = parseOneValue(bytes);
 	if (!nested) return null;
+
+	const fromNew = thresholdFromNewModelValue(nested.index, nested.layers);
+	if (fromNew !== null) return fromNew;
 
 	const steps: number[] = [];
 	const indices: string[] = [];
@@ -637,8 +678,17 @@ export const ingestS3Prefix = (value: Value) => {
 		if (key === null || !key.startsWith(`${value.scope}/`)) continue;
 
 		const threshold = thresholdFromExploreBytes(value.layers[i]);
-		if (threshold === null) continue;
-		thresholds[key] = threshold;
+		if (threshold !== null) {
+			thresholds[key] = threshold;
+			continue;
+		}
+
+		/*
+		A stored path book with no scored `threshold` layer is still a path:
+		the tree renders it at the 0.50 desk baseline instead of dropping it,
+		which an empty book would otherwise do.
+		*/
+		thresholds[key] = EXPLORE_BASE_THRESHOLD;
 	}
 
 	const keptKeys = filterExploreKeys(policyKeys, thresholds);

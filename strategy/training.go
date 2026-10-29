@@ -5,10 +5,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
+	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
@@ -88,7 +88,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			out := data.NewValue(
 				"training", "step", symbol,
 			)
-			
+
 			out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
 
 			var observed []*nmstore.Region

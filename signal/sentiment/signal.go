@@ -7,12 +7,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
 )
+
+// minPrior is the minimum observations a running moment must hold before its
+// predictive scale is treated as usable. Below this the centre and spread are
+// estimated from too few samples for the predictive correction to be
+// meaningful.
+const minPrior = 9
 
 type causalEstimator struct {
 	count float64
@@ -37,10 +42,22 @@ func (ce *causalEstimator) Step(value float64) (
 	}
 
 	residual = value - priorMean
-	scale, scorable := core.PriorScale(priorCount, priorM2, value, priorMean)
-	if !scorable {
+
+	variance := priorM2 / float64(priorCount-1)
+
+	if priorCount < minPrior || variance <= 0 {
 		return true, priorMean, residual, false, 0
 	}
+
+	stddev := math.Sqrt(variance)
+	count := float64(priorCount)
+
+	// Predictive scale: estimating the centre and the spread from the same
+	// priorCount observations inflates the spread a new sample is drawn from.
+	centreInflation := math.Sqrt(1 + 1/count)
+	spreadInflation := 1 + 1/math.Sqrt(2*(count-1))
+
+	scale := stddev * centreInflation * spreadInflation
 
 	return true, priorMean, residual, true, residual / scale
 }

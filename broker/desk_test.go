@@ -6,7 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -178,7 +178,7 @@ func TestPaperFillDuringSendSetsEntry(t *testing.T) {
 	transport := fillDuringWrite{desk: desk}
 	desk.transport = transport
 
-	position := NewPosition("ZEC/USD", "R01", true, false, nil, transport, nil)
+	position := NewPosition(t.Context(), "ZEC/USD", "R01", true, false, nil, transport, nil)
 	desk.positions.Add("ZEC/USD", position)
 
 	if err := position.Enter("R01", decimal.NewFromFloat64(0.03)); err != nil {

@@ -48,6 +48,48 @@ export type LifeOutcome = {
 	hold_ns: number;
 	expected_hold_ns: number | null;
 	triggers: string[] | null;
+	/** Realized fee-net return captured at exit (fraction, not %). */
+	realized?: number | null;
+	/** Mark-to-market return at settle (fraction). The realized-vs-mark gap is the seam audit. */
+	mark?: number | null;
+	/** Repress events the lot held (tape timebase). */
+	bars_held?: number | null;
+	/** Empirical winning horizon in bars. */
+	max_lifetime_bars?: number | null;
+};
+
+/*
+LearnedExitPolicy is the Causal-MCTS stopping boundary the desk has tuned for
+this symbol, copied onto the lot at entry (broker/exitpolicy.go teachPolicy).
+A zero or absent value means the desk has not learned that boundary yet — the
+stop falls back to the friction floor. The UI must distinguish "unlearned" from
+"zero", so each field is a nullable percent, not a defaulted 0.
+*/
+export type LearnedExitPolicy = {
+	/** Trailing giveback (percent) off the peak, once green. */
+	trailing?: number | null;
+	/** Invalidation cut (percent) below entry. */
+	cut?: number | null;
+	/** Empirical winning horizon in reprice bars. */
+	maxBars?: number | null;
+	/** Worst return (percent) ever realized on the symbol. */
+	worst?: number | null;
+};
+
+/*
+LiveStopState is the per-mark proximity of each of the four stop checks, as
+computed by broker.StopLoss.State and published on every position frame. Each
+ratio is current-value-over-threshold: >1 means firing, <1 means armed.
+*/
+export type LiveStopState = {
+	invalidation?: number;
+	trailing?: number;
+	evaporation?: number;
+	expiry?: number;
+	peak_pct?: number;
+	current_pct?: number;
+	bars_held?: number;
+	max_bars?: number;
 };
 
 export type Lifecycle = {
@@ -61,6 +103,20 @@ export type Lifecycle = {
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
+	/** Live stop-check proximity, refreshed every mark by broker.StopLoss.State. */
+	stop_state?: LiveStopState | null;
+	/** Learned exit policy for this symbol (Causal MCTS), copied on at entry. */
+	policy?: LearnedExitPolicy | null;
+	/** Peak mark-to-market return (percent) the lot has reached. */
+	peak_pct?: number | null;
+	/** Fee-net realized return captured at exit (fraction). */
+	realized_pct?: number | null;
+	/** Net percent path, one mark per reprice — the episode the exit policy learns from. */
+	pnl_trace?: number[] | null;
+	/** Repress events held (tape timebase). */
+	bars_held?: number | null;
+	/** Human-readable reason the exit fired. */
+	exit_trigger?: string | null;
 	/** Bid marks sampled while the lot was open (for hold charts). */
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
@@ -104,6 +160,7 @@ type PositionFrame = {
 	event: LifeEvent | null;
 	mark: LifeMark | null;
 	outcome: LifeOutcome | null;
+	stop_state?: LiveStopState | null;
 };
 
 type Snapshot = { report: LifecycleReport };
@@ -286,6 +343,7 @@ export const ingestPositionFrame = (frame: unknown) => {
 		closed_at: frame.closed_at ?? life.closed_at,
 		outcome: frame.outcome ?? life.outcome,
 		mark: frame.mark ?? life.mark,
+		stop_state: frame.stop_state ?? life.stop_state,
 		marks: marks.length > 0 ? marks : life.marks,
 		events: frame.event ? [...(life.events ?? []), frame.event] : life.events,
 	};
@@ -348,6 +406,13 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			marks_c: life.marks_c ?? existing?.marks_c,
 			path: life.path ?? existing?.path,
 			path_found: life.path_found ?? existing?.path_found,
+			stop_state: life.stop_state ?? existing?.stop_state ?? null,
+			policy: life.policy ?? existing?.policy ?? null,
+			peak_pct: life.peak_pct ?? existing?.peak_pct ?? null,
+			realized_pct: life.realized_pct ?? existing?.realized_pct ?? null,
+			bars_held: life.bars_held ?? existing?.bars_held ?? null,
+			pnl_trace: life.pnl_trace ?? existing?.pnl_trace ?? null,
+			exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
 			events: existing?.events?.length ? existing.events : life.events,
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
@@ -474,6 +539,13 @@ export const ingestHistoryClosedFrame = (frame: Value) => {
 		marks_c: life.marks_c ?? existing?.marks_c,
 		path: life.path ?? existing?.path,
 		path_found: life.path_found ?? existing?.path_found,
+		stop_state: life.stop_state ?? existing?.stop_state ?? null,
+		policy: life.policy ?? existing?.policy ?? null,
+		peak_pct: life.peak_pct ?? existing?.peak_pct ?? null,
+		realized_pct: life.realized_pct ?? existing?.realized_pct ?? null,
+		bars_held: life.bars_held ?? existing?.bars_held ?? null,
+		pnl_trace: life.pnl_trace ?? existing?.pnl_trace ?? null,
+		exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
 		events: existing?.events?.length ? existing.events : life.events,
 		outcome: life.outcome ?? existing?.outcome ?? null,
 		mark: life.mark ?? existing?.mark ?? null,

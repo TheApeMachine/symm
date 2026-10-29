@@ -10,7 +10,7 @@ import (
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/nomagique/runtime"
 )
 
 /*

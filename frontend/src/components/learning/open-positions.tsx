@@ -14,6 +14,8 @@ import {
 } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
+import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
+import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import {
 	BadgeButton,
 	Flex,
@@ -259,6 +261,16 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 					waitingOnBranch={row.path_found === true}
 				/>
 			</div>
+
+			{/*
+			The system's view of this lot's own protection: the four live stop
+			checks and the learned exit policy, so a held lot reads as a reason,
+			not a mystery.
+			*/}
+			<Flex.Column gap={1} className="border-t border-(--line) pt-3">
+				<StopProximityPanel row={row} />
+				<ExitPolicyPanel row={row} />
+			</Flex.Column>
 
 			{/*
 			Manual exit: the desk settles the lot (hub position.exit), and

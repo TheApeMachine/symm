@@ -13,13 +13,13 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/data"
+	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
-	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -269,21 +269,7 @@ func (booter *Booter) initPipeline() error {
 	stage := strategy.NewStage(ctx, booter.desk)
 	stage.Transition(nmruntime.READY)
 
-	pace := 0.05
-	if system.Cfg.Resonance != nil && system.Cfg.Resonance.LearningRate > 0 {
-		pace = system.Cfg.Resonance.LearningRate
-	}
-
-	solver := resonance.NewSolver(ctx, pace, booter.book)
-
-	if solver == nil {
-		return errnie.Err(
-			errnie.Validation,
-			"booter: resonance solver failed construction",
-			nil,
-		)
-	}
-
+	solver := resonance.NewSolver(ctx)
 	trainingNodes := []nmruntime.Node{stage, solver}
 
 	strategyNodes := make([]nmruntime.Node, 0, 1)
@@ -507,6 +493,18 @@ func (booter *Booter) startIngress(
 					booter.Context(), err,
 				) {
 					errnie.Error(err)
+				}
+
+				// Reprice open positions whose book just changed so the stoploss
+				// sees the new exit VWAP and depth without waiting for a trade.
+				if booter.desk != nil {
+					symbols := make([]string, 0, len(level3.Data))
+					for _, d := range level3.Data {
+						if d.Symbol != "" {
+							symbols = append(symbols, d.Symbol)
+						}
+					}
+					booter.desk.Refresh(symbols)
 				}
 			case "trade":
 				data.Tick.Add(1)

@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -73,7 +72,7 @@ invalidate marks symbol's book invalid, dumps the full diagnostic to
 DiagnosticDir, and returns the error to raise, naming the dump.
 */
 func (book *Book) invalidate(
-	kind, detail string, symbolBook *spotbook.Book, payload *kraken.Level3,
+	kind, detail string, payload *kraken.Level3,
 	entry kraken.Level3Data, serverChecksum string,
 ) error {
 	diagnostic := &BookDiagnostic{
@@ -89,10 +88,6 @@ func (book *Book) invalidate(
 		Entry:          entry,
 	}
 
-	asks, askInput := diagnosticSide(symbolBook, true)
-	bids, bidInput := diagnosticSide(symbolBook, false)
-	diagnostic.Asks, diagnostic.Bids = asks, bids
-	diagnostic.ChecksumInput = askInput + bidInput
 	diagnostic.LocalChecksum = fmt.Sprint(crc32.ChecksumIEEE([]byte(diagnostic.ChecksumInput)))
 	diagnostic.Path = filepath.Join(DiagnosticDir, fmt.Sprintf(
 		"%d-%s-%d.json", diagnostic.Epoch, strings.ReplaceAll(entry.Symbol, "/", "_"), diagnostic.Seq,
@@ -124,56 +119,6 @@ func writeDiagnostic(diagnostic *BookDiagnostic) error {
 	}
 
 	return os.WriteFile(diagnostic.Path, raw, 0o644)
-}
-
-/*
-diagnosticSide renders the top ten levels of one side the way Kraken's level3
-checksum walks them (asks low to high, bids high to low, orders in queue
-order), and the checksum input string they produce.
-*/
-func diagnosticSide(symbolBook *spotbook.Book, asks bool) ([]DiagnosticLevel, string) {
-	if symbolBook == nil {
-		return nil, ""
-	}
-
-	cursor := symbolBook.BestBid()
-
-	if asks {
-		cursor = symbolBook.BestAsk()
-	}
-
-	var (
-		levels []DiagnosticLevel
-		input  strings.Builder
-		digits [128]byte
-	)
-
-	for count := 0; count < 10 && cursor != nil; count++ {
-		level := DiagnosticLevel{Price: fmt.Sprint(cursor.Price)}
-
-		for _, order := range cursor.Queue() {
-			hashed := appendDecimalDigits(digits[:0], order.LimitPrice)
-			hashed = appendDecimalDigits(hashed, order.Quantity)
-			input.Write(hashed)
-
-			level.Orders = append(level.Orders, DiagnosticOrder{
-				ID:       order.ID,
-				Price:    fmt.Sprint(order.LimitPrice),
-				Quantity: fmt.Sprint(order.Quantity),
-				Checksum: string(hashed),
-			})
-		}
-
-		levels = append(levels, level)
-
-		if asks {
-			cursor = cursor.Higher
-		} else {
-			cursor = cursor.Lower
-		}
-	}
-
-	return levels, input.String()
 }
 
 /*

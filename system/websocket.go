@@ -7,15 +7,11 @@ import (
 )
 
 type WebSocket struct {
-	Endpoints *Endpoints
-
-	// PingInterval is how often a session sends its keepalive. A half-open
-	// connection — one side gone without a close, as when a mobile link drops
-	// out of reception — is invisible to a socket that only reads: the venue
-	// waits for data that will never come and nothing errors. The periodic
-	// write is what exposes it, since the unacknowledged retransmits eventually
-	// fail the socket and surface the disconnect.
-	PingInterval time.Duration
+	Endpoints      *Endpoints
+	PingInterval   time.Duration
+	DecayRate      float64
+	CallsPerUpdate int
+	CallsPerSecond int
 }
 
 type Endpoints struct {
@@ -35,6 +31,9 @@ func NewWebSocket() *WebSocket {
 	viper.SetDefault("system.websocket.endpoints.tradebalance", "/0/private/TradeBalance")
 	viper.SetDefault("system.websocket.endpoints.tradevolume", "/0/private/TradeVolume")
 	viper.SetDefault("system.websocket.ping_interval", 20*time.Second)
+	viper.SetDefault("system.websocket.decay_rate", 0.33)
+	viper.SetDefault("system.websocket.calls_per_update", 2)
+	viper.SetDefault("system.websocket.calls_per_second", 1)
 
 	return &WebSocket{
 		Endpoints: &Endpoints{
@@ -45,6 +44,9 @@ func NewWebSocket() *WebSocket {
 			TradeBalance: viper.GetString("system.websocket.endpoints.tradebalance"),
 			TradeVolume:  viper.GetString("system.websocket.endpoints.tradevolume"),
 		},
-		PingInterval: viper.GetDuration("system.websocket.ping_interval"),
+		PingInterval:   viper.GetDuration("system.websocket.ping_interval"),
+		DecayRate:      viper.GetFloat64("system.websocket.decay_rate"),
+		CallsPerUpdate: viper.GetInt("system.websocket.calls_per_update"),
+		CallsPerSecond: viper.GetInt("system.websocket.calls_per_second"),
 	}
 }

@@ -21,7 +21,7 @@ import (
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/system"
 	"golang.design/x/lockfree/lf"
 )

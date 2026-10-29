@@ -2,21 +2,24 @@ package leadlag
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strings"
 	"sync"
-	"unsafe"
+	"time"
 
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/algorithm"
+	nmcorrelation "github.com/theapemachine/nomagique/correlation"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/algo"
-	"github.com/theapemachine/symm/nomagique/core"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 	parent "github.com/theapemachine/symm/signal"
 )
+
+// One reprice is one bar. CrossLagScore shifts the anchor path in whole-bar
+// increments, so the bar interval is the median reprice spacing; deriving it
+// from the path keeps the lag in price events rather than an arbitrary clock.
+const barIntervalSeconds = 1.0
 
 const (
 	maxLeadLagSamples = 64
@@ -28,15 +31,13 @@ Signal is the asynchronous price-path lead-lag instrument.
 */
 type Signal struct {
 	*runtime.System
-	paths   *sync.Map
-	leadlag core.Primitive
-	keys    []string
+	paths *sync.Map
+	keys  []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		paths:   &sync.Map{},
-		leadlag: nmcorrelation.NewLeadLag(algo.NewHayashiYoshida()),
+		paths: &sync.Map{},
 		keys: []string{
 			"defined_peer_count",
 			"best_lag_seconds_median",
@@ -75,34 +76,34 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	atNano := int64(value.Timestamp)
+	at := time.Unix(0, int64(value.Timestamp))
 	symbol := trade.Symbol
 
-	untypedCurrentPath, _ := signal.paths.LoadOrStore(symbol, []temporal.Price{})
-	currentPath := untypedCurrentPath.([]temporal.Price)
+	untypedCurrentPath, _ := signal.paths.LoadOrStore(symbol, []nmcorrelation.Sample{})
+	currentPath := untypedCurrentPath.([]nmcorrelation.Sample)
 
 	if len(currentPath) > 0 {
 		last := currentPath[len(currentPath)-1].At
-		if atNano < last {
+		if at.Before(last) {
 			return value
 		}
-		if atNano == last {
-			currentPath[len(currentPath)-1] = temporal.Price{At: atNano, Value: price}
+		if at.Equal(last) {
+			currentPath[len(currentPath)-1] = nmcorrelation.Sample{At: at, Value: price}
 			signal.paths.Store(symbol, currentPath)
 		}
 	}
 
-	if len(currentPath) == 0 || atNano > currentPath[len(currentPath)-1].At {
+	if len(currentPath) == 0 || at.After(currentPath[len(currentPath)-1].At) {
 		if len(currentPath) >= maxLeadLagSamples {
 			currentPath = currentPath[1:]
 		}
-		currentPath = append(currentPath, temporal.Price{At: atNano, Value: price})
+		currentPath = append(currentPath, nmcorrelation.Sample{At: at, Value: price})
 		signal.paths.Store(symbol, currentPath)
 	}
 
 	candidateSymbols := make([]string, 0)
 	signal.paths.Range(func(peerSymbol, peerPath any) bool {
-		if peerSymbol != symbol && len(peerPath.([]temporal.Price)) >= 3 && len(currentPath) >= 3 {
+		if peerSymbol != symbol && len(peerPath.([]nmcorrelation.Sample)) >= 3 && len(currentPath) >= 3 {
 			candidateSymbols = append(candidateSymbols, peerSymbol.(string))
 		}
 		return true
@@ -121,15 +122,28 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		candidateSymbols = candidateSymbols[:maxLeadLagPeers]
 	}
 
-	readings := make([]nmcorrelation.LeadLagReading, 0, len(candidateSymbols))
+	// The focal path is the measured series; each peer is searched as the
+	// anchor against it. CrossLagScore shifts the anchor in whole-bar steps and
+	// reports the best lag (in bars) and its Hayashi correlation. A negative
+	// lag means the focal path precedes the peer.
+	readings := make([]leadLagReading, 0, len(candidateSymbols))
 	for _, peerSymbol := range candidateSymbols {
 		untypedPeerPath, _ := signal.paths.Load(peerSymbol)
-		peerPath := untypedPeerPath.([]temporal.Price)
-		input := nmcorrelation.LagProfileInput{Left: peerPath, Right: currentPath}
-		reading := drive[nmcorrelation.LagProfileInput, nmcorrelation.LeadLagReading](signal.leadlag, &input)
-		if reading.Defined {
-			readings = append(readings, reading)
+		peerPath := untypedPeerPath.([]nmcorrelation.Sample)
+
+		lagBars, corr, ok := algorithm.CrossLagScore(peerPath, currentPath, time.Second*barIntervalSeconds)
+
+		if !ok {
+			continue
 		}
+
+		readings = append(readings, leadLagReading{
+			lagSeconds:  float64(lagBars) * barIntervalSeconds,
+			corr:        corr,
+			leads:       lagBars < 0,
+			gain:        math.Abs(corr),
+			gainDefined: true,
+		})
 	}
 
 	output := summarize(readings)
@@ -146,14 +160,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		output["led_peer_share"],
 		output["covariance_score_gain_median"],
 	}, append(keys, signal.keys...)...)
-}
-
-func drive[From, To any](op core.Primitive, payload *From) To {
-	var answer To
-	for out := range op.Next(transport.NewOne(unsafe.Pointer(payload)).Next(nil)) {
-		answer = *(*To)(out)
-	}
-	return answer
 }
 
 func leaderRank(symbol string) int {

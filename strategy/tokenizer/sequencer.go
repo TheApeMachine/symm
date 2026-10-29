@@ -3,7 +3,7 @@ package tokenizer
 import (
 	"fmt"
 
-	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
 

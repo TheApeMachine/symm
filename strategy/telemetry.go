@@ -5,10 +5,10 @@ import (
 	"io"
 	"sync"
 
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
+	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/ui"
 )
@@ -141,7 +141,7 @@ func stepPolicyFromStep(
 	}
 
 	// Checked directly against the unified Tree
-	stored := model != nil && model.tree != nil && model.tree.Has(pathKey)
+	stored := model != nil && model.tree != nil && model.tree.Load().Has(pathKey)
 
 	phase := policyPath
 	if phase == "" {
@@ -389,7 +389,7 @@ func (telemetry *Telemetry) noteLearning(model *Model) {
 		return
 	}
 
-	keys, thresholds := model.tree.Catalog()
+	keys, thresholds := model.tree.Load().Catalog()
 	if len(keys) == 0 {
 		return
 	}

@@ -3,12 +3,13 @@ package strategy
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
+	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	nmstore "github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
@@ -20,7 +21,7 @@ type Model struct {
 	price *broker.Price
 	stage *Stage
 	store *store.Client
-	tree  *Tree
+	tree  *atomic.Pointer[Tree]
 	gate  *Gate
 }
 
@@ -32,15 +33,20 @@ func NewModel(
 ) *Model {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
-	return &Model{
+	model := &Model{
 		System: runtime.NewSystem(ctx, "model"),
 		desk:   desk,
 		price:  price,
 		stage:  stage,
 		store:  client,
-		tree:   NewTree(ctx, "model/paths/"),
+		tree:   &atomic.Pointer[Tree]{},
 		gate:   NewGate(ctx, desk, price, client),
 	}
+
+	tree := NewTree(ctx, "model/paths/")
+	model.tree.Store(tree)
+
+	return model
 }
 
 func (model *Model) Evaluate(
@@ -115,7 +121,7 @@ func (model *Model) Evaluate(
 	}
 
 	// 5. Predict action: Live Impulse (Pins * Coder) vs. Accumulated Resistance
-	decision := model.tree.Predict(&tokens, coder)
+	decision := model.tree.Load().Predict(&tokens, coder)
 	out.Append(decision.Action.String(), "action")
 
 	// 6. Execute based on the decision
@@ -190,20 +196,37 @@ func (model *Model) completeExit(
 		return
 	}
 
-	// Realized fractional return (e.g. +0.05 for +5% win, -0.02 for -2% loss)
-	returnFraction := position.PnLPct.Float64() / 100.0
+	// Realized fractional return (e.g. +0.05 for +5% win, -0.02 for -2% loss).
+	// RealizedPct is the fee-net return captured at exit from the exit VWAP; it
+	// is what the round trip actually made. PnLPct is a fallback only for a lot
+	// that settled with no realized capture (a venue-flat close).
+	returnFraction := position.RealizedPct
+
+	if returnFraction == 0 {
+		returnFraction = position.PnLPct.Float64() / 100.0
+	}
 
 	// 1. Train Path Tree resistance
 	if position.EntryPath != "" {
-		model.tree.UpdateResistance(position.EntryPath, ActionEnter, returnFraction)
+		model.tree.Load().UpdateResistance(position.EntryPath, ActionEnter, returnFraction)
 	}
 
 	if position.ExitPath != "" && position.ExitPath != position.EntryPath {
-		model.tree.UpdateResistance(position.ExitPath, ActionExit, returnFraction)
+		model.tree.Load().UpdateResistance(position.ExitPath, ActionExit, returnFraction)
 	}
 
-	// 2. Train Gate environmental hurdles
-	model.gate.Update(returnFraction)
+	// 2. Train Gate environmental hurdles. StoppedOut drives the rejection
+	// direction: a stop-out (invalidation/evaporation) means "take profits
+	// sooner" (lower rejection); a harvested exit means "hold longer".
+	result := GateResult{ReturnFraction: returnFraction}
+	trigger := position.ExitTrigger
+	result.StoppedOut = trigger != "" && (strings.Contains(trigger, "invalidation") || strings.Contains(trigger, "evaporation") || strings.Contains(trigger, "expired") || strings.Contains(trigger, "expiry"))
+
+	if result.StoppedOut {
+		result.StoppedOut = returnFraction < 0
+	}
+
+	model.gate.Update(result)
 
 	out.Append("exit submitted", "outcome")
 

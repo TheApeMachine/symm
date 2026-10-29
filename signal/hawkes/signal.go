@@ -2,22 +2,70 @@ package hawkes
 
 import (
 	"context"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/algorithm/excitation"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/hawkes"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	parent "github.com/theapemachine/symm/signal"
 )
 
+/*
+symbolModel owns the per-symbol arrival sampler and the asynchronous Hawkes
+excitation process. Both hold one owner: the signal's Step runs the per-symbol
+callback on its own goroutine but, for a given symbol, exactly one call runs at
+a time because the sampler serializes on its own mutex, so no additional
+synchronization is required here.
+*/
 type symbolModel struct {
-	estimator     *nmhawkes.Hawkes
+	sample  *excitation.Sample
+	process *excitation.Process
+
 	prevIntensity float64
-	prevAtSec     float64
+	prevAt        time.Time
 	hasPrev       bool
+
+	gates *gates
+}
+
+// gates is a short retained history of fit statistics from which the regime
+// gates are derived. It bounds memory without sharing a fixed event window
+// across symbols of different activity rates.
+type gates struct {
+	radii       []float64
+	asymmetries []float64
+	limit       int
+}
+
+const gatesLimit = 256
+
+func newGates() *gates {
+	return &gates{limit: gatesLimit}
+}
+
+func (g *gates) observe(radius, asymmetry float64) {
+	if math.IsNaN(radius) || math.IsInf(radius, 0) {
+		return
+	}
+
+	g.radii = append(g.radii, radius)
+	g.asymmetries = append(g.asymmetries, asymmetry)
+
+	if len(g.radii) > g.limit {
+		g.radii = g.radii[len(g.radii)-g.limit:]
+		g.asymmetries = g.asymmetries[len(g.asymmetries)-g.limit:]
+	}
+}
+
+// Gates returns the fit-history-derived regime gates, ready once enough fits
+// have been observed.
+func (g *gates) Gates() (hawkes.FitGates, bool) {
+	return hawkes.FitGatesFromHistory(g.radii, g.asymmetries)
 }
 
 type Signal struct {
@@ -67,14 +115,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	side := trade.Side
-	var mark float64
 
-	switch side {
-	case "buy":
-		mark = 1.0
-	case "sell":
-		mark = -1.0
-	default:
+	if side != "buy" && side != "sell" {
 		return value
 	}
 
@@ -85,50 +127,89 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	atSec := float64(value.Timestamp) * 1e-9
+	at := time.Unix(0, int64(value.Timestamp))
 
-	if atSec <= 0 {
+	if at.IsZero() {
 		return value
 	}
 
 	untypedState, _ := signal.models.LoadOrStore(trade.Symbol, &symbolModel{
-		estimator: nmhawkes.NewHawkes(),
+		sample:  excitation.NewSample(),
+		process: excitation.NewProcess(),
+		gates:   newGates(),
 	})
 
 	state := untypedState.(*symbolModel)
 
-	res, _, err := state.estimator.Step(mark, atSec)
+	input, ready, err := state.sample.MeasureArrival(excitation.TradeInput{
+		Symbol:    trade.Symbol,
+		Side:      side,
+		Timestamp: at,
+		UnixNano:  at.UnixNano(),
+	})
+
+	// Measure requires a horizon that includes the latest arrival. The trade's
+	// own timestamp is the newest event in the window, so it satisfies that.
+	input.Horizon = at
 
 	if err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
-			"[hawkes] estimator step failed for "+trade.Symbol,
+			"[hawkes] arrival sample failed for "+trade.Symbol,
 			err,
 		))
 
 		return value
 	}
 
-	buyRate := res["arrival_rate:buy"]
-	sellRate := res["arrival_rate:sell"]
-	radius := res["branching_spectral_radius"]
-	intensity := res["conditional_intensity"]
+	if !ready {
+		// Not enough arrivals yet for a stream: nothing to publish.
+		return value
+	}
+
+	// Measure runs a projection with the latest retained parameters when the
+	// process holds a fit, and requests an asynchronous refit only when the
+	// event-count schedule is satisfied, so the tick loop is never blocked by
+	// an optimizer.
+	outcome, measureReady, err := state.process.Measure(input)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[hawkes] excitation measure failed for "+trade.Symbol,
+			err,
+		))
+
+		return value
+	}
+
+	if !measureReady {
+		return value
+	}
+
+	intensity := outcome.Fit.IntensityX + outcome.Fit.IntensityY
 
 	var intensityVelocity float64
 
 	if intensity > 0 && state.hasPrev {
-		timeDelta := atSec - state.prevAtSec
+		timeDelta := at.Sub(state.prevAt).Seconds()
 
-		if core.Resolvable(timeDelta) {
+		if timeDelta > 0 {
 			intensityVelocity = (intensity - state.prevIntensity) / timeDelta
 		}
 	}
 
 	if intensity > 0 {
 		state.prevIntensity = intensity
-		state.prevAtSec = atSec
+		state.prevAt = at
 		state.hasPrev = true
 	}
+
+	// The regime gates are derived from fit history, not wall clock, so a quiet
+	// symbol and a frenzied one are each measured against their own recent
+	// behavior. They feed hawkes.ClassifyFit when the consuming layer wants a
+	// named regime; the signal itself publishes the raw numerics.
+	state.gates.observe(outcome.Fit.SpectralRadius, outcome.Fit.Asymmetry(false))
 
 	keys := []string{
 		signal.Name(),
@@ -136,12 +217,12 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	return value.Append([]float64{
-		buyRate,
-		sellRate,
-		radius,
+		outcome.BuyArrivalRate,
+		outcome.SellArrivalRate,
+		outcome.Fit.SpectralRadius,
 		intensity,
 		intensityVelocity,
-		res["background_rate"],
-		res["excitation_decay"],
+		outcome.Fit.MuX + outcome.Fit.MuY,
+		outcome.Fit.Beta,
 	}, append(keys, signal.keys...)...)
 }

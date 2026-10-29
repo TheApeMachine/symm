@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
 

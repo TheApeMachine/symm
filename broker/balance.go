@@ -8,9 +8,9 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 	"golang.org/x/time/rate"
@@ -31,22 +31,6 @@ type Balance struct {
 	limiter   *rate.Limiter
 }
 
-/*
-The venue's own request budgets bound how often watch may run.
-
-Live: Kraken's private REST counter decays by 0.33 per second on the Starter
-tier, the lowest tier any account has, and each poll spends two points (Balance
-and TradeBalance).
-
-Paper: `kraken paper status` prices the wallet through one public Ticker call,
-and Kraken's public REST budget is one call per second.
-*/
-const (
-	privateDecayPerSecond = 0.33
-	privateCallsPerUpdate = 2
-	publicCallsPerSecond  = 1
-)
-
 func NewBalance(
 	ctx context.Context,
 	transport Transport,
@@ -57,14 +41,14 @@ func NewBalance(
 		transport: transport,
 		Quote:     system.Cfg.Market.QuoteCurrency,
 		limiter: rate.NewLimiter(rate.Limit(
-			privateDecayPerSecond/privateCallsPerUpdate,
+			system.Cfg.WebSocket.DecayRate/float64(system.Cfg.WebSocket.CallsPerUpdate),
 		), 1),
 	}
 
 	if paper, ok := transport.(*Paper); ok {
 		balance.paper = paper
 		balance.limiter = rate.NewLimiter(rate.Limit(
-			publicCallsPerSecond,
+			system.Cfg.WebSocket.CallsPerSecond,
 		), 1)
 	}
 

@@ -6,11 +6,10 @@ import (
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/volumeclock"
 )
@@ -127,7 +126,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		midpoint = (bid + ask) * 0.5
 		spread := ask - bid
 		hasBaseline, baseline := state.spreadEstimator.Step(spread)
-		if hasBaseline && baseline > 0 && !core.Negligible(baseline, spread) {
+		if hasBaseline && baseline > 0 && math.Abs(baseline) >= 1e-6*math.Abs(spread) {
 			spreadRatio = spread / baseline
 		}
 	}
@@ -137,11 +136,11 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	var volumeRate, tradeRate, volRatio, posReturn, negReturn float64
 	if closed {
-		if core.Resolvable(bar.Duration) {
+		if bar.Duration > 0 && !math.IsInf(bar.Duration, 0) {
 			volumeRate = bar.Quantity / bar.Duration
 			tradeRate = bar.Trades / bar.Duration
 			hasVolBase, volBase := state.volumeRateEstimator.Step(volumeRate)
-			if hasVolBase && volBase > 0 && !core.Negligible(volBase, volumeRate) {
+			if hasVolBase && volBase > 0 && math.Abs(volBase) >= 1e-6*math.Abs(volumeRate) {
 				volRatio = volumeRate / volBase
 			}
 		}

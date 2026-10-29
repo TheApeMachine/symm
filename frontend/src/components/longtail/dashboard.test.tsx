@@ -5,6 +5,7 @@ import { bookAtom } from "#/collections/book";
 import {
 	type BookDeskStats,
 	type LongtailSample,
+	type OpenLotTelemetry,
 	longtailStore,
 	type TrainingSample,
 } from "#/collections/longtail";
@@ -86,18 +87,32 @@ const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 	...overrides,
 });
 
+const emptyStops: OpenLotTelemetry = {
+	open: null,
+	invalidation: null,
+	evaporation: null,
+	trailing: null,
+	expiry: null,
+	armed: null,
+	maxProximity: null,
+	exits: {},
+	exitTotal: 0,
+};
+
 const sample = (
 	at: number,
 	overrides: Partial<{
 		paper: Partial<BookDeskStats>;
 		virtual: Partial<BookDeskStats>;
 		training: Partial<TrainingSample>;
+		stops: Partial<OpenLotTelemetry>;
 	}> = {},
 ): LongtailSample => ({
 	at,
 	paper: bookStats(overrides.paper),
 	virtual: bookStats(overrides.virtual),
 	training: training(overrides.training),
+	stops: { ...emptyStops, ...overrides.stops },
 });
 
 afterEach(() => {
@@ -187,10 +202,11 @@ describe("LongtailDashboard", () => {
 			"letters",
 			"paths",
 			"exits",
+			"stops",
 		]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(container.querySelectorAll("[data-chart]")).toHaveLength(6);
+		expect(container.querySelectorAll("[data-chart]")).toHaveLength(7);
 
 		for (const title of ["Paths", "Grammar", "Letters", "Desk", "Exits"]) {
 			expect(getByText(title, { selector: "div" })).toBeTruthy();

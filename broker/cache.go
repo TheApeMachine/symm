@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/nomagique/runtime"
 )
 
 type Cache struct {

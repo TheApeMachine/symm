@@ -5,7 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
 )
 
 /*
@@ -95,14 +95,14 @@ type AddOrderMessage struct {
 
 func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
 	req.Token = token
-	
+
 	if req.OrdType == "" {
 		req.OrdType = "market"
 		if req.Price != "" {
 			req.OrdType = "limit"
 		}
 	}
-	
+
 	return AddOrderMessage{
 		Method: "add_order",
 		Params: *req,
@@ -129,4 +129,3 @@ func (req *AddOrderRequest) ToValue(epochs ...int64) *data.Value {
 	val.Append(req)
 	return val
 }
-

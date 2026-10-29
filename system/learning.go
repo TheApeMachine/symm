@@ -57,6 +57,27 @@ type Learning struct {
 	HistoryEvery            time.Duration
 	HistoryCap              int
 	HistoryBatch            int
+	// GateHurdleRate is the learning rate of the Gate's regressing hurdles:
+	// each settled round trip moves a hurdle eta*(target - hurdle).
+	GateHurdleRate float64
+	// GateIgnitionFloor / GateIgnitionCeil bound the minimum ignition required
+	// to earn a Paper entry (self-normalized brightness, 0..1).
+	GateIgnitionFloor float64
+	GateIgnitionCeil  float64
+	// GateRiskFloor / GateRiskCeil bound the maximum risk-to-net-spark tolerated
+	// for a Paper entry (brightness units).
+	GateRiskFloor float64
+	GateRiskCeil  float64
+	// GateRejectionFloor / GateRejectionCeil bound the minimum rejection force
+	// required to take a profitable exit (brightness units).
+	GateRejectionFloor float64
+	GateRejectionCeil  float64
+	// PathPruneResistance is the resistance threshold above which a path is
+	// pruned from both the tree and object storage: the trade that pushed it
+	// past is also a realized loss, so the path has earned its retirement.
+	PathPruneResistance float64
+	// MaxPathObjects bounds the number of path objects retained in the tree.
+	MaxPathObjects int
 }
 
 func NewLearning() *Learning {
@@ -101,6 +122,15 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.history_every", 5*time.Second)
 	viper.SetDefault("learning.history_cap", 20000)
 	viper.SetDefault("learning.history_batch", 200)
+	viper.SetDefault("learning.gate_hurdle_rate", 0.10)
+	viper.SetDefault("learning.gate_ignition_floor", 0.15)
+	viper.SetDefault("learning.gate_ignition_ceil", 1.00)
+	viper.SetDefault("learning.gate_risk_floor", 0.50)
+	viper.SetDefault("learning.gate_risk_ceil", 5.00)
+	viper.SetDefault("learning.gate_rejection_floor", 0.30)
+	viper.SetDefault("learning.gate_rejection_ceil", 4.00)
+	viper.SetDefault("learning.path_prune_resistance", 0.80)
+	viper.SetDefault("learning.max_path_objects", 8192)
 
 	return &Learning{
 		PolicyPrefix:            viper.GetString("learning.policy_prefix"),
@@ -144,5 +174,14 @@ func NewLearning() *Learning {
 		HistoryEvery:            viper.GetDuration("learning.history_every"),
 		HistoryCap:              viper.GetInt("learning.history_cap"),
 		HistoryBatch:            viper.GetInt("learning.history_batch"),
+		GateHurdleRate:          viper.GetFloat64("learning.gate_hurdle_rate"),
+		GateIgnitionFloor:       viper.GetFloat64("learning.gate_ignition_floor"),
+		GateIgnitionCeil:        viper.GetFloat64("learning.gate_ignition_ceil"),
+		GateRiskFloor:           viper.GetFloat64("learning.gate_risk_floor"),
+		GateRiskCeil:            viper.GetFloat64("learning.gate_risk_ceil"),
+		GateRejectionFloor:      viper.GetFloat64("learning.gate_rejection_floor"),
+		GateRejectionCeil:       viper.GetFloat64("learning.gate_rejection_ceil"),
+		PathPruneResistance:     viper.GetFloat64("learning.path_prune_resistance"),
+		MaxPathObjects:          viper.GetInt("learning.max_path_objects"),
 	}
 }

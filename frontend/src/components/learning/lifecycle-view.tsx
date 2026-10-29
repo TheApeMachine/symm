@@ -38,6 +38,8 @@ import {
 	signedMoney,
 	useLifecycles,
 } from "#/lib/lifecycle";
+import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
+import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import { formatExitTrigger } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -831,6 +833,63 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 };
 
 /*
+lifecycleRow projects a lifecycle back to the raw desk-row shape the stop and
+exit-policy panels read. A closed life with a P&L trace is the full episode the
+exit policy learned from; an open life carries only the live stop_state. The
+panels are null-aware, so a life with none of these fields renders waiting.
+*/
+const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
+	const outcome = life.outcome;
+	const stop = life.stop_state;
+	const peak =
+		life.peak_pct ??
+		(outcome?.mark !== null && outcome?.mark !== undefined
+			? outcome.mark * 100
+			: undefined) ??
+		undefined;
+	const current =
+		outcome?.pnl_pct ?? (life.mark?.unrealized_return !== null && life.mark !== null ? life.mark.unrealized_return * 100 : undefined);
+	return {
+		id: life.id,
+		symbol: life.symbol,
+		virtual: life.book === "virtual",
+		path_found: life.path_found,
+		opened_at: life.opened_at,
+		closed_at: life.closed_at ?? null,
+		entry_path: life.path,
+		exit_path: undefined,
+		pnl_pct: typeof current === "number" ? current : undefined,
+		peak_pnl_pct: typeof peak === "number" ? peak : undefined,
+		exit_pullback_pct: life.policy?.trailing ?? undefined,
+		nursery_cut_pct: life.policy?.cut ?? undefined,
+		max_lifetime_bars: life.policy?.maxBars ?? outcome?.max_lifetime_bars ?? undefined,
+		worst_pct: life.policy?.worst ?? undefined,
+		bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
+		realized_pct: life.realized_pct ?? outcome?.realized ?? undefined,
+		exit_trigger: life.exit_trigger ?? undefined,
+		outcome_triggers: outcome?.triggers ?? undefined,
+		pnl_trace: life.pnl_trace ?? undefined,
+		stop_state:
+			stop ?? {
+				current_pct: typeof current === "number" ? current : undefined,
+				peak_pct: typeof peak === "number" ? peak : undefined,
+				bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
+				maxBars: life.policy?.maxBars ?? outcome?.max_lifetime_bars ?? undefined,
+			},
+	};
+};
+
+const StopAndPolicyPanels = ({ life }: { life: Lifecycle }) => {
+	const row = lifecycleRow(life);
+	return (
+		<Flex.Column gap={1.5} className="border-(--line) border-b bg-(--surface) px-3 py-2">
+			<StopProximityPanel row={row} />
+			<ExitPolicyPanel row={row} />
+		</Flex.Column>
+	);
+};
+
+/*
 A closed virtual lot is a finished search: its A B C ticks index the run's
 tape, so the operator labels it up / up_friction / down / chop / flat and
 commits it. A commit POSTs to the hub's hindsight commit — the same label
@@ -1158,6 +1217,7 @@ export const LifecycleView = () => {
 							/>
 							<LifecycleStepper life={active} />
 							<StrategyIntelligenceCard life={active} />
+							<StopAndPolicyPanels life={active} />
 							<OutcomeCard life={active} />
 							<TrainingSampleCard life={active} />
 							{(active.events ?? []).map((event, index) => (

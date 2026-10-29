@@ -12,6 +12,32 @@ import {
 } from "#/components/book-readout";
 import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
 
+/*
+OpenLotTelemetry aggregates the live stop-loss and exit-policy state across the
+desk's open lots for one sample. A stop ratio is current-over-threshold, so the
+means are book-level pressure readings: how close, on average, the open book is
+to each of the four checks firing. null when no open lot prices, never a
+fabricated zero.
+*/
+export type OpenLotTelemetry = {
+	open: number | null;
+	/** Invalidation budget consumed (adverse drop vs learned cut). */
+	invalidation: number | null;
+	/** Full-lot slippage vs 2× friction, 3-tick persistence. */
+	evaporation: number | null;
+	/** Giveback from peak vs learned trail. */
+	trailing: number | null;
+	/** Bars held vs empirical winning horizon. */
+	expiry: number | null;
+	/** How many open lots currently have a stop check at/over 70% proximity. */
+	armed: number | null;
+	/** Highest proximity of any check on any open lot — the nearest exit. */
+	maxProximity: number | null;
+	/** Exit reason counts among closed lots this sample window. */
+	exits: Record<string, number>;
+	exitTotal: number;
+};
+
 export type Trend = "up" | "down" | "flat";
 
 /*
@@ -261,6 +287,8 @@ export type LongtailSample = {
 	paper: BookDeskStats;
 	virtual: BookDeskStats;
 	training: TrainingSample;
+	/** Live stop-loss / exit-policy pressure across the open desk book. */
+	stops: OpenLotTelemetry;
 };
 
 export type Insight = {
@@ -281,6 +309,27 @@ export const signedPct = (value: number) =>
 	`${value >= 0 ? "+" : ""}${(100 * value).toFixed(1)}%`;
 export const fixed = (value: number, digits = 2) => value.toFixed(digits);
 
+/*
+stopWord answers why a live stop reading is where it is, for the plain-language
+rail. A ratio is current-over-threshold: 1.0 is firing, 0.7 is arming. A null
+is "not armed", never a fabricated zero — the absence of data paints neutral.
+*/
+const stopWord = (
+	label: string,
+	role: "defence" | "harvest" | "time",
+	value: number | null,
+	suffix = "",
+): string => {
+	if (value === null) return `No open lots priced — ${label} not armed`;
+	if (value >= 1) {
+		const verb = role === "harvest" ? "harvesting" : "firing";
+		return `${label} ${verb}${suffix}`;
+	}
+	if (value >= 0.7) return `${label} arming at ${(100 * value).toFixed(0)}%${suffix}`;
+	if (value > 0) return `${label} armed at ${(100 * value).toFixed(0)}%${suffix}`;
+	return `${label} not armed`;
+};
+
 const median = (values: number[]): number => {
 	const sorted = [...values].sort((a, b) => a - b);
 	const mid = Math.floor(sorted.length / 2);
@@ -293,6 +342,76 @@ const mean = (values: number[]): number | null =>
 	values.length > 0
 		? values.reduce((sum, value) => sum + value, 0) / values.length
 		: null;
+
+/*
+summarizeStops folds the open desk book's live stop_state into one pressure
+reading. Each open lot reports proximity (current-over-threshold) for the four
+checks; the book mean says how close, on average, the open book is to each
+firing, and maxProximity the single nearest exit. Open lots with no stop
+state (a paper lot not yet repriced) are skipped rather than counted as safe.
+
+Exit reason counts read the closed book's outcome_triggers, so the sample shows
+where the exit policy actually landed things, not just how it is poised.
+*/
+export const summarizeStops = (
+	rows: Record<string, unknown>[],
+): OpenLotTelemetry => {
+	const open = rows.filter((row) => !positionReadout(row).closed);
+	const ratios = [
+		"invalidation",
+		"evaporation",
+		"trailing",
+		"expiry",
+	] as const;
+	const perCheck = ratios.map(() => [] as number[]);
+	let armed = 0;
+	let maxProximity = 0;
+	let withState = 0;
+
+	for (const row of open) {
+		const state = row.stop_state as Record<string, unknown> | null | undefined;
+		if (!state || typeof state !== "object") continue;
+		withState += 1;
+		let rowArmed = false;
+		let rowMax = 0;
+		ratios.forEach((check, i) => {
+			const value = state[check];
+			if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+				return;
+			}
+			perCheck[i].push(value);
+			if (value >= 0.7) rowArmed = true;
+			if (value > rowMax) rowMax = value;
+		});
+		if (rowArmed) armed += 1;
+		if (rowMax > maxProximity) maxProximity = rowMax;
+	}
+
+	const closed = rows.filter((row) => positionReadout(row).closed);
+	const exits: Record<string, number> = {};
+	let exitTotal = 0;
+	for (const row of closed) {
+		const triggers = row.outcome_triggers;
+		if (!Array.isArray(triggers)) continue;
+		for (const trigger of triggers) {
+			if (typeof trigger !== "string" || trigger === "") continue;
+			exits[trigger] = (exits[trigger] ?? 0) + 1;
+			exitTotal += 1;
+		}
+	}
+
+	return {
+		open: open.length > 0 ? open.length : null,
+		invalidation: mean(perCheck[0]),
+		evaporation: mean(perCheck[1]),
+		trailing: mean(perCheck[2]),
+		expiry: mean(perCheck[3]),
+		armed: withState > 0 ? armed : null,
+		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
+		exits,
+		exitTotal,
+	};
+};
 
 /*
 summarizeBook reads one book's desk rows into round-trip statistics via
@@ -770,6 +889,32 @@ export const buildInsights = (
 		});
 	}
 
+	if (stops) {
+		const nearest = stops.maxProximity;
+		const armed = stops.armed;
+		const open = stops.open;
+		insights.push({
+			id: "stops",
+			title: "Stop-loss posture",
+			body:
+				open === null || open === 0
+					? `No open lots — all four checks unpriced.`
+					: `${open} open lot${open === 1 ? "" : "s"}; stop-loss ${stopWord("cut", "defence", stops.invalidation)}, liquidity ${stopWord("pull", "defence", stops.evaporation)}, trail ${stopWord("harvest", "harvest", stops.trailing)}, expiry ${stopWord("horizon", "time", stops.expiry)}. ${
+						nearest === null
+							? "None near firing."
+							: `${nearest >= 1 ? "One is firing — " : ""}${nearest >= 0.7 ? "one is close — " : ""}${armed ?? 0} lot${armed === 1 ? "" : "s"} at ≥70% of a stop, nearest ${(100 * nearest).toFixed(0)}%.`
+					}`,
+				tone:
+					nearest === null
+						? "neutral"
+						: nearest >= 1
+							? "bad"
+							: nearest >= 0.7
+								? "warn"
+								: "good",
+			});
+	}
+
 	return insights;
 };
 
@@ -860,6 +1005,7 @@ const recordLongtailSample = () => {
 		paper: summarizeBook(desk, "paper"),
 		virtual: summarizeBook(desk, "virtual"),
 		training: summarizeTraining(Object.values(sequiturStore.state)),
+		stops: summarizeStops(desk),
 	});
 };
 
@@ -956,7 +1102,48 @@ const historySample = (value: unknown): LongtailSample | null => {
 		return null;
 	}
 
-	return { at, paper, virtual, training };
+	return { at, paper, virtual, training, stops: stopsFromHistory(row.stops) };
+};
+
+const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
+	if (value && typeof value === "object") {
+		const row = value as Record<string, unknown>;
+		const exits: Record<string, number> = {};
+		let exitTotal = 0;
+		const rawExits = row.exits;
+		if (rawExits && typeof rawExits === "object") {
+			for (const [key, countValue] of Object.entries(
+				rawExits as Record<string, unknown>,
+			)) {
+				const count = finiteOrNull(countValue);
+				if (count === null || count <= 0) continue;
+				exits[key] = count;
+				exitTotal += count;
+			}
+		}
+		return {
+			open: finiteOrNull(row.open),
+			invalidation: finiteOrNull(row.invalidation),
+			evaporation: finiteOrNull(row.evaporation),
+			trailing: finiteOrNull(row.trailing),
+			expiry: finiteOrNull(row.expiry),
+			armed: finiteOrNull(row.armed),
+			maxProximity: finiteOrNull(row.maxProximity),
+			exits,
+			exitTotal,
+		};
+	}
+	return {
+		open: null,
+		invalidation: null,
+		evaporation: null,
+		trailing: null,
+		expiry: null,
+		armed: null,
+		maxProximity: null,
+		exits: {},
+		exitTotal: 0,
+	};
 };
 
 /*

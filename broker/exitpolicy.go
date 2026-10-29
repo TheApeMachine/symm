@@ -6,8 +6,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/nomagique/mcts"
 )
 
 // SCM Table column mapping
@@ -34,7 +33,8 @@ type episode struct {
 type learnedExitPolicy struct {
 	invalidationCut float64       // Optimal cut loss threshold
 	trailingStop    float64       // Optimal trailing giveback threshold
-	maxHoldDuration time.Duration // Empirical lifetime of winning excursions
+	maxHoldDuration time.Duration // Empirical lifetime of winning excursions (wall-clock)
+	maxHoldBars     int           // Empirical winning horizon in reprice bars (tape timebase)
 	worst           float64
 	samples         int
 }
@@ -134,7 +134,7 @@ func (desk *Desk) refreshPolicy(symbol string) {
 	}
 
 	// Minimum sample check derived from nomagique statistical scale: MinimumPrior = 9
-	if float64(len(known.episodes)) < core.MinimumPrior {
+	if float64(len(known.episodes)) < 9 {
 		return
 	}
 
@@ -152,12 +152,13 @@ func (desk *Desk) refreshPolicy(symbol string) {
 
 	// 3. Empirical Max Duration: distribution of time-to-peak for winning excursions
 	maxDuration := extractWinningDurationHorizon(known.episodes)
+	maxBars := extractWinningBarHorizon(known.episodes)
 
 	search := mcts.NewCausalMCTS(
 		mcts.DefaultCausalEngine{},
 		1.0,
 		0.5,
-		int(core.MinimumPrior),
+		int(9),
 		policyActionColumn,
 		policyBankedColumn,
 		[]int{policyPeakColumn, policyAgeColumn, policySwingColumn},
@@ -173,6 +174,7 @@ func (desk *Desk) refreshPolicy(symbol string) {
 	}
 
 	bestNode, _, err := search.Search(root, policyIterations, known.rows)
+
 	if err != nil || bestNode == nil {
 		return
 	}
@@ -183,6 +185,7 @@ func (desk *Desk) refreshPolicy(symbol string) {
 		known.policy.invalidationCut = optCut
 		known.policy.trailingStop = optTrail
 		known.policy.maxHoldDuration = maxDuration
+		known.policy.maxHoldBars = maxBars
 	}
 }
 
@@ -190,6 +193,7 @@ func (desk *Desk) refreshPolicies() {
 	if desk == nil || desk.policies == nil {
 		return
 	}
+
 	desk.policies.Range(func(key, _ any) bool {
 		if symbol, ok := key.(string); ok && symbol != "" {
 			desk.refreshPolicy(symbol)
@@ -204,6 +208,7 @@ func (desk *Desk) teachPolicy(position *Position) {
 	}
 
 	known := desk.recordPolicy(position.Symbol)
+
 	if known == nil {
 		return
 	}
@@ -222,6 +227,9 @@ func (desk *Desk) teachPolicy(position *Position) {
 	}
 	if pol.maxHoldDuration > 0 {
 		position.MaxLifetimeNs = pol.maxHoldDuration.Nanoseconds()
+	}
+	if pol.maxHoldBars > 0 {
+		position.MaxLifetimeBars = pol.maxHoldBars
 	}
 	position.WorstPct = decimal.NewFromFloat64(pol.worst)
 }
@@ -245,20 +253,25 @@ func extractDrawdownQuantiles(episodes []episode) []float64 {
 	var winningDips []float64
 
 	for _, ep := range episodes {
-		// ONLY learn cuts from trades that actually went on to profit!
-		// Never learn holding tolerance from duds that tanked and died.
+		// Only learn cuts from trades that went on to be profitable
 		if ep.banked <= 0 || len(ep.trace) == 0 {
 			continue
 		}
 
-		minVal := ep.trace[0]
+		entryVal := ep.trace[0]
+		minVal := entryVal
+
 		for _, v := range ep.trace {
 			if v < minVal {
 				minVal = v
 			}
 		}
-		if minVal < 0 {
-			winningDips = append(winningDips, math.Abs(minVal))
+
+		// Calculate adverse drop RELATIVE to the entry mark (absorbing initial fees/spread)
+		adverseDrop := entryVal - minVal
+
+		if adverseDrop > 0 {
+			winningDips = append(winningDips, adverseDrop)
 		}
 	}
 
@@ -296,7 +309,7 @@ func computeQuantileGrid(data []float64) []float64 {
 	}
 
 	sort.Float64s(data)
-	numSteps := int(core.MinimumPrior) // 9 quantiles derived from Tolerance = 0.25
+	numSteps := int(9) // 9 quantiles derived from Tolerance = 0.25
 	if len(data) < numSteps {
 		numSteps = len(data)
 	}
@@ -334,8 +347,41 @@ func extractWinningDurationHorizon(episodes []episode) time.Duration {
 	})
 
 	// 1 - Tolerance (75th percentile) of duration for successful runs
-	rank := int(math.Round(float64(len(winningDurations)-1) * (1.0 - core.Tolerance)))
+	rank := int(math.Round(float64(len(winningDurations)-1) * (1.0 - 0.25)))
 	return winningDurations[rank]
+}
+
+/*
+extractWinningBarHorizon returns the 75th-percentile bar index of the peak of
+winning excursions. A bar is one trace mark (one reprice event), so the horizon
+lives in the tape timebase the rest of the stop uses, not in wall-clock seconds.
+*/
+func extractWinningBarHorizon(episodes []episode) int {
+	var winningBars []int
+	for _, ep := range episodes {
+		if ep.banked <= 0 || len(ep.trace) == 0 {
+			continue
+		}
+
+		peakIdx := 0
+		peakVal := ep.trace[0]
+		for i, v := range ep.trace {
+			if v > peakVal {
+				peakVal = v
+				peakIdx = i
+			}
+		}
+		winningBars = append(winningBars, peakIdx)
+	}
+
+	if len(winningBars) == 0 {
+		return 0
+	}
+
+	sort.Ints(winningBars)
+
+	rank := int(math.Round(float64(len(winningBars)-1) * (1.0 - 0.25)))
+	return winningBars[rank]
 }
 
 // ----------------------------------------------------------------------------
@@ -387,7 +433,7 @@ func (n *invalidationCutNode) GetPossibleActions() []float64 {
 func (n *invalidationCutNode) GetInterventionLevel(_ float64) float64 { return n.cut }
 
 func (n *invalidationCutNode) ApplyAction(pullback float64) mcts.State {
-	return evaluateStoppingPolicy(n.cut, pullback, n.episodes, n.rows)
+	return evaluateStoppingPolicy(n.cut, pullback, n.episodes)
 }
 
 func (n *invalidationCutNode) ToVector() []float64 {
@@ -415,7 +461,6 @@ func (t *terminalStoppingNode) GetInterventionLevel(_ float64) float64 { return 
 func evaluateStoppingPolicy(
 	cut, pullback float64,
 	episodes []episode,
-	rows [][]float64,
 ) *terminalStoppingNode {
 	if len(episodes) == 0 {
 		return &terminalStoppingNode{
@@ -461,9 +506,10 @@ func simulateStoppingPolicy(ep episode, cut, pullback float64) policySim {
 		return policySim{banked: ep.banked}
 	}
 
-	peak := ep.trace[0]
+	entryVal := ep.trace[0]
+	peak := entryVal
 	running := 0.0
-	previous := ep.trace[0]
+	previous := entryVal
 	totalMarks := float64(len(ep.trace))
 
 	for index, value := range ep.trace {
@@ -472,20 +518,34 @@ func simulateStoppingPolicy(ep episode, cut, pullback float64) policySim {
 		}
 
 		span := math.Abs(value - previous)
+
 		if span > running {
 			running = span
 		}
+
 		previous = value
 		ageRatio := float64(index) / totalMarks
 
-		// 1. Invalidation Cut: stop loss
-		if cut > 0 && value <= -cut {
-			return policySim{banked: value, peak: peak, ageRatio: ageRatio, swing: running}
+		// 1. Invalidation Cut: adverse move relative to entry mark
+		adverseMove := entryVal - value
+
+		if cut > 0 && adverseMove >= cut {
+			return policySim{
+				banked:   value,
+				peak:     peak,
+				ageRatio: ageRatio,
+				swing:    running,
+			}
 		}
 
-		// 2. Trailing Profit Stop: giveback from peak once positive
+		// 2. Trailing Profit Stop: giveback from peak once in profit
 		if pullback > 0 && peak > 0 && (peak-value) >= pullback {
-			return policySim{banked: value, peak: peak, ageRatio: ageRatio, swing: running}
+			return policySim{
+				banked:   value,
+				peak:     peak,
+				ageRatio: ageRatio,
+				swing:    running,
+			}
 		}
 	}
 
@@ -494,17 +554,19 @@ func simulateStoppingPolicy(ep episode, cut, pullback float64) policySim {
 
 func extractOptimalPolicy(root *mcts.Node) (cut, trail float64) {
 	bestCutNode := bestVisitedChild(root)
+
 	if bestCutNode == nil {
 		return 0, 0
 	}
-	cut = bestCutNode.Action
 
+	cut = bestCutNode.Action
 	bestTrailNode := bestVisitedChild(bestCutNode)
+
 	if bestTrailNode == nil {
 		return cut, 0
 	}
-	trail = bestTrailNode.Action
 
+	trail = bestTrailNode.Action
 	return cut, trail
 }
 
@@ -512,23 +574,28 @@ func bestVisitedChild(node *mcts.Node) *mcts.Node {
 	if node == nil || len(node.Children) == 0 {
 		return nil
 	}
+
 	var best *mcts.Node
 	maxVisits := -1
+
 	for _, child := range node.Children {
 		if child.Visits > maxVisits {
 			maxVisits = child.Visits
 			best = child
 		}
 	}
+
 	return best
 }
 
 func policyRows(episodes []episode) [][]float64 {
 	rows := make([][]float64, 0, len(episodes)*8)
+
 	for _, current := range episodes {
 		if len(current.trace) == 0 {
 			continue
 		}
+
 		peak := current.trace[0]
 		running := 0.0
 		previous := current.trace[0]
@@ -537,10 +604,13 @@ func policyRows(episodes []episode) [][]float64 {
 			if value > peak {
 				peak = value
 			}
+
 			span := math.Abs(value - previous)
+
 			if span > running {
 				running = span
 			}
+
 			previous = value
 
 			rows = append(rows, []float64{
@@ -552,5 +622,6 @@ func policyRows(episodes []episode) [][]float64 {
 			})
 		}
 	}
+
 	return rows
 }

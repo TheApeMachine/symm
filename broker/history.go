@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )

@@ -12,6 +12,7 @@ import {
 	ingestLongtailHistory,
 	ingestLongtailTick,
 	type LongtailSample,
+	type OpenLotTelemetry,
 	longtailStore,
 	matchTone,
 	resetLongtailRecorder,
@@ -312,11 +313,24 @@ describe("tone thresholds", () => {
 	});
 });
 
+const emptyStops: OpenLotTelemetry = {
+	open: null,
+	invalidation: null,
+	evaporation: null,
+	trailing: null,
+	expiry: null,
+	armed: null,
+	maxProximity: null,
+	exits: {},
+	exitTotal: 0,
+};
+
 const sample = (
 	overrides: Partial<{
 		paper: Partial<BookDeskStats>;
 		virtual: Partial<BookDeskStats>;
 		training: Partial<TrainingSample>;
+		stops: Partial<OpenLotTelemetry>;
 	}> = {},
 ): LongtailSample => ({
 	at: Date.now(),
@@ -376,6 +390,7 @@ const sample = (
 		exitBranch: null,
 		...overrides.training,
 	},
+	stops: { ...emptyStops, ...overrides.stops },
 });
 
 describe("verdict", () => {
@@ -696,6 +711,7 @@ const epochSample = (at: number, tokenEmitRate: number | null = 0.5) => ({
 		tokenEmitRate,
 		exploredEnter: 18,
 	},
+	stops: emptyStops,
 });
 
 describe("epoch history", () => {

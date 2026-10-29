@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/crc32"
-	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -21,8 +18,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type Book struct {
@@ -495,7 +492,7 @@ func (book *Book) apply(
 							"absent_level",
 							fmt.Sprintf("%s order %s references absent level %s",
 								order.Event, order.OrderID, order.LimitPrice.String()),
-							symbolBook, payload, original, strconv.FormatUint(uint64(data.Checksum), 10),
+							payload, original, strconv.FormatUint(uint64(data.Checksum), 10),
 						)
 					}
 
@@ -525,22 +522,21 @@ func (book *Book) apply(
 			symbolBook.EnforceDepth()
 
 			payload.Data[index] = data
-			if data.Checksum != 0 && !fastL3Checksum(symbolBook, data.Checksum) {
-				checksum := symbolBook.L3Checksum(strconv.FormatUint(
-					uint64(data.Checksum),
-					10,
-				))
 
-				if !checksum.Match {
-					// The venue checksum is authority: local book maintenance
-					// diverged from the venue. Raise it with what is needed to
-					// reproduce it; never paper over it.
-					return book.invalidate(
-						"checksum_mismatch",
-						"local book diverged from the venue checksum after applying the entry",
-						symbolBook, payload, original, checksum.ServerChecksum,
-					)
-				}
+			checksum := symbolBook.L3Checksum(strconv.FormatUint(
+				uint64(data.Checksum),
+				10,
+			))
+
+			if !checksum.Match {
+				// The venue checksum is authority: local book maintenance
+				// diverged from the venue. Raise it with what is needed to
+				// reproduce it; never paper over it.
+				return book.invalidate(
+					"checksum_mismatch",
+					"local book diverged from the venue checksum after applying the entry",
+					payload, original, checksum.ServerChecksum,
+				)
 			}
 
 			return nil
@@ -648,55 +644,4 @@ func (book *Book) JSON(symbol string) []byte {
 	})
 
 	return raw
-}
-
-type decimalLayout struct {
-	integer *big.Int
-}
-
-func appendDecimalDigits(buf []byte, d *decimal.Decimal) []byte {
-	if d == nil {
-		return buf
-	}
-
-	raw := (*decimalLayout)(unsafe.Pointer(d)).integer
-
-	if raw == nil || raw.Sign() == 0 {
-		return buf
-	}
-
-	return raw.Append(buf, 10)
-}
-
-func fastL3Checksum(b *spotbook.Book, expected uint32) bool {
-	var crc uint32
-	var buf [64]byte
-
-	cursor := b.BestAsk()
-
-	for count := 0; count < 10 && cursor != nil; count++ {
-		for _, order := range cursor.Queue() {
-			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
-			crc = crc32.Update(crc, crc32.IEEETable, digits)
-			digits = appendDecimalDigits(buf[:0], order.Quantity)
-			crc = crc32.Update(crc, crc32.IEEETable, digits)
-		}
-
-		cursor = cursor.Higher
-	}
-
-	cursor = b.BestBid()
-
-	for count := 0; count < 10 && cursor != nil; count++ {
-		for _, order := range cursor.Queue() {
-			digits := appendDecimalDigits(buf[:0], order.LimitPrice)
-			crc = crc32.Update(crc, crc32.IEEETable, digits)
-			digits = appendDecimalDigits(buf[:0], order.Quantity)
-			crc = crc32.Update(crc, crc32.IEEETable, digits)
-		}
-
-		cursor = cursor.Lower
-	}
-
-	return crc == expected
 }

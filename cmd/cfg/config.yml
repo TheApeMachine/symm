@@ -85,6 +85,9 @@ system:
     # is invisible to a socket that only reads. The periodic write is what
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
+    decay_rate: 0.33
+    calls_per_update: 2
+    calls_per_second: 1
     channel:
       # Public trade and Level3 ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.

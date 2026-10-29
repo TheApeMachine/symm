@@ -421,6 +421,45 @@ const trainingCharts: ChartDef[] = [
 			return profit > stop ? "good" : "warn";
 		},
 	},
+{
+	id: "stops",
+	label: "Stop proximity",
+	caption: "open book vs each of the four stop checks — 1.0 is firing",
+	series: (samples) => [
+		{
+			label: "stop loss",
+			values: samples.map((s) => s.stops?.invalidation ?? null),
+			stroke: "var(--down)",
+		},
+		{
+			label: "liquidity",
+			values: samples.map((s) => s.stops?.evaporation ?? null),
+			stroke: "var(--warn)",
+		},
+		{
+			label: "trail",
+			values: samples.map((s) => s.stops?.trailing ?? null),
+			stroke: "var(--up)",
+		},
+		{
+			label: "expiry",
+			values: samples.map((s) => s.stops?.expiry ?? null),
+			stroke: "var(--info)",
+		},
+	],
+	formatY: rate,
+	yDomain: [0, 1.25],
+	baseline: 1,
+	tone: (s) => {
+		const stops = s?.stops;
+		if (!stops || stops.maxProximity === null) return "neutral";
+		return stops.maxProximity >= 1
+			? "bad"
+			: stops.maxProximity >= 0.7
+				? "warn"
+				: "good";
+	},
+},
 ];
 
 const ChartPanel = ({
@@ -542,6 +581,7 @@ export const LongtailDashboard = () => {
 		latest && first ? Math.round((latest.at - first.at) / 60_000) : 0;
 	const windowMinutes = Math.max(1, spanMinutes);
 	const training = latest?.training;
+	const stops = latest?.stops;
 	const bookStats = latest ? latest[book] : undefined;
 
 	return (
@@ -599,7 +639,7 @@ export const LongtailDashboard = () => {
 			</div>
 
 			<Flex.Row className="min-h-0 flex-1">
-				<div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 grid-rows-3">
+				<div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 grid-rows-7">
 					{trainingCharts.map((chart) => (
 						<ChartPanel
 							key={chart.id}
@@ -824,6 +864,104 @@ export const LongtailDashboard = () => {
 										})()
 							}
 							tone="info"
+						/>
+					</RailBlock>
+
+					<RailBlock title="Stops">
+						<RailRow
+							label="stop loss"
+							value={
+								stops?.invalidation === null || stops?.invalidation === undefined
+									? "—"
+									: pct(stops.invalidation)
+							}
+							meter={stops?.invalidation ?? null}
+							tone={
+								(stops?.invalidation ?? 0) >= 1
+									? "bad"
+									: (stops?.invalidation ?? 0) >= 0.7
+										? "warn"
+										: (stops?.invalidation ?? 0) > 0
+											? "info"
+											: "neutral"
+								}
+						/>
+						<RailRow
+							label="liquidity"
+							value={
+								stops?.evaporation === null ||
+								stops?.evaporation === undefined
+									? "—"
+									: pct(stops.evaporation)
+							}
+							meter={stops?.evaporation ?? null}
+							tone={
+								(stops?.evaporation ?? 0) >= 1
+									? "bad"
+									: (stops?.evaporation ?? 0) >= 0.7
+										? "warn"
+										: (stops?.evaporation ?? 0) > 0
+											? "info"
+											: "neutral"
+								}
+						/>
+						<RailRow
+							label="trail"
+							value={
+								stops?.trailing === null || stops?.trailing === undefined
+									? "—"
+									: pct(stops.trailing)
+							}
+							meter={stops?.trailing ?? null}
+							tone={
+								(stops?.trailing ?? 0) >= 1
+									? "warn"
+									: (stops?.trailing ?? 0) > 0
+										? "info"
+										: "neutral"
+								}
+						/>
+						<RailRow
+							label="expiry"
+							value={
+								stops?.expiry === null || stops?.expiry === undefined
+									? "—"
+									: pct(stops.expiry)
+							}
+							meter={stops?.expiry ?? null}
+							tone={
+								(stops?.expiry ?? 0) >= 1
+									? "warn"
+									: (stops?.expiry ?? 0) >= 0.7
+										? "warn"
+										: (stops?.expiry ?? 0) > 0
+											? "info"
+											: "neutral"
+								}
+						/>
+						<RailRow
+							label="lots armed"
+							value={
+								stops?.armed === null || stops?.armed === undefined
+									? "—"
+									: `${stops.armed}/${stops.open ?? "?"} at ≥70%`
+							}
+							tone={(stops?.armed ?? 0) > 0 ? "warn" : "neutral"}
+						/>
+						<RailRow
+							label="nearest exit"
+							value={
+								stops?.maxProximity === null || stops?.maxProximity === undefined
+									? "—"
+									: pct(stops.maxProximity)
+							}
+							tone={
+								(stops?.maxProximity ?? 0) >= 1
+									? "bad"
+									: (stops?.maxProximity ?? 0) >= 0.7
+										? "warn"
+										: "neutral"
+								}
 						/>
 					</RailBlock>
 

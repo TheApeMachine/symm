@@ -1,10 +1,10 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"math"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -12,7 +12,8 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/data"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -25,9 +26,8 @@ longer needs.
 const positionTraceCap = 4096
 
 type Position struct {
+	*runtime.System
 	stopLoss        *StopLoss
-	exiting         atomic.Bool
-	settled         atomic.Bool
 	transport       Transport
 	price           *Price
 	onSettled       func(*Position)
@@ -56,15 +56,17 @@ type Position struct {
 	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
 	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"`  // First mark-to-exit PnL after open
-	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"`  // Previous tick PnL for momentum checks
-	PnLTrace        []float64               `json:"pnl_trace,omitempty"` // Net percent, one entry per reprice
+	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"`   // First mark-to-exit PnL after open
+	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"`   // Previous tick PnL for momentum checks
+	PnLTrace        []float64               `json:"pnl_trace,omitempty"`  // Net percent, one entry per reprice
+	StopState       StopState               `json:"stop_state,omitempty"` // Live proximity of each stop check
 	PeakPnLPct      *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
 	PeakStep        *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
 	Impulse         bool                    `json:"impulse,omitempty"`           // True explosive spike detected
 	ExitPullbackPct *decimal.Decimal        `json:"exit_pullback_pct,omitempty"` // Learned trailing giveback from peak
 	NurseryCutPct   *decimal.Decimal        `json:"nursery_cut_pct,omitempty"`   // Learned invalidation cut
-	MaxLifetimeNs   int64                   `json:"max_lifetime_ns,omitempty"`   // Empirical duration limit for unignited trades
+	MaxLifetimeNs   int64                   `json:"max_lifetime_ns,omitempty"`   // Legacy empirical duration limit
+	MaxLifetimeBars int                     `json:"max_lifetime_bars,omitempty"` // Empirical winning horizon in reprice bars
 	WorstPct        *decimal.Decimal        `json:"worst_pct,omitempty"`
 	paceKnown       bool
 	spreadPct       *decimal.Decimal
@@ -75,9 +77,12 @@ type Position struct {
 	Virtual         bool    `json:"virtual"`
 	PathFound       bool    `json:"path_found,omitempty"`
 	OpenSurprise    float64 `json:"open_surprise,omitempty"`
+	BarsHeld        int64   `json:"bars_held,omitempty"`    // Repress events since entry (tape timebase)
+	RealizedPct     float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
 }
 
 func NewPosition(
+	ctx context.Context,
 	symbol string,
 	path string,
 	pathFound bool,
@@ -87,6 +92,7 @@ func NewPosition(
 	onSettled func(*Position),
 ) *Position {
 	return &Position{
+		System:    runtime.NewSystem(ctx, "position"),
 		price:     price,
 		stopLoss:  NewStopLoss(),
 		transport: transport,
@@ -107,16 +113,17 @@ its own goroutine so the trade ingress can publish the next tick.
 func (position *Position) Update(mark *decimal.Decimal) {
 	var path string
 
-	if position.ClosedAt == nil && !position.exiting.Load() {
+	if position.ClosedAt == nil {
 		position.Mark = mark
 		position.repriceLocked()
 
-		// StopLoss is the SINGLE SOURCE OF TRUTH for exits
 		if position.stopLoss != nil {
 			if trigger, ok := position.stopLoss.Evaluate(position); ok {
-				position.recordExitTriggerLocked(trigger)
+				position.ExitTrigger = trigger
+				position.OutcomeTriggers = []string{trigger}
 				errnie.Info("[exit] triggered by " + trigger + " for " + position.Symbol)
-				if position.ExitPath != "" && position.claimExit() {
+
+				if position.ExitPath != "" {
 					path = position.ExitPath
 				}
 			}
@@ -130,23 +137,10 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	go position.finishExit(path)
 }
 
-func (position *Position) claimExit() bool {
-	return position.exiting.CompareAndSwap(false, true)
-}
-
-func (position *Position) recordExitTriggerLocked(trigger string) {
-	if trigger == "" {
-		return
-	}
-
-	position.ExitTrigger = trigger
-	position.OutcomeTriggers = []string{trigger}
-}
-
 func (position *Position) finishExit(path string) {
-	err := position.exitClaimed(path)
+	err := position.Exit(path)
+
 	if err != nil && !errors.Is(err, ErrVenueFlat) {
-		position.exiting.Store(false)
 		errnie.Error(err)
 		return
 	}
@@ -158,10 +152,6 @@ func (position *Position) finishExit(path string) {
 	if position.onSettled != nil {
 		position.onSettled(position)
 	}
-}
-
-func (position *Position) settleOnce() bool {
-	return position.settled.CompareAndSwap(false, true)
 }
 
 /*
@@ -193,14 +183,14 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 
 	vol := qty.String()
 
-	entryOrder := &spot.OrderRequest{
+	position.EntryOrder = &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "buy",
 		Volume:    vol,
 	}
 
-	exitOrder := &spot.OrderRequest{
+	position.ExitOrder = &spot.OrderRequest{
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "sell",
@@ -209,15 +199,10 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 
 	now := time.Now().UTC()
 	position.Qty = qty
-	position.EntryOrder = entryOrder
-	position.ExitOrder = exitOrder
 	position.OpenedAt = now
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
-	if position.ExitPath == "" {
-		position.ExitPath = path
-	}
 
 	if position.Virtual {
 		fill, err := position.price.EntryCost(position.Symbol, qty)
@@ -243,7 +228,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 		})
 	}
 
-	return position.Send(entryOrder)
+	return position.Send(position.EntryOrder)
 }
 
 // ErrExitInProgress means another caller already owns the sell.
@@ -271,31 +256,9 @@ func (position *Position) Exit(path string) error {
 		)
 	}
 
-	if !position.claimExit() {
-		return ErrExitInProgress
-	}
-
 	if position.ExitTrigger == "" {
-		position.recordExitTriggerLocked("policy exit match " + path)
-	}
-
-	if err := position.exitClaimed(path); err != nil {
-		if errors.Is(err, ErrVenueFlat) {
-			return nil
-		}
-
-		position.exiting.Store(false)
-		return err
-	}
-
-	return nil
-}
-
-func (position *Position) exitClaimed(path string) error {
-	if position.ExitOrder == nil {
-		return errnie.Err(
-			errnie.NotFound, "[position.Exit] no exit order for "+position.Symbol, nil,
-		)
+		position.ExitTrigger = "policy exit match " + path
+		position.OutcomeTriggers = []string{position.ExitTrigger}
 	}
 
 	if position.ClosedAt != nil {
@@ -439,6 +402,34 @@ func (position *Position) repriceLocked() {
 
 	if position.ClosedAt == nil && position.LastPnL == nil {
 		position.LastPnL = position.PnL
+	}
+
+	// BarsHeld counts reprice events since entry: the tape timebase the rest of
+	// the stop uses. A wall-clock horizon would expire the same 8-bar move at 3x
+	// the speed on a fast tape and under-use it on a slow one, so the expiry
+	// lives in bars, not seconds.
+	position.BarsHeld++
+
+	// Refresh the live stop-check proximity for the dashboard frame. This is
+	// what lets the operator see, per mark, how close each of the four checks
+	// is to firing, so a held lot is never a black box.
+	if position.stopLoss != nil {
+		position.StopState = position.stopLoss.State(position)
+	}
+
+	// Capture the fee-net realized return the moment the exit is priced
+	// (ExitVWAP/ExitPrice set above, then repriceLocked ran). PnLPct is
+	// mark-to-market and is overwritten on every later reprice; the realized
+	// label the tree and gate train from must be the one the exit actually made.
+	if position.RealizedPct == 0 && position.EntryPrice != nil && position.Qty != nil &&
+		position.ExitVWAP != nil && position.EntryPrice.Sign() > 0 && position.Qty.Sign() > 0 {
+		entryGross := position.EntryPrice.Mul(position.Qty)
+		cost := entryGross.OffsetPercent(decimalPercent.Mul(fee))
+
+		if cost != nil && cost.Sign() > 0 {
+			netExit := position.ExitVWAP.Mul(position.Qty).OffsetPercent(decimalPercent.Mul(fee).Mul(decimalNegativeOne))
+			position.RealizedPct = netExit.Sub(cost).Div(cost).Float64()
+		}
 	}
 }
 

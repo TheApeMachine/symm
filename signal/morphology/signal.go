@@ -2,17 +2,22 @@ package morphology
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sort"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	parent "github.com/theapemachine/symm/signal"
+)
+
+var (
+	errShape  = errors.New("morphology: book too short to score")
+	errDomain = errors.New("morphology: book is crossed or non-positive")
 )
 
 type point struct {
@@ -98,7 +103,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		for _, level := range b.Bids.Levels {
 			bids = append(bids, level.Price.Float64(), level.Quantity.Float64())
 		}
-		
+
 		for _, level := range b.Asks.Levels {
 			asks = append(asks, level.Price.Float64(), level.Quantity.Float64())
 		}
@@ -128,14 +133,14 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {
 	if len(bids) < 2 || len(asks) < 2 {
-		return nil, core.ErrShape
+		return nil, errShape
 	}
 
 	bestBidPrice := bids[0]
 	bestAskPrice := bids[1]
 
 	if bestAskPrice <= bestBidPrice {
-		return nil, core.ErrDomain
+		return nil, errDomain
 	}
 
 	spread := bestAskPrice - bestBidPrice
@@ -149,7 +154,7 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 		price := bids[index]
 		qty := bids[index+1]
 		if price <= 0 || qty < 0 {
-			return nil, core.ErrDomain
+			return nil, errDomain
 		}
 		coord := (price - midPrice) / spread
 		notional := price * qty
@@ -165,7 +170,7 @@ func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float6
 		price := asks[index]
 		qty := asks[index+1]
 		if price <= 0 || qty < 0 {
-			return nil, core.ErrDomain
+			return nil, errDomain
 		}
 		coord := (price - midPrice) / spread
 		notional := price * qty

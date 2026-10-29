@@ -3,51 +3,46 @@ package resonance
 import (
 	"context"
 	"fmt"
-	goruntime "runtime"
+	"io"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
-	"io"
-
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/data"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/learning"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
 /*
-Solver runs one predictive coder per symbol over that symbol's signal
-features (Features), at the configured pace. Each Step reads one symbol of
-one stored tick and returns the coder's reading as a Value; its "surprise"
-is the coder's reconstruction error per feature (ReadSurprise).
+Solver runs one predictive-coding manifold per symbol over that symbol's
+signal features (Features), and publishes the settled reading on the tick
+under resonance/<symbol>/… for the strategy stage and the dashboard to read.
+
+The manifold is the CPU predictive coder in nomagique/learning: it settles a
+latent state that explains the current observation (its residual is Surprise),
+carries a temporal prior across ticks, and carries a supervised task head
+whose target is the next observation's feature vector.
 */
 type Solver struct {
 	*runtime.System
-	detectors     *sync.Map
+	manifolds *sync.Map
+	pace      float64
+
+	// standardizers hold each symbol's per-feature moments, so a feature is
+	// scored against its own history rather than the raw feed.
 	standardizers *sync.Map
-	references    *sync.Map
-	steps         *sync.Map
-	pace          float64
 
-	// books supplies the touch midpoint each symbol's coder is supervised
-	// against; nil means no reference, so the forecast head never trains.
-	books *broker.Book
-
-	// ObserveModule is an optional diagnostics hook reporting per-step coder
-	// duration so the wiring diagram can profile the resonance stage like
-	// every other pipeline node.
-	ObserveModule func(string, time.Duration)
+	// pending holds, per symbol, the feature vector issued at the previous
+	// analysis epoch. Its target is the current vector: the supervised head
+	// trains on the future once it has actually arrived.
+	pending *sync.Map
 }
 
 /*
@@ -61,10 +56,9 @@ type Feature struct {
 
 /*
 Features are the solver's inputs, one headline metric per signal source, in
-coder order. A source a tick carries for the symbol without its pinned label
-is an error; a source the tick does not carry (signals arrive with trades,
-so not every tick carries every source) holds its last standardized value,
-zero until its first arrival.
+coder order. A source the tick does not carry (signals arrive with trades, so
+not every tick carries every source) holds its last standardized value, zero
+until its first arrival.
 */
 var Features = []Feature{
 	{"correlation", "cohort_covariance_score"},
@@ -88,41 +82,54 @@ const (
 	ReadingRole   = "reading"
 )
 
+// paceUpper is the manifold's fastest configured pace; a slower resting pace
+// only widens the warm-up band of its error average.
+const paceUpper = 0.150
+
 /*
 NewSolver returns a solver stepping at pace; a pace that is not positive is
 an error.
 */
-func NewSolver(
-	ctx context.Context, pace float64, books *broker.Book,
-) *Solver {
-	if !(pace > 0) || pace > paceUpper {
-		errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
-			"resonance: pace must be in (0, %g] (a coder's rate rests at pace and moves up to %g), got %g",
-			paceUpper, paceUpper, pace,
-		), nil))
+func NewSolver(ctx context.Context, pace ...float64) *Solver {
+	if len(pace) > 0 {
+		if !(pace[0] > 0) || pace[0] > paceUpper {
+			errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
+				"resonance: pace must be in (0, %g], got %g", paceUpper, pace[0],
+			), nil))
 
-		return nil
+			return nil
+		}
 	}
 
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
-		detectors:     &sync.Map{},
+		manifolds:     &sync.Map{},
+		pace:          paceValue(pace),
 		standardizers: &sync.Map{},
-		references:    &sync.Map{},
-		steps:         &sync.Map{},
-		pace:          pace,
-		books:         books,
+		pending:       &sync.Map{},
 	}
 
 	solver.Transition(runtime.READY)
 	return solver
 }
 
+func paceValue(pace []float64) float64 {
+	if len(pace) > 0 && pace[0] > 0 {
+		return pace[0]
+	}
+
+	if system := system.Cfg.Resonance.LearningRate; system > 0 {
+		return system
+	}
+
+	return 0.03
+}
+
 /*
-Step advances every symbol on the workspace tick through its predictive coder
-and attaches scalar readings on the tick under resonance/<symbol>/…. Symbols
-run concurrently (signal.RunSymbols); per-symbol coder state is sharded and
-tick.Append is synchronized. Hub readings queue per symbol.
+Step advances every symbol on the workspace tick through its predictive
+coder and attaches scalar readings on the tick under resonance/<symbol>/….
+Symbols run concurrently (signal.RunSymbols); per-symbol manifold state is
+sharded and tick.Append is synchronized.
 */
 func (solver *Solver) Step(tick *data.Value) *data.Value {
 	if tick == nil {
@@ -149,9 +156,11 @@ func (solver *Solver) Step(tick *data.Value) *data.Value {
 }
 
 /*
-stepSymbol advances one symbol's predictive coder: its Features, standardized
-causally, and the touch midpoint as the coder's reference (no reference when
-either side of the book is absent).
+stepSymbol advances one symbol's manifold: its Features, standardized
+causally, settled against the previous epoch's vector as the supervised
+target. A symbol whose feature schema changed since it learned sits the
+round out rather than corrupting a learned manifold with a different input
+shape.
 */
 func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 	if tick == nil || name == "" {
@@ -162,23 +171,78 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 		return nil
 	}
 
-	sources := make(map[string]float64, len(Features))
+	input, informative := solver.extractFeatures(name, tick)
+	if len(input) == 0 {
+		return nil
+	}
 
-	// Group every signal layer on the tick by source and symbol, then pick the
-	// value each feature's label carries for this symbol. Symbols are written
-	// as two path segments (e.g. "XBT/USD") and labels follow them.
+	// An unready vector is not a measurement: settling on it drives the latent
+	// state to the origin and turns an absent observation into a structural
+	// zero, so the reading says "not ready" and waits.
+	if !informative {
+		return nil
+	}
+
+	previous, hadPrevious := solver.takePending(name)
+
+	manifold := solver.manifold(name, len(input))
+	if manifold == nil {
+		return nil
+	}
+
+	// The supervised target is the previous epoch's vector: the head learns
+	// the one-step transition only once the future has actually arrived.
+	target := []float64(nil)
+	if hadPrevious && len(previous) == len(input) {
+		target = previous
+	}
+
+	if _, err := manifold.SettleFromBatchOptions(input, target, true, false); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			fmt.Sprintf("resonance: %s settle failed", name),
+			err,
+		))
+
+		return nil
+	}
+
+	solver.pending.Store(name, append([]float64(nil), input...))
+
+	reading := solver.publish(name, manifold, len(input))
+
+	if ui.UI != nil && ui.UI.Active() {
+		io.Copy(ui.UI, reading)
+	}
+
+	return reading
+}
+
+/*
+extractFeatures reads one symbol's feature vector off the tick: every
+signal layer grouped by source, each pinned Feature picked by its label,
+then standardized against that symbol's own history.
+
+informative reports whether at least one feature is an actual measurement.
+A zero reading and an absent reading are not the same thing: during warm-up
+the standardizer answers zero without readiness, while a ready observation
+at the learned mean is legitimately zero. Settling on an all-unready vector
+would teach the manifold that nothing moved.
+*/
+func (solver *Solver) extractFeatures(name string, tick *data.Value) ([]float64, bool) {
 	type sig struct {
 		labels []string
 		values []float64
 	}
+
+	// Symbols are written as two path segments (e.g. "XBT/USD") and labels
+	// follow them.
 	bySource := map[string]map[string]sig{}
 
 	for _, source := range types.SignalSourceStrings {
-		layers := tick.LookupPrefix(source)
-
-		for _, layer := range layers {
+		for _, layer := range tick.LookupPrefix(source) {
 			parts := strings.Split(layer.Key, "/")
-			if len(parts) < 3 {
+			if len(parts) < 4 {
 				continue
 			}
 
@@ -194,7 +258,7 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 					"[resonance.Step] "+layer.Key+" does not decode",
 					err,
 				))
-				return nil
+				continue
 			}
 
 			if bySource[source] == nil {
@@ -207,6 +271,8 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 			}
 		}
 	}
+
+	sources := make(map[string]float64, len(Features))
 
 	for _, feature := range Features {
 		symbolSigs, ok := bySource[feature.Source]
@@ -227,328 +293,281 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 		}
 	}
 
-	features, err := solver.scorer(name).Step(sources)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			fmt.Sprintf(
-				"resonance: %s of %s",
-				name, tick.Prefix,
-			), err,
-		))
-
-		return nil
+	if len(sources) == 0 {
+		return nil, false
 	}
 
-	midpoint := solver.midpoint(name)
+	scorer, _ := solver.standardizers.LoadOrStore(name, newFeatureScorer())
+	input, informative := scorer.(*featureScorer).Step(sources)
 
-	loadedStep, _ := solver.steps.LoadOrStore(name, &atomic.Int64{})
-	step := loadedStep.(*atomic.Int64).Add(1)
-
-	coder, err := solver.coder(name, len(features))
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"resonance: coder step failed for %s", name,
-			), err,
-		))
-
-		return nil
-	}
-
-	hasReference := 0.0
-
-	if _, held := solver.references.Load(name); held {
-		hasReference = 1
-	}
-
-	if midpoint > 0 {
-		solver.references.Store(name, midpoint)
-	}
-
-	stepStarted := time.Now()
-
-	out := transport.Read[[12][]float64](coder.Next(transport.NewValue([2][]float64{
-		features,
-		{midpoint, hasReference, float64(step), float64(tick.Timestamp) / 1e9},
-	}).Next(nil)))
-
-	if solver.ObserveModule != nil {
-		solver.ObserveModule("resonance", time.Since(stepStarted))
-	}
-
-	if err := coder.Error(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"resonance: coder step failed for %s at %s",
-				name, tick.Prefix,
-			), err,
-		))
-
-		return nil
-	}
-
-	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
-	reading.Epoch, reading.Tick, reading.Timestamp = tick.Epoch, tick.Tick, tick.Timestamp
-
-	if _, err := publishReturns(reading, out, coderArch(len(features))); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf("resonance: unable to publish coder reading for %s", name),
-			err,
-		))
-
-		return nil
-	}
-
-	if ui.UI != nil && ui.UI.Active() {
-		io.Copy(ui.UI, reading)
-	}
-
-	return reading
+	return input, informative
 }
 
 /*
-midpoint is the touch midpoint of symbol's book, or 0 when there is no honest
-reference: no book source, a book that is pending, stale or invalid (the
-broker then never calls back), a missing side, or a crossed book. A one-sided
-book is deliberately not a reference: its single price would read to the
-coder as a jump the moment the other side returned.
+featureScorer standardizes one symbol's features causally: each sample is
+scored against prior moments, never against the moments it is about to
+contribute.
 */
-func (solver *Solver) midpoint(symbol string) float64 {
-	if solver.books == nil {
-		return 0
-	}
-
-	var mid float64
-
-	solver.books.Book(symbol, func(managed *book.Book) {
-		bid, ask := managed.BestBid(), managed.BestAsk()
-
-		if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
-			return
-		}
-
-		low, high := bid.Price.Float64(), ask.Price.Float64()
-
-		if !(low > 0) || !(high >= low) {
-			return
-		}
-
-		mid = (low + high) / 2
-	})
-
-	return mid
-}
-
-/*
-paceUpper is the fastest learning rate a symbol's coder may move to (its
-Pace's upper bound); the pace it rests at is the solver's.
-*/
-const paceUpper = 0.150
-
-func coderArch(featureDim int) []int {
-	return []int{featureDim, featureDim * 4, featureDim * 2, featureDim}
-}
-
-func (solver *Solver) coder(symbol string, featureDim int) (*learning.PredictiveCoder, error) {
-	if loaded, found := solver.detectors.Load(symbol); found {
-		return loaded.(*learning.PredictiveCoder), nil
-	}
-
-	pace := learning.NewPace(solver.pace, solver.pace*0.1, paceUpper, 0.1, 0.2, 256)
-	target := learning.NewDirectionalTarget(0)
-	coder := learning.NewPredictiveCoder(coderArch(featureDim), 8, target, pace, 0.05, true, learning.ReadoutAll).(*learning.PredictiveCoder)
-
-	if err := coder.Error(); err != nil {
-		return nil, errnie.Err(errnie.Internal, "resonance: predictive coder for "+symbol, err)
-	}
-
-	actual, _ := solver.detectors.LoadOrStore(symbol, coder)
-	return actual.(*learning.PredictiveCoder), nil
-}
-
-func (solver *Solver) scorer(symbol string) *featureScorer {
-	loaded, found := solver.standardizers.Load(symbol)
-
-	if found {
-		if s, ok := loaded.(*featureScorer); ok && s != nil {
-			return s
-		}
-	}
-
-	created := newFeatureScorer()
-	actual, _ := solver.standardizers.LoadOrStore(symbol, created)
-	return actual.(*featureScorer)
-}
-
 type featureScorer struct {
-	isStepping   atomic.Bool
-	moments      []core.Primitive
-	residuals    []core.Primitive
-	standardized []float64
+	standardizers []*adaptive.Standardizer
 }
 
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{
-		moments:      make([]core.Primitive, len(Features)),
-		residuals:    make([]core.Primitive, len(Features)),
-		standardized: make([]float64, len(Features)),
+		standardizers: make([]*adaptive.Standardizer, len(Features)),
 	}
 
-	for index := range scorer.moments {
-		scorer.moments[index] = statistic.NewEstimator()
-		scorer.residuals[index] = statistic.NewCausalResidual()
+	for i := range scorer.standardizers {
+		scorer.standardizers[i] = adaptive.NewStandardizer()
 	}
 
 	return scorer
 }
 
 /*
-Step standardizes each Feature the tick carries for the symbol (a causal
-residual z-score over its running moments) and returns every Feature's
-latest standardized value, in Features order.
+Step returns the standardized vector in Feature order and reports whether any
+feature carries a real measurement. A source the tick does not carry holds
+the last standardized value, zero until its first arrival.
 */
-func (scorer *featureScorer) Step(sources map[string]float64) ([]float64, error) {
-	for !scorer.isStepping.CompareAndSwap(false, true) {
-		goruntime.Gosched()
-	}
-	defer scorer.isStepping.Store(false)
+func (scorer *featureScorer) Step(sources map[string]float64) ([]float64, bool) {
+	input := make([]float64, len(Features))
+	informative := false
 
-	for source := range sources {
-		if !slices.ContainsFunc(Features, func(feature Feature) bool { return feature.Source == source }) {
-			return nil, errnie.Err(errnie.Validation, "resonance: signal source "+source+" has no pinned feature", nil)
-		}
-	}
-
-	for index, feature := range Features {
-		val, carried := sources[feature.Source]
-
-		if !carried {
+	for i, feature := range Features {
+		reading, ok := sources[feature.Source]
+		if !ok {
+			// Absent this round: hold the last standardized value.
+			input[i] = scorer.standardizers[i].Standardize(reading)
 			continue
 		}
 
-		var reading *statistic.MomentReading
-
-		for out := range scorer.moments[index].Next(transport.NewValue(val).Next(nil)) {
-			reading = (*statistic.MomentReading)(out)
+		output, err := scorer.standardizers[i].Measure(reading)
+		if err != nil {
+			continue
 		}
 
-		if err := scorer.moments[index].Error(); err != nil || reading == nil {
-			return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: moments of %s/%s", feature.Source, feature.Label), err)
+		input[i] = output.Value
+
+		if output.Ready {
+			informative = true
 		}
-
-		var residual *statistic.CausalResidualResult
-
-		for out := range scorer.residuals[index].Next(transport.NewValue(*reading).Next(nil)) {
-			residual = (*statistic.CausalResidualResult)(out)
-		}
-
-		if err := scorer.residuals[index].Error(); err != nil || residual == nil {
-			return nil, errnie.Err(errnie.Internal, fmt.Sprintf("resonance: residual of %s/%s", feature.Source, feature.Label), err)
-		}
-
-		scorer.standardized[index] = residual.ZScore
 	}
 
-	return slices.Clone(scorer.standardized), nil
+	return input, informative
 }
 
-func publishReturns(prior *data.Value, out [12][]float64, arch []int) (*data.Value, error) {
-	if len(out[7]) > 0 {
-		offset := 0
-		for layer, rows := range arch {
-			width := 2 + 2*rows
-			if offset+width > len(out[7]) {
-				return nil, errnie.Error(errnie.Err(
-					errnie.Internal,
-					fmt.Sprintf(
-						"resonance: layer reading holds %d values, layer %d of arch %v needs %d",
-						len(out[7]), layer, arch, offset+width,
-					),
-					nil,
-				))
-			}
-			offset += width
-		}
-		if offset != len(out[7]) {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf(
-					"resonance: layer reading holds %d values, arch %v accounts for %d", len(out[7]), arch, offset,
-				),
-				nil,
-			))
-		}
+/*
+manifold returns symbol's predictive coder, building it on first use at the
+configured architecture and pace.
+*/
+func (solver *Solver) manifold(name string, featureDim int) *learning.ResonanceManifold {
+	loaded, _ := solver.manifolds.LoadOrStore(name, &sync.Map{})
+	bucket := loaded.(*sync.Map)
+
+	if held, ok := bucket.Load("manifold"); ok {
+		return held.(*learning.ResonanceManifold)
 	}
 
-	// The summary row is {reconstruction, energy, ..., surprise (5), ...}.
-	if len(out[0]) <= 5 {
-		return nil, errnie.Error(errnie.Err(
+	arch := coderArch(featureDim)
+
+	// The task head is supervised on the same vector the coder observes, so
+	// the target dimension equals the input dimension.
+	manifold := learning.NewResonanceManifold(arch, featureDim, solver.pace)
+	if manifold == nil {
+		solver.Error(errnie.Err(
 			errnie.Internal,
-			fmt.Sprintf(
-				"resonance: coder summary holds %d values, energy and surprise need 6", len(out[0]),
-			),
+			fmt.Sprintf("resonance: unable to build manifold for %s", name),
 			nil,
 		))
+
+		return nil
 	}
 
-	prior.Append([]float64{out[0][1]}, "energy")
-	prior.Append([]float64{out[0][5]}, "surprise")
-
-	if len(out[0]) > 11 && out[0][10] > 0 {
-		prior.Append([]float64{out[0][9]}, "task_skill")
-		prior.Append([]float64{out[0][11]}, "task_relative_precision")
-	}
-
-	// The summary row {supportedHorizon, calibrated, resolvedSteps, pending,
-	// confidence, alpha, ...} is how a consumer knows whether the forecast head
-	// has learned anything yet; it is published so that evidence is visible.
-	if len(out[10]) > 5 {
-		for index, label := range []string{
-			"supported_horizon", "calibrated", "resolved_steps",
-			"pending", "confidence", "alpha",
-		} {
-			prior.Append([]float64{out[10][index]}, label)
-		}
-	}
-
-	for i, val := range out[2] {
-		prior.Append([]float64{val}, fmt.Sprintf("latent_%d", i))
-	}
-
-	if len(out[7]) > 0 {
-		offset := 0
-		for layer, rows := range arch {
-			width := 2 + 2*rows
-			block := out[7][offset : offset+width]
-			offset += width
-
-			prior.Append([]float64{block[0]}, fmt.Sprintf("layer_%d_error", layer))
-			prior.Append([]float64{block[1]}, fmt.Sprintf("layer_%d_temporal", layer))
-
-			for j := range rows {
-				prior.Append([]float64{block[2+j]}, fmt.Sprintf("layer_%d_state_%d", layer, j))
-				prior.Append([]float64{block[2+rows+j]}, fmt.Sprintf("layer_%d_prediction_%d", layer, j))
-			}
-		}
-	}
-
-	for i, val := range out[11] {
-		prior.Append([]float64{val}, fmt.Sprintf("forward_curve_%d", i))
-	}
-
-	for i, val := range out[4] {
-		prior.Append([]float64{val}, fmt.Sprintf("task_skill_%d", i+1))
-	}
-
-	return prior, nil
+	bucket.Store("manifold", manifold)
+	return manifold
 }
 
+/*
+coderArch is the configured predictive architecture: input -> latent ->
+input, with the latent layer widened to hold the reconstruction.
+*/
+func coderArch(featureDim int) []int {
+	layers := 3
+
+	if configured := system.Cfg.Resonance.Layers; configured >= 2 {
+		layers = configured
+	}
+
+	arch := make([]int, layers)
+	arch[0] = featureDim
+
+	for i := 1; i < layers; i++ {
+		arch[i] = featureDim * 2
+	}
+
+	arch[layers-1] = featureDim
+	return arch
+}
+
+/*
+publish builds the reading Value for one settled symbol: one scalar layer per
+metric, addressed so the strategy stage and the dashboard can read
+resonance/<symbol>/<metric> off the tick.
+*/
+func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold, featureDim int) *data.Value {
+	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
+
+	layers, surprise, energy := manifold.WireSnapshot()
+	latent := manifold.LatentState()
+
+	reading.Append([]float64{surprise}, "surprise")
+	reading.Append([]float64{energy}, "energy")
+	reading.Append([]float64{solver.pace}, "alpha")
+
+	if skill, ok := manifold.TaskSkill(); ok {
+		reading.Append([]float64{skill}, "task_skill")
+	}
+
+	if precision, ok := manifold.TaskPrecision(); ok {
+		reading.Append([]float64{precision}, "task_relative_precision")
+	}
+
+	// The top layer's only residual is the temporal one; publishing it makes
+	// the memory mismatch visible next to the sensory mismatch.
+	if temporal, ok := manifold.TemporalError(); ok {
+		reading.Append([]float64{temporal}, "temporal_error")
+	}
+
+	for i, val := range latent {
+		reading.Append([]float64{val}, fmt.Sprintf("latent_%d", i))
+	}
+
+	for layer, wire := range layers {
+		reading.Append([]float64{wire.ErrorNorm}, fmt.Sprintf("layer_%d_error", layer))
+
+		if wire.Temporal {
+			reading.Append([]float64{1}, fmt.Sprintf("layer_%d_temporal", layer))
+		} else {
+			reading.Append([]float64{0}, fmt.Sprintf("layer_%d_temporal", layer))
+		}
+
+		for j, val := range wire.State {
+			reading.Append([]float64{val}, fmt.Sprintf("layer_%d_state_%d", layer, j))
+		}
+
+		for j, val := range wire.Prediction {
+			reading.Append([]float64{val}, fmt.Sprintf("layer_%d_prediction_%d", layer, j))
+		}
+	}
+
+	// The forward curve is the one-step task reading: the supervised head is
+	// trained on the next observation's vector, so its reading is that next
+	// vector, not a price return. Publish it as the coder's own forecast.
+	curve := manifold.TaskPrediction()
+
+	for i, val := range curve {
+		reading.Append([]float64{val}, fmt.Sprintf("forward_curve_%d", i))
+	}
+
+	// The strategy gate reads supported_horizon/calibrated to decide whether
+	// the head has learned anything yet. A head with no resolved sample has no
+	// supported reach; one resolved sample supports exactly the one-step
+	// transition it was trained on.
+	supported := 0.0
+	if _, hadPrevious := solver.pending.Load(name); hadPrevious && featureDim > 0 {
+		supported = float64(len(curve))
+	}
+
+	reading.Append([]float64{supported}, "supported_horizon")
+
+	if skill, ok := manifold.TaskSkill(); ok {
+		reading.Append([]float64{1}, "calibrated")
+		_ = skill
+	} else {
+		reading.Append([]float64{0}, "calibrated")
+	}
+
+	return reading
+}
+
+/*
+takePending returns and replaces the feature vector issued at the previous
+epoch for symbol.
+*/
+func (solver *Solver) takePending(name string) ([]float64, bool) {
+	held, ok := solver.pending.Load(name)
+	if !ok {
+		return nil, false
+	}
+
+	previous, ok := held.([]float64)
+	return previous, ok
+}
+
+/*
+symbolsOnTick lists every symbol the tick carries, from trades and from any
+signal source, sorted for a stable pass.
+*/
+func symbolsOnTick(tick *data.Value) []string {
+	if tick == nil {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+
+	var trades []kraken.TradeData
+	tick.Lookup(&trades, "spot:trade")
+
+	for _, trade := range trades {
+		if trade.Symbol == "" {
+			continue
+		}
+
+		seen[trade.Symbol] = struct{}{}
+	}
+
+	for _, source := range types.SignalSourceStrings {
+		for _, layer := range tick.LookupPrefix(source) {
+			parts := strings.Split(layer.Key, "/")
+
+			if len(parts) < 4 {
+				continue
+			}
+
+			seen[parts[1]+"/"+parts[2]] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+
+	for symbol := range seen {
+		out = append(out, symbol)
+	}
+
+	slices.Sort(out)
+	return out
+}
+
+/*
+attachReading copies a reading's scalar layers onto the workspace tick as
+resonance/<symbol>/<metric>, the addressing the strategy stage and the
+dashboard both read.
+*/
+func attachReading(tick *data.Value, symbol string, reading *data.Value) {
+	if tick == nil || reading == nil || symbol == "" {
+		return
+	}
+
+	scope := strings.ReplaceAll(symbol, "/", "-")
+
+	for label, val := range floatMetrics(reading) {
+		tick.Append([]float64{val}, "resonance", scope, label)
+	}
+}
+
+/*
+floatMetrics flattens a reading into label -> first scalar value.
+*/
 func floatMetrics(value *data.Value) map[string]float64 {
 	out := map[string]float64{}
 
@@ -578,4 +597,49 @@ func floatMetrics(value *data.Value) map[string]float64 {
 	}
 
 	return out
+}
+
+/*
+Reset clears learned temporal and precision state, and the per-symbol feature
+moments and pending vectors, so a fresh tape starts honestly rather than
+carrying a schema it no longer sees.
+*/
+func (solver *Solver) Reset(resetPrecision bool) {
+	if solver.manifolds != nil {
+		solver.manifolds.Range(func(_, held any) bool {
+			if bucket, ok := held.(*sync.Map); ok {
+				if manifold, ok := bucket.Load("manifold"); ok {
+					manifold.(*learning.ResonanceManifold).ResetState(resetPrecision)
+				}
+			}
+			return true
+		})
+	}
+
+	if solver.standardizers != nil {
+		solver.standardizers.Clear()
+	}
+
+	if solver.pending != nil {
+		solver.pending.Clear()
+	}
+}
+
+/*
+Close drops every manifold.
+*/
+func (solver *Solver) Close() error {
+	if solver.manifolds != nil {
+		solver.manifolds.Clear()
+	}
+
+	if solver.standardizers != nil {
+		solver.standardizers.Clear()
+	}
+
+	if solver.pending != nil {
+		solver.pending.Clear()
+	}
+
+	return nil
 }

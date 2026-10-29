@@ -3,8 +3,8 @@ package tokenizer
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/store"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/store"
 )
 
 func litRegion(key uint8, brightness float64) *store.Region {
