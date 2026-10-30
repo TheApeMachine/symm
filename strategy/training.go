@@ -103,7 +103,6 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			)
 
 			training.telemetry.NoteWalk(symbol, out)
-
 			return nil
 		})
 	}

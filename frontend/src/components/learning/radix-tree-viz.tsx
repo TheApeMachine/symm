@@ -36,8 +36,8 @@ export const MAX_TRIE_KEYS = 1_500;
 grammarKey drops the store location so the tree is the token path.
 Confirmed paths are policy/current/<path>/<action>.bin. Enter paths end
 precursor A→B; exit paths are a separate holding B→C walk from root.
-Virtual explore paths are model/paths/<path>/{enter,exit}.bin.
-Paper policy paths are model/policy/<path>/{enter,exit}.bin.
+Virtual explore paths are model/paths/<path>/{enter,hold,exit}.bin.
+Paper policy paths are model/policy/<path>/{enter,hold,exit}.bin.
 Legacy explored paths are policy/explored/<action>/<path>.bin.
 */
 export function grammarKey(key: string): string {
@@ -267,7 +267,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 	const [showAllBranches, setShowAllBranches] = useState(false);
-	type BranchFilter = "matching" | "enter" | "exit" | "all";
+	type BranchFilter = "matching" | "enter" | "hold" | "exit" | "all";
 	const [branchFilter, setBranchFilter] = useState<BranchFilter>("matching");
 
 	const activeSymbolList = useMemo(() => {
@@ -309,13 +309,15 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 
 	const actionCounts = useMemo(() => {
 		let enter = 0;
+		let hold = 0;
 		let exit = 0;
 		for (const key of allKeys) {
 			const grammar = grammarKey(key);
 			if (grammar.endsWith("/enter.bin")) enter++;
+			else if (grammar.endsWith("/hold.bin")) hold++;
 			else if (grammar.endsWith("/exit.bin")) exit++;
 		}
-		return { enter, exit, total: allKeys.length };
+		return { enter, hold, exit, total: allKeys.length };
 	}, [allKeys]);
 
 	const matchingKeys = useMemo(() => {
@@ -333,6 +335,8 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 				return allKeys;
 			case "enter":
 				return allKeys.filter((k) => grammarKey(k).endsWith("/enter.bin"));
+			case "hold":
+				return allKeys.filter((k) => grammarKey(k).endsWith("/hold.bin"));
 			case "exit":
 				return allKeys.filter((k) => grammarKey(k).endsWith("/exit.bin"));
 			case "matching":
@@ -708,6 +712,21 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 								)}
 							>
 								ENTER ({actionCounts.enter})
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									setBranchFilter("hold");
+									setShowAllBranches(false);
+								}}
+								className={cn(
+									"px-2 py-0.5 rounded transition-colors cursor-pointer",
+									branchFilter === "hold"
+										? "bg-(--raised) text-(--info) font-bold"
+										: "text-(--info)/70 hover:text-(--info)",
+								)}
+							>
+								HOLD ({actionCounts.hold})
 							</button>
 							<button
 								type="button"

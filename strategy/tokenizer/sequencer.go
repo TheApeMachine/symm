@@ -8,24 +8,37 @@ import (
 )
 
 /*
+Phase selects which story band spells this tick: enter (R00–R02), hold
+(R06–R08), or exit (R03–R05). Each phase keeps its own Sequitur sentence.
+*/
+type Phase uint8
+
+const (
+	PhaseEnter Phase = iota
+	PhaseHold
+	PhaseExit
+)
+
+/*
 Sequencer turns one tick's region brightness into a single path letter.
 The letter is regime.posture: the brightest role in each band. Brightness
 elects the role and stays out of the spelling. Risk (R12–R14) is a veto,
 not a letter.
 
-Each side (enter vs hold) keeps its own Sequitur sentence. Spell is the
-tail of that sentence after digram compression, which is what Path follows
-so oscillating chords do not inflate the trie one edge per tick.
+Spell is the tail of the active sentence after digram compression, which is
+what the path trie follows so oscillating chords do not inflate one edge per tick.
 */
 type Sequencer struct {
 	enter       *Sequitur
 	hold        *Sequitur
+	exit        *Sequitur
 	active      *Sequitur
 	mdl         *MDL
 	lastEmitted string
-	holding     bool
+	lastPhase   Phase
 	enterBreak  bool
 	holdBreak   bool
+	exitBreak   bool
 	pos         uint32
 }
 
@@ -53,6 +66,7 @@ func NewSequencer() *Sequencer {
 	return &Sequencer{
 		enter: NewSequitur(),
 		hold:  NewSequitur(),
+		exit:  NewSequitur(),
 		mdl:   NewMDL(NewCalibrator()),
 	}
 }
@@ -63,11 +77,13 @@ func (sequencer *Sequencer) Reset() {
 		return
 	}
 	sequencer.lastEmitted = ""
-	sequencer.holding = false
+	sequencer.lastPhase = PhaseEnter
 	sequencer.enterBreak = false
 	sequencer.holdBreak = false
+	sequencer.exitBreak = false
 	sequencer.enter.Sentence()
 	sequencer.hold.Sentence()
+	sequencer.exit.Sentence()
 }
 
 var (
@@ -77,45 +93,41 @@ var (
 	flatRegime  = []uint8{6, 7, 8, 9, 10, 11}
 	flatPosture = []uint8{0, 1, 2} // Enter postures: Spark, Support, Opposition
 
-	holdRegime  = []uint8{6, 7, 8, 9, 10, 11}
-	holdPosture = []uint8{3, 4, 5} // Exit postures: Stall, Evaporation, Reload
+	holdRegime = []uint8{6, 7, 8, 9, 10, 11}
 
 	riskRegions = []uint8{12, 13, 14} // Veto: Friction Hurdle, Contagion, Capacity
 )
 
 /*
-Step emits one regime.posture token. Holding selects the exit bands;
-otherwise the enter bands. The token is zero when either band is dark,
-risk brightness beats the posture, or the label repeats the previous emit.
+Step emits one regime.posture token for the given lifecycle phase. The token
+is empty when a band is dark, risk beats posture, or the label repeats.
 */
-func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
+func (sequencer *Sequencer) Step(lit []*store.Region, phase Phase) StepResult {
 	if len(lit) == 0 {
 		return StepResult{Silence: StepSilenceEmpty}
 	}
 
 	regimeKeys := flatRegime
-	if holding {
+	switch phase {
+	case PhaseHold, PhaseExit:
 		regimeKeys = holdRegime
 	}
 
 	_, regime, regimeOK := brightest(lit, regimeKeys)
 
-	var detector, support, opposition float64
 	var detKey, supKey, oppKey uint8
 
-	if holding {
-		// EXIT POSTURES
-		// R03: Exit Detector (Rejection wick, stall, arrival deceleration)
-		// R04: Exit Support (Support evaporation, bid withdrawal, spread blowout)
-		// R05: Exit Opposition (Absorption reload, trickle flow, steadfast makers)
+	switch phase {
+	case PhaseHold:
+		// HOLD: R06 detector, R07 support, R08 opposition (SIGNALS.md)
+		detKey, supKey, oppKey = 6, 7, 8
+	case PhaseExit:
 		detKey, supKey, oppKey = 3, 4, 5
-	} else {
-		// ENTER POSTURES
-		// R00: Enter Detector (Volume burst, tick in buyer arrival)
-		// R01: Enter Support (Limit bids stepping up, vanguard leader)
-		// R02: Enter Opposition (Ask wall, spoof trap, helper trap)
+	default:
 		detKey, supKey, oppKey = 0, 1, 2
 	}
+
+	var detector, support, opposition float64
 
 	for _, r := range lit {
 		if r == nil {
@@ -153,18 +165,34 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 		return StepResult{Silence: StepSilenceEmpty, Peak: netBrightness}
 	}
 
-	// Risk Oracle (R12, R13, R14) vetoes the cognitive sequence
-	if risk, _, riskOK := brightest(lit, riskRegions); riskOK && risk > netBrightness {
+	// Risk Oracle (R12, R13, R14) vetoes only when net spark is bullish but
+	// risk dominates that positive force. Opposition-led tokens carry negative
+	// netBrightness; comparing risk to that would veto every bearish letter.
+	if risk, _, riskOK := brightest(lit, riskRegions); riskOK && netBrightness > 0 && risk > netBrightness {
 		return StepResult{Silence: StepSilenceVeto, Peak: risk}
 	}
 
 	label := fmt.Sprintf("%s.%s", RegionLabel(regime), RegionLabel(posture))
 
-	if label == sequencer.lastEmitted {
-		return StepResult{Silence: StepSilenceDuplicate, Peak: netBrightness}
+	if phase != sequencer.lastPhase {
+		sequencer.lastEmitted = ""
 	}
 
-	active := sequencer.sentence(holding)
+	if label == sequencer.lastEmitted {
+		active := sequencer.sentence(phase)
+		limit := 8
+		if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MaxPathLength > 0 {
+			limit = system.Cfg.Learning.MaxPathLength
+		}
+		return StepResult{
+			Silence: StepSilenceDuplicate,
+			Token:   NewToken([]string{label}, netBrightness, 0),
+			Spell:   active.Tail(limit),
+			Peak:    netBrightness,
+		}
+	}
+
+	active := sequencer.sentence(phase)
 	active.Analyze([]string{label})
 
 	boundary, _, _, meta := sequencer.mdl.Analyze(sequencer.pos, labelCode(label))
@@ -177,15 +205,18 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 	spell := active.Tail(limit)
 
 	if boundary {
-		if holding {
+		switch phase {
+		case PhaseHold:
 			sequencer.holdBreak = true
-		} else {
+		case PhaseExit:
+			sequencer.exitBreak = true
+		default:
 			sequencer.enterBreak = true
 		}
 	}
 
 	sequencer.lastEmitted = label
-	sequencer.holding = holding
+	sequencer.lastPhase = phase
 	sequencer.active = active
 
 	return StepResult{
@@ -195,17 +226,20 @@ func (sequencer *Sequencer) Step(lit []*store.Region, holding bool) StepResult {
 	}
 }
 
-func (sequencer *Sequencer) sentence(holding bool) *Sequitur {
+func (sequencer *Sequencer) sentence(phase Phase) *Sequitur {
 	active := sequencer.enter
 	pending := &sequencer.enterBreak
-	if holding {
+
+	switch phase {
+	case PhaseHold:
 		active = sequencer.hold
 		pending = &sequencer.holdBreak
-		if !sequencer.holding {
-			active.Sentence()
-			*pending = false
-		}
-	} else if sequencer.holding {
+	case PhaseExit:
+		active = sequencer.exit
+		pending = &sequencer.exitBreak
+	}
+
+	if phase != sequencer.lastPhase {
 		active.Sentence()
 		*pending = false
 	}
@@ -275,15 +309,20 @@ func (sequencer *Sequencer) MDL() *MDL {
 // SymbolState is one symbol's sentences and MDL segmenter, saved beside explore paths.
 type SymbolState struct {
 	LastEmitted string     `json:"last_emitted"`
-	Holding     bool       `json:"holding"`
+	LastPhase   Phase      `json:"last_phase"`
 	EnterBreak  bool       `json:"enter_break"`
 	HoldBreak   bool       `json:"hold_break"`
+	ExitBreak   bool       `json:"exit_break"`
 	Pos         uint32     `json:"pos"`
 	EnterRoot   []string   `json:"enter_root"`
 	HoldRoot    []string   `json:"hold_root"`
+	ExitRoot    []string   `json:"exit_root"`
 	EnterRules  []RuleView `json:"enter_rules"`
 	HoldRules   []RuleView `json:"hold_rules"`
+	ExitRules   []RuleView `json:"exit_rules"`
 	MDL         MDLState   `json:"mdl"`
+	// Holding is kept for backward-compatible grammar restores.
+	Holding bool `json:"holding,omitempty"`
 }
 
 func (sequencer *Sequencer) State() SymbolState {
@@ -293,14 +332,17 @@ func (sequencer *Sequencer) State() SymbolState {
 
 	return SymbolState{
 		LastEmitted: sequencer.lastEmitted,
-		Holding:     sequencer.holding,
+		LastPhase:   sequencer.lastPhase,
 		EnterBreak:  sequencer.enterBreak,
 		HoldBreak:   sequencer.holdBreak,
+		ExitBreak:   sequencer.exitBreak,
 		Pos:         sequencer.pos,
 		EnterRoot:   sequencer.enter.RootSequence(),
 		HoldRoot:    sequencer.hold.RootSequence(),
+		ExitRoot:    sequencer.exit.RootSequence(),
 		EnterRules:  sequencer.enter.RuleViews(),
 		HoldRules:   sequencer.hold.RuleViews(),
+		ExitRules:   sequencer.exit.RuleViews(),
 		MDL:         sequencer.mdl.State(),
 	}
 }
@@ -312,6 +354,7 @@ func (sequencer *Sequencer) Restore(state SymbolState) {
 
 	restoreGrammar(sequencer.enter, state.EnterRoot, state.EnterRules)
 	restoreGrammar(sequencer.hold, state.HoldRoot, state.HoldRules)
+	restoreGrammar(sequencer.exit, state.ExitRoot, state.ExitRules)
 
 	if sequencer.mdl == nil {
 		sequencer.mdl = NewMDL(NewCalibrator())
@@ -319,13 +362,20 @@ func (sequencer *Sequencer) Restore(state SymbolState) {
 	sequencer.mdl.Restore(state.MDL)
 
 	sequencer.lastEmitted = state.LastEmitted
-	sequencer.holding = state.Holding
+	sequencer.lastPhase = state.LastPhase
+	if sequencer.lastPhase == 0 && state.Holding {
+		sequencer.lastPhase = PhaseHold
+	}
 	sequencer.enterBreak = state.EnterBreak
 	sequencer.holdBreak = state.HoldBreak
+	sequencer.exitBreak = state.ExitBreak
 	sequencer.pos = state.Pos
 	sequencer.active = sequencer.enter
-	if state.Holding {
+	switch sequencer.lastPhase {
+	case PhaseHold:
 		sequencer.active = sequencer.hold
+	case PhaseExit:
+		sequencer.active = sequencer.exit
 	}
 }
 

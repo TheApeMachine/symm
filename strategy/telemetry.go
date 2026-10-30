@@ -47,13 +47,14 @@ pathWalk is the sentence one symbol is spelling. The dashboard gets a batch
 of these once per tick, and only for symbols whose sentence changed.
 */
 type pathWalk struct {
-	Symbol  string `json:"symbol"`
-	Phase   string `json:"phase"`
-	Live    string `json:"live,omitempty"`
-	Trigger string `json:"trigger,omitempty"`
-	Policy  string `json:"policy,omitempty"`
-	Enter   bool   `json:"enter"`
-	Outcome string `json:"outcome,omitempty"`
+	Symbol      string `json:"symbol"`
+	Phase       string `json:"phase"`
+	Live        string `json:"live,omitempty"`
+	Trigger     string `json:"trigger,omitempty"`
+	Policy      string `json:"policy,omitempty"`
+	Enter       bool   `json:"enter"`
+	StoryPhase  string `json:"storyPhase,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
 }
 
 type Telemetry struct {
@@ -126,32 +127,40 @@ func (telemetry *Telemetry) attachPolicy(out *data.Value, model *Model) {
 	out.Lookup(&enter, "enter")
 
 	out.Append(stepPolicyFromStep(
-		model, pathKey, liveAfter, triggerAfter, policyPath, outcome, enter,
+		out, model, pathKey, liveAfter, triggerAfter, policyPath, outcome, enter,
 	), "policy")
 }
 
 func stepPolicyFromStep(
+	out *data.Value,
 	model *Model,
 	pathKey, livePath, triggerPath, policyPath, outcome string,
 	enter bool,
 ) stepPolicy {
-	action := "enter"
-	if !enter {
-		action = "exit"
+	var phase string
+	if out != nil {
+		out.Lookup(&phase, "phase")
+	}
+	action := phase
+	if action == "" {
+		action = "enter"
+		if !enter {
+			action = "exit"
+		}
 	}
 
 	// Checked directly against the unified Tree
 	stored := model != nil && model.tree != nil && model.tree.Load().Has(pathKey)
 
-	phase := policyPath
-	if phase == "" {
-		phase = livePath
+	pathPhase := policyPath
+	if pathPhase == "" {
+		pathPhase = livePath
 	}
 
 	depth := 0
-	if phase != "" {
+	if pathPhase != "" {
 		depth = 1
-		for _, char := range phase {
+		for _, char := range pathPhase {
 			if char == '/' {
 				depth++
 			}
@@ -191,7 +200,7 @@ func (telemetry *Telemetry) NoteWalk(symbol string, out *data.Value) {
 		return
 	}
 
-	var live, trigger, policy, outcome string
+	var live, trigger, policy, outcome, storyPhase string
 	var enter bool
 
 	out.Lookup(&live, "livePath")
@@ -199,6 +208,7 @@ func (telemetry *Telemetry) NoteWalk(symbol string, out *data.Value) {
 	out.Lookup(&policy, "policyPath")
 	out.Lookup(&outcome, "outcome")
 	out.Lookup(&enter, "enter")
+	out.Lookup(&storyPhase, "phase")
 
 	phase := policy
 	if phase == "" {
@@ -219,13 +229,14 @@ func (telemetry *Telemetry) NoteWalk(symbol string, out *data.Value) {
 
 	telemetry.lastPhase.Store(symbol, phase)
 	telemetry.walks = append(telemetry.walks, pathWalk{
-		Symbol:  symbol,
-		Phase:   phase,
-		Live:    live,
-		Trigger: trigger,
-		Policy:  policy,
-		Enter:   enter,
-		Outcome: outcome,
+		Symbol:     symbol,
+		Phase:      phase,
+		Live:       live,
+		Trigger:    trigger,
+		Policy:     policy,
+		Enter:      enter,
+		StoryPhase: storyPhase,
+		Outcome:    outcome,
 	})
 }
 
@@ -318,6 +329,7 @@ func (telemetry *Telemetry) publishStep(
 
 func (telemetry *Telemetry) recordStep(out *data.Value) {
 	var gate stepGate
+	var gateFrame gateFrame
 	var policy stepPolicy
 	var blocked bool
 	var blockedReason string
@@ -325,7 +337,14 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	var outcome string
 	var paperOutcome string
 
+	out.Lookup(&gateFrame, "gate")
+	if gateFrame.Phase != "" {
+		gate.Passed = gateFrame.Passed
+	}
 	out.Lookup(&gate, "gate")
+	if !gate.Passed && gateFrame.Passed {
+		gate.Passed = gateFrame.Passed
+	}
 	out.Lookup(&policy, "policy")
 	out.Lookup(&blocked, "blocked")
 	out.Lookup(&blockedReason, "blockedReason")
@@ -361,17 +380,25 @@ func (telemetry *Telemetry) recordStep(out *data.Value) {
 	}
 
 	switch outcome {
-	case "enter submitted":
+	case "enter submitted", "virtual enter submitted", "paper enter submitted":
 		telemetry.rollup.OutcomeEnter++
-		telemetry.rollup.ExploreEnter++
-	case "paper enter submitted":
-		telemetry.rollup.OutcomeEnter++
+		if outcome == "virtual enter submitted" {
+			telemetry.rollup.ExploreEnter++
+		}
 	case "exit submitted":
 		telemetry.rollup.OutcomeExit++
 	}
 
 	if paperOutcome == "paper enter submitted" && outcome != "paper enter submitted" {
 		telemetry.rollup.OutcomeEnter++
+	}
+
+	var phase string
+	out.Lookup(&phase, "phase")
+	var action string
+	out.Lookup(&action, "action")
+	if phase == "hold" && action == "exit" && outcome == "" && !blocked {
+		telemetry.rollup.PolicyChecks++
 	}
 }
 

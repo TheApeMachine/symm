@@ -2,15 +2,12 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { positionReadout } from "#/components/book-readout";
 import { cn } from "#/lib/utils";
 import {
-	CHOICE_WINDOW_MS,
-	type ChoiceSample,
-	choiceWindow,
+	CHOICE_SAMPLE_MS,
 	dropOpenChoices,
-	extendToNow,
-	meanPath,
+	indexMean,
+	linePath,
 	noteOpenChoice,
 	openChoiceTrail,
-	samplesInWindow,
 } from "./open-choice-trail";
 
 const STROKES = [
@@ -40,18 +37,6 @@ const pctText = (value: number) => {
 	return `${sign}${value.toFixed(digits)}%`;
 };
 
-const lineOf = (
-	samples: ChoiceSample[],
-	xOf: (t: number) => number,
-	yOf: (pnl: number) => number,
-) =>
-	samples
-		.map((sample, index) => {
-			const cmd = index === 0 ? "M" : "L";
-			return `${cmd}${xOf(sample.t).toFixed(1)},${yOf(sample.pnl).toFixed(1)}`;
-		})
-		.join(" ");
-
 export const OpenChoiceChart = ({
 	lots,
 }: {
@@ -65,15 +50,25 @@ export const OpenChoiceChart = ({
 	const clipId = useId().replace(/:/g, "");
 
 	useEffect(() => {
-		const live = new Set<string>();
-		for (const row of lots) {
-			const id = lotId(row);
-			live.add(id);
-			const pnl = positionReadout(row).returnPctDisplay;
-			if (pnl !== null) noteOpenChoice(id, pnl);
-		}
-		dropOpenChoices(live);
-		setRevision((value) => value + 1);
+		const sample = () => {
+			const live = new Set<string>();
+			let dirty = false;
+			for (const row of lots) {
+				const id = lotId(row);
+				live.add(id);
+				const readout = positionReadout(row);
+				const pnl =
+					readout.returnPctDisplay ??
+					(readout.returnPct === null ? null : readout.returnPct * 100);
+				if (pnl !== null && noteOpenChoice(id, pnl)) dirty = true;
+			}
+			if (dropOpenChoices(live)) dirty = true;
+			if (dirty) setRevision((value) => value + 1);
+		};
+
+		sample();
+		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
+		return () => window.clearInterval(timer);
 	}, [lots]);
 
 	useEffect(() => {
@@ -94,13 +89,8 @@ export const OpenChoiceChart = ({
 	});
 	void revision;
 
-	const drawn = series
-		.map((item) => ({ ...item, samples: extendToNow(item.samples, now) }))
-		.filter((item) => item.samples.length > 0);
-	const mean = meanPath(
-		series.map((item) => item.samples),
-		now,
-	);
+	const drawn = series.filter((item) => item.samples.length > 0);
+	const meanSeries = indexMean(drawn.map((item) => item.samples));
 	const watching = drawn.length > 0;
 
 	useLayoutEffect(() => {
@@ -125,26 +115,34 @@ export const OpenChoiceChart = ({
 	const pad = { l: 52, r: 12, t: 16, b: 22 };
 	const plotW = width - pad.l - pad.r;
 	const plotH = height - pad.t - pad.b;
-	const { from: t0, span } = choiceWindow(now, CHOICE_WINDOW_MS);
-	const shown = drawn.map((item) => ({
-		...item,
-		samples: samplesInWindow(item.samples, t0),
-	}));
-	const meanShown = samplesInWindow(mean, t0);
+	const maxLen = drawn.reduce((n, item) => Math.max(n, item.samples.length), 0);
+	const slots = Math.max(maxLen - 1, 1);
 	const values = [
-		...shown.flatMap((item) => item.samples.map((sample) => sample.pnl)),
-		...meanShown.map((sample) => sample.pnl),
+		...drawn.flatMap((item) => item.samples.map((sample) => sample.pnl)),
+		...meanSeries.filter((pnl) => Number.isFinite(pnl)),
 	];
-	const dataMin = values.length > 0 ? Math.min(...values) : 0;
-	const dataMax = values.length > 0 ? Math.max(...values) : 0;
-	const rawSpan = Math.max(dataMax, 0) - Math.min(dataMin, 0) || 1;
-	const yMin = Math.min(dataMin, 0) - rawSpan * 0.16;
-	const yMax = Math.max(dataMax, 0) + rawSpan * 0.12;
-	const ySpan = yMax - yMin || 1;
-	const xOf = (t: number) => pad.l + ((t - t0) / span) * plotW;
-	const yOf = (pnl: number) => pad.t + (1 - (pnl - yMin) / ySpan) * plotH;
+	const dataMin = Math.min(0, ...(values.length > 0 ? values : [0]));
+	const dataMax = Math.max(0, ...(values.length > 0 ? values : [0]));
+	const ySpan = dataMax - dataMin || 1;
+	const xAt = (index: number) => pad.l + (index / slots) * plotW;
+	const yOf = (pnl: number) =>
+		pad.t + 2 + (1 - (pnl - dataMin) / ySpan) * (plotH - 4);
 	const yZero = yOf(0);
-	const latestMean = mean.length > 0 ? mean[mean.length - 1].pnl : null;
+	const latestMean =
+		[...meanSeries].reverse().find((value) => Number.isFinite(value)) ?? null;
+	const longest = drawn.reduce<(typeof drawn)[number] | null>(
+		(best, item) =>
+			!best || item.samples.length > best.samples.length ? item : best,
+		null,
+	);
+	const ageMs =
+		longest && longest.samples.length > 0
+			? Math.max(0, now - longest.samples[0].t)
+			: 0;
+	const ageLabel =
+		ageMs >= 60_000
+			? `${Math.round(ageMs / 60_000)}m ago`
+			: `${Math.round(ageMs / 1000)}s ago`;
 	const bookTone =
 		latestMean === null
 			? "flat"
@@ -162,8 +160,8 @@ export const OpenChoiceChart = ({
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Close-now return while the lot is still open. The dashed line is
-						entry after fees.
+						Close-now return while the lot is still open. Dashed line is flat.
+						The heavy line is the book average.
 					</div>
 				</div>
 				{latestMean !== null && (
@@ -246,7 +244,7 @@ export const OpenChoiceChart = ({
 							</text>
 						)}
 						<text x={pad.l} y={height - 4} fill="var(--f4)" fontSize={9}>
-							{Math.round(CHOICE_WINDOW_MS / 60000)}m ago
+							{ageLabel}
 						</text>
 						<text
 							x={width - pad.r}
@@ -258,18 +256,24 @@ export const OpenChoiceChart = ({
 							now
 						</text>
 						<g clipPath={`url(#${clipId})`}>
-							{shown.map((item) => {
+							{drawn.map((item) => {
+								const start = maxLen - item.samples.length;
 								const last = item.samples[item.samples.length - 1];
 								return (
 									<g key={item.id}>
 										<path
-											d={lineOf(item.samples, xOf, yOf)}
+											d={linePath(
+												item.samples.map((sample, i) => ({
+													x: xAt(start + i),
+													y: yOf(sample.pnl),
+												})),
+											)}
 											fill="none"
 											stroke={item.stroke}
-											strokeWidth={1.6}
+											strokeWidth={1.4}
 										/>
 										<circle
-											cx={xOf(last.t)}
+											cx={xAt(start + item.samples.length - 1)}
 											cy={yOf(last.pnl)}
 											r={3}
 											fill={item.stroke}
@@ -277,9 +281,15 @@ export const OpenChoiceChart = ({
 									</g>
 								);
 							})}
-							{meanShown.length > 1 && (
+							{meanSeries.filter((pnl) => Number.isFinite(pnl)).length > 1 && (
 								<path
-									d={lineOf(meanShown, xOf, yOf)}
+									d={linePath(
+										meanSeries.flatMap((pnl, i) =>
+											Number.isFinite(pnl)
+												? [{ x: xAt(i), y: yOf(pnl) }]
+												: [],
+										),
+									)}
 									fill="none"
 									stroke="var(--f1)"
 									strokeWidth={2.2}
@@ -326,13 +336,13 @@ export const OpenChoiceChart = ({
 							</span>
 						</span>
 					))}
-					{mean.length > 1 && (
+					{meanSeries.filter((pnl) => Number.isFinite(pnl)).length > 1 && (
 						<span className="inline-flex items-center gap-1 text-[10px] text-(--f1)">
 							<span className="inline-block h-0.5 w-3 bg-(--f1)" />
 							book
 						</span>
 					)}
-					<span className="text-[10px] text-(--f4)">entry after fees</span>
+					<span className="text-[10px] text-(--f4)">flat</span>
 				</div>
 			) : null}
 		</section>

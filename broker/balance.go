@@ -27,7 +27,7 @@ type Balance struct {
 	Quote     string
 	wallet    atomic.Pointer[kraken.Balance]
 	trade     atomic.Pointer[kraken.TradeBalanceResult]
-	value     *data.Value
+	value     atomic.Pointer[data.Value]
 	limiter   *rate.Limiter
 }
 
@@ -68,11 +68,14 @@ func (balance *Balance) Wallet() *kraken.Balance {
 Trade is the latest trade-balance reading from the same poll as Wallet.
 */
 func (balance *Balance) Trade() *kraken.TradeBalanceResult {
-	if balance == nil {
-		return nil
-	}
-
 	return balance.trade.Load()
+}
+
+/*
+Frame is the latest dashboard update produced by poll; readers load it atomically.
+*/
+func (balance *Balance) Frame() *data.Value {
+	return balance.value.Load()
 }
 
 func (balance *Balance) cash(asset string) *decimal.Decimal {
@@ -202,7 +205,7 @@ func (balance *Balance) poll() (err error) {
 	kept := *tradeBalance
 	balance.trade.Store(&kept)
 
-	balance.value = data.NewValue("balance", "update", "all").Append(
+	frame := data.NewValue("balance", "update", "all").Append(
 		map[string]any{
 			"cash":       balance.cash(balance.Quote),
 			"equity":     tradeBalance.Equity,
@@ -210,12 +213,13 @@ func (balance *Balance) poll() (err error) {
 		},
 		"balance",
 	)
+	balance.value.Store(frame)
 
 	// Push the refreshed frame to the active dashboard hub; the hello
 	// callback only carries the one captured at connect. With no
 	// dashboard connected there is nothing to publish to.
-	if balance.value != nil && ui.UI != nil {
-		io.Copy(ui.UI, balance.value)
+	if ui.UI != nil {
+		io.Copy(ui.UI, frame)
 	}
 
 	return nil

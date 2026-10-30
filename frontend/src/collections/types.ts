@@ -9,6 +9,7 @@ mirror the JSON exactly.
 export type DeskPosition = {
 	id: string;
 	entry_path: string;
+	hold_path?: string;
 	exit_path: string;
 	symbol: string;
 	opened_at: string;

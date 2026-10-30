@@ -149,7 +149,10 @@ func (gate *Gate) EvaluateEnter(
 	observed []*nmstore.Region,
 	coder CoderReading,
 ) GateDecision {
-	if !coder.Bullish {
+	forceVirtual := false
+	if !coder.Ready && !coder.Bullish {
+		forceVirtual = true
+	} else if !coder.Bullish {
 		return GateDecision{Allowed: false, Reason: "coder not bullish or uncalibrated"}
 	}
 
@@ -172,16 +175,22 @@ func (gate *Gate) EvaluateEnter(
 		}
 	}
 
+	if forceVirtual {
+		return GateDecision{Allowed: true, Virtual: true, Reason: "coder uncalibrated; virtual exploration only"}
+	}
+
 	brightness := regionBrightness(observed)
 
 	// NET SPARK VECTOR: Detector (R00) + Support (R01) - Opposition (R02)
 	netSpark := (brightness[0] + brightness[1]) - brightness[2]
 
-	ignition := brightness[7]                                   // R07: Explosive Ignition
+	// NET HOLD VECTOR: Detector (R06) + Support (R07) - Opposition (R08)
+	netHold := (brightness[6] + brightness[7]) - brightness[8]
+
 	risk := max(brightness[12], brightness[13], brightness[14]) // R12-R14: Risk Oracle
 
-	// Environmental Test A: Has ignition cleared the learned (bounded) hurdle?
-	lacksIgnition := ignition < gate.ignition
+	// Environmental Test A: Is hold confluence still supportive vs fading?
+	lacksIgnition := netHold < gate.ignition
 
 	// Environmental Test B: Is risk dominating the net spark?
 	riskDominant := (risk - netSpark) > gate.risk
@@ -221,7 +230,7 @@ func (gate *Gate) EvaluateExit(
 	// NET REJECTION VECTOR: Detector (R03) + Support (R04) - Opposition (R05)
 	netRejection := (brightness[3] + brightness[4]) - brightness[5]
 
-	// EXHAUSTION: Turbulent Friction (R08) / Dead Starved Tape (R09)
+	// EXHAUSTION: hold opposition (R08) plus any legacy R09 pin still wired
 	exhaustion := max(brightness[8], brightness[9])
 
 	// TOTAL EXIT FORCE

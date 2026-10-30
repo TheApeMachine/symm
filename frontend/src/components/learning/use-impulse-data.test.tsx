@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { clockAtom, signals } from "#/collections/app";
-import { Value } from "#/types/value";
+import { mergeWorkspaceAggregate, Value } from "#/types/value";
 import { useImpulseData } from "./use-impulse-data";
 
 const SYMBOL = "BTC/USD";
@@ -23,10 +23,12 @@ const publish = (value: Value) => {
 	act(() => {
 		signals.workspace.setState((prev) => ({
 			...prev,
-			aggregate: value,
+			aggregate: mergeWorkspaceAggregate(prev.aggregate, value),
 		}));
 	});
 };
+
+const snm = (raw: number) => Math.abs(raw) / (1 + Math.abs(raw));
 
 const pin = (data: ReturnType<typeof useImpulseData>["data"], id: string) =>
 	data.find((node) => node.id === id);
@@ -43,7 +45,7 @@ describe("useImpulseData", () => {
 		publish(
 			frame([
 				{
-					key: "cvd/BTC/USD/midpoint_log_return",
+					key: "correlation/aggregate/structural_alignment",
 					payload: [0.8],
 				},
 			]),
@@ -52,31 +54,33 @@ describe("useImpulseData", () => {
 		const { result } = renderHook(() => useImpulseData(SYMBOL));
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
-		).toBe(0.8);
+			pin(result.current.data, "correlation:structural_alignment:R01")
+				?.activation,
+		).toBeCloseTo(snm(0.8));
 
 		publish(
 			frame([
 				{
-					key: "hawkes/BTC/USD/arrival_rate:buy",
+					key: "pumpdump/BTC/USD/blowoff_dip",
 					payload: [0.4],
 				},
 			]),
 		);
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
-		).toBe(0.8);
+			pin(result.current.data, "correlation:structural_alignment:R01")
+				?.activation,
+		).toBeCloseTo(snm(0.8));
 		expect(
-			pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation,
-		).toBe(0.4);
+			pin(result.current.data, "pumpdump:blowoff_dip:R08")?.activation,
+		).toBeCloseTo(snm(0.4));
 	});
 
 	it("writes a pin to zero when the tick carries zero", () => {
 		publish(
 			frame([
 				{
-					key: "cvd/BTC/USD/midpoint_log_return",
+					key: "correlation/aggregate/structural_alignment",
 					payload: [0.8],
 				},
 			]),
@@ -87,14 +91,15 @@ describe("useImpulseData", () => {
 		publish(
 			frame([
 				{
-					key: "cvd/BTC/USD/midpoint_log_return",
+					key: "correlation/aggregate/structural_alignment",
 					payload: [0],
 				},
 			]),
 		);
 
 		expect(
-			pin(result.current.data, "cvd:midpoint_log_return:R00")?.activation,
+			pin(result.current.data, "correlation:structural_alignment:R01")
+				?.activation,
 		).toBe(0);
 	});
 
@@ -144,6 +149,22 @@ describe("useImpulseData", () => {
 		expect(result.current.regions[4]?.strength).toBe(0.6);
 	});
 
+	it("merges aggregate kernel readings into region strength for the focus symbol", () => {
+		publish(
+			frame([
+				{
+					key: "correlation/aggregate/structural_alignment",
+					payload: [0.8],
+				},
+			]),
+		);
+
+		const { result } = renderHook(() => useImpulseData(SYMBOL));
+
+		expect(result.current.regions[1]?.strength).toBeGreaterThan(0);
+		expect(result.current.regions[10]?.strength).toBeGreaterThan(0);
+	});
+
 	it("does not create pins for hawkes metrics declared unpinned on the grid", () => {
 		publish(
 			frame([
@@ -152,12 +173,8 @@ describe("useImpulseData", () => {
 					payload: [0.62],
 				},
 				{
-					key: "hawkes/BTC/USD/excitation_decay",
-					payload: [1.8],
-				},
-				{
-					key: "hawkes/BTC/USD/arrival_rate:buy",
-					payload: [0.4],
+					key: "hawkes/BTC/USD/supercritical_cascade",
+					payload: [1.2],
 				},
 			]),
 		);
@@ -168,10 +185,7 @@ describe("useImpulseData", () => {
 			pin(result.current.data, "hawkes:background_rate:R07"),
 		).toBeUndefined();
 		expect(
-			pin(result.current.data, "hawkes:excitation_decay:R03"),
-		).toBeUndefined();
-		expect(
-			pin(result.current.data, "hawkes:arrival_rate:buy:R00")?.activation,
-		).toBe(0.4);
+			pin(result.current.data, "hawkes:supercritical_cascade:R06")?.activation,
+		).toBeCloseTo(snm(1.2));
 	});
 });

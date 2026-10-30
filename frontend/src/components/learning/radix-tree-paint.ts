@@ -384,6 +384,7 @@ const paintLinks = (input: RadixTreeSceneInput, paintActivity: boolean) => {
 
 const terminalFill = (action: string | undefined) => {
 	if (action === "ENTER") return "rgba(115, 190, 104, 0.15)";
+	if (action === "HOLD") return "rgba(56, 189, 248, 0.15)";
 	if (action === "EXIT") return "rgba(240, 84, 79, 0.15)";
 	if (action === "NOOP") return "rgba(232, 163, 61, 0.2)";
 	return "rgba(148, 163, 184, 0.12)";
@@ -391,6 +392,7 @@ const terminalFill = (action: string | undefined) => {
 
 const terminalStroke = (action: string | undefined) => {
 	if (action === "ENTER") return "var(--up)";
+	if (action === "HOLD") return "var(--info)";
 	if (action === "EXIT") return "var(--down)";
 	if (action === "NOOP") return "var(--warn)";
 	return "var(--f4)";
@@ -398,6 +400,7 @@ const terminalStroke = (action: string | undefined) => {
 
 const terminalTextFill = (action: string | undefined) => {
 	if (action === "ENTER") return "var(--up)";
+	if (action === "HOLD") return "var(--info)";
 	if (action === "EXIT") return "var(--down)";
 	if (action === "NOOP") return "var(--warn)";
 	return "var(--f3)";

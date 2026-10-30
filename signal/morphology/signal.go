@@ -10,6 +10,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
@@ -42,13 +43,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"book_shape_distance",
-			"book_shape_ks",
-			"concentration:bid",
-			"concentration:ask",
-			"entropy:bid",
-			"entropy:ask",
-			"morphology_change",
+			"book_shape_stable",
 		},
 	}
 
@@ -76,7 +71,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -118,17 +113,39 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		return value
 	}
 
-	if len(res) == 6 {
-		res = append(res, 0.0)
-	}
+	stable := bookShapeStable(res)
 
 	keys := []string{
 		signal.Name(),
 		symbol,
 	}
 
-	value.Append(res, append(keys, signal.keys...)...)
+	value.Append([]float64{stable}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal": signal.Name(),
+		"symbol": symbol,
+		"stable": stable,
+	})
+
 	return value
+}
+
+/*
+bookShapeStable is high when the normalized depth curve is barely morphing
+between snapshots — ladder shape holding steady under the move.
+*/
+func bookShapeStable(res []float64) float64 {
+	if len(res) < 7 {
+		return 0
+	}
+
+	morphChange := res[6]
+	if morphChange <= 0 {
+		return 1
+	}
+
+	return 1 / (1 + morphChange)
 }
 
 func (signal *Signal) Calculate(stateKey string, bids, asks []float64) ([]float64, error) {

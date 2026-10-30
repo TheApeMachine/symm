@@ -11,24 +11,21 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/hawkes"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
 )
 
 /*
 symbolModel owns the per-symbol arrival sampler and the asynchronous Hawkes
-excitation process. Both hold one owner: the signal's Step runs the per-symbol
-callback on its own goroutine but, for a given symbol, exactly one call runs at
-a time because the sampler serializes on its own mutex, so no additional
-synchronization is required here.
+excitation process. RunTrades may invoke several prints for the same pair in
+one tick; mu serializes sample, process, and gate history for that pair.
 */
 type symbolModel struct {
+	mu sync.Mutex
+
 	sample  *excitation.Sample
 	process *excitation.Process
-
-	prevIntensity float64
-	prevAt        time.Time
-	hasPrev       bool
 
 	gates *gates
 }
@@ -78,13 +75,7 @@ func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		models: &sync.Map{},
 		keys: []string{
-			"arrival_rate:buy",
-			"arrival_rate:sell",
-			"branching_spectral_radius",
-			"conditional_intensity",
-			"conditional_intensity_velocity",
-			"background_rate",
-			"excitation_decay",
+			"supercritical_cascade",
 		},
 	}
 
@@ -110,7 +101,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -140,6 +131,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	})
 
 	state := untypedState.(*symbolModel)
+	state.mu.Lock()
+	defer state.mu.Unlock()
 
 	input, ready, err := state.sample.MeasureArrival(excitation.TradeInput{
 		Symbol:    trade.Symbol,
@@ -187,28 +180,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	intensity := outcome.Fit.IntensityX + outcome.Fit.IntensityY
-
-	var intensityVelocity float64
-
-	if intensity > 0 && state.hasPrev {
-		timeDelta := at.Sub(state.prevAt).Seconds()
-
-		if timeDelta > 0 {
-			intensityVelocity = (intensity - state.prevIntensity) / timeDelta
-		}
-	}
-
-	if intensity > 0 {
-		state.prevIntensity = intensity
-		state.prevAt = at
-		state.hasPrev = true
-	}
-
-	// The regime gates are derived from fit history, not wall clock, so a quiet
-	// symbol and a frenzied one are each measured against their own recent
-	// behavior. They feed hawkes.ClassifyFit when the consuming layer wants a
-	// named regime; the signal itself publishes the raw numerics.
 	state.gates.observe(outcome.Fit.SpectralRadius, outcome.Fit.Asymmetry(false))
 
 	keys := []string{
@@ -216,13 +187,15 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	return value.Append([]float64{
-		outcome.BuyArrivalRate,
-		outcome.SellArrivalRate,
+	out := value.Append([]float64{
 		outcome.Fit.SpectralRadius,
-		intensity,
-		intensityVelocity,
-		outcome.Fit.MuX + outcome.Fit.MuY,
-		outcome.Fit.Beta,
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal":         signal.Name(),
+		"trade":          trade,
+		"spectralRadius": outcome.Fit.SpectralRadius,
+	})
+
+	return out
 }

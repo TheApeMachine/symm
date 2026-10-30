@@ -1,4 +1,3 @@
-import { createStore } from "@tanstack/store";
 import { triePrefix } from "#/collections/book";
 import {
 	EXPLORE_BASE_THRESHOLD,
@@ -8,6 +7,7 @@ import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { parseOneValue } from "#/types/decoder";
 import type { Value } from "#/types/value";
+import { createStore } from "@tanstack/store";
 
 /*
 The live symbol set, as known to the app (it also seeds the symbol
@@ -459,7 +459,9 @@ const layerNumber = (raw: unknown): number | null => {
 
 	try {
 		const parsed = JSON.parse(text);
-		return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null;
+		return typeof parsed === "number" && Number.isFinite(parsed)
+			? parsed
+			: null;
 	} catch {
 		return null;
 	}
@@ -486,7 +488,12 @@ const sumExploreThresholdSteps = (
 	for (let i = 0; i < steps.length; i++) {
 		const step = steps[i];
 		// Only legacy "threshold"-named layers can be absolute snapshots.
-		if (names && layers && isLegacyAbsoluteThreshold(names, i) && absoluteThreshold(step)) {
+		if (
+			names &&
+			layers &&
+			isLegacyAbsoluteThreshold(names, i) &&
+			absoluteThreshold(step)
+		) {
 			book = step;
 			continue;
 		}
@@ -522,9 +529,16 @@ const thresholdStepsFromStored = (
 Legacy "threshold" layers may be absolute snapshots in [0.05, 0.95].
 "resistance" layers are always deltas (−returnFraction) and are small.
 */
-const isLegacyAbsoluteThreshold = (names: unknown[], index: number): boolean => {
+const isLegacyAbsoluteThreshold = (
+	names: unknown[],
+	index: number,
+): boolean => {
 	const name = names[index];
-	return typeof name === "string" && name.includes("threshold") && !name.includes("resistance");
+	return (
+		typeof name === "string" &&
+		name.includes("threshold") &&
+		!name.includes("resistance")
+	);
 };
 
 /*
@@ -590,9 +604,7 @@ const thresholdFromNewModelValue = (
 thresholdFromExploreBytes reads a path book off one S3 list layer: either a
 JSON-marshaled explore value (hub ListPrefix) or a nested wire Value blob.
 */
-export const thresholdFromExploreBytes = (
-	bytes: Uint8Array,
-): number | null => {
+export const thresholdFromExploreBytes = (bytes: Uint8Array): number | null => {
 	const json = tryDecodeJsonBytes(bytes);
 	const fromJSON = thresholdFromStored(json);
 	if (fromJSON !== null) return fromJSON;
@@ -623,7 +635,11 @@ export const thresholdFromExploreBytes = (
 	for (let i = 0; i < steps.length; i++) {
 		// Only "threshold"-named layers can be absolute snapshots.
 		// "resistance" layers are always small deltas.
-		if (indices[i].includes("threshold") && !indices[i].includes("resistance") && absoluteThreshold(steps[i])) {
+		if (
+			indices[i].includes("threshold") &&
+			!indices[i].includes("resistance") &&
+			absoluteThreshold(steps[i])
+		) {
 			book = steps[i];
 			continue;
 		}
@@ -634,7 +650,8 @@ export const thresholdFromExploreBytes = (
 };
 
 const sameStringList = (left: string[], right: string[]): boolean =>
-	left.length === right.length && left.every((key, index) => key === right[index]);
+	left.length === right.length &&
+	left.every((key, index) => key === right[index]);
 
 const sameThresholds = (
 	left: Record<string, number>,
@@ -669,7 +686,7 @@ export const ingestS3Prefix = (value: Value) => {
 
 	const policyKeys = value.index
 		.map((index) => s3KeyFromIndex(value.prefix, index))
-		.filter((key): key is string => key != null && key.startsWith(`${value.scope}/`))
+		.filter((key): key is string => key?.startsWith(`${value.scope}/`) ?? false)
 		.sort();
 
 	const thresholds: Record<string, number> = {};
@@ -761,7 +778,16 @@ type PathWalk = {
 	trigger?: string;
 	policy?: string;
 	enter?: boolean;
+	storyPhase?: string;
 	outcome?: string;
+};
+
+const walkAction = (row: PathWalk): string => {
+	const story = row.storyPhase?.toLowerCase();
+	if (story === "enter" || story === "hold" || story === "exit") {
+		return story;
+	}
+	return row.enter ? "enter" : "exit";
 };
 
 /*
@@ -799,11 +825,12 @@ export const ingestPathWalks = (tick: number, payload: unknown): boolean => {
 				stored: prior?.stored ?? false,
 				match: prior?.match ?? "",
 				depth: tokens.length,
-				action: row.enter ? "enter" : "exit",
+				action: walkAction(row),
 				livePath: row.live,
 				triggerPath: row.trigger,
 				policyPath: row.policy || phase,
-				rejected: prior?.tick === tick ? prior.rejected : (prior?.rejected ?? []),
+				rejected:
+					prior?.tick === tick ? prior.rejected : (prior?.rejected ?? []),
 			};
 		}
 
@@ -829,10 +856,7 @@ export const ingestCognitionFrame = (role: string, payload: unknown) => {
 	if (role === COGNITION_TREE_ROLE && isTree(payload)) {
 		const tree = payload as CognitionTreeFrame;
 		cognitionStore.setState((state) => {
-			const policyKeys = filterExploreKeys(
-				[...tree.keys],
-				state.thresholds,
-			);
+			const policyKeys = filterExploreKeys([...tree.keys], state.thresholds);
 			const keysChanged = !sameStringList(state.policyKeys, policyKeys);
 			if (keysChanged) {
 				trySendCommand({ type: "s3", prefix: triePrefix() });

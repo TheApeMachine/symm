@@ -2,12 +2,12 @@ package cvd
 
 import (
 	"context"
-	"math"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
@@ -37,10 +37,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"midpoint_log_return",
-			"flow_aligned_midpoint_return",
-			"gross_notional",
-			"signed_net_fraction",
+			"aggressor_backing",
 		},
 	}
 
@@ -67,7 +64,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -87,11 +84,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	tradeNotional := qty * price
 
 	var (
-		midpointLogReturn float64
-		flowAligned       float64
-		grossNotional     float64
-		signedFraction    float64
-		appendMetrics     bool
+		signedFraction float64
+		appendMetrics  bool
 	)
 
 	// The `books.Book` callback is synchronous; the book is present only if
@@ -124,24 +118,16 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		if tick.Closed {
 			flow := state.window
 			state.window = window{}
-			grossNotional = flow.buyNotional + flow.sellNotional
+			grossNotional := flow.buyNotional + flow.sellNotional
 			netNotional := flow.buyNotional - flow.sellNotional
 			if grossNotional > 0 {
 				signedFraction = netNotional / grossNotional
 			}
-		}
 
-		if state.prevMidpoint > 0 {
-			midpointLogReturn = math.Log(midpoint / state.prevMidpoint)
-			flowAligned = midpointLogReturn
-
-			if side == "sell" {
-				flowAligned = -midpointLogReturn
-			}
+			appendMetrics = true
 		}
 
 		state.prevMidpoint = midpoint
-		appendMetrics = true
 	})
 
 	if !appendMetrics {
@@ -154,11 +140,14 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	value.Append([]float64{
-		midpointLogReturn,
-		flowAligned,
-		grossNotional,
 		signedFraction,
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal":         signal.Name(),
+		"trade":          trade,
+		"signedFraction": signedFraction,
+	})
 
 	return value
 }

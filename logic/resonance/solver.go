@@ -52,6 +52,8 @@ Feature is one signal metric the solver reads: the label a source writes
 type Feature struct {
 	Source string
 	Label  string
+	// Scope "aggregate" reads source/aggregate/<label>; empty uses the symbol.
+	Scope string
 }
 
 /*
@@ -61,16 +63,15 @@ not every tick carries every source) holds its last standardized value, zero
 until its first arrival.
 */
 var Features = []Feature{
-	{"correlation", "cohort_covariance_score"},
-	{"leadlag", "covariance_score_gain_median"},
-	{"liquidity", "relative_spread"},
-	{"sentiment", "breadth"},
-	{"cvd", "signed_net_fraction"},
-	{"depthflow", "book_imbalance"},
-	{"morphology", "morphology_change"},
-	{"hawkes", "branching_spectral_radius"},
-	{"pumpdump", "spread_ratio"},
-	{"toxicity", "retreat_fraction:bid"},
+	{"pumpdump", "coiled_compression", ""},
+	{"correlation", "structural_alignment", "aggregate"},
+	{"pumpdump", "starved_tape", ""},
+	{"pumpdump", "rejection_tick", ""},
+	{"depthflow", "bid_ladder_release", ""},
+	{"depthflow", "bid_ladder_build", ""},
+	{"hawkes", "supercritical_cascade", ""},
+	{"depthflow", "bid_ladder_build", ""},
+	{"pumpdump", "blowoff_dip", ""},
 }
 
 /*
@@ -197,6 +198,8 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 		target = previous
 	}
 
+	hadTarget := len(target) > 0
+
 	if _, err := manifold.SettleFromBatchOptions(input, target, true, false); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -209,7 +212,7 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 
 	solver.pending.Store(name, append([]float64(nil), input...))
 
-	reading := solver.publish(name, manifold, len(input))
+	reading := solver.publish(name, manifold, hadTarget)
 
 	if ui.UI != nil && ui.UI.Active() {
 		io.Copy(ui.UI, reading)
@@ -242,6 +245,21 @@ func (solver *Solver) extractFeatures(name string, tick *data.Value) ([]float64,
 	for _, source := range types.SignalSourceStrings {
 		for _, layer := range tick.LookupPrefix(source) {
 			parts := strings.Split(layer.Key, "/")
+			if len(parts) == 3 && parts[1] == "aggregate" {
+				var values []float64
+				if err := layer.Decode(&values); err != nil {
+					continue
+				}
+				if bySource[source] == nil {
+					bySource[source] = make(map[string]sig)
+				}
+				bySource[source]["aggregate"] = sig{
+					labels: []string{parts[2]},
+					values: values,
+				}
+				continue
+			}
+
 			if len(parts) < 4 {
 				continue
 			}
@@ -272,7 +290,7 @@ func (solver *Solver) extractFeatures(name string, tick *data.Value) ([]float64,
 		}
 	}
 
-	sources := make(map[string]float64, len(Features))
+	readings := make(map[string]float64, len(Features))
 
 	for _, feature := range Features {
 		symbolSigs, ok := bySource[feature.Source]
@@ -280,25 +298,30 @@ func (solver *Solver) extractFeatures(name string, tick *data.Value) ([]float64,
 			continue
 		}
 
-		s, ok := symbolSigs[name]
+		scopeKey := name
+		if feature.Scope == "aggregate" {
+			scopeKey = "aggregate"
+		}
+
+		s, ok := symbolSigs[scopeKey]
 		if !ok {
 			continue
 		}
 
 		for idx, label := range s.labels {
 			if label == feature.Label && idx < len(s.values) {
-				sources[feature.Source] = s.values[idx]
+				readings[featureReadingKey(feature)] = s.values[idx]
 				break
 			}
 		}
 	}
 
-	if len(sources) == 0 {
+	if len(readings) == 0 {
 		return nil, false
 	}
 
 	scorer, _ := solver.standardizers.LoadOrStore(name, newFeatureScorer())
-	input, informative := scorer.(*featureScorer).Step(sources)
+	input, informative := scorer.(*featureScorer).Step(readings)
 
 	return input, informative
 }
@@ -310,11 +333,13 @@ contribute.
 */
 type featureScorer struct {
 	standardizers []*adaptive.Standardizer
+	held          []float64
 }
 
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{
 		standardizers: make([]*adaptive.Standardizer, len(Features)),
+		held:          make([]float64, len(Features)),
 	}
 
 	for i := range scorer.standardizers {
@@ -329,15 +354,20 @@ Step returns the standardized vector in Feature order and reports whether any
 feature carries a real measurement. A source the tick does not carry holds
 the last standardized value, zero until its first arrival.
 */
-func (scorer *featureScorer) Step(sources map[string]float64) ([]float64, bool) {
+func featureReadingKey(feature Feature) string {
+	return feature.Source + "/" + feature.Label
+}
+
+func (scorer *featureScorer) Step(readings map[string]float64) ([]float64, bool) {
 	input := make([]float64, len(Features))
 	informative := false
 
 	for i, feature := range Features {
-		reading, ok := sources[feature.Source]
+		reading, ok := readings[featureReadingKey(feature)]
 		if !ok {
-			// Absent this round: hold the last standardized value.
-			input[i] = scorer.standardizers[i].Standardize(reading)
+			// Absent this round: hold the last standardized value without
+			// feeding the standardizer a synthetic sample.
+			input[i] = scorer.held[i]
 			continue
 		}
 
@@ -347,6 +377,7 @@ func (scorer *featureScorer) Step(sources map[string]float64) ([]float64, bool) 
 		}
 
 		input[i] = output.Value
+		scorer.held[i] = output.Value
 
 		if output.Ready {
 			informative = true
@@ -414,7 +445,7 @@ publish builds the reading Value for one settled symbol: one scalar layer per
 metric, addressed so the strategy stage and the dashboard can read
 resonance/<symbol>/<metric> off the tick.
 */
-func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold, featureDim int) *data.Value {
+func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold, hadTarget bool) *data.Value {
 	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
 
 	layers, surprise, energy := manifold.WireSnapshot()
@@ -474,7 +505,7 @@ func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold,
 	// supported reach; one resolved sample supports exactly the one-step
 	// transition it was trained on.
 	supported := 0.0
-	if _, hadPrevious := solver.pending.Load(name); hadPrevious && featureDim > 0 {
+	if hadTarget && len(curve) > 0 {
 		supported = float64(len(curve))
 	}
 
@@ -605,41 +636,25 @@ moments and pending vectors, so a fresh tape starts honestly rather than
 carrying a schema it no longer sees.
 */
 func (solver *Solver) Reset(resetPrecision bool) {
-	if solver.manifolds != nil {
-		solver.manifolds.Range(func(_, held any) bool {
-			if bucket, ok := held.(*sync.Map); ok {
-				if manifold, ok := bucket.Load("manifold"); ok {
-					manifold.(*learning.ResonanceManifold).ResetState(resetPrecision)
-				}
+	solver.manifolds.Range(func(_, held any) bool {
+		if bucket, ok := held.(*sync.Map); ok {
+			if manifold, ok := bucket.Load("manifold"); ok {
+				manifold.(*learning.ResonanceManifold).ResetState(resetPrecision)
 			}
-			return true
-		})
-	}
+		}
+		return true
+	})
 
-	if solver.standardizers != nil {
-		solver.standardizers.Clear()
-	}
-
-	if solver.pending != nil {
-		solver.pending.Clear()
-	}
+	solver.standardizers.Clear()
+	solver.pending.Clear()
 }
 
 /*
 Close drops every manifold.
 */
 func (solver *Solver) Close() error {
-	if solver.manifolds != nil {
-		solver.manifolds.Clear()
-	}
-
-	if solver.standardizers != nil {
-		solver.standardizers.Clear()
-	}
-
-	if solver.pending != nil {
-		solver.pending.Clear()
-	}
-
+	solver.manifolds.Clear()
+	solver.standardizers.Clear()
+	solver.pending.Clear()
 	return nil
 }

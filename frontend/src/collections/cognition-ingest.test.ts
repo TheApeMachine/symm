@@ -44,6 +44,22 @@ describe("path walks", () => {
 		expect(match?.action).toBe("exit");
 		expect(cognitionStore.state.matches[""]).toBeUndefined();
 	});
+
+	it("uses storyPhase hold for trie matching", () => {
+		cognitionStore.setState((s) => ({ ...s, matches: {} }));
+
+		ingestPathWalks(10, [
+			{
+				symbol: "ETH/USD",
+				phase: "R11.R08/R07.R05",
+				policy: "R11.R08/R07.R05",
+				storyPhase: "hold",
+				enter: false,
+			},
+		]);
+
+		expect(cognitionStore.state.matches["ETH/USD"]?.action).toBe("hold");
+	});
 });
 
 describe("stored thresholds", () => {

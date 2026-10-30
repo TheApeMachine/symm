@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -26,6 +27,7 @@ longer needs.
 const positionTraceCap = 4096
 
 type Position struct {
+	mu              sync.Mutex
 	*runtime.System
 	stopLoss        *StopLoss
 	transport       Transport
@@ -33,6 +35,7 @@ type Position struct {
 	onSettled       func(*Position)
 	ID              string                  `json:"id"`
 	EntryPath       string                  `json:"entry_path"`
+	HoldPath        string                  `json:"hold_path,omitempty"`
 	ExitPath        string                  `json:"exit_path"`
 	ExitTrigger     string                  `json:"exit_trigger,omitempty"`
 	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
@@ -113,6 +116,8 @@ its own goroutine so the trade ingress can publish the next tick.
 func (position *Position) Update(mark *decimal.Decimal) {
 	var path string
 
+	position.mu.Lock()
+
 	if position.ClosedAt == nil {
 		position.Mark = mark
 		position.repriceLocked()
@@ -130,11 +135,40 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		}
 	}
 
+	position.mu.Unlock()
+
 	if path == "" {
 		return
 	}
 
 	go position.finishExit(path)
+}
+
+/*
+ShouldReprice reports whether a lot needs a mark refresh on this ingress
+path. Desk.Update uses it under the lot lock so skip logic does not race
+Refresh or serialization.
+*/
+func (position *Position) ShouldReprice(mark *decimal.Decimal, isTraded bool) bool {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ClosedAt != nil || mark == nil {
+		return false
+	}
+
+	markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
+
+	watchProfit := false
+	if position.stopLoss != nil {
+		watchProfit = position.stopLoss.ProfitLocked(position)
+	}
+
+	if position.PnL != nil && position.PnL.Sign() > 0 {
+		watchProfit = true
+	}
+
+	return isTraded || !markUnchanged || watchProfit
 }
 
 func (position *Position) finishExit(path string) {
@@ -159,7 +193,10 @@ Enter records the buy. qty must be a venue-valid size from Price.Allocate;
 when nil or non-positive, Allocate is called once inside Enter.
 */
 func (position *Position) Enter(path string, qty *decimal.Decimal) error {
+	position.mu.Lock()
+
 	if path == "" {
+		position.mu.Unlock()
 		return errnie.Err(
 			errnie.NotFound,
 			"[position.Enter] missing path for "+position.Symbol,
@@ -177,6 +214,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 				msg += ": " + why
 			}
 
+			position.mu.Unlock()
 			return errnie.Err(errnie.NotFound, msg, nil)
 		}
 	}
@@ -208,6 +246,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 		fill, err := position.price.EntryCost(position.Symbol, qty)
 
 		if err != nil {
+			position.mu.Unlock()
 			return errnie.Error(errnie.Err(
 				errnie.IO,
 				"[position.Enter] no fill price for "+position.Symbol,
@@ -215,7 +254,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 			))
 		}
 
-		position.Apply(kraken.ExecutionData{
+		position.applyLocked(kraken.ExecutionData{
 			Symbol:      position.Symbol,
 			Side:        "buy",
 			ExecType:    "Fill",
@@ -228,7 +267,10 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 		})
 	}
 
-	return position.Send(position.EntryOrder)
+	order := position.EntryOrder
+	position.mu.Unlock()
+
+	return position.Send(order)
 }
 
 // ErrExitInProgress means another caller already owns the sell.
@@ -248,7 +290,10 @@ fill can be applied while this call waits on the paper CLI.
 */
 
 func (position *Position) Exit(path string) error {
+	position.mu.Lock()
+
 	if path == "" {
+		position.mu.Unlock()
 		return errnie.Err(
 			errnie.NotFound,
 			"[position.Exit] missing path for "+position.Symbol,
@@ -262,6 +307,7 @@ func (position *Position) Exit(path string) error {
 	}
 
 	if position.ClosedAt != nil {
+		position.mu.Unlock()
 		return nil
 	}
 
@@ -282,7 +328,12 @@ func (position *Position) Exit(path string) error {
 	position.repriceLocked()
 	order := position.ExitOrder
 
+	position.mu.Unlock()
+
 	if err := position.Send(order); err != nil {
+		position.mu.Lock()
+		defer position.mu.Unlock()
+
 		if venueFlat(err) {
 			return ErrVenueFlat
 		}
@@ -295,6 +346,12 @@ func (position *Position) Exit(path string) error {
 }
 
 func (position *Position) Apply(execution kraken.ExecutionData) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	position.applyLocked(execution)
+}
+
+func (position *Position) applyLocked(execution kraken.ExecutionData) {
 	position.Fills = append(position.Fills, &execution)
 
 	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {

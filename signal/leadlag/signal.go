@@ -12,6 +12,7 @@ import (
 	nmcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
 )
@@ -67,7 +68,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -153,13 +154,21 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	return value.Append([]float64{
+	out := value.Append([]float64{
 		output["defined_peer_count"],
 		output["best_lag_seconds_median"],
 		output["best_lag_seconds_mad"],
 		output["led_peer_share"],
 		output["covariance_score_gain_median"],
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal": signal.Name(),
+		"trade":  trade,
+		"output": output,
+	})
+
+	return out
 }
 
 func leaderRank(symbol string) int {

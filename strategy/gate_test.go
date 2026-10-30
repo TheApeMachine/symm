@@ -62,6 +62,7 @@ func TestGateWinLowersIgnitionRisk(t *testing.T) {
 
 func TestGateLossRaisesIgnitionRisk(t *testing.T) {
 	gate := newTestGate(t)
+	gate.ignition = 0.5
 	beforeIgnition, beforeRisk := gate.ignition, gate.risk
 
 	gate.Update(GateResult{ReturnFraction: -0.5})
@@ -180,20 +181,20 @@ This is the seam #20 cares about: the coder is the entry gate.
 func TestGateNonBullishCoderBlocks(t *testing.T) {
 	gate := newTestGate(t)
 
-	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{region(0, 1), region(7, 1)}, CoderReading{Bullish: false})
+	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{region(0, 1), region(7, 1)}, CoderReading{Ready: true, Bullish: false})
 
 	if decision.Allowed {
-		t.Fatal("a non-bullish coder must block the entry")
+		t.Fatal("a calibrated non-bullish coder must block the entry")
 	}
 }
 
-// --- Issue #8 / #20: a nil coder reading is a hard reject, not a silent fallback ---
+// --- Issue #8 / #20: an uncalibrated coder permits virtual entry for learning ---
 
-func TestGateNilCoderBlocks(t *testing.T) {
+func TestGateUncalibratedCoderVirtual(t *testing.T) {
 	gate := newTestGate(t)
 	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{region(0, 1), region(7, 1)}, CoderReading{})
-	if decision.Allowed {
-		t.Fatal("a zero coder reading (not bullish, not calibrated) must block, never fall back to a default")
+	if !decision.Allowed || !decision.Virtual {
+		t.Fatalf("an uncalibrated coder must allow virtual entry, got %+v", decision)
 	}
 }
 
@@ -201,10 +202,11 @@ func TestGateNilCoderBlocks(t *testing.T) {
 
 func TestReadCoderPopulatesConfidence(t *testing.T) {
 	tick := data.NewValue("training", "step", "BTC/USD")
-	tick.Append(1.0, "resonance/BTC-USD/calibrated")
-	tick.Append(4.0, "resonance/BTC-USD/supported_horizon")
+	tick.Append([]float64{1}, "resonance", "BTC-USD", "calibrated")
+	tick.Append([]float64{4}, "resonance", "BTC-USD", "supported_horizon")
+	tick.Append([]float64{1.2}, "resonance", "BTC-USD", "task_relative_precision")
 	for h := 0; h < 4; h++ {
-		tick.Append(0.004, "resonance/BTC-USD/forward_curve_"+itoa(h))
+		tick.Append([]float64{0.25}, "resonance", "BTC-USD", "forward_curve_"+itoa(h))
 	}
 
 	reading := ReadCoder(tick, "BTC/USD")

@@ -48,7 +48,7 @@ func TestBalance(t *testing.T) {
 			So(err, ShouldBeNil)
 			value := data.NewValue("broker", "balance", balance.Quote).Append(buf)
 
-			balance.value = value
+			balance.value.Store(value)
 		})
 	})
 }

@@ -224,14 +224,6 @@ export const mergeWorkspaceAggregate = (
 ): Value => {
 	if (!prior) return incoming;
 
-	/*
-	Same tick only: union layers when the hub fans out sparse then rich.
-	A new tick replaces the frame; UI sticky state holds the last paint.
-	*/
-	if (prior.tick !== incoming.tick) {
-		return incoming;
-	}
-
 	const byRelative = new Map<string, Uint8Array>();
 
 	for (let i = 0; i < prior.index.length; i++) {

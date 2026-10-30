@@ -175,8 +175,6 @@ github.com/theapemachine/datura v1.2.11 h1:d3bbjvCIFlRYI5uPLqvjnMGSwnYKM/w2Dm2xR
 github.com/theapemachine/datura v1.2.11/go.mod h1:EIRynIm5PAXoQTXc4sjRuAPqoPu17oZYQ8kPDz1hIO8=
 github.com/theapemachine/errnie v1.2.10 h1:k0LauZHKnhHzq5RZs5ZJXFi82ylhMTkbO+iq5bbn1Ac=
 github.com/theapemachine/errnie v1.2.10/go.mod h1:lzUJVUSJSrXRb0LmgwQtyxf6LupsXhrXTz2etTbAJlg=
-github.com/theapemachine/nomagique v0.0.10 h1:UU/bg4rlkyY8DTZ49eLRoEUmEvwxcCHiz1CqOr8hCkA=
-github.com/theapemachine/nomagique v0.0.10/go.mod h1:ZKI8Wv3CeYaJrRM5pC/q8Egj2x4Z/LSxlQMzI14/HrI=
 github.com/tinylib/msgp v1.6.5 h1:iAH6XTP7BpzErjBZlujJQXxA+GmRi2YWs6M4KdLtNbE=
 github.com/tinylib/msgp v1.6.5/go.mod h1:RSp0LW9oSxFut3KzESt5Voq4GVWyS+PSulT77roAqEA=
 github.com/tj/assert v0.0.3 h1:Df/BlaZ20mq6kuai7f5z2TvPFiwC3xaWJSDQNiIS3Rk=

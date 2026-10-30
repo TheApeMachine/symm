@@ -19,7 +19,7 @@ func TestSequencerState(t *testing.T) {
 				{Key: 6, Brightness: 0.4},
 				{Key: 0, Brightness: 0.3},
 			}
-			first := sequencer.Step(lit, false)
+			first := sequencer.Step(lit, PhaseEnter)
 			So(first.Token.String(), ShouldNotBeBlank)
 
 			saved := sequencer.State()
@@ -29,13 +29,13 @@ func TestSequencerState(t *testing.T) {
 			second := restored.Step([]*store.Region{
 				{Key: 7, Brightness: 0.5},
 				{Key: 1, Brightness: 0.2},
-			}, false)
+			}, PhaseEnter)
 			So(second.Token.String(), ShouldNotBeBlank)
 			So(len(restored.State().EnterRoot), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("empty lit emits silence", func() {
-			step := NewSequencer().Step(nil, false)
+			step := NewSequencer().Step(nil, PhaseEnter)
 			So(step.Token.String(), ShouldBeEmpty)
 			So(step.Silence, ShouldEqual, StepSilenceEmpty)
 		})
@@ -49,20 +49,31 @@ func TestSequencerState(t *testing.T) {
 				litRegion(1, 0.3),
 				litRegion(2, 0.2),
 				litRegion(4, 4),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldEqual, "R07.R00")
 		})
 
-		Convey("hold band picks brightest regime leader", func() {
+		Convey("hold phase uses R06-R08 postures", func() {
 			step := NewSequencer().Step([]*store.Region{
 				litRegion(6, 0.05),
-				litRegion(0, 5),
+				litRegion(7, 0.1),
 				litRegion(8, 0.4),
 				litRegion(9, 0.2),
 				litRegion(3, 0.1),
 				litRegion(4, 0.8),
 				litRegion(5, 0.3),
-			}, true)
+			}, PhaseHold)
+			So(step.Token.String(), ShouldEqual, "R08.R08")
+		})
+
+		Convey("exit phase uses R03-R05 postures", func() {
+			step := NewSequencer().Step([]*store.Region{
+				litRegion(8, 0.4),
+				litRegion(9, 0.2),
+				litRegion(3, 0.1),
+				litRegion(4, 0.8),
+				litRegion(5, 0.3),
+			}, PhaseExit)
 			So(step.Token.String(), ShouldEqual, "R08.R04")
 		})
 
@@ -70,7 +81,7 @@ func TestSequencerState(t *testing.T) {
 			step := NewSequencer().Step([]*store.Region{
 				litRegion(7, 0.8),
 				litRegion(0, 0),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldBeEmpty)
 			So(step.Silence, ShouldEqual, StepSilenceEmpty)
 		})
@@ -81,7 +92,7 @@ func TestSequencerState(t *testing.T) {
 				litRegion(6, 0.5),
 				litRegion(2, 0.4),
 				litRegion(0, 0.4),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldEqual, "R06.R00")
 		})
 
@@ -91,7 +102,7 @@ func TestSequencerState(t *testing.T) {
 				litRegion(1, 0.4),
 				litRegion(12, 0.2),
 				litRegion(13, 0.5),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldBeEmpty)
 			So(step.Silence, ShouldEqual, StepSilenceVeto)
 		})
@@ -101,8 +112,19 @@ func TestSequencerState(t *testing.T) {
 				litRegion(6, 0.6),
 				litRegion(1, 0.5),
 				litRegion(14, 0.5),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldEqual, "R06.R01")
+		})
+
+		Convey("opposition-led enter is not vetoed by friction oracle", func() {
+			step := NewSequencer().Step([]*store.Region{
+				litRegion(8, 0.72),
+				litRegion(2, 0.72),
+				litRegion(12, 0.003),
+				litRegion(14, 0.003),
+			}, PhaseEnter)
+			So(step.Token.String(), ShouldEqual, "R08.R02")
+			So(step.Silence, ShouldEqual, StepOK)
 		})
 
 		Convey("sequential duplicate lit is silent", func() {
@@ -111,17 +133,18 @@ func TestSequencerState(t *testing.T) {
 				litRegion(6, 0.4),
 				litRegion(0, 0.3),
 			}
-			first := sequencer.Step(lit, false)
-			second := sequencer.Step(lit, false)
+			first := sequencer.Step(lit, PhaseEnter)
+			second := sequencer.Step(lit, PhaseEnter)
 			So(first.Token.String(), ShouldEqual, "R06.R00")
-			So(second.Token.String(), ShouldBeEmpty)
+			So(second.Token.String(), ShouldEqual, "R06.R00")
 			So(second.Silence, ShouldEqual, StepSilenceDuplicate)
+			So(len(second.Spell), ShouldBeGreaterThan, 0)
 		})
 
 		Convey("emits again after leader changes", func() {
 			sequencer := NewSequencer()
-			_ = sequencer.Step([]*store.Region{litRegion(6, 0.4), litRegion(0, 0.3)}, false)
-			next := sequencer.Step([]*store.Region{litRegion(7, 0.5), litRegion(1, 0.2)}, false)
+			_ = sequencer.Step([]*store.Region{litRegion(6, 0.4), litRegion(0, 0.3)}, PhaseEnter)
+			next := sequencer.Step([]*store.Region{litRegion(7, 0.5), litRegion(1, 0.2)}, PhaseEnter)
 			So(next.Token.String(), ShouldEqual, "R07.R01")
 		})
 
@@ -140,29 +163,29 @@ func TestSequencerState(t *testing.T) {
 				litRegion(10, 0.85),
 				litRegion(0, 0.5),
 				litRegion(1, 0.2),
-			}, false)
+			}, PhaseEnter)
 			So(step.Token.String(), ShouldEqual, "R10.R00")
 		})
 
 		Convey("hold sentiment recurrence regime R11", func() {
 			step := NewSequencer().Step([]*store.Region{
 				litRegion(11, 0.7),
+				litRegion(6, 0.1),
+				litRegion(7, 0.15),
 				litRegion(8, 0.2),
-				litRegion(5, 0.6),
-				litRegion(4, 0.1),
-			}, true)
-			So(step.Token.String(), ShouldEqual, "R11.R05")
+			}, PhaseHold)
+			So(step.Token.String(), ShouldEqual, "R11.R08")
 		})
 
 		Convey("hold spell compresses oscillation via sequitur", func() {
 			sequencer := NewSequencer()
 			a := []*store.Region{litRegion(7, 0.5), litRegion(3, 0.4)}
-			b := []*store.Region{litRegion(8, 0.5), litRegion(3, 0.4)}
+			b := []*store.Region{litRegion(8, 0.5), litRegion(4, 0.4)}
 
 			var last []string
 			for range 6 {
-				last = sequencer.Step(a, true).Spell
-				last = sequencer.Step(b, true).Spell
+				last = sequencer.Step(a, PhaseExit).Spell
+				last = sequencer.Step(b, PhaseExit).Spell
 			}
 			So(len(last), ShouldBeLessThanOrEqualTo, 4)
 		})

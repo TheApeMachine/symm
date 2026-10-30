@@ -4,9 +4,16 @@ import (
 	"context"
 	"runtime"
 
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"
 	"golang.org/x/sync/errgroup"
 )
+
+// HasFrame reports whether value is non-nil and already carries ingress layers.
+func HasFrame(value *data.Value) bool {
+	return value != nil && value.HasLayers()
+}
 
 // LastTradePerSymbol keeps one print per pair (last in frame order).
 func LastTradePerSymbol(trades []kraken.TradeData) []kraken.TradeData {
@@ -36,6 +43,8 @@ func LastTradePerSymbol(trades []kraken.TradeData) []kraken.TradeData {
 
 // DistinctSymbols lists each pair once in first-seen order.
 func DistinctSymbols(trades []kraken.TradeData) []string {
+	errnie.Debug("[trades] DistinctSymbols", "trades", trades)
+
 	if len(trades) == 0 {
 		return nil
 	}
@@ -57,6 +66,8 @@ func DistinctSymbols(trades []kraken.TradeData) []string {
 
 // RunTrades runs fn concurrently over trades with WorkerLimit fan-out.
 func RunTrades(ctx context.Context, trades []kraken.TradeData, fn func(kraken.TradeData)) error {
+	errnie.Debug("[trades] RunTrades", "trades", trades)
+
 	if len(trades) == 0 {
 		return nil
 	}
@@ -84,6 +95,8 @@ func RunTrades(ctx context.Context, trades []kraken.TradeData, fn func(kraken.Tr
 
 // RunSymbols runs fn concurrently over symbols with WorkerLimit fan-out.
 func RunSymbols(ctx context.Context, symbols []string, fn func(string)) error {
+	errnie.Debug("[trades] RunSymbols", "symbols", symbols)
+
 	if len(symbols) == 0 {
 		return nil
 	}

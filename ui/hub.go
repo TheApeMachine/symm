@@ -39,6 +39,11 @@ type Hub struct {
 	queue      *lf.Queue[[]byte]
 	conn       atomic.Pointer[websocket.Conn]
 	connected  atomic.Bool
+	// connectedSince is the monotonic instant the most recent connection was
+	// established. The writer treats a connection within the grace window as
+	// active even if the `connected` flag has already been cleared, so the
+	// first ticks after a dashboard attaches are not silently dropped.
+	connectedSince atomic.Int64
 	callbacks  []func()
 	commit     atomic.Value
 	store      *store.Client
@@ -162,7 +167,9 @@ func (hub *Hub) wsHandler() fiber.Handler {
 		}
 
 		// Attached: publishers may produce again, and the replay below
-		// (Hello) flows through Write.
+		// (Hello) flows through Write. Record the attach instant so the first
+		// ticks (produced while `connected` is still settling) are delivered.
+		hub.connectedSince.Store(time.Now().UnixNano())
 		hub.connected.Store(true)
 
 		for _, callback := range hub.callbacks {
@@ -258,7 +265,7 @@ without blocking: no client, or a full client queue, drops the frame.
 p must be a fresh buffer (io.Copy(hub, value) hands over value.Bytes()).
 */
 func (hub *Hub) Write(p []byte) (n int, err error) {
-	if hub.connected.Load() {
+	if hub.active() {
 		hub.queue.Enqueue(p)
 	}
 
@@ -269,8 +276,28 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 Active reports whether a dashboard is attached. Publishers that build a frame
 per tick check it to skip the serialization entirely when nobody is listening.
 */
+/*
+active reports whether a frame should be enqueued: a live connection, or one
+established within the grace window. The window covers the sliver between a
+connection being accepted and its dashboard's first read, where a concurrently
+produced tick would otherwise be dropped and a freshly-attached dashboard would
+show no metrics until the next symbol-bearing tick.
+*/
+func (hub *Hub) active() bool {
+	if hub.connected.Load() {
+		return true
+	}
+
+	since := hub.connectedSince.Load()
+	if since == 0 {
+		return false
+	}
+
+	return time.Since(time.Unix(0, since)) < 5*time.Second
+}
+
 func (hub *Hub) Active() bool {
-	return hub.connected.Load()
+	return hub.active()
 }
 
 /*

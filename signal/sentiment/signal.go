@@ -9,6 +9,7 @@ import (
 
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
 )
@@ -110,22 +111,19 @@ type focalState struct {
 
 type Signal struct {
 	*runtime.System
-	members *sync.Map
-	focals  *sync.Map
-	keys    []string
+	members     *sync.Map
+	focals      *sync.Map
+	lastAligned *sync.Map
+	keys        []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		members: &sync.Map{},
-		focals:  &sync.Map{},
+		members:     &sync.Map{},
+		focals:      &sync.Map{},
+		lastAligned: &sync.Map{},
 		keys: []string{
-			"breadth",
-			"same_direction_peer_count",
-			"opposite_direction_peer_count",
-			"breadth_velocity",
-			"historical_path_distance",
-			"historical_path_percentile",
+			"cohort_still_aligned",
 		},
 	}
 
@@ -145,11 +143,46 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.step(value, trade)
 	}
 
+	signal.appendCohortRecurrence(value)
+
 	return value
 }
 
+/*
+appendCohortRecurrence publishes the median same-direction peer count across
+symbols as the board sentiment oracle (R11), not a single-name reading.
+*/
+func (signal *Signal) appendCohortRecurrence(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.lastAligned.Range(func(_, untyped any) bool {
+		if score, ok := untyped.(float64); ok {
+			scores = append(scores, score)
+		}
+		return true
+	})
+
+	if len(scores) == 0 {
+		return
+	}
+
+	slices.Sort(scores)
+	median := scores[len(scores)/2]
+	if len(scores)%2 == 0 {
+		median = (scores[len(scores)/2-1] + scores[len(scores)/2]) / 2
+	}
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "cohort_still_aligned")...)
+}
+
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -245,23 +278,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	advanceCount := 0.0
-	declineCount := 0.0
-	var returns []float64
-
-	for _, validReturn := range valid {
-		returns = append(returns, validReturn.ret)
-		if validReturn.ret > 0 {
-			advanceCount++
-		} else if validReturn.ret < 0 {
-			declineCount++
-		}
-	}
-
-	breadth := (advanceCount - declineCount) / validCount
-	slices.Sort(returns)
-	medRet := returns[len(returns)/2]
-
 	focalReturn := 0.0
 	for _, validReturn := range valid {
 		if validReturn.symbol == symbol {
@@ -271,33 +287,13 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	sameDirPeer := 0.0
-	oppDirPeer := 0.0
 	for _, validReturn := range valid {
 		if validReturn.symbol == symbol || validReturn.ret == 0 {
 			continue
 		}
 		if (focalReturn > 0 && validReturn.ret > 0) || (focalReturn < 0 && validReturn.ret < 0) {
 			sameDirPeer++
-		} else if (focalReturn > 0 && validReturn.ret < 0) || (focalReturn < 0 && validReturn.ret > 0) {
-			oppDirPeer++
 		}
-	}
-
-	untypedFocal, _ := signal.focals.LoadOrStore(symbol, &focalState{})
-	focal := untypedFocal.(*focalState)
-
-	_, _, _, hasBZ, bZScore := focal.breadthEstimator.Step(breadth)
-	var breadthVelocity float64
-	if focal.hasPrevBreadth {
-		breadthVelocity = breadth - focal.prevBreadth
-	}
-	focal.prevBreadth = breadth
-	focal.hasPrevBreadth = true
-
-	_, _, _, hasMZ, mZScore := focal.medianEstimator.Step(medRet)
-	var histDistance, histPercentile float64
-	if hasBZ && hasMZ {
-		histDistance, histPercentile = focal.historyPath([2]float64{bZScore, mZScore})
 	}
 
 	keys := []string{
@@ -305,14 +301,19 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	return value.Append([]float64{
-		breadth,
+	signal.lastAligned.Store(symbol, sameDirPeer)
+
+	out := value.Append([]float64{
 		sameDirPeer,
-		oppDirPeer,
-		breadthVelocity,
-		histDistance,
-		histPercentile,
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal":      signal.Name(),
+		"trade":       trade,
+		"sameDirPeer": sameDirPeer,
+	})
+
+	return out
 }
 
 func (focal *focalState) historyPath(target [2]float64) (minDist float64, percentile float64) {

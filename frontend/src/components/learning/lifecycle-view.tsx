@@ -50,15 +50,15 @@ const REGION_INFO: Record<
 	string,
 	{ name: string; tone: "up" | "down" | "acc" | "info" | "neutral" | "warn" }
 > = {
-	R00: { name: "Enter Detector", tone: "up" },
-	R01: { name: "Enter Support", tone: "up" },
-	R02: { name: "Enter Opposition", tone: "info" },
-	R03: { name: "Exit Detector", tone: "down" },
-	R04: { name: "Exit Support", tone: "down" },
-	R05: { name: "Exit Opposition", tone: "down" },
-	R06: { name: "Coiled Compression", tone: "neutral" },
-	R07: { name: "Explosive Ignition", tone: "acc" },
-	R08: { name: "Turbulent Friction", tone: "warn" },
+	R00: { name: "Coiled compression", tone: "up" },
+	R01: { name: "Structural alignment", tone: "up" },
+	R02: { name: "Starved tape", tone: "info" },
+	R03: { name: "Rejection tick", tone: "down" },
+	R04: { name: "Bid ladder release", tone: "down" },
+	R05: { name: "Bid ladder build", tone: "down" },
+	R06: { name: "Supercritical cascade", tone: "neutral" },
+	R07: { name: "Bid ladder build", tone: "acc" },
+	R08: { name: "Blowoff dip", tone: "warn" },
 	R09: { name: "Dead / Starved", tone: "neutral" },
 	R10: { name: "Macro Recurrence", tone: "up" },
 	R11: { name: "Sentiment Recurrence", tone: "info" },
@@ -1080,24 +1080,29 @@ const OutcomeCard = ({ life }: { life: Lifecycle }) => {
 };
 
 /*
-LifecycleView is the settled round-trip archive: only closed desk lots appear
-in the list. Open lots live on Open positions. Each row replays match, sizing,
-fills, exit, and outcome from the hub tape; paper exchange figures read
-"not available", never zero.
+LifecycleView lists open and closed round trips for the active book: live desk
+lots (gate, trie, stop, marks) plus settled archive rows. Paper exchange
+figures read "not available", never zero.
 */
 export const LifecycleView = () => {
 	const { report } = useLifecycles();
 	const book = useSelector(bookAtom, (state) => state);
 	const view = selectBook(report, book);
 	const [selected, setSelected] = useState<string | null>(null);
-	const lifecycles = view.lifecycles
-		.map(shownLife)
-		.filter((life) => life.status === "closed")
-		.sort((left, right) => {
-			const leftAt = left.closed_at ? Date.parse(left.closed_at) : 0;
-			const rightAt = right.closed_at ? Date.parse(right.closed_at) : 0;
-			return rightAt - leftAt;
-		});
+	const lifecycles = view.lifecycles.map(shownLife).sort((left, right) => {
+		if (left.status !== right.status) {
+			return left.status === "open" ? -1 : 1;
+		}
+		const leftAt =
+			left.status === "closed" && left.closed_at
+				? Date.parse(left.closed_at)
+				: Date.parse(left.opened_at);
+		const rightAt =
+			right.status === "closed" && right.closed_at
+				? Date.parse(right.closed_at)
+				: Date.parse(right.opened_at);
+		return rightAt - leftAt;
+	});
 	const perf = view.performance;
 	const name = book === "virtual" ? "virtual" : "paper";
 	const active =
@@ -1151,8 +1156,8 @@ export const LifecycleView = () => {
 				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r bg-(--surface)/40 max-lg:w-full">
 					{lifecycles.length === 0 ? (
 						<Typography.Mono size="s" tone="f3" className="p-3">
-							No closed positions yet. History loads from S3 when the hub is
-							connected.
+							No positions yet for this book. Open lots sync from the desk;
+							closed history loads from S3 when the hub is connected.
 						</Typography.Mono>
 					) : (
 						lifecycles.map((life) => {

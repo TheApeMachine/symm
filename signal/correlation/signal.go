@@ -11,27 +11,19 @@ import (
 	nmcorrelation "github.com/theapemachine/nomagique/correlation"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
 )
 
-// A price path is one reprice per bar. The correlation pipeline holds a
-// bounded path per symbol and computes the asynchronous (Hayashi) correlation
-// between the focal symbol and each peer, reducing the cohort to one robust
-// covariance score.
 const (
-	maxCorrSamples = 64
-	maxCorrPeers   = 16
-
-	// maxInterval guards against a single pathological gap dominating the
-	// Hayashi realized variance. It is set to the median reprice spacing in
-	// practice; here it is left unbounded so the path itself is the interval.
-	maxInterval = 0
+	maxCorrSamples  = 64
+	minBoardSamples = 3
+	maxBoardSymbols = 32
+	maxBoardPairs   = 256
+	maxInterval     = 0
 )
 
-/*
-path is one symbol's retained reprice history.
-*/
 type path struct {
 	samples []nmcorrelation.Sample
 }
@@ -46,7 +38,7 @@ func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		paths: &sync.Map{},
 		keys: []string{
-			"cohort_covariance_score",
+			"structural_alignment",
 		},
 	}
 
@@ -55,32 +47,49 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 /*
-Step processes one trade per distinct symbol in the tick. The correlation
-pipeline retains cross-symbol peer state, so symbol steps run sequentially;
-deduping by symbol avoids redundant pair work when many prints hit the same
-symbol in one frame.
+Step retains reprices for every symbol, then publishes one board-wide
+structural_alignment reading on correlation/aggregate/….
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	var trades []kraken.TradeData
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+		return value
+	}
 
+	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
 	for _, trade := range parent.LastTradePerSymbol(trades) {
-		signal.step(value, trade)
+		signal.ingest(trade, value)
+		score, ok := signal.boardAlignment()
+
+		if ok {
+			value.Append([]float64{score}, append([]string{
+				signal.Name(),
+				trade.Symbol,
+			}, "structural_alignment")...)
+
+			value.Append([]float64{score}, append([]string{
+				signal.Name(),
+				"aggregate",
+			}, "structural_alignment")...)
+		}
+
+		audit.Record.Write(map[string]any{
+			"signal":   signal.Name(),
+			"trade":    trade,
+			"score":    score,
+			"ok":       ok,
+			"eligible": len(signal.eligibleSymbols()),
+		})
 	}
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
-		return value
-	}
-
+func (signal *Signal) ingest(trade kraken.TradeData, value *data.Value) {
 	price := trade.Price.Float64()
-
 	if price <= 0 {
-		return value
+		return
 	}
 
 	at := time.Unix(0, int64(value.Timestamp))
@@ -88,77 +97,59 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	untyped, _ := signal.paths.LoadOrStore(symbol, &path{})
 	focal := untyped.(*path)
-
 	focal.append(at, price)
-
-	// Collect the peer paths that have enough history to score.
-	peers := make([]string, 0)
-	signal.paths.Range(func(peerSymbol, peer any) bool {
-		p := peer.(*path)
-		if peerSymbol != symbol && len(p.samples) >= 2 && len(focal.samples) >= 2 {
-			peers = append(peers, peerSymbol.(string))
-		}
-		return true
-	})
-
-	if len(peers) > maxCorrPeers {
-		peers = peers[:maxCorrPeers]
-	}
-
-	score, defined := signal.cohortScore(focal, peers)
-
-	keys := []string{
-		signal.Name(),
-		trade.Symbol,
-	}
-
-	// The signal carries no layer when there is no evidence yet; a zero that
-	// reads as a measured value is worse than an absent metric.
-	if defined {
-		value.Append([]float64{score}, append(keys, signal.keys[0])...)
-	}
-
-	return value
 }
 
 /*
-cohortScore computes the median absolute asynchronous correlation between the
-focal path and each peer path, the same reduction the vendored pipeline's
-pairwise stage performed. Returns (score, defined).
+boardAlignment is the median absolute Hayashi correlation over eligible
+symbol pairs: high means many paths are moving on the same current now.
 */
-func (signal *Signal) cohortScore(focal *path, peers []string) (float64, bool) {
-	if len(focal.samples) < 2 || len(peers) == 0 {
+func (signal *Signal) boardAlignment() (float64, bool) {
+	eligible := signal.eligibleSymbols()
+	if len(eligible) < 2 {
 		return 0, false
 	}
 
-	correlations := make([]float64, 0, len(peers))
+	correlations := make([]float64, 0, maxBoardPairs)
+	pairs := 0
 
-	for _, peerSymbol := range peers {
-		untyped, _ := signal.paths.Load(peerSymbol)
-		peer := untyped.(*path)
-
-		if len(peer.samples) < 2 {
+	for i := 0; i < len(eligible); i++ {
+		leftSym := eligible[i]
+		left := signal.pathFor(leftSym)
+		if left == nil {
 			continue
 		}
 
-		// The focal path is the anchor: the Hayashi correlation is symmetric
-		// in its intervals, so the left/right assignment is a convention.
-		corr, ok := algorithm.HayashiPairCorrelation(
-			focal.samples, peer.samples, maxInterval,
-		)
+		for j := i + 1; j < len(eligible); j++ {
+			if pairs >= maxBoardPairs {
+				break
+			}
 
-		if !ok || math.IsNaN(corr) {
-			continue
+			right := signal.pathFor(eligible[j])
+			if right == nil {
+				continue
+			}
+
+			corr, ok := algorithm.HayashiPairCorrelation(
+				left.samples, right.samples, maxInterval,
+			)
+			if !ok || math.IsNaN(corr) {
+				continue
+			}
+
+			correlations = append(correlations, math.Abs(corr))
+			pairs++
 		}
 
-		correlations = append(correlations, math.Abs(corr))
+		if pairs >= maxBoardPairs {
+			break
+		}
 	}
 
 	if len(correlations) == 0 {
 		return 0, false
 	}
 
-	// Median is the robust cohort score: a single spurious peer cannot move it.
 	sorted := append([]float64(nil), correlations...)
 	slices.Sort(sorted)
 	middle := len(sorted) / 2
@@ -168,6 +159,34 @@ func (signal *Signal) cohortScore(focal *path, peers []string) (float64, bool) {
 	}
 
 	return (sorted[middle-1] + sorted[middle]) / 2, true
+}
+
+func (signal *Signal) eligibleSymbols() []string {
+	var symbols []string
+
+	signal.paths.Range(func(symbol, untyped any) bool {
+		p := untyped.(*path)
+		if len(p.samples) >= minBoardSamples {
+			symbols = append(symbols, symbol.(string))
+		}
+		return true
+	})
+
+	slices.Sort(symbols)
+
+	if len(symbols) > maxBoardSymbols {
+		symbols = symbols[:maxBoardSymbols]
+	}
+
+	return symbols
+}
+
+func (signal *Signal) pathFor(symbol string) *path {
+	untyped, ok := signal.paths.Load(symbol)
+	if !ok {
+		return nil
+	}
+	return untyped.(*path)
 }
 
 func (p *path) append(at time.Time, value float64) {

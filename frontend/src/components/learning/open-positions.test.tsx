@@ -123,6 +123,14 @@ describe("OpenPositions", () => {
 		expect(view.queryByText("ETH/USD")).toBeNull();
 	});
 
+	it("renders a lot whose grammar feed is keyed by symbol", () => {
+		ingest(lot({ symbol: "ASTER/USD", virtual: true }));
+		bookAtom.set("virtual");
+		const view = render(<OpenPositions />);
+		expect(view.getAllByText("ASTER/USD").length).toBeGreaterThan(0);
+		expect(view.getByText("Live cognition")).toBeTruthy();
+	});
+
 	it("keeps a virtual lot off the paper book", () => {
 		ingest(
 			lot({ symbol: "BTC/USD" }),

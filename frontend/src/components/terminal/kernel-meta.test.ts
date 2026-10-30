@@ -7,12 +7,11 @@ import {
 } from "./kernel-meta";
 
 describe("sourceHeadline", () => {
-	it("names the metric each signal kernel leads with", () => {
-		expect(sourceHeadline("depthflow")).toBe("book_imbalance");
-		expect(sourceHeadline("hawkes")).toBe("branching_spectral_radius");
-		expect(sourceHeadline("correlation")).toBe("cohort_covariance_score");
-		expect(sourceHeadline("cvd")).toBe("signed_net_fraction");
-		expect(sourceHeadline("toxicity")).toBe("retreat_fraction:bid");
+	it("names the metric each live signal kernel leads with", () => {
+		expect(sourceHeadline("depthflow")).toBe("bid_ladder_build");
+		expect(sourceHeadline("hawkes")).toBe("supercritical_cascade");
+		expect(sourceHeadline("correlation")).toBe("structural_alignment");
+		expect(sourceHeadline("sentiment")).toBe("cohort_still_aligned");
 	});
 
 	it("returns null for sources with no named headline", () => {
@@ -22,53 +21,42 @@ describe("sourceHeadline", () => {
 });
 
 describe("sourceHeadlineMetric", () => {
-	it("uses the dimensionless branching ratio as Hawkes' headline", () => {
+	it("uses supercritical cascade as Hawkes' headline", () => {
 		expect(sourceHeadlineMetric("hawkes")).toBe(
-			"metrics.branching_spectral_radius",
+			"metrics.supercritical_cascade",
 		);
 	});
 
-	it("uses a metric the live depthflow measurement publishes", () => {
-		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.book_imbalance");
-		expect(sourceMetrics("depthflow")).toContain("book_imbalance");
-		expect(sourceMetrics("depthflow")).toContain("touch_notional:bid");
+	it("uses metrics the live depthflow kernel publishes", () => {
+		expect(sourceHeadlineMetric("depthflow")).toBe(
+			"metrics.bid_ladder_build",
+		);
+		expect(sourceMetrics("depthflow")).toContain("bid_ladder_build");
+		expect(sourceMetrics("depthflow")).toContain("bid_ladder_release");
 		expect(sourceMetrics("depthflow")).not.toContain("snr");
 	});
 
-	it("uses the live correlation hypothesis as its headline", () => {
+	it("uses board structural alignment as the correlation headline", () => {
 		expect(sourceHeadlineMetric("correlation")).toBe(
-			"metrics.cohort_covariance_score",
+			"metrics.structural_alignment",
 		);
-		expect(sourceMetrics("correlation")).toContain("cohort_covariance_score");
+		expect(sourceMetrics("correlation")).toContain("structural_alignment");
 		expect(sourceMetrics("correlation")).not.toContain("snr");
 	});
 
-	it("uses the anchor evidence names emitted by leadlag", () => {
-		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.led_peer_share");
-		expect(sourceMetrics("leadlag")).toContain("led_peer_share");
-		expect(sourceMetrics("leadlag")).toContain("best_lag_seconds_median");
-		expect(sourceMetrics("leadlag")).not.toContain("snr");
+	it("shows PumpDump's enter detector on the slate", () => {
+		expect(sourceHeadline("pumpdump")).toBe("coiled_compression");
+		expect(sourceMetrics("pumpdump")).toContain("coiled_compression");
+		expect(sourceMetrics("pumpdump")).toContain("rejection_tick");
+		expect(sourceMetrics("pumpdump")).toContain("board_starvation");
 	});
 
-	it("shows PumpDump's measured spread contract", () => {
-		expect(sourceHeadline("pumpdump")).toBe("volume_ratio");
-		expect(sourceMetrics("pumpdump")).toContain("spread_ratio");
-		expect(sourceMetrics("pumpdump")).toContain("volume_ratio");
-		expect(sourceMetrics("pumpdump")).toContain("volume_rate");
-	});
-
-	it("uses toxicity's emitted retreat fraction rather than an absent summary", () => {
-		expect(sourceHeadlineMetric("toxicity")).toBe(
-			"metrics.retreat_fraction:bid",
+	it("rejects dormant or unsupported sources", () => {
+		expect(() => sourceHeadlineMetric("toxicity")).toThrow(
+			"unsupported measurement source: toxicity",
 		);
-	});
-
-	it("rejects unsupported sources instead of inventing a metric fallback", () => {
-		expect(() => sourceHeadlineMetric("unknown")).toThrow(
-			"unsupported measurement source: unknown",
-		);
-		expect(() => sourceMetrics("unknown")).toThrow(
-			"unsupported measurement source: unknown",
+		expect(() => sourceMetrics("cvd")).toThrow(
+			"unsupported measurement source: cvd",
 		);
 	});
 });
@@ -78,8 +66,6 @@ describe("kernelSparkPaths", () => {
 		const before = kernelSparkPaths([0.2, 0.8]).spark;
 		const after = kernelSparkPaths([0.2, 0.8, 5]).spark;
 
-		// The leftmost (oldest) point keeps its exact coordinate: a new extreme
-		// clamps to the rail instead of renormalizing the whole window.
 		expect(after.split(" ")[0]).toBe(before.split(" ")[0]);
 		expect(before).toBe("0.0,23.8 150.0,8.2");
 		expect(after).toBe("0.0,23.8 75.0,8.2 150.0,3.0");

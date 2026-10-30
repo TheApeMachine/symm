@@ -242,6 +242,34 @@ func (book *Book) Stale(symbols []string) {
 	))
 }
 
+/*
+StaleSymbol reports whether a symbol's book is stale, invalid, pending, or absent.
+*/
+func (book *Book) StaleSymbol(symbol string) bool {
+	if book == nil || symbol == "" {
+		return true
+	}
+
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	if pendingPtr := book.pending.Load(); pendingPtr != nil {
+		if _, pending := (*pendingPtr)[symbol]; pending {
+			return true
+		}
+	}
+
+	if _, stale := book.stale.Load(symbol); stale {
+		return true
+	}
+
+	if _, invalid := book.invalid.Load(symbol); invalid {
+		return true
+	}
+
+	return book.manager.GetBook(symbol) == nil
+}
+
 func (book *Book) SetNotify(notify func(string, time.Time)) {
 	book.notify.Store(&notify)
 }

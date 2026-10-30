@@ -5,7 +5,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/nomagique/runtime"
 	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
@@ -90,18 +92,25 @@ func (stage *Stage) ResetSequencer(symbol string) {
 	loaded.(*tokenizer.Sequencer).Reset()
 }
 
+func (stage *Stage) isBookStale(symbol string) bool {
+	if stage == nil || stage.desk == nil {
+		return false
+	}
+	return stage.desk.BookStale(symbol)
+}
+
 func (stage *Stage) Step(tick *data.Value) *data.Value {
 	if stage == nil || tick == nil {
 		return tick
 	}
 
-	bySymbol := SignalSourcesBySymbol(tick)
+	bySymbol := SignalSourcesBySymbol(tick, stage.isBookStale)
 
 	if len(bySymbol) == 0 {
 		return tick
 	}
 
-	group, ctx := errgroup.WithContext(stage.Context())
+	group, _ := errgroup.WithContext(stage.Context())
 
 	for symbol, sources := range bySymbol {
 		group.Go(func() error {
@@ -109,7 +118,10 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 				symbol, sources, stage.desk.Has(symbol, true),
 			)
 
+			errnie.Debug("[stage.Step] Observed regions", "symbol", symbol, "observed_len", len(observed), "err", err)
+
 			if err != nil {
+				errnie.Warn("[stage.Step] grid.Observe failed", "symbol", symbol, "err", err)
 				return stage.Error(err)
 			}
 
@@ -124,13 +136,42 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 			holding := holdingPaper || holdingVirtual
 
 			sequencer := stage.Sequencer(symbol)
-			step := sequencer.Step(observed, holding)
+			phase := tokenizer.PhaseEnter
+			if holding {
+				phase = tokenizer.PhaseHold
+			}
+
+			step := sequencer.Step(observed, phase)
+			audit.Record.Write(map[string]any{
+				"stage":    "sequencer",
+				"symbol":   symbol,
+				"phase":    phaseName(phase),
+				"token":    step.Token.String(),
+				"silence":  string(step.Silence),
+				"spell":    len(step.Spell),
+				"regions":  litKeys(observed),
+			})
 
 			tick.Append(step, "stage", symbol, "step")
 			tick.Append(step.Token, "stage", symbol, "cut")
+			tick.Append(string(phaseName(phase)), "stage", symbol, "phase")
+
+			if holding {
+				exitStep := sequencer.Step(observed, tokenizer.PhaseExit)
+				tick.Append(exitStep, "stage", symbol, "exitStep")
+				tick.Append(exitStep.Token, "stage", symbol, "exitCut")
+			}
 
 			if len(step.Spell) > 0 && stage.client != nil {
-				sequencer.Persist(ctx, stage.client, symbol)
+				state := sequencer.State()
+				client := stage.client
+				go func() {
+					saved := data.NewValue("model", "grammar", symbol)
+					saved.Append(state, "state")
+					if _, err := client.WriteAtPrefix(tokenizer.GrammarObjectKey(symbol), saved.Bytes()); err != nil {
+						errnie.Error(errnie.Err(errnie.IO, "[sequencer] persist "+symbol, err))
+					}
+				}()
 			}
 
 			return nil
@@ -142,4 +183,26 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 	}
 
 	return tick
+}
+
+func litKeys(regions []*nmstore.Region) []int {
+	keys := make([]int, 0, len(regions))
+	for _, region := range regions {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+		keys = append(keys, int(region.Key))
+	}
+	return keys
+}
+
+func phaseName(phase tokenizer.Phase) string {
+	switch phase {
+	case tokenizer.PhaseHold:
+		return "hold"
+	case tokenizer.PhaseExit:
+		return "exit"
+	default:
+		return "enter"
+	}
 }

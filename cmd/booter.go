@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	sysruntime "runtime"
 	"strings"
 	"sync"
@@ -21,15 +22,11 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/signal/correlation"
-	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/hawkes"
-	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
-	"github.com/theapemachine/symm/signal/morphology"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
-	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -83,6 +80,7 @@ type Booter struct {
 	signals          []nmruntime.Node
 	training         *strategy.Training
 	workspace        *nmruntime.Workspace
+	store            *store.Client
 	replies          sync.Map
 }
 
@@ -114,6 +112,7 @@ func NewBooter(ctx context.Context, name string) *Booter {
 
 	return &Booter{
 		System: nmruntime.NewSystem(ctx, name, nil),
+		store:  store.NewClient(ctx, "symm"),
 	}
 }
 
@@ -245,15 +244,11 @@ func (booter *Booter) initPipeline() error {
 
 	booter.signals = []nmruntime.Node{
 		correlation.NewSignal(ctx),
-		cvd.NewSignal(ctx, booter.book),
 		depthflow.NewSignal(ctx, booter.book),
 		hawkes.NewSignal(ctx),
-		leadlag.NewSignal(ctx),
 		liquidity.NewSignal(ctx, booter.book),
-		morphology.NewSignal(ctx, booter.book),
 		pumpdump.NewSignal(ctx, booter.book),
 		sentiment.NewSignal(ctx),
-		toxicity.NewSignal(ctx, booter.book),
 	}
 
 	for _, node := range booter.signals {
@@ -302,7 +297,6 @@ func (booter *Booter) initPipeline() error {
 			{Group: "strategy", Nodes: strategyNodes},
 		},
 	)
-
 	for _, signal := range booter.signals {
 		signal.Transition(nmruntime.READY)
 	}
@@ -535,7 +529,15 @@ func (booter *Booter) startIngress(
 				value := data.NewValue("workspace", "tick", "aggregate")
 				value.Append(trade.Data, "spot:trade", msgType)
 
-				booter.workspace.Step(value)
+				// Step blocks until signals, the sequencer, and the model
+				// have written this tick. The frame copied below is that result.
+				out := booter.workspace.Step(value)
+				io.Copy(ui.UI, out)
+				if booter.store != nil {
+					snapshot := out.Bytes()
+					prefix := out.Prefix
+					go booter.store.WriteAtPrefix(prefix, snapshot)
+				}
 			case "heartbeat", "status":
 			default:
 				// Request acknowledgements (subscribe, unsubscribe, ...). A

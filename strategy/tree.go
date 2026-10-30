@@ -19,6 +19,7 @@ type Action string
 const (
 	ActionNone  Action = "none"
 	ActionEnter Action = "enter"
+	ActionHold  Action = "hold"
 	ActionExit  Action = "exit"
 )
 
@@ -26,6 +27,8 @@ func NewAction(action string) Action {
 	switch action {
 	case "enter":
 		return ActionEnter
+	case "hold":
+		return ActionHold
 	case "exit":
 		return ActionExit
 	default:
@@ -167,9 +170,21 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 Predict evaluates the live pin brightness and predictive coder against the
 recency-weighted resistance of the matching paths.
 */
-func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision {
-	if tokens == nil || tokens.Len() == 0 {
-		return Decision{Action: ActionNone}
+func (tree *Tree) Predict(tokens tokenizer.Tokens, coder CoderReading) Decision {
+	return tree.PredictDefault(tokens, coder, ActionEnter)
+}
+
+/*
+PredictDefault walks the path trie; when nothing matches it returns defaultAction
+(virtual explore enter, hold, or exit depending on lifecycle phase).
+*/
+func (tree *Tree) PredictDefault(
+	tokens tokenizer.Tokens,
+	coder CoderReading,
+	defaultAction Action,
+) Decision {
+	if tokens.Len() == 0 {
+		return Decision{Action: defaultAction, Virtual: true, Resistance: 1.0}
 	}
 
 	prefix := tokens.String()
@@ -202,7 +217,7 @@ func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision
 
 	if matchCount == 0 || action == ActionNone {
 		return Decision{
-			Action:     ActionEnter,
+			Action:     defaultAction,
 			Virtual:    true,
 			Impulse:    0.0,
 			Resistance: 1.0,
@@ -214,11 +229,12 @@ func (tree *Tree) Predict(tokens *tokenizer.Tokens, coder CoderReading) Decision
 	brightness := tokens.Brightness()
 	impulse := 0.0
 
-	if action == ActionEnter {
+	switch action {
+	case ActionEnter:
 		if coder.Bullish {
 			impulse = brightness * (1.0 + coder.Confidence)
 		}
-	} else {
+	case ActionHold, ActionExit:
 		impulse = brightness
 	}
 

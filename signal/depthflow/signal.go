@@ -8,6 +8,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
@@ -35,12 +36,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"book_imbalance",
-			"touch_notional:bid",
-			"touch_notional:ask",
-			"touch_imbalance",
-			"net_displayed_flow:bid",
-			"mutation_activity_imbalance",
+			"bid_ladder_build",
+			"bid_ladder_release",
 		},
 	}
 
@@ -68,7 +65,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -94,9 +91,6 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		fullBid := len(b.Bids.Levels) >= b.MaxDepth
 		fullAsk := len(b.Asks.Levels) >= b.MaxDepth
 
-		touchBid := bids[0][0] * bids[0][1]
-		touchAsk := asks[0][0] * asks[0][1]
-
 		obsBid := 0.0
 		currentBids := make(map[float64]float64, len(bids))
 		for _, bid := range bids {
@@ -113,18 +107,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			currentAsks[ask[0]] = notional
 		}
 
-		total := obsBid + obsAsk
-		var bookImb float64
-		if total > 0 {
-			bookImb = (obsBid - obsAsk) / total
-		}
-
-		var touchImb float64
-		if touchTotal := touchBid + touchAsk; touchTotal > 0 {
-			touchImb = (touchBid - touchAsk) / touchTotal
-		}
-
-		var netBid, activityImb float64
+		var netBid float64
 		if state.hasPrev {
 			bidWorst := bids[len(bids)-1][0]
 			askWorst := asks[len(asks)-1][0]
@@ -139,13 +122,8 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			)
 
 			netBid = addedBid - removedBid
-			bidActivity := addedBid + removedBid
-			askActivity := addedAsk + removedAsk
-			bookActivity := bidActivity + askActivity
-
-			if bookActivity > 0 {
-				activityImb = (bidActivity - askActivity) / bookActivity
-			}
+			_ = addedAsk
+			_ = removedAsk
 		}
 
 		state.prevBids = currentBids
@@ -161,14 +139,29 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			symbol,
 		}
 
+		build := netBid
+
+		if build < 0 {
+			build = 0
+		}
+
+		release := -netBid
+
+		if release < 0 {
+			release = 0
+		}
+
 		value.Append([]float64{
-			bookImb,
-			touchBid,
-			touchAsk,
-			touchImb,
-			netBid,
-			activityImb,
+			build,
+			release,
 		}, append(keys, signal.keys...)...)
+
+		audit.Record.Write(map[string]any{
+			"signal":  signal.Name(),
+			"symbol":  symbol,
+			"build":   build,
+			"release": release,
+		})
 	})
 
 	return value

@@ -882,7 +882,9 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 												lit ? "text-(--acc)" : "text-(--f4)",
 											)}
 										>
-											{strength.toFixed(2)}
+											{strength > 0 && strength < 0.01
+												? strength.toFixed(4)
+												: strength.toFixed(2)}
 											{members != null && members > 0 ? (
 												<span className="text-[9px] font-normal text-(--f4) ml-1">
 													{members}m

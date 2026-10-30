@@ -6,8 +6,10 @@ import (
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
@@ -34,8 +36,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"retreat_fraction:bid",
-			"net_withdrawal_rate:bid",
+			"spoof_pressure",
+			"floor_evaporation",
 		},
 	}
 
@@ -61,7 +63,9 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	errnie.Debug("[toxicity] step", "trade", trade)
+
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -149,6 +153,13 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		retreatFraction,
 		withdrawalRate,
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal":          signal.Name(),
+		"trade":           trade,
+		"retreatFraction": retreatFraction,
+		"withdrawalRate":  withdrawalRate,
+	})
 
 	return value
 }

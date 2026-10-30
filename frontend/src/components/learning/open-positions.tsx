@@ -13,9 +13,14 @@ import {
 	positionReadout,
 } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
+import {
+	CHOICE_SAMPLE_MS,
+	CHOICE_TRAIL_LENGTH,
+} from "#/components/learning/open-choice-trail";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
 import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
 import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
+import { PositionLiveIntel } from "#/components/learning/position-live-intel";
 import {
 	BadgeButton,
 	Flex,
@@ -35,7 +40,6 @@ that moved, and the book keeps every lot that tick did not mention.
 
 const trails = new Map<string, number[]>();
 const trailAt = new Map<string, number>();
-const TRAIL_SAMPLE_MS = 250;
 
 /* Match default Gauge SVG height so the P&L trail aligns with the dials. */
 const GAUGE_SIZE = 96;
@@ -159,19 +163,19 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 			const now = Date.now();
 			const last = trailAt.get(lotId) ?? 0;
 			const changed = prior.length === 0 || prior[prior.length - 1] !== pnlPct;
-			if (!changed && now - last < TRAIL_SAMPLE_MS) {
+			if (!changed && now - last < CHOICE_SAMPLE_MS) {
 				setPnlTrail(prior);
 				return;
 			}
 
-			const next = [...prior, pnlPct].slice(-90);
+			const next = [...prior, pnlPct].slice(-CHOICE_TRAIL_LENGTH);
 			trails.set(lotId, next);
 			trailAt.set(lotId, now);
 			setPnlTrail(next);
 		};
 
 		sample();
-		const timer = window.setInterval(sample, TRAIL_SAMPLE_MS);
+		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
 		return () => window.clearInterval(timer);
 	}, [lotId, pnlPct]);
 	const selling = !positionReadout(row).closed && qty === 0;
@@ -270,6 +274,7 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 			<Flex.Column gap={1} className="border-t border-(--line) pt-3">
 				<StopProximityPanel row={row} />
 				<ExitPolicyPanel row={row} />
+				<PositionLiveIntel symbol={String(row.symbol)} row={row} />
 			</Flex.Column>
 
 			{/*

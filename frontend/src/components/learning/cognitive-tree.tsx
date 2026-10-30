@@ -81,7 +81,7 @@ export const CognitiveTree = () => {
 					<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 					<span className="text-sm">
 						{epoch !== "0"
-							? `no ${book} paths yet (${prefix}/…/enter.bin or exit.bin)`
+							? `no ${book} paths yet (${prefix}/…/enter.bin, hold.bin, or exit.bin)`
 							: `waiting for ${prefix}`}
 					</span>
 				</div>

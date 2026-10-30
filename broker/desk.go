@@ -300,8 +300,8 @@ func (desk *Desk) Hello() {
 		), "positions",
 	))
 
-	if desk.balance.value != nil {
-		io.Copy(ui.UI, desk.balance.value)
+	if frame := desk.balance.Frame(); frame != nil {
+		io.Copy(ui.UI, frame)
 	}
 }
 
@@ -339,8 +339,8 @@ func (desk *Desk) ClosedVirtuals() []*Position {
 }
 
 /*
-Takepending returns a virtual lot closed on a mark exit since the last
-take. Evaluate consumes it for path threshold updates.
+Takepending returns a lot closed on a mark exit since the last take.
+Evaluate consumes it for path threshold updates (virtual or paper).
 */
 func (desk *Desk) Takepending(symbol string) (*Position, bool) {
 	if desk == nil || symbol == "" {
@@ -446,6 +446,8 @@ whose book mark actually moved are also updated so exits see a live mark.
 Unchanged, non-traded lots are skipped to prevent false momentum stalls.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
+	errnie.Debug("[desk] Update", "trades", trades)
+
 	if len(trades) == 0 {
 		return
 	}
@@ -471,13 +473,11 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 			}
 
 			_, isTraded := traded[position.Symbol]
-			markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
-			watchProfit := position.stopLoss.ProfitLocked(position) || position.PnL.Sign() > 0
 
 			// Skip idle lots. A green lot is still repriced when the touch
 			// price is unchanged: ExitRoom is size, and a size pull is an
 			// exit input. Identical replays are not this symbol's tape.
-			if !isTraded && markUnchanged && !watchProfit {
+			if !position.ShouldReprice(mark, isTraded) {
 				continue
 			}
 
@@ -519,9 +519,13 @@ func lotUpdates(lots []*Position) []*data.Value {
 			}
 		}
 
-		frames = append(frames, data.NewValue("positions", "update", scope).Append(
+		position.mu.Lock()
+		frame := data.NewValue("positions", "update", scope).Append(
 			position, "position",
-		))
+		)
+		position.mu.Unlock()
+
+		frames = append(frames, frame)
 	}
 
 	return frames
@@ -546,6 +550,17 @@ func (desk *Desk) CanSize(symbol string) bool {
 
 	qty, _ := desk.price.Allocate(symbol)
 	return qty != nil && qty.Sign() > 0
+}
+
+/*
+BookStale reports whether a symbol's book is stale or absent in the price book manager.
+*/
+func (desk *Desk) BookStale(symbol string) bool {
+	if desk == nil || desk.price == nil || desk.price.Books == nil {
+		return false
+	}
+
+	return desk.price.Books.StaleSymbol(symbol)
 }
 
 /*
@@ -1016,6 +1031,7 @@ func (desk *Desk) Enter(
 			msg += ": " + why
 		}
 
+		errnie.Warn(msg)
 		return errnie.Err(errnie.NotFound, msg, nil)
 	}
 
@@ -1106,10 +1122,10 @@ func (desk *Desk) releaseLocked(position *Position) error {
 	if cache.Has(position.Symbol) {
 		if position.Virtual {
 			desk.virtuals.Remove(position.Symbol)
-			desk.pending.Store(position.Symbol, position)
 		} else {
 			desk.positions.Remove(position.Symbol)
 		}
+		desk.pending.Store(position.Symbol, position)
 	}
 
 	// The round trip is over. Its trace is now an episode, and this symbol's

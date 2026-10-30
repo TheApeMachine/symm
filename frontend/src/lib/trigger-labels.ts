@@ -44,8 +44,18 @@ formatExitTrigger turns a raw trigger string into a short label. Unknown
 strings fall back to the text with underscores spaced, so a renamed trigger
 never vanishes — it reads a little worse but stays present.
 */
-export const formatExitTrigger = (trigger: string): string =>
-	EXIT_TRIGGER_LABEL[trigger] ?? trigger.replaceAll("_", " ");
+export const formatExitTrigger = (trigger: string): string => {
+	if (EXIT_TRIGGER_LABEL[trigger]) {
+		return EXIT_TRIGGER_LABEL[trigger];
+	}
+	const lower = trigger.toLowerCase();
+	for (const [key, label] of Object.entries(EXIT_TRIGGER_LABEL)) {
+		if (lower.startsWith(key)) {
+			return label;
+		}
+	}
+	return trigger.replaceAll("_", " ");
+};
 
 /*
 triggerTone paints a trigger by what it means, so a row of exits is

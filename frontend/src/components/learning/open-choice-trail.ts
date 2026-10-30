@@ -14,8 +14,10 @@ export const choiceWindow = (now: number, windowMs = CHOICE_WINDOW_MS) => ({
 });
 
 /*
-samplesInWindow keeps the point just before `from` so the segment still
-crosses the left edge, then every sample inside the window.
+samplesInWindow holds the last return into the left edge, then keeps every
+sample inside the window. The held point uses `from` as its time. Keeping
+the older timestamp draws a ramp across the minute for a change that
+happened at one instant, and that ramp slides as the window moves.
 */
 export const samplesInWindow = (
 	samples: ChoiceSample[],
@@ -31,38 +33,89 @@ export const samplesInWindow = (
 		}
 	}
 
-	if (firstInside === samples.length) return samples.slice(-1);
-	return samples.slice(firstInside === 0 ? 0 : firstInside - 1);
+	if (firstInside === samples.length) {
+		const last = samples[samples.length - 1];
+		return [{ t: from, pnl: last.pnl }];
+	}
+
+	if (firstInside === 0) return samples;
+
+	const held = samples[firstInside - 1];
+	return [{ t: from, pnl: held.pnl }, ...samples.slice(firstInside)];
+};
+
+/*
+stepPath holds the previous return until the sample time, then jumps.
+Close-now return is constant between the samples we kept.
+*/
+export const stepPath = (
+	samples: ChoiceSample[],
+	xOf: (t: number) => number,
+	yOf: (pnl: number) => number,
+) => {
+	if (samples.length === 0) return "";
+
+	const x = (t: number) => xOf(t).toFixed(1);
+	const y = (pnl: number) => yOf(pnl).toFixed(1);
+	let path = `M${x(samples[0].t)},${y(samples[0].pnl)}`;
+
+	for (let i = 1; i < samples.length; i++) {
+		path += ` L${x(samples[i].t)},${y(samples[i - 1].pnl)}`;
+		path += ` L${x(samples[i].t)},${y(samples[i].pnl)}`;
+	}
+
+	return path;
 };
 
 const trails = new Map<string, ChoiceSample[]>();
-const MAX_SAMPLES = 180;
+const sampleAt = new Map<string, number>();
 
-export const noteOpenChoice = (id: string, pnl: number, now = Date.now()) => {
-	if (!Number.isFinite(pnl)) return;
+/** Same cadence and length as the per-lot P&L trail on position cards. */
+export const CHOICE_SAMPLE_MS = 250;
+export const CHOICE_TRAIL_LENGTH = 90;
+
+export const noteOpenChoice = (
+	id: string,
+	pnl: number,
+	now = Date.now(),
+): boolean => {
+	if (!Number.isFinite(pnl)) return false;
 
 	const prior = trails.get(id) ?? [];
 	const last = prior[prior.length - 1];
-	if (last && last.pnl === pnl) return;
+	const lastAt = sampleAt.get(id) ?? 0;
+	const changed = !last || last.pnl !== pnl;
+	if (!changed && now - lastAt < CHOICE_SAMPLE_MS) return false;
 
 	const next = [...prior, { t: now, pnl }];
 	trails.set(
 		id,
-		next.length > MAX_SAMPLES ? next.slice(next.length - MAX_SAMPLES) : next,
+		next.length > CHOICE_TRAIL_LENGTH
+			? next.slice(next.length - CHOICE_TRAIL_LENGTH)
+			: next,
 	);
+	sampleAt.set(id, now);
+	return true;
 };
 
 export const openChoiceTrail = (id: string): ChoiceSample[] =>
 	trails.get(id) ?? [];
 
-export const dropOpenChoices = (live: Set<string>) => {
+export const dropOpenChoices = (live: Set<string>): boolean => {
+	let dropped = false;
 	for (const id of trails.keys()) {
-		if (!live.has(id)) trails.delete(id);
+		if (!live.has(id)) {
+			trails.delete(id);
+			sampleAt.delete(id);
+			dropped = true;
+		}
 	}
+	return dropped;
 };
 
 export const resetOpenChoices = () => {
 	trails.clear();
+	sampleAt.clear();
 };
 
 export const extendToNow = (
@@ -115,4 +168,43 @@ export const meanPath = (
 	}
 
 	return out;
+};
+
+/*
+linePath joins samples in order, the same way the position-card Trail does.
+Index 0 is the oldest kept sample and the last index is now.
+*/
+export const linePath = (
+	points: { x: number; y: number }[],
+): string =>
+	points
+		.map(
+			(point, i) =>
+				`${i === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`,
+		)
+		.join(" ");
+
+/*
+indexMean right-aligns each lot on a shared sample index so now is the last
+slot, then takes the equal-weight return of the lots that have a sample there.
+*/
+export const indexMean = (series: ChoiceSample[][]): number[] => {
+	const maxLen = series.reduce((n, samples) => Math.max(n, samples.length), 0);
+	const mean: number[] = [];
+
+	for (let i = 0; i < maxLen; i++) {
+		let sum = 0;
+		let count = 0;
+		for (const samples of series) {
+			const idx = i - (maxLen - samples.length);
+			if (idx < 0) continue;
+			const pnl = samples[idx]?.pnl;
+			if (pnl === undefined || !Number.isFinite(pnl)) continue;
+			sum += pnl;
+			count++;
+		}
+		mean.push(count > 0 ? sum / count : Number.NaN);
+	}
+
+	return mean;
 };

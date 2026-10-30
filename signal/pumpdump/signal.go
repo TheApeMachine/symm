@@ -3,16 +3,24 @@ package pumpdump
 import (
 	"context"
 	"math"
+	"slices"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/signal/volumeclock"
 )
+
+// midReturnDeadband suppresses coiled_compression when the bar already repriced.
+const midReturnDeadband = 5e-4
+
+// peakReturnFloor is the minimum recent up-bar needed before a dip counts as blowoff.
+const peakReturnFloor = 5 * midReturnDeadband
 
 type causalEstimator struct {
 	count float64
@@ -37,9 +45,15 @@ func (ce *causalEstimator) Step(value float64) (hasBaseline bool, baseline float
 }
 
 type symbolState struct {
-	clock               volumeclock.Clock
-	spreadEstimator     causalEstimator
-	volumeRateEstimator causalEstimator
+	clock                 volumeclock.Clock
+	volumeRateEstimator   causalEstimator
+	tradeDensityEstimator causalEstimator
+	barDurationEstimator  causalEstimator
+	recentPeakPos         float64
+	lastStarved           float64
+	lastCoiled            float64
+	lastRejection         float64
+	lastBlowoff           float64
 }
 
 type Signal struct {
@@ -54,12 +68,10 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"spread_ratio",
-			"volume_rate",
-			"trade_rate",
-			"volume_ratio",
-			"positive_midpoint_return",
-			"negative_midpoint_return",
+			"coiled_compression",
+			"rejection_tick",
+			"starved_tape",
+			"blowoff_dip",
 		},
 	}
 
@@ -67,10 +79,6 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return signal
 }
 
-/*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
-*/
 func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
@@ -81,11 +89,44 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.Error(err)
 	}
 
+	signal.appendBoardStarvation(value)
+
 	return value
 }
 
+/*
+appendBoardStarvation publishes the median last starved_tape across symbols
+as a regime oracle (flat / dead board), not a single-name reading.
+*/
+func (signal *Signal) appendBoardStarvation(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.states.Range(func(_, untyped any) bool {
+		scores = append(scores, untyped.(*symbolState).lastStarved)
+		return true
+	})
+
+	if len(scores) == 0 {
+		return
+	}
+
+	slices.Sort(scores)
+	median := scores[len(scores)/2]
+	if len(scores)%2 == 0 {
+		median = (scores[len(scores)/2-1] + scores[len(scores)/2]) / 2
+	}
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_starvation")...)
+}
+
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
 		return value
 	}
 
@@ -111,38 +152,46 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		}
 	})
 
-	if !bookAvailable {
+	if !bookAvailable || !hasTouch {
 		return value
 	}
 
 	atNanos := float64(value.Timestamp)
-	midpoint := 0.0
+	midpoint := (bid + ask) * 0.5
 
 	untypedState, _ := signal.states.LoadOrStore(trade.Symbol, &symbolState{})
 	state := untypedState.(*symbolState)
 
-	var spreadRatio float64
-	if hasTouch {
-		midpoint = (bid + ask) * 0.5
-		spread := ask - bid
-		hasBaseline, baseline := state.spreadEstimator.Step(spread)
-		if hasBaseline && baseline > 0 && math.Abs(baseline) >= 1e-6*math.Abs(spread) {
-			spreadRatio = spread / baseline
-		}
-	}
-
 	tick := state.clock.Step(price, qty, atNanos, midpoint)
 	bar, closed := tick.Bar, tick.Closed
 
-	var volumeRate, tradeRate, volRatio, posReturn, negReturn float64
+	var coiled, rejection, starved, blowoffDip float64
 	if closed {
+		var volumeRate, volRatio, posReturn, negReturn float64
+
 		if bar.Duration > 0 && !math.IsInf(bar.Duration, 0) {
 			volumeRate = bar.Quantity / bar.Duration
-			tradeRate = bar.Trades / bar.Duration
 			hasVolBase, volBase := state.volumeRateEstimator.Step(volumeRate)
 			if hasVolBase && volBase > 0 && math.Abs(volBase) >= 1e-6*math.Abs(volumeRate) {
 				volRatio = volumeRate / volBase
 			}
+
+			tradeDensity := bar.Trades / bar.Duration
+			if hasBase, base := state.tradeDensityEstimator.Step(tradeDensity); hasBase && base > 0 {
+				starved = math.Min(1, base/(tradeDensity+1e-12))
+			}
+
+			durationStress := 0.0
+			if hasDur, baseDur := state.barDurationEstimator.Step(bar.Duration); hasDur && baseDur > 0 {
+				durationStress = math.Min(1, bar.Duration/(baseDur+1e-12))
+			}
+
+			midMove := 0.0
+			if bar.FromMid > 0 && bar.AtMid > 0 {
+				midMove = math.Abs(math.Log(bar.AtMid / bar.FromMid))
+			}
+			flat := 1.0 - math.Min(1.0, midMove/midReturnDeadband)
+			starved = math.Max(starved, flat*durationStress)
 		}
 
 		if bar.FromMid > 0 && bar.AtMid > 0 {
@@ -150,6 +199,35 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 			posReturn = math.Max(midReturn, 0)
 			negReturn = math.Max(-midReturn, 0)
 		}
+
+		quiet := 1.0 - math.Min(1.0, posReturn/midReturnDeadband)
+		if volRatio > 0 {
+			coiled = volRatio * quiet
+		}
+
+		rejection = negReturn
+
+		if negReturn >= midReturnDeadband &&
+			state.recentPeakPos >= peakReturnFloor &&
+			state.recentPeakPos > 0 {
+			blowoffDip = math.Min(1, negReturn/state.recentPeakPos)
+		}
+
+		if posReturn >= state.recentPeakPos {
+			state.recentPeakPos = posReturn
+		} else if state.recentPeakPos > 0 {
+			state.recentPeakPos *= 0.92
+		}
+
+		state.lastStarved = starved
+		state.lastCoiled = coiled
+		state.lastRejection = rejection
+		state.lastBlowoff = blowoffDip
+	} else {
+		coiled = state.lastCoiled
+		rejection = state.lastRejection
+		starved = state.lastStarved
+		blowoffDip = state.lastBlowoff
 	}
 
 	keys := []string{
@@ -157,12 +235,21 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	return value.Append([]float64{
-		spreadRatio,
-		volumeRate,
-		tradeRate,
-		volRatio,
-		posReturn,
-		negReturn,
+	out := value.Append([]float64{
+		coiled,
+		rejection,
+		starved,
+		blowoffDip,
 	}, append(keys, signal.keys...)...)
+
+	audit.Record.Write(map[string]any{
+		"signal":     signal.Name(),
+		"trade":      trade,
+		"coiled":     coiled,
+		"rejection":  rejection,
+		"starved":    starved,
+		"blowoffDip": blowoffDip,
+	})
+
+	return out
 }

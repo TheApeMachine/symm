@@ -758,6 +758,7 @@ export const buildInsights = (
 
 	const prior = samples[Math.max(0, samples.length - 16)];
 	const training = latest.training;
+	const stops = latest.stops;
 	const insights: Insight[] = [];
 
 	if (training.reuseRate === null && training.createRate === null) {

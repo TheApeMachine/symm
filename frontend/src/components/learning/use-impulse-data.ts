@@ -3,6 +3,7 @@ import {
 	kernelSymbolForAggregate,
 	signalFor,
 	signals,
+	symbolScopeAliases,
 	workspaceFrame,
 } from "#/collections/app";
 import type { Value } from "#/types/value";
@@ -34,6 +35,107 @@ export interface ImpulseDataState {
 
 const CANONICAL_PINS = getCanonicalPinDefs();
 const CANONICAL_COUNTS = getCanonicalRegionCounts();
+
+type WireRegion = {
+	key?: number;
+	brightness?: number;
+	counts?: number;
+	symbol?: string;
+};
+
+const snm = (raw: number): number => {
+	if (!Number.isFinite(raw) || raw === 0) return 0;
+	return Math.abs(raw) / (1 + Math.abs(raw));
+};
+
+const layerArray = (frame: Value, key: string): unknown[] | undefined => {
+	const direct = frame.reading(key);
+	if (Array.isArray(direct) && direct.length > 0) {
+		return direct;
+	}
+
+	for (const { payload } of frame.layersUnder(key)) {
+		if (Array.isArray(payload) && payload.length > 0) {
+			return payload;
+		}
+	}
+
+	return undefined;
+};
+
+const applyLitRegions = (
+	targetSymbol: string,
+	regions: WireRegion[],
+	resetMissing: boolean,
+	heldBrightness: { current: number[] },
+	heldMembers: { current: number[] },
+): boolean => {
+	if (!regions.length) return false;
+
+	let changed = false;
+	if (resetMissing) {
+		for (let i = 0; i < 15; i++) {
+			if (heldBrightness.current[i] !== 0) {
+				heldBrightness.current[i] = 0;
+				changed = true;
+			}
+		}
+	}
+
+	for (const region of regions) {
+		if (region == null || typeof region.key !== "number") continue;
+		if (
+			targetSymbol &&
+			typeof region.symbol === "string" &&
+			region.symbol !== "" &&
+			region.symbol !== targetSymbol
+		) {
+			continue;
+		}
+
+		const key = region.key;
+		if (key < 0 || key > 14) continue;
+
+		const brightness =
+			typeof region.brightness === "number"
+				? region.brightness
+				: snm(Number(region.brightness));
+
+		if (heldBrightness.current[key] !== brightness) {
+			heldBrightness.current[key] = brightness;
+			changed = true;
+		}
+
+		if (typeof region.counts === "number") {
+			const members = Math.round(region.counts);
+			if (heldMembers.current[key] !== members) {
+				heldMembers.current[key] = members;
+				changed = true;
+			}
+		}
+	}
+
+	return changed;
+};
+
+const pinPeakForRegion = (
+	regionKey: number,
+	heldPins: Record<string, { activation: number; snr: number }>,
+): number => {
+	let peak = 0;
+	for (const pin of CANONICAL_PINS) {
+		if (pin.cluster !== regionKey) continue;
+		peak = Math.max(peak, heldPins[pin.id]?.activation ?? 0);
+	}
+	return peak;
+};
+
+const regionStrength = (
+	regionKey: number,
+	heldBrightness: number[],
+	heldPins: Record<string, { activation: number; snr: number }>,
+): number =>
+	Math.max(heldBrightness[regionKey] ?? 0, pinPeakForRegion(regionKey, heldPins));
 
 /*
 useImpulseData tracks the live SOM grid cells and confluence regions from the
@@ -83,7 +185,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 		const publish = () => {
 			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
 				const reading = heldPins.current[pin.id];
-				const regionLit = heldBrightness.current[pin.cluster] ?? 0;
+				const regionLit = regionStrength(
+					pin.cluster,
+					heldBrightness.current,
+					heldPins.current,
+				);
 				const metricAct = reading?.activation ?? 0;
 				const activation = Math.max(metricAct, regionLit);
 
@@ -97,7 +203,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			});
 
 			const regionsList = REGION_KEYS.map((_key, idx) => {
-				const strength = heldBrightness.current[idx] ?? 0;
+				const strength = regionStrength(
+					idx,
+					heldBrightness.current,
+					heldPins.current,
+				);
 
 				return {
 					id: idx,
@@ -109,7 +219,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 			const activeEventsList = REGION_KEYS.map((regionKey, idx) => {
 				const meta = REGIONS[regionKey];
-				const strength = heldBrightness.current[idx] ?? 0;
+				const strength = regionStrength(
+					idx,
+					heldBrightness.current,
+					heldPins.current,
+				);
 
 				return {
 					id: idx,
@@ -136,17 +250,18 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			// Look for the training frame for the symbol, or any scope.
 			let latest: Value | null = null;
 			if (trainingState) {
-				if (symbol && trainingState[symbol]) {
-					latest = trainingState[symbol];
-				} else if (trainingState.learner) {
-					latest = trainingState.learner;
-				} else {
-					for (const frame of Object.values(trainingState)) {
-						if (frame) {
-							latest = frame;
-							break;
-						}
+				const scopes = [
+					...symbolScopeAliases(symbol),
+					...symbolScopeAliases(querySymbol),
+				];
+				for (const scope of scopes) {
+					if (trainingState[scope]) {
+						latest = trainingState[scope];
+						break;
 					}
+				}
+				if (!latest && trainingState.learner) {
+					latest = trainingState.learner;
 				}
 			}
 
@@ -205,6 +320,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 					}
 				}
 			}
+
 			if (latest) {
 				for (const { suffix, payload } of latest.layersUnder("train/regions")) {
 					const first = Array.isArray(payload) ? payload[0] : payload;
@@ -228,20 +344,59 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 
 			let changed = false;
 
+			if (latest) {
+				const wanted = new Set([
+					...symbolScopeAliases(symbol),
+					...symbolScopeAliases(querySymbol),
+				]);
+				if (wanted.has(latest.scope)) {
+					const activeRows = layerArray(latest, "active") as
+						| Array<{ key?: number; brightness?: number }>
+						| undefined;
+					const litRows = layerArray(latest, "lit") as
+						| WireRegion[]
+						| undefined;
+					const rows =
+						activeRows && activeRows.length > 0
+							? activeRows.map((row) => ({
+									key: row.key,
+									brightness: row.brightness,
+								}))
+							: litRows;
+
+					if (rows && rows.length > 0) {
+						if (
+							applyLitRegions(
+								querySymbol,
+								rows,
+								true,
+								heldBrightness,
+								heldMembers,
+							)
+						) {
+							sawRegionLayerForSymbol = true;
+							changed = true;
+						}
+					}
+				}
+			}
+
 			/*
 			A kernel layer names its metrics. Pins whose metric is on this
 			tick take that reading, including zero. Pins the tick does not
 			name keep the reading they already hold.
 			*/
 			for (const pin of CANONICAL_PINS) {
-				const payloads = signalFor(pin.source, querySymbol, aggregate);
+				const pinScope =
+					pin.scope === "aggregate" ? "aggregate" : querySymbol;
+				const payloads = signalFor(pin.source, pinScope, aggregate);
 				const payload = payloads[pin.metric];
 				if (!Array.isArray(payload) || payload.length === 0) continue;
 
 				const raw = Number(payload[0]);
 				if (!Number.isFinite(raw)) continue;
 
-				const act = Math.min(1, Math.max(0, Math.abs(raw)));
+				const act = snm(raw);
 				const snr = act >= 0.5 ? 2.5 : 1.0;
 				const prev = heldPins.current[pin.id];
 				if (prev && prev.activation === act && prev.snr === snr) {
@@ -257,7 +412,19 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			symbol (post midpoint cut). Regions absent from that row read
 			as zero so consistently dead slots stay visible in the panel.
 			*/
-			if (sawRegionLayerForSymbol) {
+			if (sawRegionLayerForSymbol && gridRegions.length > 0) {
+				if (
+					applyLitRegions(
+						querySymbol,
+						gridRegions,
+						true,
+						heldBrightness,
+						heldMembers,
+					)
+				) {
+					changed = true;
+				}
+			} else if (sawRegionLayerForSymbol) {
 				for (let i = 0; i < 15; i++) {
 					const regionKey = `R${String(i).padStart(2, "0")}`;
 					const explicitBrightness =

@@ -27,13 +27,9 @@ export const TERMINAL_KERNEL_ORDER = [
 	"regime",
 	"correlation",
 	"pumpdump",
-	"toxicity",
-	"cvd",
 	"depthflow",
-	"morphology",
 	"liquidity",
 	"sentiment",
-	"leadlag",
 	"training",
 ] as const;
 
@@ -46,29 +42,17 @@ const kernelOrderIndex = (source: string): number => {
 };
 
 /*
-Each kernel publishes its own vocabulary, so the headline is named per source
-rather than assumed. The binding must name a metric that the live producer
-actually emits; otherwise the row can be live while its trace remains empty.
-
-Headlines are the actual emitted metric names, verified against the signal
-bindings: cohort_covariance_score (correlation), signed_net_fraction (cvd),
-book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
-book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
-best_lag_correlation (leadlag), relative_spread (liquidity),
-morphology_change (morphology), volume_ratio (pumpdump), breadth
-(sentiment), retreat_fraction:bid (toxicity), confidence (training).
+Headlines name one live metric per signal kernel (SIGNALS.md nine-pin grid +
+oracles). Dormant booter sources (toxicity, cvd, leadlag, morphology) are
+not listed here.
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "cohort_covariance_score",
-	cvd: "signed_net_fraction",
-	depthflow: "book_imbalance",
-	hawkes: "branching_spectral_radius",
-	leadlag: "led_peer_share",
+	correlation: "structural_alignment",
+	depthflow: "bid_ladder_build",
+	hawkes: "supercritical_cascade",
 	liquidity: "relative_spread",
-	morphology: "morphology_change",
-	pumpdump: "volume_ratio",
-	sentiment: "breadth",
-	toxicity: "retreat_fraction:bid",
+	pumpdump: "coiled_compression",
+	sentiment: "cohort_still_aligned",
 	training: "confidence",
 };
 
@@ -93,75 +77,28 @@ export const sourceHeadlineMetric = (source: string): string => {
 	return `metrics.${metric}`;
 };
 
-/*
-A kernel publishes a map of named metrics, and the detail panel reads several of
-them side by side. The map cannot be walked from a binding — a painted surface
-names the paths it wants up front — so each kernel's readable metrics are named
-here, in the vocabulary the signal actually emits.
-
-A name that a kernel turns out not to publish reads as absent rather than as a
-zero, so the panel understates rather than invents.
-*/
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
-		"cohort_covariance_score",
-		"historical_path_distance",
-		"historical_path_percentile",
+		"structural_alignment",
+		"structure_uncoupling",
 	],
-	cvd: [
-		"signed_net_fraction",
-		"gross_notional",
-		"midpoint_log_return",
-		"flow_aligned_midpoint_return",
+	depthflow: ["bid_ladder_build", "bid_ladder_release"],
+	hawkes: ["supercritical_cascade"],
+	liquidity: [
+		"best_price:bid",
+		"best_price:ask",
+		"relative_spread",
+		"market_friction",
+		"capacity_stress",
 	],
-	depthflow: [
-		"net_displayed_flow:bid",
-		"book_imbalance",
-		"touch_notional:bid",
-		"mutation_activity_imbalance",
-	],
-	morphology: [
-		"morphology_change",
-		"book_shape_distance",
-		"book_shape_ks",
-		"concentration:bid",
-		"concentration:ask",
-		"entropy:bid",
-		"entropy:ask",
-	],
-	hawkes: [
-		"arrival_rate:buy",
-		"arrival_rate:sell",
-		"branching_spectral_radius",
-		"conditional_intensity_velocity",
-		"background_rate",
-		"excitation_decay",
-	],
-	leadlag: [
-		"led_peer_share",
-		"best_lag_seconds_median",
-		"best_lag_seconds_mad",
-		"covariance_score_gain_median",
-		"defined_peer_count",
-	],
-	liquidity: ["best_price:bid", "best_price:ask", "relative_spread"],
 	pumpdump: [
-		"spread_ratio",
-		"volume_rate",
-		"trade_rate",
-		"volume_ratio",
-		"positive_midpoint_return",
-		"negative_midpoint_return",
+		"coiled_compression",
+		"rejection_tick",
+		"starved_tape",
+		"blowoff_dip",
+		"board_starvation",
 	],
-	sentiment: [
-		"same_direction_peer_count",
-		"opposite_direction_peer_count",
-		"breadth",
-		"breadth_velocity",
-		"historical_path_distance",
-		"historical_path_percentile",
-	],
-	toxicity: ["retreat_fraction:bid", "net_withdrawal_rate:bid"],
+	sentiment: ["cohort_still_aligned"],
 	training: [
 		"steps",
 		"decisions",
@@ -183,9 +120,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 /*
 sourceMetrics names the metrics a kernel's detail panel reads. An unsupported
 source is a wiring error; silently painting a generic metric would make that
-frontend defect indistinguishable from missing backend data. "snr" is prepended
-first: every measurement row serializes its signal-to-noise ratio under that
-name, so it is the one quantity every kernel's detail always shows.
+frontend defect indistinguishable from missing backend data.
 */
 export const sourceMetrics = (source: string): string[] => {
 	const metrics = SOURCE_METRICS[source.toLowerCase()];
@@ -215,7 +150,6 @@ than assumed equal.
 */
 const READINESS_GATE: Record<string, string> = {
 	depthflow: "depth_flow",
-	leadlag: "lead_lag",
 	pumpdump: "pump_dump",
 };
 
@@ -239,9 +173,6 @@ const KERNEL_COPY: Record<
 		blurb:
 			"Self-exciting point process over order-flow events. Branching ratio η near 1 means the book is reflexive and primed to cascade.",
 	},
-	// "prediction" is a presentation alias for the resonance measurement: the
-	// backend has one autoencoder output, while the mockup names the detail row
-	// after its predictive-coding role.
 	prediction: {
 		name: "Predictive coding",
 		sub: "predict · 8-step horizon",
@@ -289,43 +220,22 @@ const KERNEL_COPY: Record<
 		blurb:
 			"Pump impulse measurement from raw market frames projected into the terminal signal surface.",
 	},
-	leadlag: {
-		name: "Lead-lag",
-		sub: "leadlag · cross-lag",
-		blurb:
-			"Lead-lag coupling across the cross-section from backend measurements.",
-	},
 	liquidity: {
 		name: "Liquidity",
 		sub: "liquidity · touch scarcity",
 		blurb:
 			"Current executable touch depth relative to the market cross-section, with reported-volume turnover shown separately as context.",
 	},
-	toxicity: {
-		name: "Toxicity",
-		sub: "toxicity · flow",
-		blurb: "Order-flow toxicity measurement from backend frames.",
-	},
 	depthflow: {
 		name: "Depthflow",
 		sub: "depthflow · ladder",
 		blurb: "Depth flow measurement from backend frames.",
 	},
-	morphology: {
-		name: "Morphology",
-		sub: "morphology · book shape",
-		blurb:
-			"Order-book shape drift: bid/ask concentration and entropy versus a rolling reference shape, with the shape-distance divergence itself.",
-	},
-	cvd: {
-		name: "CVD",
-		sub: "cvd · pressure",
-		blurb: "Cumulative volume delta pressure from backend frames.",
-	},
 	sentiment: {
 		name: "Sentiment",
-		sub: "sentiment · tape",
-		blurb: "Sentiment measurement from backend frames.",
+		sub: "sentiment · cohort alignment",
+		blurb:
+			"Cross-symbol directional agreement: how many peers still move with the focal name over a cohort horizon.",
 	},
 	training: {
 		name: "Cognitive Training",
@@ -442,17 +352,6 @@ export const kernelSparkPaths = (
 } => {
 	const history = values.length > 0 ? values : [0];
 
-	/*
-	The y-domain is fixed so the trace scrolls instead of renormalizing: a
-	window-relative min/max scale moves every existing point whenever a new
-	extreme lands, which reads as the whole line jumping as one segment. The
-	caller is expected to have already scaled values into [0,1] (or [-1,1]
-	signed, which folds to the lower half) using whatever mapping is
-	appropriate for that value's own domain — this function has no way to
-	know what range a given source's raw readings live in, so it never
-	invents one; it only clamps anything still outside [0,1]/[-1,1] to the
-	rails so old points keep their position and only the newest point moves.
-	*/
 	const scaled = history.map((value) => {
 		if (!Number.isFinite(value)) return 0.5;
 		if (value < 0) return Math.max(0, (value + 1) / 2);

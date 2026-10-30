@@ -18,6 +18,10 @@ import {
 	useLongtailReport,
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
+import {
+	formatExitTrigger,
+	triggerTone,
+} from "#/lib/trigger-labels";
 import { Flex } from "#/components/ui/flex";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
@@ -963,6 +967,24 @@ export const LongtailDashboard = () => {
 										: "neutral"
 								}
 						/>
+						{(stops?.exitTotal ?? 0) > 0 ? (
+							<div className="mt-2 space-y-1 border-t border-(--line)/60 pt-2">
+								<div className="text-[9px] font-bold uppercase tracking-wider text-(--f4)">
+									closed exit reasons
+								</div>
+								{Object.entries(stops?.exits ?? {})
+									.sort((a, b) => b[1] - a[1])
+									.slice(0, 6)
+									.map(([trigger, count]) => (
+										<RailRow
+											key={trigger}
+											label={formatExitTrigger(trigger)}
+											value={String(count)}
+											tone={triggerTone(trigger)}
+										/>
+									))}
+							</div>
+						) : null}
 					</RailBlock>
 
 					<div className="min-h-0 flex-1 overflow-auto">

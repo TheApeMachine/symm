@@ -2,10 +2,13 @@ package liquidity
 
 import (
 	"context"
+	"math"
+	"slices"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	parent "github.com/theapemachine/symm/signal"
@@ -14,19 +17,11 @@ import (
 type Signal struct {
 	*runtime.System
 	books *broker.Book
-	keys  []string
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books: books,
-		keys: []string{
-			"best_price:bid",
-			"best_price:ask",
-			"relative_spread",
-			"fee_rate",
-			"friction_hurdle",
-		},
 	}
 
 	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
@@ -34,33 +29,62 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes the book of every distinct symbol traded in the tick's frame;
-each symbol writes its own (reserved) layer.
+Step samples relative spread for every symbol on the tick, then publishes
+board-wide friction and capacity oracles (no per-symbol layers).
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
+	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+		return value
+	}
+
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
 	symbols := parent.DistinctSymbols(trades)
+	spreads := make([]float64, 0, len(symbols))
 
-	if err := parent.RunSymbols(signal.Context(), symbols, func(symbol string) {
-		signal.step(value, symbol)
-	}); err != nil {
-		signal.Error(err)
+	for _, symbol := range symbols {
+		if spread, ok := signal.relativeSpread(symbol); ok {
+			spreads = append(spreads, spread)
+		}
 	}
+
+	if len(spreads) == 0 {
+		return value
+	}
+
+	slices.Sort(spreads)
+	median := spreads[len(spreads)/2]
+	if len(spreads)%2 == 0 {
+		median = (spreads[len(spreads)/2-1] + spreads[len(spreads)/2]) / 2
+	}
+
+	worst := spreads[len(spreads)-1]
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "market_friction")...)
+
+	value.Append([]float64{worst}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "capacity_stress")...)
+
+	audit.Record.Write(map[string]any{
+		"signal": signal.Name(),
+		"median": median,
+		"worst":  worst,
+	})
 
 	return value
 }
 
-func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
-	if signal.Status() != runtime.READY || value == nil || len(value.Layers) == 0 {
-		return value
-	}
+func (signal *Signal) relativeSpread(symbol string) (float64, bool) {
+	var spread float64
+	var ok bool
 
-	var bookAvailable bool
 	signal.books.Book(symbol, func(b *spotbook.Book) {
-		bookAvailable = true
-
 		bestBid := b.BestBid()
 		bestAsk := b.BestAsk()
 		if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
@@ -69,36 +93,18 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 
 		bid := bestBid.Price.Float64()
 		ask := bestAsk.Price.Float64()
-
-		midpoint := (bid + ask) / 2.0
-		var relSpread float64
-		if midpoint > 0 {
-			relSpread = (ask - bid) / midpoint
+		mid := (bid + ask) / 2
+		if mid <= 0 || ask <= bid {
+			return
 		}
 
-		feeRate := 0.0
-		var frictionHurdle float64
-		if feeRate > 0 {
-			frictionHurdle = relSpread + 2.0*feeRate
-		}
-
-		keys := []string{
-			signal.Name(),
-			symbol,
-		}
-
-		value.Append([]float64{
-			bid,
-			ask,
-			relSpread,
-			feeRate,
-			frictionHurdle,
-		}, append(keys, signal.keys...)...)
+		spread = (ask - bid) / mid
+		ok = true
 	})
 
-	if !bookAvailable {
-		return value
+	if !ok || math.IsNaN(spread) {
+		return 0, false
 	}
 
-	return value
+	return spread, true
 }

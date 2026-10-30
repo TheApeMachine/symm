@@ -6,15 +6,11 @@ import { Value } from "#/types/value";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
-	"cvd",
 	"depthflow",
 	"hawkes",
-	"leadlag",
 	"liquidity",
-	"morphology",
 	"pumpdump",
 	"sentiment",
-	"toxicity",
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
@@ -349,6 +345,13 @@ export const kernelSymbolForAggregate = (
 		: focus;
 };
 
+/** Kernels that publish their layers under the "aggregate" scope. */
+const aggregateScopedKernels = new Set<string>([
+	"correlation",
+	"liquidity",
+	"sentiment",
+]);
+
 export const signalFor = (
 	kernel: string,
 	symbol: string,
@@ -357,6 +360,13 @@ export const signalFor = (
 	if (!frame) return {};
 	for (const scope of symbolScopeAliases(symbol)) {
 		const metrics = readKernel(kernel, scope, frame).metrics;
+		if (Object.keys(metrics).length > 0) {
+			return metrics;
+		}
+	}
+	// Fallback: some kernels publish only under "aggregate", not per-symbol.
+	if (aggregateScopedKernels.has(kernel)) {
+		const metrics = readKernel(kernel, "aggregate", frame).metrics;
 		if (Object.keys(metrics).length > 0) {
 			return metrics;
 		}
@@ -386,6 +396,15 @@ export const kernelMeasurement = (
 			metrics = reading.metrics;
 			bytes = reading.bytes;
 			break;
+		}
+	}
+
+	// Fallback: some kernels publish only under "aggregate", not per-symbol.
+	if (Object.keys(metrics).length === 0 && aggregateScopedKernels.has(kernel)) {
+		const reading = readKernel(kernel, "aggregate", frame);
+		if (Object.keys(reading.metrics).length > 0) {
+			metrics = reading.metrics;
+			bytes = reading.bytes;
 		}
 	}
 
