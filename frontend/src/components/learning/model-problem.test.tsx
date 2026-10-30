@@ -3,7 +3,6 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { cognitionStore } from "#/collections/cognition";
 import { Engine } from "#/components/engine";
-import { SequiturGrammarViz } from "./sequitur-grammar-viz";
 
 const problemTree = {
 	epoch: "0",
@@ -61,7 +60,7 @@ describe("ModelProblem banner", () => {
 		expect(banner?.className).toContain("wrap-anywhere");
 	});
 
-	it("shows in the engine panel and the Sequitur tab", () => {
+	it("shows in the engine panel", () => {
 		cognitionStore.setState(() => ({
 			epoch: "0",
 			policyKeys: [],
@@ -71,12 +70,9 @@ describe("ModelProblem banner", () => {
 			tree: problemTree,
 		}));
 
-		for (const view of [<Engine key="e" />, <SequiturGrammarViz key="s" />]) {
-			const { container, unmount } = render(view);
-			const banner = container.querySelector('[data-problem="error"]');
-			expect(banner?.textContent).toContain(problemTree.problem.reason);
-			expect(banner?.textContent).toContain(`Fix: ${problemTree.problem.fix}`);
-			unmount();
-		}
+		const { container } = render(<Engine />);
+		const banner = container.querySelector('[data-problem="error"]');
+		expect(banner?.textContent).toContain(problemTree.problem.reason);
+		expect(banner?.textContent).toContain(`Fix: ${problemTree.problem.fix}`);
 	});
 });

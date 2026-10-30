@@ -38,6 +38,11 @@
 		"source.fixAll.eslint": "explicit",
 		"source.fixAll.ruff": "explicit",
 		"source.organizeImports": "explicit"
+	},
+	"go.buildTags": "integration",
+	"go.testFlags": ["-tags=integration"],
+	"gopls": {
+		"build.buildFlags": ["-tags=integration"]
 	}
 	// "[go]": {
 	// 	"editor.defaultFormatter": "golang.go",

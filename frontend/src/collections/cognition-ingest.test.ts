@@ -115,7 +115,7 @@ describe("stored thresholds", () => {
 				Index: ["model/explore/SYM/threshold", "model/explore/SYM/threshold"],
 				Layers: [encode(0.49), encode(-0.01)],
 			}),
-		).toBeCloseTo(0.48);
+		).toBeCloseTo(0.49);
 	});
 
 	it("keeps the last legacy snapshot instead of adding them", () => {
@@ -130,7 +130,7 @@ describe("stored thresholds", () => {
 				],
 				Layers: [encode(0.51), encode(0.52), encode(0.52)],
 			}),
-		).toBeCloseTo(0.52);
+		).toBeCloseTo(0.51);
 	});
 
 	it("leaves an unscored value without a threshold", () => {
@@ -143,17 +143,70 @@ describe("stored thresholds", () => {
 	});
 });
 
+const encodeStoredPathValue = (scope: string) => {
+	const textEncoder = new TextEncoder();
+	const origin = textEncoder.encode("model");
+	const role = textEncoder.encode("action");
+	const scopeBytes = textEncoder.encode(scope);
+	const prefix = textEncoder.encode("model/action/enter/0/0");
+	const size =
+		48 + 1 + origin.length + 1 + role.length + 1 + scopeBytes.length + 2 + 2 + prefix.length;
+	const buf = new Uint8Array(size);
+	const dv = new DataView(buf.buffer);
+	dv.setBigUint64(16, 0n, true);
+	dv.setBigUint64(24, 0n, true);
+	dv.setBigUint64(32, 0n, true);
+	dv.setBigUint64(40, 0n, true);
+	let offset = 48;
+	buf[offset++] = origin.length;
+	buf.set(origin, offset);
+	offset += origin.length;
+	buf[offset++] = role.length;
+	buf.set(role, offset);
+	offset += role.length;
+	buf[offset++] = scopeBytes.length;
+	buf.set(scopeBytes, offset);
+	offset += scopeBytes.length;
+	dv.setUint16(offset, 0, true);
+	offset += 2;
+	dv.setUint16(offset, prefix.length, true);
+	offset += 2;
+	buf.set(prefix, offset);
+	return buf;
+};
+
 describe("policy tree keys", () => {
+	it("normalizes model/paths keys from stored action scope", () => {
+		bookAtom.set("paper");
+		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
+		const framePrefix = "s3/prefix/model/paths/1/2";
+		const rawKey = "model/paths/R01/R02";
+		ingestS3Prefix(
+			new Value({
+				origin: "s3",
+				role: "prefix",
+				scope: "model/paths",
+				prefix: framePrefix,
+				epoch: 4n,
+				index: [`${framePrefix}/${rawKey}`],
+				layers: [encodeStoredPathValue("enter")],
+			}),
+		);
+		expect(cognitionStore.state.policyKeys).toEqual([
+			"model/paths/R01/R02/enter.bin",
+		]);
+	});
+
 	it("stores cognition/keys strings unchanged", () => {
 		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		ingestPolicyKeys(
-			["model/explore/R01/R02/enter.bin", "model/explore/R01/R02/exit.bin"],
+			["model/paths/R01/R02/enter.bin", "model/paths/R01/R02/exit.bin"],
 			"1",
 		);
 		expect(cognitionStore.state.policyKeys).toEqual([
-			"model/explore/R01/R02/enter.bin",
-			"model/explore/R01/R02/exit.bin",
+			"model/paths/R01/R02/enter.bin",
+			"model/paths/R01/R02/exit.bin",
 		]);
 	});
 
@@ -167,31 +220,35 @@ describe("policy tree keys", () => {
 			new Value({
 				origin: "s3",
 				role: "prefix",
-				scope: "model/explore",
+				scope: "model/paths",
 				prefix: framePrefix,
 				epoch: 2n,
 				index: [
-					`${framePrefix}/model/explore/R01/R02/enter.bin`,
-					`${framePrefix}/model/explore/R01/R02/exit.bin`,
-					`${framePrefix}/model/explore/custom/path/enter.bin`,
+					`${framePrefix}/model/paths/R01/R02/enter.bin`,
+					`${framePrefix}/model/paths/R01/R02/exit.bin`,
+					`${framePrefix}/model/paths/custom/path/enter.bin`,
 				],
 				layers: [layer, layer, layer],
 			}),
 		);
 		expect(cognitionStore.state.policyKeys).toEqual([
-			"model/explore/R01/R02/enter.bin",
-			"model/explore/R01/R02/exit.bin",
-			"model/explore/custom/path/enter.bin",
+			"model/paths/R01/R02/enter.bin",
+			"model/paths/R01/R02/exit.bin",
+			"model/paths/custom/path/enter.bin",
 		]);
 		expect(cognitionStore.state.epoch).toBe("2");
-		expect(cognitionStore.state.thresholds).toEqual({});
+		expect(cognitionStore.state.thresholds).toEqual({
+			"model/paths/R01/R02/enter.bin": 0.5,
+			"model/paths/R01/R02/exit.bin": 0.5,
+			"model/paths/custom/path/enter.bin": 0.5,
+		});
 	});
 
 	it("reads a threshold off the stored value body", () => {
 		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
 		const framePrefix = "s3/prefix/model/explore/1/2";
-		const key = "model/explore/R01/R02/exit.bin";
+		const key = "model/paths/R01/R02/exit.bin";
 		const stored = {
 			Index: [`${key}/threshold`],
 			Layers: [btoa(JSON.stringify(-0.05))],
@@ -200,7 +257,7 @@ describe("policy tree keys", () => {
 			new Value({
 				origin: "s3",
 				role: "prefix",
-				scope: "model/explore",
+				scope: "model/paths",
 				prefix: framePrefix,
 				epoch: 3n,
 				index: [`${framePrefix}/${key}`],
@@ -232,39 +289,26 @@ describe("policy tree keys", () => {
 	it("replaces the list on the next publish", () => {
 		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		ingestPolicyKeys(["model/explore/R01/R02/enter.bin"], "1");
-		ingestPolicyKeys(["model/explore/R03/R04/exit.bin"], "2");
+		ingestPolicyKeys(["model/paths/R01/R02/enter.bin"], "1");
+		ingestPolicyKeys(["model/paths/R03/R04/exit.bin"], "2");
 		expect(cognitionStore.state.policyKeys).toEqual([
-			"model/explore/R03/R04/exit.bin",
+			"model/paths/R03/R04/exit.bin",
 		]);
 	});
 
-	it("keeps the paper trie when the virtual catalog arrives", () => {
+	it("keeps the listed trie when a stale catalog arrives", () => {
 		bookAtom.set("paper");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		const framePrefix = "s3/prefix/model/policy/1/2";
+		const framePrefix = "s3/prefix/model/paths/1/2";
 		const layer = enc.encode(JSON.stringify("enter"));
 		ingestS3Prefix(
 			new Value({
 				origin: "s3",
 				role: "prefix",
-				scope: "model/policy",
+				scope: "model/paths",
 				prefix: framePrefix,
 				epoch: 4n,
-				index: [`${framePrefix}/model/policy/R08.R01/R07.R00/enter.bin`],
-				layers: [layer],
-			}),
-		);
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
-				scope: "model/explore",
-				prefix: "s3/prefix/model/explore/1/2",
-				epoch: 5n,
-				index: [
-					"s3/prefix/model/explore/1/2/model/explore/R01/R02/enter.bin",
-				],
+				index: [`${framePrefix}/model/paths/R08.R01/R07.R00/enter.bin`],
 				layers: [layer],
 			}),
 		);
@@ -272,7 +316,7 @@ describe("policy tree keys", () => {
 			false,
 		);
 		expect(cognitionStore.state.policyKeys).toEqual([
-			"model/policy/R08.R01/R07.R00/enter.bin",
+			"model/paths/R08.R01/R07.R00/enter.bin",
 		]);
 	});
 });

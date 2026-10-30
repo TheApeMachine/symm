@@ -1,14 +1,7 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { closeNowReturnPct, positionReadout } from "#/components/book-readout";
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { positionReadout } from "#/components/book-readout";
 import { cn } from "#/lib/utils";
-import {
-	CHOICE_SAMPLE_MS,
-	indexMean,
-	linePath,
-	openChoiceTrail,
-	openChoiceValues,
-	syncOpenChoiceLots,
-} from "./open-choice-trail";
+import { indexMean, linePath, openChoiceTrail, openChoiceValues } from "./open-choice-trail";
 
 const STROKES = [
 	"#7eb6ff",
@@ -29,9 +22,6 @@ const strokeFor = (id: string) => {
 	}
 	return STROKES[hash % STROKES.length];
 };
-
-const trailPayload = (rows: Record<string, unknown>[]) =>
-	rows.map((row) => ({ id: lotId(row), pnl: closeNowReturnPct(row) }));
 
 const pctText = (value: number) => {
 	const digits = Math.abs(value) >= 10 ? 0 : 1;
@@ -58,30 +48,10 @@ export const OpenChoiceChart = ({
 }: {
 	lots: Record<string, unknown>[];
 }) => {
-	const [revision, setRevision] = useState(0);
 	const plotRef = useRef<HTMLDivElement>(null);
-	const lotsRef = useRef(lots);
 	const [plotSize, setPlotSize] = useState({ w: 0, h: 168 });
 	const [legendOpen, setLegendOpen] = useState(false);
 	const clipId = useId().replace(/:/g, "");
-	lotsRef.current = lots;
-
-	useLayoutEffect(() => {
-		if (syncOpenChoiceLots(trailPayload(lots))) {
-			setRevision((value) => value + 1);
-		}
-	}, [lots]);
-
-	useEffect(() => {
-		const sample = () => {
-			if (syncOpenChoiceLots(trailPayload(lotsRef.current))) {
-				setRevision((value) => value + 1);
-			}
-		};
-		sample();
-		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
-		return () => window.clearInterval(timer);
-	}, []);
 
 	const series = lots.map((row) => {
 		const id = lotId(row);
@@ -94,7 +64,6 @@ export const OpenChoiceChart = ({
 			stroke: strokeFor(id),
 		};
 	});
-	void revision;
 
 	const drawn = series.filter((item) => item.values.length > 0);
 	const watching = drawn.length > 0;

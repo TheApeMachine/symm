@@ -4,190 +4,46 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/store"
 )
 
-func litRegion(key uint8, brightness float64) *store.Region {
-	return &store.Region{Key: key, Brightness: brightness}
-}
+func TestSequencerStep(t *testing.T) {
+	Convey("Given a sequencer", t, func() {
+		seq := NewSequencer()
 
-func TestSequencerState(t *testing.T) {
-	Convey("Sequencer state and Step", t, func() {
-		Convey("State survives Restore after ticks", func() {
-			sequencer := NewSequencer()
-			lit := []*store.Region{
-				{Key: 6, Brightness: 0.4},
-				{Key: 0, Brightness: 0.3},
-			}
-			first := sequencer.Step(lit, PhaseEnter)
-			So(first.Token.String(), ShouldNotBeBlank)
-
-			saved := sequencer.State()
+		Convey("State survives Restore", func() {
+			_ = seq.Step("R06.R00", 0.4)
+			saved := seq.State()
 			restored := NewSequencer()
 			restored.Restore(saved)
 
-			second := restored.Step([]*store.Region{
-				{Key: 7, Brightness: 0.5},
-				{Key: 1, Brightness: 0.2},
-			}, PhaseEnter)
-			So(second.Token.String(), ShouldNotBeBlank)
-			So(len(restored.State().EnterRoot), ShouldBeGreaterThan, 0)
+			next := restored.Step("R07.R01", 0.5)
+			So(next.Last().String(), ShouldNotBeBlank)
+			So(len(restored.State().Root), ShouldBeGreaterThan, 0)
 		})
 
-		Convey("empty lit emits silence", func() {
-			step := NewSequencer().Step(nil, PhaseEnter)
-			So(step.Token.String(), ShouldBeEmpty)
-			So(step.Silence, ShouldEqual, StepSilenceEmpty)
+		Convey("duplicate symbol refreshes cut brightness without growing grammar", func() {
+			first := seq.Step("R06.R00", 0.3)
+			second := seq.Step("R06.R00", 0.5)
+
+			So(first.String(), ShouldEqual, "R06.R00")
+			So(second.Len(), ShouldBeGreaterThan, 0)
+			So(second.Last().Brightness, ShouldEqual, 0.5)
 		})
 
-		Convey("flat band picks brightest regime leader", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(6, 0.2),
-				litRegion(7, 0.9),
-				litRegion(8, 0.1),
-				litRegion(0, 0.4),
-				litRegion(1, 0.3),
-				litRegion(2, 0.2),
-				litRegion(4, 4),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldEqual, "R07.R00")
+		Convey("repeat symbol does not append to grammar", func() {
+			_ = seq.Step("R06.R00", 0.3)
+			before := len(seq.Grammar().RootSequence())
+			_ = seq.Step("R06.R00", 0.3)
+			So(len(seq.Grammar().RootSequence()), ShouldEqual, before)
 		})
 
-		Convey("hold phase uses R06-R08 postures", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(6, 0.05),
-				litRegion(7, 0.1),
-				litRegion(8, 0.4),
-				litRegion(9, 0.2),
-				litRegion(3, 0.1),
-				litRegion(4, 0.8),
-				litRegion(5, 0.3),
-			}, PhaseHold)
-			So(step.Token.String(), ShouldEqual, "R08.R08")
-		})
-
-		Convey("exit phase uses R03-R05 postures", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(8, 0.4),
-				litRegion(9, 0.2),
-				litRegion(3, 0.1),
-				litRegion(4, 0.8),
-				litRegion(5, 0.3),
-			}, PhaseExit)
-			So(step.Token.String(), ShouldEqual, "R08.R04")
-		})
-
-		Convey("dark posture stays silent", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(7, 0.8),
-				litRegion(0, 0),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldBeEmpty)
-			So(step.Silence, ShouldEqual, StepSilenceEmpty)
-		})
-
-		Convey("brightness tie keeps lower regime key", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(8, 0.5),
-				litRegion(6, 0.5),
-				litRegion(2, 0.4),
-				litRegion(0, 0.4),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldEqual, "R06.R00")
-		})
-
-		Convey("risk regions veto emission", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(6, 0.6),
-				litRegion(1, 0.4),
-				litRegion(12, 0.2),
-				litRegion(13, 0.5),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldBeEmpty)
-			So(step.Silence, ShouldEqual, StepSilenceVeto)
-		})
-
-		Convey("risk at posture does not veto", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(6, 0.6),
-				litRegion(1, 0.5),
-				litRegion(14, 0.5),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldEqual, "R06.R01")
-		})
-
-		Convey("opposition-led enter is not vetoed by friction oracle", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(8, 0.72),
-				litRegion(2, 0.72),
-				litRegion(12, 0.003),
-				litRegion(14, 0.003),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldEqual, "R08.R02")
-			So(step.Silence, ShouldEqual, StepOK)
-		})
-
-		Convey("sequential duplicate lit is silent", func() {
-			sequencer := NewSequencer()
-			lit := []*store.Region{
-				litRegion(6, 0.4),
-				litRegion(0, 0.3),
-			}
-			first := sequencer.Step(lit, PhaseEnter)
-			second := sequencer.Step(lit, PhaseEnter)
-			So(first.Token.String(), ShouldEqual, "R06.R00")
-			So(second.Token.String(), ShouldEqual, "R06.R00")
-			So(second.Silence, ShouldEqual, StepSilenceDuplicate)
-			So(len(second.Spell), ShouldBeGreaterThan, 0)
-		})
-
-		Convey("emits again after leader changes", func() {
-			sequencer := NewSequencer()
-			_ = sequencer.Step([]*store.Region{litRegion(6, 0.4), litRegion(0, 0.3)}, PhaseEnter)
-			next := sequencer.Step([]*store.Region{litRegion(7, 0.5), litRegion(1, 0.2)}, PhaseEnter)
-			So(next.Token.String(), ShouldEqual, "R07.R01")
-		})
-
-		Convey("labelCode maps R10 and R11 regime/posture nibbles", func() {
-			const (
-				codeR10R00 = byte(0xA0) // regime 10, posture 0
-				codeR11R05 = byte(0xB5) // regime 11, posture 5
-			)
-			So(labelCode("R10.R00"), ShouldEqual, codeR10R00)
-			So(labelCode("R11.R05"), ShouldEqual, codeR11R05)
-		})
-
-		Convey("board hold confidence regime R10", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(6, 0.1),
-				litRegion(10, 0.85),
-				litRegion(0, 0.5),
-				litRegion(1, 0.2),
-			}, PhaseEnter)
-			So(step.Token.String(), ShouldEqual, "R10.R00")
-		})
-
-		Convey("board exit confidence regime R11", func() {
-			step := NewSequencer().Step([]*store.Region{
-				litRegion(11, 0.7),
-				litRegion(6, 0.1),
-				litRegion(7, 0.15),
-				litRegion(8, 0.2),
-			}, PhaseHold)
-			So(step.Token.String(), ShouldEqual, "R11.R08")
-		})
-
-		Convey("hold spell compresses oscillation via sequitur", func() {
-			sequencer := NewSequencer()
-			a := []*store.Region{litRegion(7, 0.5), litRegion(3, 0.4)}
-			b := []*store.Region{litRegion(8, 0.5), litRegion(4, 0.4)}
-
-			var last []string
+		Convey("oscillating symbols compress via sequitur", func() {
 			for range 6 {
-				last = sequencer.Step(a, PhaseExit).Spell
-				last = sequencer.Step(b, PhaseExit).Spell
+				_ = seq.Step("R07.R03", 0.5)
+				_ = seq.Step("R08.R04", 0.5)
 			}
-			So(len(last), ShouldBeLessThanOrEqualTo, 4)
+
+			So(len(seq.Grammar().Tail(8)), ShouldBeLessThanOrEqualTo, 4)
 		})
 	})
 }

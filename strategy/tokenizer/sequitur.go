@@ -561,7 +561,7 @@ func parseDisplay(symbol string) Symbol {
 	return Symbol(symbol)
 }
 
-// Learn copies one rule into this grammar so a restart spells digrams the same way.
+// Learn copies one rule into this grammar so a restart replays digrams the same way.
 func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
 	if sequitur == nil || id <= 0 || len(symbols) == 0 {
 		return

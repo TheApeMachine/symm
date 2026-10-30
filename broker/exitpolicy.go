@@ -50,8 +50,27 @@ type policyRecord struct {
 	policy   learnedExitPolicy
 }
 
-func (desk *Desk) observePolicy(position *Position) {
-	if desk == nil || desk.policies == nil || position == nil || position.Symbol == "" || position.PnLPct == nil {
+/*
+ExitPolicy learns per-symbol stop cut and trail from settled virtual and
+venue round trips. Desk composes it the same way it composes Price.
+*/
+type ExitPolicy struct {
+	desk       *Desk
+	policies   *sync.Map
+	shadowMu   sync.Mutex
+	shadowJobs []shadowJob
+}
+
+func NewExitPolicy() *ExitPolicy {
+	return &ExitPolicy{policies: &sync.Map{}}
+}
+
+func (policy *ExitPolicy) compose(desk *Desk) {
+	policy.desk = desk
+}
+
+func (policy *ExitPolicy) Observe(position *Position) {
+	if policy == nil || policy.policies == nil || position == nil || position.Symbol == "" || position.PnLPct == nil {
 		return
 	}
 
@@ -86,7 +105,7 @@ func (desk *Desk) observePolicy(position *Position) {
 		timeToPeak = time.Duration(float64(duration) * (float64(peakIdx) / float64(len(trace)-1)))
 	}
 
-	known := desk.ensurePolicyRecord(position.Symbol)
+	known := policy.ensureRecord(position.Symbol)
 	if known == nil {
 		return
 	}
@@ -113,14 +132,14 @@ func (desk *Desk) observePolicy(position *Position) {
 	symbol := position.Symbol
 	known.mu.Unlock()
 
-	desk.persistExitPolicy(symbol)
+	policy.persist(symbol)
 }
 
-func (desk *Desk) recordPolicy(symbol string) *policyRecord {
-	if desk == nil || desk.policies == nil {
+func (policy *ExitPolicy) record(symbol string) *policyRecord {
+	if policy == nil || policy.policies == nil {
 		return nil
 	}
-	val, ok := desk.policies.Load(symbol)
+	val, ok := policy.policies.Load(symbol)
 	if !ok {
 		return nil
 	}
@@ -128,17 +147,17 @@ func (desk *Desk) recordPolicy(symbol string) *policyRecord {
 	return known
 }
 
-func (desk *Desk) ensurePolicyRecord(symbol string) *policyRecord {
-	if desk == nil || desk.policies == nil || symbol == "" {
+func (policy *ExitPolicy) ensureRecord(symbol string) *policyRecord {
+	if policy == nil || policy.policies == nil || symbol == "" {
 		return nil
 	}
 
-	if known := desk.recordPolicy(symbol); known != nil {
+	if known := policy.record(symbol); known != nil {
 		return known
 	}
 
 	known := &policyRecord{}
-	if actual, loaded := desk.policies.LoadOrStore(symbol, known); loaded {
+	if actual, loaded := policy.policies.LoadOrStore(symbol, known); loaded {
 		return actual.(*policyRecord)
 	}
 
@@ -149,22 +168,22 @@ func (desk *Desk) ensurePolicyRecord(symbol string) *policyRecord {
 refreshPolicy derives candidate stopping boundaries from empirical quantiles
 and executes the Causal MCTS search.
 */
-func (desk *Desk) refreshPolicy(symbol string) {
-	known := desk.recordPolicy(symbol)
+func (policy *ExitPolicy) Refresh(symbol string) {
+	known := policy.record(symbol)
 	if known == nil {
 		return
 	}
 
 	known.mu.Lock()
-	desk.refreshPolicyLocked(known)
+	policy.refreshLocked(known)
 	known.mu.Unlock()
 
 	if symbol != "" {
-		desk.persistExitPolicy(symbol)
+		policy.persist(symbol)
 	}
 }
 
-func (desk *Desk) refreshPolicyLocked(known *policyRecord) {
+func (policy *ExitPolicy) refreshLocked(known *policyRecord) {
 	if known == nil {
 		return
 	}
@@ -174,21 +193,21 @@ func (desk *Desk) refreshPolicyLocked(known *policyRecord) {
 		return
 	}
 
-	// 1. Candidate Invalidation Cuts: sample quantiles of observed drawdowns
-	candidateCuts := extractDrawdownQuantiles(known.episodes)
-	if len(candidateCuts) == 0 {
-		return
-	}
-
-	// 2. Candidate Trailing Pullbacks: sample quantiles of observed givebacks
-	candidatePullbacks := extractPullbackQuantiles(known.episodes)
-	if len(candidatePullbacks) == 0 {
-		return
-	}
-
-	// 3. Empirical Max Duration: distribution of time-to-peak for winning excursions
+	// Duration is recorded from winning episodes. It is not an exit.
 	maxDuration := extractWinningDurationHorizon(known.episodes)
 	maxBars := extractWinningBarHorizon(known.episodes)
+
+	// 1. Candidate Invalidation Cuts: winning dips, else observed loser dips,
+	// else a friction-scale prior from the opening mark.
+	candidateCuts := extractDrawdownQuantiles(known.episodes)
+	candidatePullbacks := extractPullbackQuantiles(known.episodes)
+	if len(candidateCuts) == 0 || len(candidatePullbacks) == 0 {
+		known.policy.maxHoldBars = maxBars
+		if maxDuration > 0 {
+			known.policy.maxHoldDuration = maxDuration
+		}
+		return
+	}
 
 	search := mcts.NewCausalMCTS(
 		mcts.DefaultCausalEngine{},
@@ -212,6 +231,10 @@ func (desk *Desk) refreshPolicyLocked(known *policyRecord) {
 	bestNode, _, err := search.Search(root, policyIterations, known.rows)
 
 	if err != nil || bestNode == nil {
+		known.policy.maxHoldBars = maxBars
+		if maxDuration > 0 {
+			known.policy.maxHoldDuration = maxDuration
+		}
 		return
 	}
 
@@ -221,12 +244,14 @@ func (desk *Desk) refreshPolicyLocked(known *policyRecord) {
 		optCut = cap
 	}
 
+	known.policy.maxHoldBars = maxBars
+	if maxDuration > 0 {
+		known.policy.maxHoldDuration = maxDuration
+	}
 	if optCut > 0 && optTrail > 0 {
 		optTrail = widenTrailForRegret(optTrail, known.episodes)
 		known.policy.invalidationCut = optCut
 		known.policy.trailingStop = optTrail
-		known.policy.maxHoldDuration = maxDuration
-		known.policy.maxHoldBars = maxBars
 	}
 }
 
@@ -276,25 +301,25 @@ func worstCaseAdverseDrop(episodes []episode) float64 {
 	return worst
 }
 
-func (desk *Desk) refreshPolicies() {
-	if desk == nil || desk.policies == nil {
+func (policy *ExitPolicy) RefreshAll() {
+	if policy == nil || policy.policies == nil {
 		return
 	}
 
-	desk.policies.Range(func(key, _ any) bool {
+	policy.policies.Range(func(key, _ any) bool {
 		if symbol, ok := key.(string); ok && symbol != "" {
-			desk.refreshPolicy(symbol)
+			policy.Refresh(symbol)
 		}
 		return true
 	})
 }
 
-func (desk *Desk) teachPolicy(position *Position) {
+func (policy *ExitPolicy) Teach(position *Position) {
 	if position == nil {
 		return
 	}
 
-	known := desk.recordPolicy(position.Symbol)
+	known := policy.record(position.Symbol)
 
 	if known == nil {
 		return
@@ -323,8 +348,8 @@ func (desk *Desk) teachPolicy(position *Position) {
 	position.WorstPct = decimal.NewFromFloat64(pol.worst)
 }
 
-func (desk *Desk) Policy(symbol string) (exitPullbackPct float64, worstPct float64, ok bool) {
-	known := desk.recordPolicy(symbol)
+func (policy *ExitPolicy) Lookup(symbol string) (exitPullbackPct float64, worstPct float64, ok bool) {
+	known := policy.record(symbol)
 	if known == nil {
 		return 0, 0, false
 	}
@@ -344,10 +369,10 @@ func (desk *Desk) Policy(symbol string) (exitPullbackPct float64, worstPct float
 
 func extractDrawdownQuantiles(episodes []episode) []float64 {
 	var winningDips []float64
+	var anyDips []float64
 
 	for _, ep := range episodes {
-		// Only learn cuts from trades that went on to be profitable
-		if ep.banked <= 0 || len(ep.trace) == 0 {
+		if len(ep.trace) == 0 {
 			continue
 		}
 
@@ -360,19 +385,53 @@ func extractDrawdownQuantiles(episodes []episode) []float64 {
 			}
 		}
 
-		// Calculate adverse drop RELATIVE to the entry mark (absorbing initial fees/spread)
+		// Adverse drop relative to the entry mark (fees and spread sit in the
+		// opening mark, so they are not themselves a further move).
 		adverseDrop := entryVal - minVal
+		if adverseDrop <= 0 {
+			continue
+		}
 
-		if adverseDrop > 0 {
+		anyDips = append(anyDips, adverseDrop)
+		// Prefer dips that the trade later recovered through. A book of only
+		// losers still yields anyDips so the search is not aborted.
+		if ep.banked > 0 {
 			winningDips = append(winningDips, adverseDrop)
 		}
 	}
 
-	if len(winningDips) == 0 {
-		return nil
+	if len(winningDips) > 0 {
+		return computeQuantileGrid(winningDips)
+	}
+	if len(anyDips) > 0 {
+		return computeQuantileGrid(anyDips)
 	}
 
-	return computeQuantileGrid(winningDips)
+	// Flat underwater traces never move past the opening drag. Seed the cut
+	// grid from that drag so a boundary exists before the first winner.
+	return frictionScalePrior(episodes)
+}
+
+/*
+frictionScalePrior is the Day-1 cut/trail grid: one, one-and-a-half, and two
+times the deepest opening drag in the episode set. The opening mark is already
+the taker-fee plus spread disadvantage, so it is the friction scale the book
+has actually shown.
+*/
+func frictionScalePrior(episodes []episode) []float64 {
+	scale := 0.0
+	for _, ep := range episodes {
+		if len(ep.trace) == 0 {
+			continue
+		}
+		if entry := ep.trace[0]; entry < 0 && -entry > scale {
+			scale = -entry
+		}
+	}
+	if scale <= 0 {
+		return nil
+	}
+	return []float64{scale, scale * 1.5, scale * 2}
 }
 
 func extractPullbackQuantiles(episodes []episode) []float64 {
@@ -397,7 +456,10 @@ func extractPullbackQuantiles(episodes []episode) []float64 {
 		}
 	}
 
-	return computeQuantileGrid(pullbacks)
+	if grid := computeQuantileGrid(pullbacks); len(grid) > 0 {
+		return grid
+	}
+	return frictionScalePrior(episodes)
 }
 
 func computeQuantileGrid(data []float64) []float64 {

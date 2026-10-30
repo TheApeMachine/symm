@@ -5,9 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/nomagique/runtime"
 	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
@@ -20,33 +18,26 @@ type Model struct {
 	*runtime.System
 	desk  *broker.Desk
 	price *broker.Price
-	stage *Stage
 	store *store.Client
 	tree  *atomic.Pointer[Tree]
-	gate  *Gate
 }
 
 func NewModel(
 	ctx context.Context,
 	desk *broker.Desk,
 	price *broker.Price,
-	stage *Stage,
 ) *Model {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
-
-	gate := NewGate(ctx, desk, price, client)
 
 	model := &Model{
 		System: runtime.NewSystem(ctx, "model"),
 		desk:   desk,
 		price:  price,
-		stage:  stage,
 		store:  client,
 		tree:   &atomic.Pointer[Tree]{},
-		gate:   gate,
 	}
 
-	tree := NewTree(ctx, "model/paths/", gate)
+	tree := NewTree(ctx, "model/paths/")
 	model.tree.Store(tree)
 
 	return model
@@ -60,312 +51,138 @@ func (model *Model) Evaluate(
 	}
 
 	symbol := out.Scope
-	source := out
-
-	if tick != nil {
-		source = tick
-	}
-
-	coder := ReadCoder(source, symbol)
-	out.Append(observed, "lit")
 
 	if tick == nil {
 		return out
 	}
 
+	coder := ReadCoder(tick, symbol)
+
+	if !coder.Ready {
+		return out
+	}
+
+	out.Append(observed, "lit")
+
+	// First we handle the positions that were exited by the stoploss.
 	if pending, ok := model.desk.TakePending(symbol); ok {
-		model.completeExit(out, symbol, pending)
+		model.Exit(pending)
 	}
 
-	holding := model.desk.Has(symbol, false) || model.desk.Has(symbol, true)
+	position := model.desk.Position(symbol)
 
-	step := data.Get[tokenizer.StepResult](
-		source, strings.Join([]string{"stage", symbol, "step"}, "/"),
+	tokens := data.Get[tokenizer.Tokens](
+		tick, strings.Join([]string{"stage", symbol, "cut"}, "/"),
 	)
 
-	cut := data.Get[tokenizer.Token](
-		source, strings.Join([]string{"stage", symbol, "cut"}, "/"),
-	)
+	out.Append(tokens, "cut")
 
-	if cut.String() == "" && step.Token.String() != "" {
-		cut = step.Token
-	}
+	action, strength, disagreed := model.tree.Load().Predict(tokens)
 
-	if cut.String() == "" && !holding {
-		audit.Record.Write(map[string]any{
-			"model":       "evaluate",
-			"symbol":      symbol,
-			"outcome":     "empty-cut",
-			"holding":     holding,
-			"stepToken":   step.Token.String(),
-			"spellLen":    len(step.Spell),
-			"stepSilence": string(step.Silence),
-			"regions":     litKeys(observed),
-		})
+	if disagreed {
 		return out
 	}
 
-	out.Append(cut, "cut")
+	var phase string
+	tick.Lookup(&phase, strings.Join([]string{"stage", symbol, "phase"}, "/"))
 
-	if holding {
-		return model.evaluateHold(out, symbol, observed, source, step, cut, coder)
-	}
-
-	return model.evaluateEnter(out, symbol, observed, step, cut, coder)
-}
-
-func (model *Model) evaluateEnter(
-	out *data.Value,
-	symbol string,
-	observed []*nmstore.Region,
-	step tokenizer.StepResult,
-	cut tokenizer.Token,
-	coder CoderReading,
-) *data.Value {
-	spell := tokenizer.CollapseConsecutive(step.Spell)
-	pathKey := strings.Join(spell, "/")
-
-	minPath := 2
-	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MinPathLength > 0 {
-		minPath = system.Cfg.Learning.MinPathLength
-	}
-
-	// A stable letter (the sequencer marks the repeat) is a confirmed spell.
-	// Waiting for a second distinct label left the book flat on a steady tape.
-	confirmed := len(spell) >= minPath ||
-		(len(spell) > 0 && step.Silence == tokenizer.StepSilenceDuplicate)
-	if !confirmed {
-		return out
-	}
-
-	out.Append(pathKey, "path")
-	out.Append(pathKey, "policyPath")
-	out.Append("enter", "phase")
-
-	tokens := tokensFromSpell(spell, cut)
-	decision := model.tree.Load().PredictDefault(tokens, coder, ActionEnter)
-	out.Append(decision.Action.String(), "action")
-	if decision.FuzzySimilarity > 0 {
-		out.Append(decision.FuzzySimilarity, "policyFuzzySimilarity")
-		out.Append(decision.PolicyKey, "policyFuzzyKey")
-	}
-	if decision.Promoted {
-		out.Append(true, "policyPromoted")
-	}
-
-	switch decision.Action {
+	switch action {
 	case ActionEnter:
-		out.Append(true, "enter")
-
-		gateDec := model.gate.EvaluateEnter(symbol, observed, coder)
-		out.Append(model.gate.frameForEnter(observed, gateDec, decision), "gate")
-
-		if !gateDec.Allowed {
-			writeEnterAudit(
-				model.gate, "gate-blocked", symbol, pathKey,
-				gateDec, decision, coder, observed, step, cut, false, nil,
-			)
-			out.Append(true, "blocked")
-			out.Append(gateDec.Reason, "blockedReason")
-			return out
+		if !coder.Bullish || position != nil {
+			break
 		}
 
-		isVirtual := decision.Virtual || gateDec.Virtual
-
-		if model.stage != nil && model.gate != nil {
-			if !isVirtual && coder.Ready && coder.Bullish {
-				if maturity := model.stage.SymbolMaturity(symbol); maturity < model.gate.gridMaturityMin() {
-					reason := "grid maturity below minimum (signals still warming up)"
-					writeEnterAudit(
-						model.gate, "gate-blocked", symbol, pathKey,
-						GateDecision{Allowed: false, Reason: reason},
-						decision, coder, observed, step, cut, false, nil,
-					)
-					out.Append(true, "blocked")
-					out.Append(reason, "blockedReason")
-					return out
-				}
-			}
+		paper := strength > 0.2
+		model.Enter(symbol, tokens.String(), !paper, paper)
+	case ActionHold:
+		model.Hold(position, tokens.String())
+	case ActionExit:
+		if coder.Bullish {
+			break
 		}
 
-		if model.desk.Has(symbol, isVirtual) {
-			return out
+		model.Exit(position)
+	case ActionNone:
+		if !coder.Bullish || position != nil || phase != "enter" || tokens.Len() == 0 {
+			break
 		}
 
-		if err := model.desk.Enter(symbol, pathKey, isVirtual, true); err != nil {
-			writeEnterAudit(
-				model.gate, "rejected", symbol, pathKey,
-				gateDec, decision, coder, observed, step, cut, isVirtual, err,
-			)
-			return out
-		}
-
-		outcome := "paper enter submitted"
-		if isVirtual {
-			outcome = "virtual enter submitted"
-		}
-		out.Append(outcome, "outcome")
-		writeEnterAudit(
-			model.gate, outcome, symbol, pathKey,
-			gateDec, decision, coder, observed, step, cut, isVirtual, nil,
-		)
-
-		if pos := model.desk.Position(symbol, isVirtual); pos != nil {
-			pos.OpenSurprise = coder.Surprise
-			pos.ExitPath = pathKey
-			b := regionBrightness(observed)
-			_, netHold := entryNets(b)
-			pos.EnterR02 = b[2]
-			pos.EnterNetHold = netHold
-			if model.stage != nil {
-				pos.EnterGridMaturity = model.stage.SymbolMaturity(symbol)
-			}
-		}
-
-		if model.stage != nil {
-			model.stage.ResetSequencer(symbol)
-		}
-
-	case ActionExit, ActionHold:
-		out.Append(false, "enter")
+		model.Enter(symbol, tokens.String(), true, false)
 	}
 
 	return out
 }
 
-func (model *Model) evaluateHold(
-	out *data.Value,
+/*
+Enter enters a new position.
+*/
+func (model *Model) Enter(
 	symbol string,
-	observed []*nmstore.Region,
-	source *data.Value,
-	step tokenizer.StepResult,
-	cut tokenizer.Token,
-	coder CoderReading,
-) *data.Value {
-	holdSpell := tokenizer.CollapseConsecutive(step.Spell)
-	holdPath := strings.Join(holdSpell, "/")
-
-	exitStep := data.Get[tokenizer.StepResult](
-		source, strings.Join([]string{"stage", symbol, "exitStep"}, "/"),
-	)
-	exitCut := data.Get[tokenizer.Token](
-		source, strings.Join([]string{"stage", symbol, "exitCut"}, "/"),
-	)
-
-	exitSpell := tokenizer.CollapseConsecutive(exitStep.Spell)
-	exitPath := strings.Join(exitSpell, "/")
-
-	out.Append(holdPath, "holdPath")
-	out.Append(exitPath, "path")
-	out.Append(exitPath, "policyPath")
-	out.Append("hold", "phase")
-
-	for _, virtual := range []bool{false, true} {
-		if pos := model.desk.Position(symbol, virtual); pos != nil {
-			pos.HoldPath = holdPath
-			if exitPath != "" {
-				pos.ExitPath = exitPath
-			}
-		}
-	}
-
-	holdTokens := tokensFromSpell(holdSpell, cut)
-	exitTokens := tokensFromSpell(exitSpell, exitCut)
-
-	holdDecision := model.tree.Load().PredictDefault(holdTokens, coder, ActionHold)
-	exitDecision := model.tree.Load().PredictDefault(exitTokens, coder, ActionExit)
-
-	out.Append(holdDecision.Action.String(), "holdAction")
-	out.Append(exitDecision.Action.String(), "action")
-	out.Append(model.gate.frameForHold(observed, holdDecision), "gate")
-
-	if len(exitSpell) >= system.Cfg.Learning.MinPathLength &&
-		exitDecision.Action == ActionExit &&
-		exitDecision.Impulse >= exitDecision.Resistance {
-		for _, virtual := range []bool{false, true} {
-			if pos := model.desk.Position(symbol, virtual); pos != nil {
-				gateDec := model.gate.EvaluateExit(symbol, observed, coder, pos)
-				out.Append(model.gate.frameForExit(observed, gateDec, exitDecision), "gate")
-
-				if !gateDec.Allowed {
-					writeExitGateAudit(
-						model.gate, symbol, exitPath,
-						gateDec, exitDecision, coder, observed,
-						exitStep, exitCut, virtual, pos,
-					)
-					out.Append(true, "blocked")
-					out.Append(gateDec.Reason, "blockedReason")
-					continue
-				}
-
-				if err := model.desk.Exit(symbol, exitPath, virtual); err != nil {
-					errnie.Error(err)
-				}
-			}
-		}
-	}
-
-	return out
-}
-
-func tokensFromSpell(spell []string, cut tokenizer.Token) tokenizer.Tokens {
-	tokens := tokenizer.NewTokens()
-	for i, segment := range spell {
-		b := 0.0
-		if i == len(spell)-1 {
-			b = cut.Brightness
-		}
-		tokens = tokens.Append(tokenizer.NewToken([]string{segment}, b, cut.Meta))
-	}
-	return tokens
-}
-
-func (model *Model) completeExit(
-	out *data.Value, symbol string, position *broker.Position,
+	path string,
+	virtual bool,
+	pathFound bool,
 ) {
-	if position == nil || position.PnLPct == nil {
+	model.desk.Enter(symbol, path, virtual, pathFound)
+}
+
+/*
+Hold holds a position.
+*/
+func (model *Model) Hold(position *broker.Position, path string) {
+	if position == nil {
 		return
 	}
 
-	returnFraction := position.RealizedPct
+	position.HoldPaths = append(position.HoldPaths, path)
+}
 
-	if returnFraction == 0 {
-		returnFraction = position.PnLPct.Float64() / 100.0
+/*
+Exit writes the paths to the tree, and the S3 store.
+Only once a position has exited should we write the paths, so we are capturing
+life-cycles, and can accurately update the resistance of the paths.
+*/
+func (model *Model) Exit(
+	position *broker.Position,
+) {
+	if position == nil {
+		return
 	}
 
-	virtual := position.Virtual
-	if position.EntryPath != "" {
-		model.tree.Load().UpdateResistance(position.EntryPath, ActionEnter, returnFraction, virtual)
+	tree := model.tree.Load()
+
+	if tree == nil {
+		return
 	}
 
-	if position.HoldPath != "" {
-		model.tree.Load().UpdateResistance(position.HoldPath, ActionHold, returnFraction, virtual)
+	if position.Virtual {
+		tree.Insert(
+			position.EntryPath,
+			data.NewValue("model", "action", "enter"),
+		)
+
+		for _, path := range position.HoldPaths {
+			tree.Insert(path, data.NewValue("model", "action", "hold"))
+		}
+
+		tree.Insert(
+			position.ExitPath,
+			data.NewValue("model", "action", "exit"),
+		)
+
+		return
 	}
 
-	if position.ExitPath != "" && position.ExitPath != position.EntryPath {
-		model.tree.Load().UpdateResistance(position.ExitPath, ActionExit, returnFraction, virtual)
+	resistance := 0.05
+
+	if position.PnL.Sign() > 0 {
+		resistance = -0.05
 	}
 
-	result := GateResult{
-		ReturnFraction: returnFraction,
-		Virtual:        virtual,
-		EnterR02:       position.EnterR02,
-		EnterNetHold:   position.EnterNetHold,
-		GridMaturity:   position.EnterGridMaturity,
-		ExitTrigger:    position.ExitTrigger,
-	}
-	trigger := position.ExitTrigger
-	result.StoppedOut = trigger != "" && (strings.Contains(trigger, "invalidation") || strings.Contains(trigger, "evaporation") || strings.Contains(trigger, "expired") || strings.Contains(trigger, "expiry"))
+	tree.Update(position.EntryPath, resistance)
 
-	if result.StoppedOut {
-		result.StoppedOut = returnFraction < 0
+	for _, path := range position.HoldPaths {
+		tree.Update(path, resistance)
 	}
 
-	model.gate.Update(result)
-
-	out.Append("exit submitted", "outcome")
-
-	if model.stage != nil {
-		model.stage.ResetSequencer(symbol)
-	}
+	tree.Update(position.ExitPath, resistance)
 }

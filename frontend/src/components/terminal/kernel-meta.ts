@@ -49,7 +49,7 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "structural_alignment",
 	depthflow: "bid_ladder_build",
 	hawkes: "supercritical_cascade",
-	liquidity: "relative_spread",
+	liquidity: "spread_expansion",
 	pumpdump: "coiled_compression",
 	training: "confidence",
 };
@@ -88,11 +88,11 @@ const SOURCE_METRICS: Record<string, string[]> = {
 	],
 	hawkes: ["supercritical_cascade", "board_cascade"],
 	liquidity: [
-		"best_price:bid",
-		"best_price:ask",
-		"relative_spread",
+		"spread_expansion",
+		"liquidation_impact",
 		"market_friction",
 		"capacity_stress",
+		"friction_drag_ratio",
 	],
 	pumpdump: [
 		"coiled_compression",

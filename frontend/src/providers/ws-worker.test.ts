@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeValueWire as encodeValue } from "#/test/encode-value-wire";
 
 type EventListener = (event: MessageEvent) => void | Promise<void>;
 
@@ -50,14 +51,6 @@ class MockWebSocket {
 	}
 }
 
-const encodeFrameBatch = (counts: number[]): ArrayBuffer => {
-	const buf = new Uint8Array(counts.length);
-	for (let i = 0; i < counts.length; i++) {
-		buf[i] = counts[i];
-	}
-	return buf.buffer;
-};
-
 const connectWorker = async () => {
 	const scope = new MockWorkerScope();
 
@@ -95,22 +88,27 @@ describe("ws-worker", () => {
 		await socket.emit("open", {});
 		expect(scope.messages).toContainEqual({ type: "STATUS", status: "ONLINE" });
 
-		// Inbound batch: must transfer binary buffer to main thread via postMessage
-		const batchBuffer = encodeFrameBatch([1, 2, 3]);
+		const batchBuffer = encodeValue({
+			origin: "positions",
+			role: "update",
+			scope: "BTC/USD",
+			tick: 9n,
+		}).buffer;
+
 		await socket.emit("message", batchBuffer);
 
-		const batchMsg = scope.messages.find(
-			(m): m is { type: "BATCH"; buffer: ArrayBuffer } =>
+		const valuesMsg = scope.messages.find(
+			(m): m is { type: "VALUES"; values: { origin: string }[] } =>
 				typeof m === "object" &&
 				m !== null &&
 				"type" in m &&
-				m.type === "BATCH" &&
-				"buffer" in m &&
-				m.buffer instanceof ArrayBuffer,
+				m.type === "VALUES" &&
+				"values" in m &&
+				Array.isArray(m.values),
 		);
 
-		expect(batchMsg).toBeDefined();
-		expect(batchMsg?.buffer.byteLength).toBe(batchBuffer.byteLength);
+		expect(valuesMsg).toBeDefined();
+		expect(valuesMsg?.values[0]?.origin).toBe("positions");
 
 		// Close socket: must notify main thread of OFFLINE
 		await socket.emit("close", {});

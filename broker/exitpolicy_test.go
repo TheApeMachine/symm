@@ -73,6 +73,54 @@ func TestEncodeDecodePolicyRecord(t *testing.T) {
 	})
 }
 
+func TestExtractDrawdownQuantilesColdStart(t *testing.T) {
+	Convey("drawdown quantiles exist before the first winner", t, func() {
+		Convey("loser dips are the candidate cuts", func() {
+			grid := extractDrawdownQuantiles([]episode{
+				{trace: []float64{-1.6, -2.4, -3.2}, banked: -3.2},
+				{trace: []float64{-1.6, -1.8}, banked: -1.8},
+			})
+			So(len(grid), ShouldBeGreaterThan, 0)
+			for _, cut := range grid {
+				So(cut, ShouldBeGreaterThan, 0)
+			}
+		})
+
+		Convey("a flat underwater book seeds a friction-scale prior", func() {
+			grid := extractDrawdownQuantiles([]episode{
+				{trace: []float64{-1.6, -1.6, -1.6}, banked: -1.6},
+			})
+			So(len(grid), ShouldEqual, 3)
+			So(grid[0], ShouldAlmostEqual, 1.6, 1e-9)
+			So(grid[1], ShouldAlmostEqual, 2.4, 1e-9)
+			So(grid[2], ShouldAlmostEqual, 3.2, 1e-9)
+		})
+
+		Convey("a winning dip is preferred over loser dips", func() {
+			grid := extractDrawdownQuantiles([]episode{
+				{trace: []float64{-1.6, -4.0}, banked: -4.0},
+				{trace: []float64{0, -0.4, 1.2}, banked: 1.2},
+			})
+			So(grid, ShouldNotBeEmpty)
+			for _, cut := range grid {
+				So(cut, ShouldBeLessThanOrEqualTo, 0.4)
+			}
+		})
+	})
+}
+
+func TestExtractPullbackQuantilesColdStart(t *testing.T) {
+	Convey("a flat book still yields a pullback prior", t, func() {
+		grid := extractPullbackQuantiles([]episode{
+			{trace: []float64{-1.6, -1.6}, banked: -1.6},
+		})
+		So(len(grid), ShouldEqual, 3)
+		So(grid[0], ShouldAlmostEqual, 1.6, 1e-9)
+		So(grid[1], ShouldAlmostEqual, 2.4, 1e-9)
+		So(grid[2], ShouldAlmostEqual, 3.2, 1e-9)
+	})
+}
+
 func dec(s string) decimal.Decimal {
 	d, err := decimal.NewFromString(s)
 	if err != nil {

@@ -1,7 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
 import { signals } from "#/collections/app";
-import { sequiturStore } from "#/collections/sequitur";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
@@ -86,11 +85,6 @@ export const PositionLiveIntel = ({
 	row: Record<string, unknown>;
 }) => {
 	const trainingFrame = useSelector(signals.training, (state) => state[symbol]);
-	const sequitur = useSelector(
-		sequiturStore,
-		(state) => state[symbol]?.latest ?? null,
-	);
-
 	const life = useMemo(
 		(): Lifecycle =>
 			({
@@ -121,12 +115,10 @@ export const PositionLiveIntel = ({
 		(gate.treeImpulse ?? 0) >= (gate.treeResistance ?? 0);
 	const exitDecision = phase === "exit";
 	const active =
-		sequitur?.active ??
 		(trainingFrame?.reading("active") as Array<{
 			key: number;
 			brightness: number;
-		}>) ??
-		[];
+		}>) ?? [];
 
 	const entryPath = String(row.entry_path ?? "");
 	const holdPath = String(row.hold_path ?? "");

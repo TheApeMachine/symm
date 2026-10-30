@@ -8,17 +8,14 @@ import (
 )
 
 /*
-Token is one MDL segment over the region observation stream. Sequitur
-
-	supplies rule labels (M1, …) for the same span when digrams compressed.
+Token is one emitted path letter plus its impulse brightness.
 */
 type Token struct {
-	Symbols    []string    `json:"symbols"`
-	Brightness float64     `json:"brightness"`
-	Meta       SegmentMeta `json:"-"`
+	Symbols    []string `json:"symbols"`
+	Brightness float64  `json:"brightness"`
 }
 
-func NewToken(symbols []string, brightness float64, meta SegmentMeta) Token {
+func NewToken(symbols []string, brightness float64) Token {
 	if len(symbols) == 0 {
 		return Token{}
 	}
@@ -29,7 +26,6 @@ func NewToken(symbols []string, brightness float64, meta SegmentMeta) Token {
 	return Token{
 		Symbols:    out,
 		Brightness: brightness,
-		Meta:       meta,
 	}
 }
 
@@ -79,6 +75,14 @@ func (tokens Tokens) Brightness() float64 {
 
 func (tokens Tokens) Len() int {
 	return len(tokens)
+}
+
+func (tokens Tokens) Last() Token {
+	if len(tokens) == 0 {
+		return Token{}
+	}
+
+	return tokens[len(tokens)-1]
 }
 
 func (tokens Tokens) StringList() []string {

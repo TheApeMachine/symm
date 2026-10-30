@@ -95,7 +95,6 @@ export const signals: Record<string, Store<Record<string, Value>>> = {
 	positions: createStore<Record<string, Value>>({}),
 	s3: createStore<Record<string, Value>>({}),
 	paper: createStore<Record<string, Value>>({}),
-	sequitur: createStore<Record<string, Value>>({}),
 	cognition: createStore<Record<string, Value>>({}),
 };
 

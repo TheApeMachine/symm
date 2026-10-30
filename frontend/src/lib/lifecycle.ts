@@ -492,41 +492,42 @@ export const resetLifecycles = () => {
 	for (const listener of listeners) listener();
 };
 
-const historyFrameIsNewer = (next: Value, prev: HistoryStamp): boolean => {
-	if (next.epoch !== prev.epoch) return next.epoch > prev.epoch;
-	if (next.tick !== prev.tick) return next.tick > prev.tick;
-	return next.timestamp > prev.timestamp;
+export type ClosedHistoryEntry = {
+	stamp: HistoryStamp;
+	row: Record<string, unknown>;
 };
 
-/*
-ingestHistoryClosedFrame folds one stored desk lot (position/closed or
-virtual/closed on S3) into the lifecycle archive.
-*/
-export const ingestHistoryClosedFrame = (frame: Value) => {
-	if (frame.role !== "closed") return;
-	if (frame.origin !== "position" && frame.origin !== "virtual") return;
+const historyFrameIsNewerStamp = (
+	stamp: HistoryStamp,
+	prior: HistoryStamp,
+): boolean => {
+	if (stamp.epoch !== prior.epoch) return stamp.epoch > prior.epoch;
+	if (stamp.tick !== prior.tick) return stamp.tick > prior.tick;
+	return stamp.timestamp > prior.timestamp;
+};
 
-	const row = framePositionRows(frame)[0];
-	if (!row || typeof row.id !== "string" || row.id === "") return;
+const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
+	const row = entry.row;
+	if (!row || typeof row.id !== "string" || row.id === "") {
+		return false;
+	}
 
 	const existing = lives.get(row.id);
 	if (existing && !existing.history) {
-		return;
+		return false;
 	}
 
 	const prior = historyStamp.get(row.id);
-	const stamp: HistoryStamp = {
-		epoch: frame.epoch ?? 0n,
-		tick: frame.tick ?? 0n,
-		timestamp: frame.timestamp ?? 0n,
-	};
-	if (prior && !historyFrameIsNewer(frame, prior)) {
-		return;
+	if (prior && !historyFrameIsNewerStamp(entry.stamp, prior)) {
+		return false;
 	}
-	historyStamp.set(row.id, stamp);
+
+	historyStamp.set(row.id, entry.stamp);
 
 	const life = lifecycleFromDeskClosed(row);
-	if (!life) return;
+	if (!life) {
+		return false;
+	}
 
 	life.history = true;
 	life.desk = true;
@@ -552,7 +553,45 @@ export const ingestHistoryClosedFrame = (frame: Value) => {
 		marks: existing?.marks?.length ? existing.marks : life.marks,
 	};
 
-	if (storeLife(merged)) {
+	return storeLife(merged);
+};
+
+/*
+ingestHistoryClosedBatch folds many stored closed lots with one publish.
+The websocket worker compacts S3 ListPrefix frames before they reach the UI.
+*/
+export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
+	let changed = false;
+
+	for (const entry of entries) {
+		if (ingestHistoryClosedEntry(entry)) {
+			changed = true;
+		}
+	}
+
+	if (changed) {
+		publish();
+	}
+};
+
+/*
+ingestHistoryClosedFrame folds one stored desk lot (position/closed or
+virtual/closed on S3) into the lifecycle archive.
+*/
+export const ingestHistoryClosedFrame = (frame: Value) => {
+	if (frame.role !== "closed") return;
+	if (frame.origin !== "position" && frame.origin !== "virtual") return;
+
+	const row = framePositionRows(frame)[0];
+	if (!row || typeof row.id !== "string" || row.id === "") return;
+
+	const stamp: HistoryStamp = {
+		epoch: frame.epoch ?? 0n,
+		tick: frame.tick ?? 0n,
+		timestamp: frame.timestamp ?? 0n,
+	};
+
+	if (ingestHistoryClosedEntry({ stamp, row })) {
 		publish();
 	}
 };
@@ -575,13 +614,38 @@ export const ingestS3PositionHistory = (value: Value): boolean => {
 		return false;
 	}
 
+	const entries: ClosedHistoryEntry[] = [];
+
 	for (let i = 0; i < value.layers.length; i++) {
 		const nested = parseOneValue(value.layers[i]);
-		if (nested) {
-			ingestHistoryClosedFrame(nested);
+		if (!nested) {
+			continue;
 		}
+
+		if (nested.role !== "closed") {
+			continue;
+		}
+
+		if (nested.origin !== "position" && nested.origin !== "virtual") {
+			continue;
+		}
+
+		const row = framePositionRows(nested)[0];
+		if (!row || typeof row.id !== "string" || row.id === "") {
+			continue;
+		}
+
+		entries.push({
+			stamp: {
+				epoch: nested.epoch ?? 0n,
+				tick: nested.tick ?? 0n,
+				timestamp: nested.timestamp ?? 0n,
+			},
+			row,
+		});
 	}
 
+	ingestHistoryClosedBatch(entries);
 	return true;
 };
 

@@ -7,21 +7,15 @@ import { Typography } from "#/components/ui/typography";
 
 const STATS = [
 	{
-		label: "best bid",
-		name: "best_price:bid",
-		format: "fixed:2",
+		label: "spread expansion",
+		name: "spread_expansion",
+		format: "fixed:4",
 		align: "text-left",
 	},
 	{
-		label: "best ask",
-		name: "best_price:ask",
-		format: "fixed:2",
-		align: "text-center",
-	},
-	{
-		label: "rel spread",
-		name: "relative_spread",
-		format: "bp",
+		label: "liquidation impact",
+		name: "liquidation_impact",
+		format: "fixed:4",
 		align: "text-right",
 	},
 ] as const;
@@ -41,8 +35,8 @@ export const CrossSectionPanel = () => {
 						size="xxs"
 						label={
 							<Typography.Span
-								data-metric-raw="relative_spread"
-								data-format="bp"
+								data-metric-raw="spread_expansion"
+								data-format="fixed:4"
 								className="text-[8px]"
 							>
 								—
@@ -58,9 +52,9 @@ export const CrossSectionPanel = () => {
 
 				<Flex.Row align="center" justify="between">
 					<Typography.Span className="font-mono text-[11px] text-(--f2)">
-						relative spread{" "}
+						spread expansion{" "}
 						<Typography.Span
-							data-metric-raw="relative_spread"
+							data-metric-raw="spread_expansion"
 							data-format="fixed:4"
 							className="text-(--acc)"
 						>
@@ -87,14 +81,14 @@ export const CrossSectionPanel = () => {
 						</span>
 						<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
 							<div
-								data-mbar="relative_spread"
+								data-mbar="spread_expansion"
 								className="h-full bg-(--info)"
 								style={{ width: "0%" }}
 							/>
 						</div>
 						<Typography.Span
-							data-metric-raw="relative_spread"
-							data-format="bp"
+							data-metric-raw="spread_expansion"
+							data-format="fixed:4"
 							className="w-12 shrink-0 text-right font-mono text-[9px] text-(--f2)"
 						>
 							—

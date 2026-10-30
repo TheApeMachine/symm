@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
@@ -16,9 +16,9 @@ import {
 import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import {
-	CHOICE_SAMPLE_MS,
-	noteOpenChoice,
+	openChoiceLotsFromRows,
 	openChoiceValues,
+	syncOpenChoiceLots,
 } from "#/components/learning/open-choice-trail";
 import { PositionLiveIntel } from "#/components/learning/position-live-intel";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
@@ -136,7 +136,6 @@ const heldSeconds = (row: Record<string, unknown>) => {
 
 const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 	const [exiting, setExiting] = useState(false);
-	const [pnlTrail, setPnlTrail] = useState<number[]>([]);
 	const readout = positionReadout(row);
 	const entry = readout.entryPrice;
 	const mark = readout.mark;
@@ -151,22 +150,9 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
 
 	const lotId = String(row.id ?? row.symbol);
+	const pnlTrail =
+		trailPct === undefined ? [] : openChoiceValues(lotId);
 
-	useEffect(() => {
-		if (trailPct === undefined) {
-			setPnlTrail([]);
-			return;
-		}
-
-		const sample = () => {
-			noteOpenChoice(lotId, trailPct);
-			setPnlTrail(openChoiceValues(lotId));
-		};
-
-		sample();
-		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
-		return () => window.clearInterval(timer);
-	}, [lotId, trailPct]);
 	const selling = !positionReadout(row).closed && qty === 0;
 	const pnlMarks = exploreExitGaugeMarks(row);
 
@@ -316,6 +302,16 @@ export const OpenPositions = () => {
 		() => (profitOnly ? held.filter(lotInProfit) : held),
 		[held, profitOnly],
 	);
+
+	const [choiceTrailRev, setChoiceTrailRev] = useState(0);
+
+	useLayoutEffect(() => {
+		if (syncOpenChoiceLots(openChoiceLotsFromRows(shown))) {
+			setChoiceTrailRev((rev) => rev + 1);
+		}
+	}, [shown]);
+
+	void choiceTrailRev;
 
 	if (held.length === 0) {
 		return (

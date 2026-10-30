@@ -94,19 +94,3 @@ export interface SymbolProgress {
 	rejected?: string[];
 }
 
-export interface SequiturRuleExport {
-	id: number;
-	name: string;
-	count: number;
-	depth: number;
-	length: number;
-	symbols: string[];
-	terminals: string[];
-	action?: string;
-}
-
-export interface SequiturGrammarResponse {
-	symbol: string;
-	rules: SequiturRuleExport[];
-	start: string[];
-}

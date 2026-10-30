@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	CHOICE_SAMPLE_MS,
 	CHOICE_TRAIL_LENGTH,
 	indexMean,
 	linePath,
@@ -11,22 +10,19 @@ import {
 } from "./open-choice-trail";
 
 describe("open choice trail", () => {
-	it("keeps sampling on a cadence even when return is flat", () => {
+	it("appends one sample per store update even when return is flat", () => {
 		resetOpenChoices();
 		const t0 = 1_000_000;
 		noteOpenChoice("doge", -1.5, t0);
-		noteOpenChoice("doge", -1.5, t0 + CHOICE_SAMPLE_MS - 1);
-		expect(openChoiceTrail("doge")).toHaveLength(1);
-
-		noteOpenChoice("doge", -1.5, t0 + CHOICE_SAMPLE_MS);
+		noteOpenChoice("doge", -1.5, t0 + 1);
 		expect(openChoiceTrail("doge")).toHaveLength(2);
-		expect(openChoiceTrail("doge")[1].t).toBe(t0 + CHOICE_SAMPLE_MS);
+		expect(openChoiceTrail("doge")[1].t).toBe(t0 + 1);
 	});
 
 	it("exposes the same values array the card Trail uses", () => {
 		resetOpenChoices();
 		noteOpenChoice("doge", 1.2, 1_000);
-		noteOpenChoice("doge", -0.5, 1_000 + CHOICE_SAMPLE_MS);
+		noteOpenChoice("doge", -0.5, 1_001);
 		expect(openChoiceValues("doge")).toEqual([1.2, -0.5]);
 	});
 
@@ -54,7 +50,7 @@ describe("open choice trail", () => {
 	it("caps the ring buffer at CHOICE_TRAIL_LENGTH", () => {
 		resetOpenChoices();
 		for (let i = 0; i < CHOICE_TRAIL_LENGTH + 5; i++) {
-			noteOpenChoice("doge", i, 1_000 + i * CHOICE_SAMPLE_MS);
+			noteOpenChoice("doge", i, 1_000 + i);
 		}
 		expect(openChoiceTrail("doge")).toHaveLength(CHOICE_TRAIL_LENGTH);
 		expect(openChoiceTrail("doge")[0].pnl).toBe(5);

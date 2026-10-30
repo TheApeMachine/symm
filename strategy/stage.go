@@ -7,9 +7,9 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/nomagique/runtime"
 	nmstore "github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
@@ -27,6 +27,7 @@ type Stage struct {
 	desk       *broker.Desk
 	client     *store.Client
 	sequencers *sync.Map
+	grammar    tokenizer.GrammarCatalog
 }
 
 func NewStage(ctx context.Context, desk *broker.Desk) *Stage {
@@ -50,7 +51,7 @@ func (stage *Stage) RestoreSequencers(ctx context.Context) {
 		return
 	}
 
-	tokenizer.RestoreCatalog(ctx, stage.client, stage.RestoreSequencer)
+	stage.grammar.RestoreCatalog(ctx, stage.client, stage.RestoreSequencer)
 }
 
 func (stage *Stage) Sequencer(symbol string) *tokenizer.Sequencer {
@@ -62,21 +63,27 @@ func (stage *Stage) Sequencer(symbol string) *tokenizer.Sequencer {
 	return loaded.(*tokenizer.Sequencer)
 }
 
-func (stage *Stage) RestoreSequencer(symbol string, state tokenizer.SymbolState) {
+func (stage *Stage) RestoreSequencer(symbol string, state tokenizer.SequencerState) {
 	if stage == nil || symbol == "" {
 		return
 	}
 
-	sequencer := stage.Sequencer(symbol)
-	sequencer.Restore(state)
-	stage.sequencers.Store(symbol, sequencer)
+	stage.Sequencer(symbol).Restore(state)
+	stage.sequencers.Store(symbol, stage.Sequencer(symbol))
 }
 
 func (stage *Stage) PersistSequencer(ctx context.Context, symbol string) {
 	if stage == nil || stage.client == nil || symbol == "" {
 		return
 	}
-	stage.Sequencer(symbol).Persist(ctx, stage.client, symbol)
+
+	seq := stage.Sequencer(symbol)
+	value := data.NewValue("model", "grammar", symbol)
+	value.Append(seq.State(), "state")
+
+	if _, err := stage.client.WriteAtPrefix(stage.grammar.ObjectKey(symbol), value.Bytes()); err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "[stage] persist grammar "+symbol, err))
+	}
 }
 
 func (stage *Stage) ResetSequencer(symbol string) {
@@ -92,14 +99,6 @@ func (stage *Stage) ResetSequencer(symbol string) {
 	loaded.(*tokenizer.Sequencer).Reset()
 }
 
-// SymbolMaturity returns grid warm-up readiness for one pair (0..1).
-func (stage *Stage) SymbolMaturity(symbol string) float64 {
-	if stage == nil || stage.grid == nil || symbol == "" {
-		return 0
-	}
-	return stage.grid.SymbolMaturity(symbol)
-}
-
 func (stage *Stage) isBookStale(symbol string) bool {
 	if stage == nil || stage.desk == nil {
 		return false
@@ -112,7 +111,7 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 		return tick
 	}
 
-	bySymbol := SignalSourcesBySymbol(tick, stage.isBookStale)
+	bySymbol := NewSymbols(tick).GroupBySymbol(stage.isBookStale)
 
 	if len(bySymbol) == 0 {
 		return tick
@@ -122,13 +121,9 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 
 	for symbol, sources := range bySymbol {
 		group.Go(func() error {
-			holdingPaper := stage.desk.Has(symbol, false)
-			holdingVirtual := stage.desk.Has(symbol, true)
-			holding := holdingPaper || holdingVirtual
+			holding := stage.desk.Has(symbol)
 
-			observed, err := stage.grid.Observe(
-				symbol, sources, !holding,
-			)
+			observed, err := stage.grid.Observe(symbol, sources)
 
 			if err != nil {
 				errnie.Warn("[stage.Step] grid.Observe failed", "symbol", symbol, "err", err)
@@ -141,40 +136,34 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 				tick.Append(observed, append([]string{"train", "regions"}, parts...)...)
 			}
 
-			sequencer := stage.Sequencer(symbol)
-			phase := tokenizer.PhaseEnter
+			seq := stage.Sequencer(symbol)
+			cut := stage.stepCut(seq, observed)
+
+			phase := "enter"
 			if holding {
-				phase = tokenizer.PhaseHold
+				phase = "hold"
 			}
 
-			step := sequencer.Step(observed, phase)
 			audit.Record.Write(map[string]any{
-				"stage":    "sequencer",
-				"symbol":   symbol,
-				"phase":    phaseName(phase),
-				"token":    step.Token.String(),
-				"silence":  string(step.Silence),
-				"spell":    len(step.Spell),
-				"regions":  litKeys(observed),
+				"stage":   "sequencer",
+				"symbol":  symbol,
+				"phase":   phase,
+				"cut":     cut.String(),
+				"cutLen":  cut.Len(),
+				"regions": litKeys(observed),
 			})
 
-			tick.Append(step, "stage", symbol, "step")
-			tick.Append(step.Token, "stage", symbol, "cut")
-			tick.Append(string(phaseName(phase)), "stage", symbol, "phase")
+			tick.Append(cut, "stage", symbol, "cut")
+			tick.Append(phase, "stage", symbol, "phase")
 
-			if holding {
-				exitStep := sequencer.Step(observed, tokenizer.PhaseExit)
-				tick.Append(exitStep, "stage", symbol, "exitStep")
-				tick.Append(exitStep.Token, "stage", symbol, "exitCut")
-			}
-
-			if len(step.Spell) > 0 && stage.client != nil {
-				state := sequencer.State()
+			if cut.Len() > 0 && stage.client != nil {
 				client := stage.client
+				saved := seq.State()
+
 				go func() {
-					saved := data.NewValue("model", "grammar", symbol)
-					saved.Append(state, "state")
-					if _, err := client.WriteAtPrefix(tokenizer.GrammarObjectKey(symbol), saved.Bytes()); err != nil {
+					value := data.NewValue("model", "grammar", symbol)
+					value.Append(saved, "state")
+					if _, err := client.WriteAtPrefix(stage.grammar.ObjectKey(symbol), value.Bytes()); err != nil {
 						errnie.Error(errnie.Err(errnie.IO, "[sequencer] persist "+symbol, err))
 					}
 				}()
@@ -191,6 +180,26 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 	return tick
 }
 
+func (stage *Stage) stepCut(seq *tokenizer.Sequencer, lit []*nmstore.Region) tokenizer.Tokens {
+	var best *nmstore.Region
+
+	for _, region := range lit {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		if best == nil || region.Brightness > best.Brightness {
+			best = region
+		}
+	}
+
+	if best == nil {
+		return tokenizer.Tokens{}
+	}
+
+	return seq.Step(tokenizer.RegionLabel(uint8(best.Key)), best.Brightness)
+}
+
 func litKeys(regions []*nmstore.Region) []int {
 	keys := make([]int, 0, len(regions))
 	for _, region := range regions {
@@ -200,15 +209,4 @@ func litKeys(regions []*nmstore.Region) []int {
 		keys = append(keys, int(region.Key))
 	}
 	return keys
-}
-
-func phaseName(phase tokenizer.Phase) string {
-	switch phase {
-	case tokenizer.PhaseHold:
-		return "hold"
-	case tokenizer.PhaseExit:
-		return "exit"
-	default:
-		return "enter"
-	}
 }

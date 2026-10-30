@@ -76,7 +76,7 @@ func NewPrice(
 		Books:      books,
 		balance:    balance,
 		normalizer: normalizer,
-		fees:       &sync.Map{},
+		fees: &sync.Map{},
 	}
 
 	if !price.loadFees() {
@@ -104,39 +104,26 @@ func (price *Price) loadFees() bool {
 		return false
 	}
 
-	var volume *kraken.TradeVolumeResult
+	// Account schedule, paper and live. The paper CLI's fee_rate is the
+	// simulator's own number; the desk trades the account's tier.
+	rest := network.NewREST()
+	response, err := rest.Post(
+		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.TradeVolume,
+		kraken.NewTradeVolumeRequest(symbols),
+	)
 
-	if paper, ok := price.private.(*Paper); ok {
-		result, err := paper.TradeVolume(symbols)
+	if err != nil {
+		price.Error(errnie.Err(
+			errnie.IO, "failed to get trade volume fees", err,
+		))
+		return false
+	}
 
-		if err != nil {
-			price.Error(err)
-			return false
-		}
+	volume, err := kraken.ParseTradeVolume(response.Body())
 
-		volume = result
-	} else {
-		rest := network.NewREST()
-		response, err := rest.Post(
-			"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.TradeVolume,
-			kraken.NewTradeVolumeRequest(symbols),
-		)
-
-		if err != nil {
-			price.Error(errnie.Err(
-				errnie.IO, "failed to get trade volume fees", err,
-			))
-			return false
-		}
-
-		result, err := kraken.ParseTradeVolume(response.Body())
-
-		if err != nil {
-			price.Error(err)
-			return false
-		}
-
-		volume = result
+	if err != nil {
+		price.Error(err)
+		return false
 	}
 
 	stored := 0
@@ -146,7 +133,9 @@ func (price *Price) loadFees() bool {
 			continue
 		}
 
-		price.fees.Store(price.normalizer.Name(pair), fee.Fee)
+		name := price.normalizer.Name(pair)
+		price.fees.Store(name, fee.Fee)
+		price.Instrument.RememberFee(name, fee.Fee)
 		stored++
 	}
 
@@ -167,7 +156,29 @@ Fee returns the taker fee for a symbol, in percent. 0.40 means 0.40%.
 Nil means the fee is unknown, and every other answer then abstains.
 */
 func (price *Price) Fee(symbol string) *decimal.Decimal {
-	val, ok := price.fees.Load(price.normalizer.Name(symbol))
+	if price != nil && price.Instrument != nil {
+		if fee := price.Instrument.TakerFee(price.feeName(symbol)); fee != nil {
+			return fee
+		}
+	}
+
+	return price.storedFee(price.fees, symbol)
+}
+
+func (price *Price) feeName(symbol string) string {
+	if price == nil || price.normalizer == nil {
+		return symbol
+	}
+
+	return price.normalizer.Name(symbol)
+}
+
+func (price *Price) storedFee(table *sync.Map, symbol string) *decimal.Decimal {
+	if price == nil || table == nil {
+		return nil
+	}
+
+	val, ok := table.Load(price.feeName(symbol))
 
 	if !ok || val == nil {
 		return nil
@@ -773,6 +784,62 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 	}
 
 	return nil, reason
+}
+
+/*
+roundTrip is the fee-net result of buying at entry and selling through the
+bid book. entryFee and exitFee are percent rates (0.40 means 0.40%).
+*/
+func (price *Price) roundTrip(
+	symbol string,
+	quantity, entry, entryFee, exitFee *decimal.Decimal,
+) (profit, cost *decimal.Decimal) {
+	if price == nil || price.Books == nil || quantity == nil || entry == nil ||
+		quantity.Sign() <= 0 || entry.Sign() <= 0 || entryFee == nil || exitFee == nil {
+		return nil, nil
+	}
+
+	var grossExit *decimal.Decimal
+
+	price.Books.Book(symbol, func(managed *book.Book) {
+		if !bookReady(managed) {
+			return
+		}
+
+		filled, gross, err := price.walk(managed, quantity, SELL)
+
+		if err != nil || filled == nil || gross == nil || filled.Cmp(quantity) < 0 {
+			return
+		}
+
+		grossExit = gross
+	})
+
+	if grossExit == nil {
+		return nil, nil
+	}
+
+	cost = price.afterFee(notional(entry, quantity), entryFee, BUY)
+	netExit := price.afterFee(grossExit, exitFee, SELL)
+
+	if cost == nil || netExit == nil {
+		return nil, nil
+	}
+
+	return netExit.Sub(cost), cost
+}
+
+func (price *Price) roundTripPct(
+	symbol string,
+	quantity, entry, entryFee, exitFee *decimal.Decimal,
+) *decimal.Decimal {
+	profit, cost := price.roundTrip(symbol, quantity, entry, entryFee, exitFee)
+
+	if profit == nil || cost == nil || cost.Sign() <= 0 {
+		return nil
+	}
+
+	return profit.Div(cost).Mul(decimalHundred)
 }
 
 func (price *Price) settle(

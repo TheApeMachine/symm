@@ -3,14 +3,47 @@ import { Value } from "#/types/value";
 const textDecoder = new TextDecoder();
 
 /*
-parseOneValue decodes one wire frame into the one Value the whole frontend
-reads. byteLength records the consumed wire size so parseValues can advance
-through a batch.
+WireValue is the structured-cloneable hub frame. The websocket worker parses
+binary batches into WireValue[]; the main thread turns them into Value instances
+for ingest.
 */
-export const parseOneValue = (
+export type WireValue = {
+	id: string;
+	epoch: bigint;
+	tick: bigint;
+	seqIdx: bigint;
+	timestamp: bigint;
+	origin: string;
+	role: string;
+	scope: string;
+	prefix: string;
+	layers: Uint8Array[];
+	index: string[];
+	byteLength: number;
+};
+
+export const valueFromWire = (wire: WireValue): Value => {
+	const value = new Value({
+		id: wire.id,
+		epoch: wire.epoch,
+		tick: wire.tick,
+		seqIdx: wire.seqIdx,
+		timestamp: wire.timestamp,
+		origin: wire.origin,
+		role: wire.role,
+		scope: wire.scope,
+		prefix: wire.prefix,
+		layers: wire.layers,
+		index: wire.index,
+	});
+	value.byteLength = wire.byteLength;
+	return value;
+};
+
+const parseOneWireValue = (
 	bytes: Uint8Array,
 	byteOffset = 0,
-): Value | null => {
+): WireValue | null => {
 	const remaining = bytes.byteLength - byteOffset;
 	if (remaining < 53) return null;
 
@@ -65,13 +98,15 @@ export const parseOneValue = (
 	const prefix = textDecoder.decode(bytes.subarray(cursor, cursor + prefixLen));
 	cursor += prefixLen;
 
-	const layers: Array<{ index: string; bytes: Uint8Array }> = [];
+	const index: string[] = [];
+	const layers: Uint8Array[] = [];
+
 	for (let i = 0; i < numLayers; i++) {
 		if (cursor + 2 > bytes.byteLength) return null;
 		const idxLen = view.getUint16(cursor - byteOffset, true);
 		cursor += 2;
 		if (cursor + idxLen > bytes.byteLength) return null;
-		const index =
+		const layerIndex =
 			idxLen > 0
 				? textDecoder.decode(bytes.subarray(cursor, cursor + idxLen))
 				: "";
@@ -84,11 +119,13 @@ export const parseOneValue = (
 		const layerBytes = bytes.subarray(cursor, cursor + layerLen);
 		cursor += layerLen;
 
-		layers.push({ index, bytes: layerBytes });
+		index.push(layerIndex);
+		layers.push(new Uint8Array(layerBytes));
 	}
 
 	const totalSize = cursor - byteOffset;
-	const value = new Value({
+
+	return {
 		id,
 		tick,
 		seqIdx,
@@ -98,12 +135,46 @@ export const parseOneValue = (
 		role,
 		scope,
 		prefix,
-		layers: layers.map((layer) => layer.bytes),
-		index: layers.map((layer) => layer.index),
-	});
+		layers,
+		index,
+		byteLength: totalSize,
+	};
+};
 
-	value.byteLength = totalSize;
-	return value;
+/*
+parseOneValue decodes one wire frame into the one Value the whole frontend
+reads. byteLength records the consumed wire size so parseValues can advance
+through a batch.
+*/
+export const parseOneValue = (
+	bytes: Uint8Array,
+	byteOffset = 0,
+): Value | null => {
+	const wire = parseOneWireValue(bytes, byteOffset);
+	if (!wire) return null;
+	return valueFromWire(wire);
+};
+
+/*
+parseWireValues parses one websocket message into clone-safe wire records.
+The worker uses this so binary decoding stays off the UI thread.
+*/
+export const parseWireValues = (bytes: Uint8Array): WireValue[] | null => {
+	if (bytes.byteLength < 53) return null;
+
+	const list: WireValue[] = [];
+	let offset = 0;
+
+	while (offset < bytes.byteLength) {
+		const wire = parseOneWireValue(bytes, offset);
+		if (!wire || wire.byteLength === 0) {
+			break;
+		}
+		list.push(wire);
+		offset += wire.byteLength;
+	}
+
+	return list.length > 0 ? list : null;
 };
 
 /*
@@ -113,19 +184,7 @@ serialization per Write — no batch header). A frame that does not decode
 ends the message; values parsed before it are kept.
 */
 export const parseValues = (bytes: Uint8Array): Value[] | null => {
-	if (bytes.byteLength < 53) return null;
-
-	const list: Value[] = [];
-	let offset = 0;
-
-	while (offset < bytes.byteLength) {
-		const val = parseOneValue(bytes, offset);
-		if (!val || val.byteLength === 0) {
-			break;
-		}
-		list.push(val);
-		offset += val.byteLength;
-	}
-
-	return list.length > 0 ? list : null;
+	const wire = parseWireValues(bytes);
+	if (!wire) return null;
+	return wire.map(valueFromWire);
 };

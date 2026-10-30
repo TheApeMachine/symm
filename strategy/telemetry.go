@@ -14,9 +14,9 @@ import (
 )
 
 /*
-Telemetry publishes training/step hub frames after Evaluate: grammar state,
-observation readouts, and rollups driven only by layers Evaluate appended
-(gate, blocked, policy, cut).
+Telemetry publishes training/step hub frames after Evaluate: observation
+readouts and rollups driven only by layers Evaluate appended (gate, blocked,
+policy, cut).
 */
 type stepGate struct {
 	Surprise *float64 `json:"surprise"`
@@ -42,9 +42,26 @@ type stepPolicy struct {
 	Outcome     string `json:"outcome"`
 }
 
+type gateFrame struct {
+	Phase          string  `json:"phase"`
+	Passed         bool    `json:"passed"`
+	Virtual        bool    `json:"virtual"`
+	Reason         string  `json:"reason,omitempty"`
+	NetSpark       float64 `json:"netSpark"`
+	NetHold        float64 `json:"netHold"`
+	NetExit        float64 `json:"netExit"`
+	TreeAction     string  `json:"treeAction,omitempty"`
+	TreeVirtual    bool    `json:"treeVirtual,omitempty"`
+	TreeExplore    bool    `json:"treeExplore,omitempty"`
+	TreeBlocked    bool    `json:"treeBlocked,omitempty"`
+	TreeImpulse    float64 `json:"treeImpulse,omitempty"`
+	TreeResistance float64 `json:"treeResistance,omitempty"`
+	PathBook       float64 `json:"pathBook,omitempty"`
+}
+
 /*
-pathWalk is the sentence one symbol is spelling. The dashboard gets a batch
-of these once per tick, and only for symbols whose sentence changed.
+pathWalk is the live token path for one symbol. The dashboard gets a batch of
+these once per tick, and only for symbols whose path changed.
 */
 type pathWalk struct {
 	Symbol      string `json:"symbol"`
@@ -89,12 +106,11 @@ func (telemetry *Telemetry) Publish() {
 }
 
 /*
-CompleteSymbolStep attaches policy, enriches grammar layers from cut/lit, publishes
-the step frame, and updates longtail rollups from gate/policy on the value.
+CompleteSymbolStep attaches policy, publishes the step frame, and updates
+longtail rollups from gate/policy on the value.
 */
 func (telemetry *Telemetry) CompleteSymbolStep(
 	out *data.Value,
-	sequencer *tokenizer.Sequencer,
 	model *Model,
 ) {
 	if out == nil {
@@ -102,7 +118,7 @@ func (telemetry *Telemetry) CompleteSymbolStep(
 	}
 
 	telemetry.attachPolicy(out, model)
-	telemetry.publishStep(out, sequencer)
+	telemetry.publishStep(out)
 }
 
 func (telemetry *Telemetry) attachPolicy(out *data.Value, model *Model) {
@@ -149,8 +165,7 @@ func stepPolicyFromStep(
 		}
 	}
 
-	// Checked directly against the unified Tree
-	stored := model != nil && model.tree != nil && model.tree.Load().Has(pathKey)
+	stored := false
 
 	pathPhase := policyPath
 	if pathPhase == "" {
@@ -266,62 +281,24 @@ func (telemetry *Telemetry) PublishWalks() {
 
 func (telemetry *Telemetry) EndTick(model *Model, desk *broker.Desk) {
 	telemetry.enrichLedger(desk)
-	telemetry.noteLearning(model)
 	telemetry.Publish()
 }
 
-// publishStep appends grammar layers onto the training step value and publishes it.
-func (telemetry *Telemetry) publishStep(
-	out *data.Value,
-	sequencer *tokenizer.Sequencer,
-) {
+func (telemetry *Telemetry) publishStep(out *data.Value) {
 	if !uiActive() || out == nil {
 		return
 	}
 
-	if sequencer != nil && sequencer.Grammar() != nil {
-		var lit []*nmstore.Region
-		var cut tokenizer.Token
-		out.Lookup(&lit, "lit")
-		out.Lookup(&cut, "cut")
+	var lit []*nmstore.Region
+	var cut tokenizer.Tokens
+	out.Lookup(&lit, "lit")
+	out.Lookup(&cut, "cut")
 
-		fired, midpoint := litFired(cut)
+	fired, midpoint := litFired(cut.Last())
 
-		out.Append(regionActive(lit), "active")
-		out.Append(midpoint, "midpoint")
-		out.Append(fired, "fired")
-
-		events := []map[string]any{}
-		if len(cut.Symbols) > 0 {
-			kind := sequencer.Grammar().LastKind()
-			if kind == "" {
-				kind = "append"
-			}
-
-			events = append(events, map[string]any{
-				"kind":   kind,
-				"token":  cut.String(),
-				"rule":   0,
-				"into":   0,
-				"from":   0,
-				"digram": []string{"", ""},
-			})
-		}
-
-		completed := ""
-		if len(cut.Symbols) > 0 {
-			if rule := sequencer.Grammar().LastRule(); rule != nil {
-				completed = tokenizer.RuleRef(rule.ID)
-			}
-		}
-
-		out.Append(events, "grammar", "events")
-		out.Append(completed, "grammar", "completed")
-		out.Append(grammarRules(sequencer), "grammar", "rules")
-		out.Append(grammarStart(sequencer), "grammar", "start")
-		out.Append(sequencer.Grammar().RootLength(), "grammar", "rawLength")
-		out.Append(sequencer.Grammar().Symbols(), "grammar", "grammarSymbols")
-	}
+	out.Append(regionActive(lit), "active")
+	out.Append(midpoint, "midpoint")
+	out.Append(fired, "fired")
 
 	telemetry.recordStep(out)
 	io.Copy(ui.UI, out)
@@ -409,72 +386,6 @@ func (telemetry *Telemetry) enrichLedger(desk *broker.Desk) {
 
 	telemetry.rollup.VenueOpen = len(desk.OpenPositions(false))
 	telemetry.rollup.VirtualExcursion = len(desk.OpenPositions(true))
-}
-
-func (telemetry *Telemetry) noteLearning(model *Model) {
-	if telemetry == nil || model == nil || model.tree == nil || !uiActive() {
-		return
-	}
-
-	keys, thresholds := model.tree.Load().Catalog()
-	if len(keys) == 0 {
-		return
-	}
-
-	value := data.NewValue("training", "explore", "catalog")
-	value.Append(keys, "exploreKeys")
-	if len(thresholds) > 0 {
-		value.Append(thresholds, "exploreThresholds")
-	}
-
-	io.Copy(ui.UI, value)
-}
-
-func grammarRules(sequencer *tokenizer.Sequencer) []map[string]any {
-	grammar := sequencer.Grammar()
-	if grammar == nil {
-		return []map[string]any{}
-	}
-
-	views := grammar.RuleViews()
-	rules := make([]map[string]any, 0, len(views))
-
-	for _, view := range views {
-		symbols := view.Symbols
-		if symbols == nil {
-			symbols = []string{}
-		}
-		terminals := view.Terminals
-		if terminals == nil {
-			terminals = []string{}
-		}
-
-		rules = append(rules, map[string]any{
-			"id":        view.ID,
-			"name":      tokenizer.RuleRef(view.ID),
-			"count":     view.Count,
-			"depth":     view.Depth,
-			"length":    len(symbols),
-			"symbols":   symbols,
-			"terminals": terminals,
-		})
-	}
-
-	return rules
-}
-
-func grammarStart(sequencer *tokenizer.Sequencer) []string {
-	grammar := sequencer.Grammar()
-	if grammar == nil {
-		return []string{}
-	}
-
-	start := grammar.RootSequence()
-	if start == nil {
-		return []string{}
-	}
-
-	return start
 }
 
 func litFired(cut tokenizer.Token) ([]string, float64) {

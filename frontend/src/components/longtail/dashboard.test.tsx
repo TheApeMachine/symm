@@ -54,15 +54,6 @@ const bookStats = (overrides: Partial<BookDeskStats> = {}): BookDeskStats => ({
 
 const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 	feeds: 0,
-	rules: null,
-	grammarSymbols: null,
-	rawLength: null,
-	avgRuleDepth: null,
-	maxRuleDepth: null,
-	actionCoverage: null,
-	createRate: null,
-	reuseRate: null,
-	inlineRate: null,
 	tokenEmitRate: null,
 	blockedRate: null,
 	blockedBrightnessRate: null,
@@ -73,7 +64,6 @@ const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 	outcomeRate: null,
 	outcomeEnterRate: null,
 	outcomeExitRate: null,
-	violations: null,
 	exploredEnter: null,
 	venueOpen: null,
 	virtualExcursion: null,
@@ -131,7 +121,7 @@ describe("LongtailDashboard", () => {
 		expect(container.textContent).toContain("collecting history…");
 	});
 
-	it("renders the KPI strip, the six charts, and the right rail", () => {
+	it("renders the KPI strip, charts, and the right rail", () => {
 		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
@@ -181,12 +171,8 @@ describe("LongtailDashboard", () => {
 
 		const { container, getByText } = render(<LongtailDashboard />);
 
-		// Eight KPI tiles.
 		for (const id of [
-			"reuse",
-			"create",
 			"policy",
-			"coverage",
 			"letters",
 			"developed",
 			"promoted",
@@ -195,78 +181,54 @@ describe("LongtailDashboard", () => {
 			expect(container.querySelector(`[data-kpi="${id}"]`)).not.toBeNull();
 		}
 
-		for (const id of [
-			"grammar",
-			"policy",
-			"coverage",
-			"letters",
-			"paths",
-			"exits",
-			"stops",
-		]) {
+		for (const id of ["policy", "letters", "paths", "exits", "stops"]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(container.querySelectorAll("[data-chart]")).toHaveLength(7);
+		expect(container.querySelectorAll("[data-chart]")).toHaveLength(5);
 
-		for (const title of ["Paths", "Grammar", "Letters", "Desk", "Exits"]) {
+		for (const title of ["Paths", "Policy", "Letters", "Desk", "Exits"]) {
 			expect(getByText(title, { selector: "div" })).toBeTruthy();
 		}
 		expect(getByText("Plain-language readings")).toBeTruthy();
 	});
 
-	it("paints low reuse red and high reuse green", () => {
+	it("paints weak policy hits red and strong hits green", () => {
 		const bad = [
 			sample(1_000, {
-				training: training({
-					reuseRate: 0.1,
-					createRate: 0.8,
-					policyStoredRate: 0.01,
-				}),
+				training: training({ policyStoredRate: 0.01 }),
 			}),
 			sample(6_000, {
-				training: training({
-					reuseRate: 0.1,
-					createRate: 0.8,
-					policyStoredRate: 0.01,
-				}),
+				training: training({ policyStoredRate: 0.01 }),
 			}),
 		];
 
 		longtailStore.setState(() => ({ samples: bad, lastSampleAt: 6_000 }));
 		const badView = render(<LongtailDashboard />);
 
-		const badReuse = badView.container.querySelector(
-			'[data-kpi="reuse"] .font-bold',
+		const badPolicy = badView.container.querySelector(
+			'[data-kpi="policy"] .font-bold',
 		) as HTMLElement;
-		expect(badReuse.style.color).toBe("var(--down)");
-		expect(badView.getByText("Finding structure")).toBeTruthy();
+		expect(badPolicy.style.color).toBe("var(--down)");
+		expect(badView.getByText("Learning")).toBeTruthy();
 
 		cleanup();
 
 		const good = [
 			sample(1_000, {
-				training: training({
-					reuseRate: 0.6,
-					createRate: 0.2,
-					policyStoredRate: 0.4,
-				}),
+				training: training({ policyStoredRate: 0.55 }),
 			}),
 			sample(6_000, {
-				training: training({
-					reuseRate: 0.65,
-					createRate: 0.18,
-					policyStoredRate: 0.42,
-				}),
+				training: training({ policyStoredRate: 0.6 }),
 			}),
 		];
 
 		longtailStore.setState(() => ({ samples: good, lastSampleAt: 6_000 }));
 		const goodView = render(<LongtailDashboard />);
 
-		const goodReuse = goodView.container.querySelector(
-			'[data-kpi="reuse"] .font-bold',
+		const goodPolicy = goodView.container.querySelector(
+			'[data-kpi="policy"] .font-bold',
 		) as HTMLElement;
-		expect(goodReuse.style.color).toBe("var(--up)");
-		expect(goodView.getByText("Reusing paths")).toBeTruthy();
+		expect(goodPolicy.style.color).toBe("var(--up)");
+		expect(goodView.getByText("Matching paths")).toBeTruthy();
 	});
 });

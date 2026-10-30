@@ -4,7 +4,6 @@ import {
 	type BookDeskStats,
 	beginLongtailHistory,
 	buildInsights,
-	coverageTone,
 	endLongtailHistory,
 	blockedTone,
 	tokenEmitTone,
@@ -17,7 +16,6 @@ import {
 	matchTone,
 	resetLongtailRecorder,
 	returnTone,
-	reuseTone,
 	summarizeBook,
 	summarizeTraining,
 	surpriseTone,
@@ -36,15 +34,9 @@ afterEach(() => {
 	resetLongtailRecorder();
 });
 
-/* One live grammar feed around a frame, shaped as the store holds it. */
 const feed = (frame: SequiturFrame): SequiturFeed => ({
 	latest: frame,
 	frames: 1,
-	events: frame.events.map((event, i) => ({
-		...event,
-		tick: frame.tick,
-		seq: i,
-	})),
 	chords: [],
 	receivedAt: 0,
 });
@@ -156,13 +148,11 @@ describe("summarizeTraining", () => {
 		const sample = summarizeTraining([]);
 
 		expect(sample.feeds).toBe(0);
-		expect(sample.rules).toBeNull();
 		expect(sample.tokenEmitRate).toBeNull();
-		expect(sample.reuseRate).toBeNull();
 		expect(sample.policyStoredRate).toBeNull();
 	});
 
-	it("aggregates the live grammar feeds", () => {
+	it("aggregates live training step feeds", () => {
 		const sample = summarizeTraining([
 			feed(sequiturFrame()),
 			feed(
@@ -177,15 +167,7 @@ describe("summarizeTraining", () => {
 						passed: false,
 					},
 					blocked: true,
-					events: [
-						{
-							kind: "reuse",
-							rule: 1,
-							into: 0,
-							from: 0,
-							digram: ["R02", "R04"],
-						},
-					],
+					blockedReason: "duplicate",
 					policy: {
 						epoch: "1",
 						paths: 3,
@@ -196,37 +178,15 @@ describe("summarizeTraining", () => {
 						action: "",
 						outcome: "",
 					},
-					rules: [
-						{
-							id: 1,
-							name: "M1",
-							count: 2,
-							depth: 2,
-							length: 2,
-							symbols: ["R02", "R04"],
-							terminals: ["R02", "R04"],
-						},
-					],
-					violations: ["digram uniqueness violated"],
 				}),
 			),
 		]);
 
 		expect(sample.feeds).toBe(2);
-		expect(sample.rules).toBe(2);
-		expect(sample.grammarSymbols).toBe(10);
-		expect(sample.rawLength).toBe(10);
-		expect(sample.avgRuleDepth).toBeCloseTo(1.5);
-		expect(sample.maxRuleDepth).toBe(2);
-		expect(sample.actionCoverage).toBeCloseTo(0.5);
-		// 3 events on the first frame (1 create), 1 on the second (1 reuse).
-		expect(sample.createRate).toBeCloseTo(1 / 4);
-		expect(sample.reuseRate).toBeCloseTo(1 / 4);
 		expect(sample.tokenEmitRate).toBeCloseTo(0.5);
 		expect(sample.blockedRate).toBeCloseTo(0.5);
 		expect(sample.policyStoredRate).toBeCloseTo(0.5);
 		expect(sample.outcomeRate).toBeCloseTo(0.5);
-		expect(sample.violations).toBe(1);
 	});
 
 	it("keeps a missing path book blank and a reported zero as zero", () => {
@@ -274,13 +234,6 @@ describe("tone thresholds", () => {
 		expect(surpriseTone(1)).toBe("warn");
 		expect(surpriseTone(3)).toBe("bad");
 		expect(surpriseTone(-0.1)).toBe("bad");
-
-		expect(reuseTone(0.6)).toBe("good");
-		expect(reuseTone(0.3)).toBe("warn");
-		expect(reuseTone(0.1)).toBe("bad");
-
-		expect(coverageTone(0.6)).toBe("good");
-		expect(coverageTone(0.1)).toBe("bad");
 
 		expect(matchTone(0.6)).toBe("good");
 		expect(matchTone(0.1)).toBe("bad");
@@ -358,15 +311,6 @@ const sample = (
 	},
 	training: {
 		feeds: 0,
-		rules: null,
-		grammarSymbols: null,
-		rawLength: null,
-		avgRuleDepth: null,
-		maxRuleDepth: null,
-		actionCoverage: null,
-		createRate: null,
-		reuseRate: null,
-		inlineRate: null,
 		tokenEmitRate: null,
 		blockedRate: null,
 		blockedBrightnessRate: null,
@@ -377,7 +321,6 @@ const sample = (
 		outcomeRate: null,
 		outcomeEnterRate: null,
 		outcomeExitRate: null,
-		violations: null,
 		exploredEnter: null,
 		venueOpen: null,
 		virtualExcursion: null,
@@ -410,8 +353,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 4, wins: 3, winRate: 0.6, meanReturn: 0.01 },
 				training: {
-					rules: 10,
-					reuseRate: 0.6,
 					policyStoredRate: 0.05,
 					tokenEmitRate: 0.08,
 					blockedRate: 0.7,
@@ -420,8 +361,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 5, wins: 4, winRate: 0.65, meanReturn: 0.03 },
 				training: {
-					rules: 11,
-					reuseRate: 0.6,
 					policyStoredRate: 0.05,
 					tokenEmitRate: 0.08,
 					blockedRate: 0.7,
@@ -440,8 +379,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.02,
 					blockedRate: 0.9,
@@ -450,8 +387,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 6, wins: 1, winRate: 0.15, meanReturn: -0.12 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.02,
 					blockedRate: 0.9,
@@ -469,8 +404,6 @@ describe("verdict", () => {
 		const held = sample({
 			virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 			training: {
-				rules: 3,
-				reuseRate: 0.1,
 				policyStoredRate: 0.01,
 				tokenEmitRate: 0.02,
 				blockedRate: 0.9,
@@ -488,8 +421,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.02,
 					blockedRate: 0.9,
@@ -498,8 +429,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 6, wins: 2, winRate: 0.3, meanReturn: -0.04 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.02,
 					blockedRate: 0.9,
@@ -518,8 +447,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.02,
 					blockedRate: 0.9,
@@ -528,8 +455,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 6, wins: 2, winRate: 0.3, meanReturn: -0.04 },
 				training: {
-					rules: 3,
-					reuseRate: 0.1,
 					policyStoredRate: 0.01,
 					tokenEmitRate: 0.05,
 					blockedRate: 0.85,
@@ -548,8 +473,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 5, wins: 4, winRate: 0.7, meanReturn: 0.05 },
 				training: {
-					rules: 10,
-					reuseRate: 0.6,
 					policyStoredRate: 0.05,
 					tokenEmitRate: 0.08,
 					blockedRate: 0.7,
@@ -558,8 +481,6 @@ describe("verdict", () => {
 			sample({
 				virtual: { closed: 6, wins: 4, winRate: 0.6, meanReturn: 0.01 },
 				training: {
-					rules: 10,
-					reuseRate: 0.6,
 					policyStoredRate: 0.05,
 					tokenEmitRate: 0.08,
 					blockedRate: 0.7,
@@ -575,27 +496,23 @@ describe("verdict", () => {
 });
 
 describe("trainingVerdict", () => {
-	it("labels strong reuse and policy hits", () => {
+	it("labels strong policy hits", () => {
 		const samples = [
 			sample({
 				training: {
-					reuseRate: 0.55,
-					createRate: 0.2,
 					policyStoredRate: 0.3,
 					developedPaths: 4,
 				},
 			}),
 			sample({
 				training: {
-					reuseRate: 0.6,
-					createRate: 0.15,
 					policyStoredRate: 0.35,
 					developedPaths: 6,
 				},
 			}),
 		];
 		expect(trainingVerdict(samples)).toEqual({
-			label: "Reusing paths",
+			label: "Matching paths",
 			tone: "good",
 		});
 	});
@@ -616,11 +533,6 @@ describe("buildInsights", () => {
 				sample({
 					virtual: { closed: 5, wins: 1, winRate: 0.2, meanReturn: -0.1 },
 					training: {
-						rules: 3,
-						avgRuleDepth: 1.5,
-						maxRuleDepth: 2,
-						reuseRate: 0.1,
-						createRate: 0.8,
 						tokenEmitRate: 0.03,
 						blockedRate: 0.85,
 						policyStoredRate: 0.01,
@@ -630,11 +542,6 @@ describe("buildInsights", () => {
 				sample({
 					virtual: { closed: 6, wins: 1, winRate: 0.15, meanReturn: -0.12 },
 					training: {
-						rules: 3,
-						avgRuleDepth: 1.5,
-						maxRuleDepth: 2,
-						reuseRate: 0.1,
-						createRate: 0.8,
 						tokenEmitRate: 0.03,
 						blockedRate: 0.85,
 						policyStoredRate: 0.01,
@@ -646,8 +553,6 @@ describe("buildInsights", () => {
 		);
 
 		const byId = Object.fromEntries(insights.map((i) => [i.id, i]));
-		expect(byId.grammar.tone).toBe("bad");
-		expect(byId.grammar.body).toContain("reuse");
 		expect(byId.policy.body).toContain("stored path");
 		expect(byId.paths.tone).toBe("neutral");
 		expect(byId.emit.body).toContain("new letter");
@@ -707,7 +612,6 @@ const epochSample = (at: number, tokenEmitRate: number | null = 0.5) => ({
 	},
 	training: {
 		feeds: 1,
-		rules: null,
 		tokenEmitRate,
 		exploredEnter: 18,
 	},
@@ -737,7 +641,6 @@ describe("epoch history", () => {
 		expect(ats.slice(0, 2)).toEqual([5_000, 10_000]);
 		expect(longtailStore.state.samples[0]?.training.tokenEmitRate).toBe(0.5);
 		expect(longtailStore.state.samples[0]?.paper.meanReturn).toBe(0.1);
-		expect(longtailStore.state.samples[0]?.training.rules).toBeNull();
 		expect(longtailStore.state.samples[1]?.training.tokenEmitRate).toBe(0);
 	});
 

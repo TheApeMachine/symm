@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/nomagique/data"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -27,13 +28,14 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public   Transport
-	snapshot *kraken.Instrument
-	Level3   *sync.Map
-	cache    *sync.Map
-	quote    string
-	symbols  []string
-	auth     *kraken.Auth
+	public    Transport
+	snapshot  *kraken.Instrument
+	Level3    *sync.Map
+	cache     *sync.Map
+	takerFees *sync.Map
+	quote     string
+	symbols   []string
+	auth      *kraken.Auth
 }
 
 // Level3 wires book stale marking and per-socket ingress for SubscribeBooks.
@@ -50,12 +52,13 @@ func NewInstrument(
 	ctx context.Context, public Transport,
 ) *Instrument {
 	instrument := &Instrument{
-		public:  public,
-		Level3:  &sync.Map{},
-		cache:   &sync.Map{},
-		symbols: []string{},
-		quote:   system.Cfg.Market.QuoteCurrency,
-		auth:    kraken.NewAuth(),
+		public:    public,
+		Level3:    &sync.Map{},
+		cache:     &sync.Map{},
+		takerFees: &sync.Map{},
+		symbols:   []string{},
+		quote:     system.Cfg.Market.QuoteCurrency,
+		auth:      kraken.NewAuth(),
 	}
 
 	instrument.System = runtime.NewSystem(
@@ -568,4 +571,57 @@ func (instrument *Instrument) Unsubscribe() error {
 
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
+}
+
+/*
+WebSocketToken is the private-socket token for this process's API key.
+Live order entry and the executions subscription use it. Paper does not.
+*/
+func (instrument *Instrument) WebSocketToken(ctx context.Context) (string, error) {
+	if instrument == nil || instrument.auth == nil {
+		return "", errnie.Err(
+			errnie.Validation,
+			"[instrument] websocket token requested without auth",
+			nil,
+		)
+	}
+
+	return instrument.auth.Token(ctx)
+}
+
+/*
+RememberFee stores one pair's account taker schedule. Fees are percent:
+0.40 means 0.40%.
+*/
+func (instrument *Instrument) RememberFee(symbol string, taker *decimal.Decimal) {
+	if instrument == nil || symbol == "" || taker == nil {
+		return
+	}
+
+	if instrument.takerFees == nil {
+		instrument.takerFees = &sync.Map{}
+	}
+
+	instrument.takerFees.Store(symbol, taker)
+}
+
+/*
+TakerFee is the account's taker rate for the symbol, in percent.
+*/
+func (instrument *Instrument) TakerFee(symbol string) *decimal.Decimal {
+	return instrument.fee(instrument.takerFees, symbol)
+}
+
+func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decimal {
+	if instrument == nil || table == nil || symbol == "" {
+		return nil
+	}
+
+	val, ok := table.Load(symbol)
+
+	if !ok || val == nil {
+		return nil
+	}
+
+	return val.(*decimal.Decimal)
 }

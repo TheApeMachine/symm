@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	neturl "net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,19 @@ var UI *Hub
 
 func init() {
 	UI = NewHub(context.Background())
+	if runningGoTest() {
+		return
+	}
 	UI.Run()
+}
+
+func runningGoTest() bool {
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.") {
+			return true
+		}
+	}
+	return false
 }
 
 type Hub struct {
@@ -44,25 +57,13 @@ type Hub struct {
 	// active even if the `connected` flag has already been cleared, so the
 	// first ticks after a dashboard attaches are not silently dropped.
 	connectedSince atomic.Int64
-	callbacks  []func()
-	commit     atomic.Value
-	store      *store.Client
-	exiter     Exiter
-	streams    map[string]context.CancelFunc
-	streamGen  map[string]uint64
-	nextStream uint64
-}
-
-/*
-UseStore replaces the hub object store. Call after config load so ListPrefix
-reads the same bucket the model writes (ui init runs before Viper).
-*/
-func (hub *Hub) UseStore(client *store.Client) {
-	if hub == nil || client == nil {
-		return
-	}
-
-	hub.store = client
+	callbacks      []func()
+	commit         atomic.Value
+	store          *store.Client
+	exiter         Exiter
+	streams        map[string]context.CancelFunc
+	streamGen      map[string]uint64
+	nextStream     uint64
 }
 
 /*

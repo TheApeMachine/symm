@@ -54,14 +54,16 @@ describe("kernelMeasurement", () => {
 			prefix,
 		});
 		aggregate.layers.push(new TextEncoder().encode(JSON.stringify([0.5])));
-		aggregate.index.push(`${prefix}/cvd/MEGA/USD/signed_net_fraction`);
+		aggregate.index.push(`${prefix}/liquidity/MEGA/USD/spread_expansion`);
 
 		expect(symbolsOnAggregate(aggregate)).toEqual(["MEGA/USD"]);
 		expect(kernelSymbolForAggregate("BTC/USD", aggregate)).toBe("MEGA/USD");
 		expect(
-			kernelMeasurement("cvd", kernelSymbolForAggregate("BTC/USD", aggregate), aggregate)?.metric(
-				"signed_net_fraction",
-			),
+			kernelMeasurement(
+				"liquidity",
+				kernelSymbolForAggregate("BTC/USD", aggregate),
+				aggregate,
+			)?.metric("spread_expansion"),
 		).toBe(0.5);
 	});
 
@@ -77,12 +79,10 @@ describe("kernelMeasurement", () => {
 		});
 
 		aggregate.layers.push(
-			new TextEncoder().encode(
-				JSON.stringify([0.04528, 0.04534, 0.0013242109909511709, 0, 0]),
-			),
+			new TextEncoder().encode(JSON.stringify([0.08])),
 		);
 		aggregate.index.push(
-			`${prefix}/liquidity/MEGA/USD/best_price:bid/best_price:ask/relative_spread/fee_rate/friction_hurdle`,
+			`${prefix}/liquidity/MEGA/USD/spread_expansion`,
 		);
 
 		aggregate.layers.push(
@@ -98,7 +98,7 @@ describe("kernelMeasurement", () => {
 		expect(cvd?.metric("signed_net_fraction")).toBe(-0.15);
 
 		const liq = kernelMeasurement("liquidity", "MEGA/USD", aggregate);
-		expect(liq?.metric("relative_spread")).toBeCloseTo(0.0013242109909511709);
+		expect(liq?.metric("spread_expansion")).toBeCloseTo(0.08);
 
 		const viaAlias = kernelMeasurement("cvd", "MEGA-USD", aggregate);
 		expect(viaAlias?.metric("signed_net_fraction")).toBe(-0.15);

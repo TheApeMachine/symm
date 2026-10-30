@@ -52,8 +52,9 @@ func symbolFromExitPolicyKey(key string) string {
 	return strings.ReplaceAll(key, "-", "/")
 }
 
-func (desk *Desk) restoreExitPolicies() {
-	if desk == nil || desk.history == nil || desk.history.store == nil {
+func (policy *ExitPolicy) Restore() {
+	desk := policy.desk
+	if policy == nil || desk == nil || desk.history == nil || desk.history.store == nil {
 		return
 	}
 
@@ -74,10 +75,10 @@ func (desk *Desk) restoreExitPolicies() {
 			continue
 		}
 
-		desk.policies.Store(symbol, record)
+		policy.policies.Store(symbol, record)
 	}
 
-	desk.restoreShadowQueue()
+	policy.restoreShadowQueue()
 }
 
 func decodePolicyRecord(value *data.Value) *policyRecord {
@@ -120,12 +121,13 @@ func decodePolicyRecord(value *data.Value) *policyRecord {
 	return record
 }
 
-func (desk *Desk) persistExitPolicy(symbol string) {
-	if desk == nil || desk.history == nil || desk.history.store == nil || symbol == "" {
+func (policy *ExitPolicy) persist(symbol string) {
+	desk := policy.desk
+	if policy == nil || desk == nil || desk.history == nil || desk.history.store == nil || symbol == "" {
 		return
 	}
 
-	known := desk.recordPolicy(symbol)
+	known := policy.record(symbol)
 	if known == nil {
 		return
 	}
@@ -138,7 +140,7 @@ func (desk *Desk) persistExitPolicy(symbol string) {
 	value.Append(blob, "exit_policy")
 
 	if _, err := desk.history.store.WriteAtPrefix(exitPolicyObjectKey(symbol), value.Bytes()); err != nil {
-		errnie.Error(errnie.Err(errnie.IO, "[desk] persist exit policy "+symbol, err))
+		errnie.Error(errnie.Err(errnie.IO, "[exitpolicy] persist "+symbol, err))
 	}
 }
 
@@ -174,14 +176,15 @@ func encodePolicyRecord(known *policyRecord) persistedExitPolicy {
 	return out
 }
 
-func (desk *Desk) persistShadowQueue() {
-	if desk == nil || desk.history == nil || desk.history.store == nil {
+func (policy *ExitPolicy) persistShadowQueue() {
+	desk := policy.desk
+	if policy == nil || desk == nil || desk.history == nil || desk.history.store == nil {
 		return
 	}
 
-	desk.shadowMu.Lock()
-	jobs := append([]shadowJob(nil), desk.shadowJobs...)
-	desk.shadowMu.Unlock()
+	policy.shadowMu.Lock()
+	jobs := append([]shadowJob(nil), policy.shadowJobs...)
+	policy.shadowMu.Unlock()
 
 	raw, err := sonic.Marshal(jobs)
 	if err != nil {
@@ -193,12 +196,13 @@ func (desk *Desk) persistShadowQueue() {
 	value.AppendBytes(raw, "shadow_queue")
 
 	if _, err := desk.history.store.WriteAtPrefix(exitShadowQueueKey, value.Bytes()); err != nil {
-		errnie.Error(errnie.Err(errnie.IO, "[desk] persist shadow queue", err))
+		errnie.Error(errnie.Err(errnie.IO, "[exitpolicy] persist shadow queue", err))
 	}
 }
 
-func (desk *Desk) restoreShadowQueue() {
-	if desk == nil || desk.history == nil || desk.history.store == nil {
+func (policy *ExitPolicy) restoreShadowQueue() {
+	desk := policy.desk
+	if policy == nil || desk == nil || desk.history == nil || desk.history.store == nil {
 		return
 	}
 
@@ -214,7 +218,7 @@ func (desk *Desk) restoreShadowQueue() {
 		return
 	}
 
-	desk.shadowMu.Lock()
-	desk.shadowJobs = jobs
-	desk.shadowMu.Unlock()
+	policy.shadowMu.Lock()
+	policy.shadowJobs = jobs
+	policy.shadowMu.Unlock()
 }

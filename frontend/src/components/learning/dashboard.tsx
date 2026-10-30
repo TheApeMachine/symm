@@ -8,20 +8,17 @@ import { CognitiveTree } from "./cognitive-tree";
 import { ImpulseMapViz } from "./impulse-map-viz";
 import { LifecycleView } from "./lifecycle-view";
 import { OpenPositions } from "./open-positions";
-import { SequiturGrammarViz } from "./sequitur-grammar-viz";
 
 export type Tab =
 	| "positions"
 	| "forward"
 	| "cognitive"
-	| "sequitur"
 	| "impulse";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "positions", label: "Open positions" },
 	{ key: "forward", label: "Position life-cycle" },
 	{ key: "cognitive", label: "Cognitive tree" },
-	{ key: "sequitur", label: "Sequitur grammar" },
 	{ key: "impulse", label: "Impulse map" },
 ];
 
@@ -72,12 +69,6 @@ export const LearningDashboard = () => {
 				{tab === "cognitive" && (
 					<Flex.Column className="flex-1 min-h-0">
 						<CognitiveTree />
-					</Flex.Column>
-				)}
-
-				{tab === "sequitur" && (
-					<Flex.Column className="flex-1 min-h-0">
-						<SequiturGrammarViz />
 					</Flex.Column>
 				)}
 

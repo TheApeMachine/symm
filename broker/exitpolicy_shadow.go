@@ -36,13 +36,13 @@ func policyShadowBars() int {
 	return bars
 }
 
-func (desk *Desk) schedulePostExitShadow(position *Position) {
-	if desk == nil || position == nil || position.Symbol == "" {
+func (policy *ExitPolicy) SchedulePostExitShadow(position *Position) {
+	if policy == nil || position == nil || position.Symbol == "" {
 		return
 	}
 
 	if position.ExitTick == 0 || position.Qty == nil || position.EntryPrice == nil {
-		go desk.refreshPolicy(position.Symbol)
+		go policy.Refresh(position.Symbol)
 		return
 	}
 
@@ -65,29 +65,29 @@ func (desk *Desk) schedulePostExitShadow(position *Position) {
 		job.PolicyEpoch = data.Epoch.Load()
 	}
 
-	desk.enqueueShadowJob(job)
-	go desk.runShadowJob(job)
+	policy.enqueueShadowJob(job)
+	go policy.runShadowJob(job)
 }
 
-func (desk *Desk) enqueueShadowJob(job shadowJob) {
-	if desk == nil || job.Symbol == "" {
+func (policy *ExitPolicy) enqueueShadowJob(job shadowJob) {
+	if policy == nil || job.Symbol == "" {
 		return
 	}
 
-	desk.shadowMu.Lock()
-	desk.shadowJobs = append(desk.shadowJobs, job)
-	desk.shadowMu.Unlock()
-	desk.persistShadowQueue()
+	policy.shadowMu.Lock()
+	policy.shadowJobs = append(policy.shadowJobs, job)
+	policy.shadowMu.Unlock()
+	policy.persistShadowQueue()
 }
 
-func (desk *Desk) dequeueShadowJob(job shadowJob) {
-	if desk == nil {
+func (policy *ExitPolicy) dequeueShadowJob(job shadowJob) {
+	if policy == nil {
 		return
 	}
 
-	desk.shadowMu.Lock()
-	filtered := desk.shadowJobs[:0]
-	for _, existing := range desk.shadowJobs {
+	policy.shadowMu.Lock()
+	filtered := policy.shadowJobs[:0]
+	for _, existing := range policy.shadowJobs {
 		if shadowJobEqual(existing, job) {
 			continue
 		}
@@ -95,9 +95,9 @@ func (desk *Desk) dequeueShadowJob(job shadowJob) {
 		filtered = append(filtered, existing)
 	}
 
-	desk.shadowJobs = filtered
-	desk.shadowMu.Unlock()
-	desk.persistShadowQueue()
+	policy.shadowJobs = filtered
+	policy.shadowMu.Unlock()
+	policy.persistShadowQueue()
 }
 
 func shadowJobEqual(a, b shadowJob) bool {
@@ -110,26 +110,26 @@ func shadowJobEqual(a, b shadowJob) bool {
 		a.EntryPrice == b.EntryPrice
 }
 
-func (desk *Desk) resumeShadowJobs() {
-	if desk == nil {
+func (policy *ExitPolicy) ResumeShadowJobs() {
+	if policy == nil {
 		return
 	}
 
-	desk.shadowMu.Lock()
-	jobs := append([]shadowJob(nil), desk.shadowJobs...)
-	desk.shadowMu.Unlock()
+	policy.shadowMu.Lock()
+	jobs := append([]shadowJob(nil), policy.shadowJobs...)
+	policy.shadowMu.Unlock()
 
 	for _, job := range jobs {
-		go desk.runShadowJob(job)
+		go policy.runShadowJob(job)
 	}
 }
 
-func (desk *Desk) runShadowJob(job shadowJob) {
-	if desk == nil {
+func (policy *ExitPolicy) runShadowJob(job shadowJob) {
+	if policy == nil || policy.desk == nil {
 		return
 	}
 
-	ctx := desk.Context()
+	ctx := policy.desk.Context()
 	if ctx == nil {
 		return
 	}
@@ -157,16 +157,17 @@ func (desk *Desk) runShadowJob(job shadowJob) {
 	case <-time.After(250 * time.Millisecond):
 	}
 
-	maxPct, bars := desk.measurePostExitRegret(job)
+	maxPct, bars := policy.measurePostExitRegret(job)
 	if bars > 0 {
-		desk.applyPostExitRegret(job.Symbol, job.Banked, maxPct, bars)
+		policy.applyPostExitRegret(job.Symbol, job.Banked, maxPct, bars)
 	}
 
-	desk.dequeueShadowJob(job)
+	policy.dequeueShadowJob(job)
 }
 
-func (desk *Desk) measurePostExitRegret(job shadowJob) (maxPct float64, bars int) {
-	if desk == nil || desk.history == nil || desk.history.store == nil || desk.price == nil {
+func (policy *ExitPolicy) measurePostExitRegret(job shadowJob) (maxPct float64, bars int) {
+	desk := policy.desk
+	if policy == nil || desk == nil || desk.history == nil || desk.history.store == nil || desk.price == nil {
 		return 0, 0
 	}
 
@@ -182,11 +183,11 @@ func (desk *Desk) measurePostExitRegret(job shadowJob) (maxPct float64, bars int
 
 	limit := policyShadowBars()
 	prefix := fmt.Sprintf("workspace/tick/aggregate/%019d/", job.PolicyEpoch)
-	ctx := desk.Context()
+	ctx := policy.desk.Context()
 
 	maxPct = math.Inf(-1)
 
-	for key := range desk.history.store.ListKeys(prefix) {
+	for key := range policy.desk.history.store.ListKeys(prefix) {
 		tick, ok := tickFromAggregateKey(key)
 		if !ok || tick <= job.ExitTick {
 			continue
@@ -196,7 +197,7 @@ func (desk *Desk) measurePostExitRegret(job shadowJob) (maxPct float64, bars int
 			break
 		}
 
-		tickValue := desk.history.store.Download(ctx, key)
+		tickValue := policy.desk.history.store.Download(ctx, key)
 		if tickValue == nil || tickValue.Err != nil {
 			continue
 		}
@@ -206,7 +207,7 @@ func (desk *Desk) measurePostExitRegret(job shadowJob) (maxPct float64, bars int
 			continue
 		}
 
-		pct := desk.price.PnLPctAtSellPrice(job.Symbol, qty, entry, nil, sellPrice)
+		pct := policy.desk.price.PnLPctAtSellPrice(job.Symbol, qty, entry, nil, sellPrice)
 		if pct == nil {
 			continue
 		}
@@ -226,8 +227,8 @@ func (desk *Desk) measurePostExitRegret(job shadowJob) (maxPct float64, bars int
 	return maxPct, bars
 }
 
-func (desk *Desk) applyPostExitRegret(symbol string, banked, postExitMax float64, shadowBars int) {
-	known := desk.recordPolicy(symbol)
+func (policy *ExitPolicy) applyPostExitRegret(symbol string, banked, postExitMax float64, shadowBars int) {
+	known := policy.record(symbol)
 	if known == nil {
 		return
 	}
@@ -255,7 +256,7 @@ func (desk *Desk) applyPostExitRegret(symbol string, banked, postExitMax float64
 	known.rows = policyRows(known.episodes)
 	known.mu.Unlock()
 
-	desk.refreshPolicy(symbol)
+	policy.Refresh(symbol)
 }
 
 func tickFromAggregateKey(key string) (uint64, bool) {

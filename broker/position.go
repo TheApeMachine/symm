@@ -17,6 +17,7 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/network"
 )
 
 /*
@@ -28,65 +29,65 @@ longer needs.
 const positionTraceCap = 4096
 
 type Position struct {
-	mu              sync.Mutex
-	exitInProgress  uint32
+	mu             sync.Mutex
+	exitInProgress uint32
 	*runtime.System
-	stopLoss        *StopLoss
-	transport       Transport
-	price           *Price
-	onSettled       func(*Position)
-	ID              string                  `json:"id"`
-	EntryPath       string                  `json:"entry_path"`
-	HoldPath        string                  `json:"hold_path,omitempty"`
-	ExitPath        string                  `json:"exit_path"`
-	ExitTrigger     string                  `json:"exit_trigger,omitempty"`
-	OutcomeTriggers []string                `json:"outcome_triggers,omitempty"`
-	Symbol          string                  `json:"symbol"`
-	OpenedAt        time.Time               `json:"opened_at"`
-	ClosedAt        *time.Time              `json:"closed_at"`
-	UpdatedAt       *time.Time              `json:"updated_at"`
-	PolicyEpoch     uint64                  `json:"policy_epoch,omitempty"`
-	EntryTick       uint64                  `json:"entry_tick,omitempty"`
-	ExitTick        uint64                  `json:"exit_tick,omitempty"`
-	EntryOrder      *spot.OrderRequest      `json:"entry_order,omitempty"`
-	ExitOrder       *spot.OrderRequest      `json:"exit_order,omitempty"`
-	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
-	Qty             *decimal.Decimal        `json:"qty,omitempty"`
-	EntryPrice      *decimal.Decimal        `json:"entry_price,omitempty"`
-	ExitPrice       *decimal.Decimal        `json:"exit_price,omitempty"`
-	EntryFee        *decimal.Decimal        `json:"entry_fee,omitempty"`
-	ExitFee         *decimal.Decimal        `json:"exit_fee,omitempty"`
-	Mark            *decimal.Decimal        `json:"mark,omitempty"`
-	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
-	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
-	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
-	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL         *decimal.Decimal        `json:"open_pnl,omitempty"`   // First mark-to-exit PnL after open
-	LastPnL         *decimal.Decimal        `json:"last_pnl,omitempty"`   // Previous tick PnL for momentum checks
-	PnLTrace        []float64               `json:"pnl_trace,omitempty"`  // Net percent, one entry per reprice
-	StopState       StopState               `json:"stop_state,omitempty"` // Live proximity of each stop check
-	PeakPnLPct      *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
-	PeakStep        *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
-	Impulse         bool                    `json:"impulse,omitempty"`           // True explosive spike detected
-	ExitPullbackPct *decimal.Decimal        `json:"exit_pullback_pct,omitempty"` // Learned trailing giveback from peak
-	NurseryCutPct   *decimal.Decimal        `json:"nursery_cut_pct,omitempty"`   // Learned invalidation cut
-	MaxLifetimeNs   int64                   `json:"max_lifetime_ns,omitempty"`   // Legacy empirical duration limit
-	MaxLifetimeBars int                     `json:"max_lifetime_bars,omitempty"` // Empirical winning horizon in reprice bars
-	WorstPct        *decimal.Decimal        `json:"worst_pct,omitempty"`
-	paceKnown       bool
-	spreadPct       *decimal.Decimal
-	frictionPct     *decimal.Decimal
-	stallTicks      int
-	lastMark        *decimal.Decimal
-	HoldNs          int64   `json:"hold_ns,omitempty"`
-	Virtual         bool    `json:"virtual"`
-	PathFound       bool    `json:"path_found,omitempty"`
-	OpenSurprise    float64 `json:"open_surprise,omitempty"`
-	EnterR02        float64 `json:"enter_r02_brightness,omitempty"`
-	EnterNetHold    float64 `json:"enter_net_hold,omitempty"`
-	EnterGridMaturity float64 `json:"enter_grid_maturity,omitempty"`
-	BarsHeld        int64   `json:"bars_held,omitempty"`    // Repress events since entry (tape timebase)
-	RealizedPct     float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
+	stopLoss          *StopLoss
+	transport         Transport
+	price             *Price
+	onSettled         func(*Position)
+	ID                string                  `json:"id"`
+	EntryPath         string                  `json:"entry_path"`
+	HoldPaths         []string                `json:"hold_paths,omitempty"`
+	ExitPath          string                  `json:"exit_path"`
+	ExitTrigger       string                  `json:"exit_trigger,omitempty"`
+	OutcomeTriggers   []string                `json:"outcome_triggers,omitempty"`
+	Symbol            string                  `json:"symbol"`
+	OpenedAt          time.Time               `json:"opened_at"`
+	ClosedAt          *time.Time              `json:"closed_at"`
+	UpdatedAt         *time.Time              `json:"updated_at"`
+	PolicyEpoch       uint64                  `json:"policy_epoch,omitempty"`
+	EntryTick         uint64                  `json:"entry_tick,omitempty"`
+	ExitTick          uint64                  `json:"exit_tick,omitempty"`
+	EntryOrder        *spot.OrderRequest      `json:"entry_order,omitempty"`
+	ExitOrder         *spot.OrderRequest      `json:"exit_order,omitempty"`
+	Fills             []*kraken.ExecutionData `json:"fills,omitempty"`
+	Qty               *decimal.Decimal        `json:"qty,omitempty"`
+	EntryPrice        *decimal.Decimal        `json:"entry_price,omitempty"`
+	ExitPrice         *decimal.Decimal        `json:"exit_price,omitempty"`
+	EntryFee          *decimal.Decimal        `json:"entry_fee,omitempty"`
+	ExitFee           *decimal.Decimal        `json:"exit_fee,omitempty"`
+	Mark              *decimal.Decimal        `json:"mark,omitempty"`
+	ExitVWAP          *decimal.Decimal        `json:"exit_vwap,omitempty"`
+	ExitRoom          *decimal.Decimal        `json:"exit_room,omitempty"`
+	PnL               *decimal.Decimal        `json:"pnl,omitempty"`
+	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
+	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`   // First mark-to-exit PnL after open
+	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`   // Previous tick PnL for momentum checks
+	PnLTrace          []float64               `json:"pnl_trace,omitempty"`  // Net percent, one entry per reprice
+	StopState         StopState               `json:"stop_state,omitempty"` // Live proximity of each stop check
+	PeakPnLPct        *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
+	PeakStep          *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
+	Impulse           bool                    `json:"impulse,omitempty"`           // True explosive spike detected
+	ExitPullbackPct   *decimal.Decimal        `json:"exit_pullback_pct,omitempty"` // Learned trailing giveback from peak
+	NurseryCutPct     *decimal.Decimal        `json:"nursery_cut_pct,omitempty"`   // Learned invalidation cut
+	MaxLifetimeNs     int64                   `json:"max_lifetime_ns,omitempty"`   // Legacy empirical duration limit
+	MaxLifetimeBars   int                     `json:"max_lifetime_bars,omitempty"` // Empirical winning horizon in reprice bars
+	WorstPct          *decimal.Decimal        `json:"worst_pct,omitempty"`
+	paceKnown         bool
+	spreadPct         *decimal.Decimal
+	frictionPct       *decimal.Decimal
+	stallTicks        int
+	lastMark          *decimal.Decimal
+	HoldNs            int64            `json:"hold_ns,omitempty"`
+	Virtual           bool             `json:"virtual"`
+	PathFound         bool             `json:"path_found,omitempty"`
+	OpenSurprise      float64          `json:"open_surprise,omitempty"`
+	EnterR02          float64          `json:"enter_r02_brightness,omitempty"`
+	EnterNetHold      float64          `json:"enter_net_hold,omitempty"`
+	EnterGridMaturity float64          `json:"enter_grid_maturity,omitempty"`
+	BarsHeld          int64            `json:"bars_held,omitempty"`    // Reprice events since entry (tape timebase)
+	RealizedPct float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
 }
 
 func NewPosition(
@@ -115,6 +116,19 @@ func NewPosition(
 }
 
 /*
+IsClosed reports whether the lot has finished exit bookkeeping.
+*/
+func (position *Position) IsClosed() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	return position.ClosedAt != nil
+}
+
+/*
 Update refreshes the mark and reprices open PnL. A fired exit starts on
 its own goroutine so the trade ingress can publish the next tick.
 */
@@ -131,7 +145,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 			if trigger, ok := position.stopLoss.Evaluate(position); ok {
 				position.ExitTrigger = trigger
 				position.OutcomeTriggers = []string{trigger}
-				path = position.exitPathForStop()
+				path = position.ExitPath
 			}
 		}
 	}
@@ -148,23 +162,6 @@ func (position *Position) Update(mark *decimal.Decimal) {
 
 	errnie.Info("[exit] triggered by " + position.ExitTrigger + " for " + position.Symbol)
 	go position.finishExit(path)
-}
-
-/*
-exitPathForStop is the path key used when a stop fires. Hold ticks must not
-wipe the enter path before the exit grammar has spelled; fall back to entry.
-*/
-func (position *Position) exitPathForStop() string {
-	if position == nil {
-		return ""
-	}
-	if position.ExitPath != "" {
-		return position.ExitPath
-	}
-	if position.HoldPath != "" {
-		return position.HoldPath
-	}
-	return position.EntryPath
 }
 
 /*
@@ -276,34 +273,80 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	position.ExitPath = path
 
 	if position.Virtual {
-		fill, err := position.price.EntryCost(position.Symbol, qty)
-
-		if err != nil {
+		if err := position.fillTakerEntryLocked(); err != nil {
 			position.mu.Unlock()
-			return errnie.Error(errnie.Err(
-				errnie.IO,
-				"[position.Enter] no fill price for "+position.Symbol,
-				err,
-			))
+			return err
 		}
 
-		position.applyLocked(kraken.ExecutionData{
-			Symbol:      position.Symbol,
-			Side:        "buy",
-			ExecType:    "Fill",
-			LastQty:     qty,
-			CumQty:      qty,
-			LastPrice:   fill.EntryPrice,
-			AvgPrice:    fill.EntryPrice,
-			FeeUsdEquiv: fill.EntryFee,
-			Timestamp:   time.Now().UTC(),
-		})
+		position.mu.Unlock()
+		return nil
 	}
 
 	order := position.EntryOrder
 	position.mu.Unlock()
 
 	return position.Send(order)
+}
+
+func (position *Position) Unfilled() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ClosedAt != nil {
+		return false
+	}
+
+	if position.EntryPrice != nil && position.EntryPrice.Sign() > 0 {
+		return false
+	}
+
+	return position.Qty != nil && position.Qty.Sign() > 0
+}
+
+func (position *Position) fillTakerEntryLocked() error {
+	if position.price == nil || position.Qty == nil || position.Qty.Sign() <= 0 {
+		return errnie.Err(
+			errnie.NotFound,
+			"[position.Enter] cannot fill virtual entry for "+position.Symbol,
+			nil,
+		)
+	}
+
+	fill, err := position.price.EntryCost(position.Symbol, position.Qty)
+	if err != nil || fill == nil || fill.EntryPrice == nil || fill.EntryPrice.Sign() <= 0 {
+		msg := "[position.Enter] cannot fill virtual entry for " + position.Symbol
+		if err != nil {
+			msg += ": " + err.Error()
+		}
+
+		return errnie.Err(errnie.NotFound, msg, err)
+	}
+
+	position.applyLocked(kraken.ExecutionData{
+		Symbol:       position.Symbol,
+		Side:         "buy",
+		ExecType:     "trade",
+		LiquidityInd: "t",
+		LastQty:      position.Qty,
+		CumQty:       position.Qty,
+		LastPrice:    fill.EntryPrice,
+		AvgPrice:     fill.EntryPrice,
+		FeeUsdEquiv:  fill.EntryFee,
+	})
+
+	if position.EntryPrice == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"[position.Enter] virtual taker fill did not set entry for "+position.Symbol,
+			nil,
+		)
+	}
+
+	return nil
 }
 
 // ErrExitInProgress means another caller already owns the sell.
@@ -462,8 +505,12 @@ func (position *Position) repriceLocked() {
 	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, position.Qty)
 	position.ExitRoom = position.price.ExitRoom(position.Symbol, position.Qty)
 
-	newPnL := position.price.PnL(position.Symbol, position.Qty, position.EntryPrice, fee)
-	newPnLPct := position.price.PnLPct(position.Symbol, position.Qty, position.EntryPrice, fee)
+	newPnL, _ := position.price.roundTrip(
+		position.Symbol, position.Qty, position.EntryPrice, fee, fee,
+	)
+	newPnLPct := position.price.roundTripPct(
+		position.Symbol, position.Qty, position.EntryPrice, fee, fee,
+	)
 
 	if newPnL == nil {
 		return
@@ -494,10 +541,8 @@ func (position *Position) repriceLocked() {
 		position.LastPnL = position.PnL
 	}
 
-	// BarsHeld counts reprice events since entry: the tape timebase the rest of
-	// the stop uses. A wall-clock horizon would expire the same 8-bar move at 3x
-	// the speed on a fast tape and under-use it on a slow one, so the expiry
-	// lives in bars, not seconds.
+	// BarsHeld counts reprices since entry. It is a trace statistic. It does
+	// not close the lot.
 	position.BarsHeld++
 
 	// Refresh the live stop-check proximity for the dashboard frame. This is
@@ -562,14 +607,34 @@ func (position *Position) Send(order *spot.OrderRequest) error {
 		)
 	}
 
-	buf, err := sonic.Marshal(kraken.NewAddOrderMessage("", &kraken.AddOrderRequest{
+	request := &kraken.AddOrderRequest{
 		Pair:    position.Symbol,
 		Type:    order.Type,
 		OrdType: order.OrderType,
 		Volume:  order.Volume,
 		Price:   order.Price,
 		ClOrdId: order.ClOrdId,
-	}))
+	}
+
+	if _, live := position.transport.(*network.WebsocketClient); live {
+		if position.price == nil || position.price.Instrument == nil {
+			return errnie.Err(
+				errnie.Validation,
+				"[position.Send] live order has no instrument for a websocket token",
+				nil,
+			)
+		}
+
+		token, err := position.price.Instrument.WebSocketToken(position.Context())
+
+		if err != nil {
+			return err
+		}
+
+		request.Token = token
+	}
+
+	buf, err := sonic.Marshal(kraken.NewAddOrderMessage(request.Token, request))
 
 	if err != nil {
 		return errnie.Err(

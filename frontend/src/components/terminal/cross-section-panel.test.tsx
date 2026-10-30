@@ -39,25 +39,20 @@ describe("CrossSectionPanel", () => {
 		).toBe("—");
 
 		publishLiquidity({
-			relative_spread: 0.0004,
-			"best_price:bid": 95123.45,
-			"best_price:ask": 95127.25,
+			spread_expansion: 0.12,
+			liquidation_impact: 0.03,
 		});
 
 		expect(
 			view.container.querySelector('[data-metric="symbol"]')?.textContent,
 		).toBe("BTC/USD");
 		expect(
-			view.container.querySelector('[data-metric-raw="best_price:bid"]')
+			view.container.querySelector('[data-metric-raw="spread_expansion"]')
 				?.textContent,
-		).toBe("95123.45");
+		).toBe("0.1200");
 		expect(
-			view.container.querySelector('[data-metric-raw="best_price:ask"]')
+			view.container.querySelector('[data-metric-raw="liquidation_impact"]')
 				?.textContent,
-		).toBe("95127.25");
-		expect(
-			view.container.querySelector('[data-metric-raw="relative_spread"]')
-				?.textContent,
-		).toBe("4.0 bp");
+		).toBe("0.0300");
 	});
 });

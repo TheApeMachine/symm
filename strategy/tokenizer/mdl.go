@@ -2,303 +2,119 @@ package tokenizer
 
 import (
 	"math"
-	"math/bits"
-
-	"github.com/theapemachine/symm/system"
 )
 
 /*
-MDL discovers natural boundaries in a raw byte stream using minimum
-description length, with optional calibrator tuning for split sensitivity.
+MDL finds segment boundaries in the symbol stream Sequitur emits (terminals
+and rule refs such as R06.R00 and M1), using minimum description length.
 */
 type MDL struct {
-	calibrator *Calibrator
-	eigen      *EigenMode
+	stream []uint32
+	offset int
+	dist   *symbolHistogram
 
-	buf  []byte
-	dist *Distribution
+	vocab  map[string]uint32
+	nextID uint32
 
-	runningHist *Distribution
-
-	prevSegLen  int
-	fluxEmitted bool
-
-	lastByteVal  float64
-	lastEigenMag float64
-
-	emaPhase float64
-	emaPop   float64
-
-	runningMeta SegmentMeta
-
-	candidates []candidate
-	offset     int
-
-	// lastGain is the MDL boundary gain from the most recent cut,
-	// normalised to [0, 1]. Used by the Sequencer to compute token
-	// confidence: a strong structural break yields high confidence.
 	lastGain float64
 
-	MinSegmentBytes int
-
-	ShannonCeiling float64
-
-	PhaseThreshold float64
+	MinSegmentSymbols int
 }
 
-type candidate struct {
-	k       int
-	gain    float64
-	entropy float64
-	forced  bool
-}
-
-func NewMDL(calibrator *Calibrator) *MDL {
-	minSeg := max(int(math.Log2(float64(
-		system.Cfg.Learning.VocabSize,
-	))/2), 2)
-
+func NewMDL() *MDL {
 	return &MDL{
-		calibrator:      calibrator,
-		eigen:           NewEigenMode(),
-		dist:            NewDistribution(),
-		runningHist:     NewDistribution(),
-		MinSegmentBytes: minSeg,
-		ShannonCeiling:  system.Cfg.Learning.ShannonCapacity,
-		PhaseThreshold:  math.Pi / 2.0,
+		dist:              newSymbolHistogram(),
+		vocab:             make(map[string]uint32),
+		nextID:            1,
+		MinSegmentSymbols: 2,
 	}
 }
 
-func (seq *MDL) CloneEmpty() *MDL {
-	return &MDL{
-		calibrator:      seq.calibrator,
-		eigen:           seq.eigen,
-		dist:            NewDistribution(),
-		runningHist:     NewDistribution(),
-		MinSegmentBytes: seq.MinSegmentBytes,
-		ShannonCeiling:  seq.ShannonCeiling,
-		PhaseThreshold:  seq.PhaseThreshold,
+/*
+Analyze ingests one grammar symbol from the active Sequitur root sequence.
+It returns whether an MDL cut was committed and the penalized split gain.
+*/
+func (mdl *MDL) Analyze(symbol string) (cut bool, gain float64) {
+	if mdl == nil || symbol == "" {
+		return false, 0
 	}
+
+	id := mdl.intern(symbol)
+
+	mdl.stream = append(mdl.stream, id)
+	mdl.dist.add(id)
+
+	seg := mdl.stream[mdl.offset:]
+	if len(seg) < 2*mdl.MinSegmentSymbols {
+		return false, 0
+	}
+
+	ok, k, g := mdl.detectBoundary(seg, mdl.dist)
+	if !ok || g <= 0 || k <= 0 || k >= len(seg) {
+		return false, 0
+	}
+
+	mdl.offset += k
+	mdl.dist = newSymbolHistogram()
+
+	for _, symID := range mdl.stream[mdl.offset:] {
+		mdl.dist.add(symID)
+	}
+
+	mdl.lastGain = g
+
+	return true, g
 }
 
-func (seq *MDL) Clone() *MDL {
-	c := seq.CloneEmpty()
-	c.buf = append([]byte(nil), seq.buf...)
-	c.dist = seq.dist.Clone()
-	c.runningHist = seq.runningHist.Clone()
-	c.prevSegLen = seq.prevSegLen
-	c.fluxEmitted = seq.fluxEmitted
-	c.lastByteVal = seq.lastByteVal
-	c.lastEigenMag = seq.lastEigenMag
-	c.emaPhase = seq.emaPhase
-	c.emaPop = seq.emaPop
-	c.runningMeta = seq.runningMeta
-	c.candidates = append([]candidate(nil), seq.candidates...)
-	c.offset = seq.offset
+func (mdl *MDL) intern(symbol string) uint32 {
+	id, ok := mdl.vocab[symbol]
+	if ok {
+		return id
+	}
 
-	return c
+	id = mdl.nextID
+	mdl.nextID++
+	mdl.vocab[symbol] = id
+
+	return id
 }
 
-func (seq *MDL) Analyze(pos uint32, byteVal byte) (bool, int, []int, SegmentMeta) {
-	val, delta, eigenMag := seq.computeSignal(byteVal)
-
-	seq.buf = append(seq.buf, byteVal)
-	seq.dist.Add(byteVal)
-	seq.runningHist.Add(byteVal)
-
-	seq.runningMeta = seq.runningMeta.RollLeft(1)
-
-	densityCeiling := seq.ShannonCeiling
-	phaseThreshold := seq.PhaseThreshold
-
-	if seq.calibrator != nil {
-		densityCeiling = seq.calibrator.DensityCeiling(seq.ShannonCeiling)
-		phaseThreshold = seq.calibrator.PhaseLimit(seq.PhaseThreshold)
-	}
-
-	canSplit := (len(seq.buf) - seq.offset) >= seq.MinSegmentBytes
-
-	relativeOffset := len(seq.buf) - seq.offset - 1
-	newBits := 0
-
-	if relativeOffset > 0 {
-		newBits = bits.OnesCount8(byteVal ^ seq.buf[len(seq.buf)-2])
-	}
-
-	shannonForced := seq.runningHist.ShannonDensity() > densityCeiling && canSplit
-	phaseForced := seq.eigen != nil && seq.eigen.Trained && delta > phaseThreshold && canSplit
-	primeForced := newBits >= 3 && canSplit
-
-	isBoundary := false
-	k := 0
-	gain := 0.0
-
-	if shannonForced || phaseForced || primeForced {
-		isBoundary = true
-		k = len(seq.buf) - seq.offset
-		gain = 1.0
-	} else if canSplit {
-		mdlBoundary, mdlK, mdlGain := seq.detectBoundary(seq.buf[seq.offset:], seq.dist)
-		if mdlBoundary {
-			isBoundary = true
-			k = mdlK
-			gain = mdlGain
-		}
-	}
-
-	var events []int
-
-	emitK := 0
-
-	if isBoundary {
-		absK := seq.offset + k
-
-		seq.candidates = append(seq.candidates, candidate{
-			k:      absK,
-			gain:   gain,
-			forced: shannonForced || phaseForced || primeForced,
-		})
-
-		// Track the gain for the Sequencer's confidence computation.
-		// Normalise: a gain of 1.0+ means a very strong structural break.
-		seq.lastGain = gain
-
-		seq.offset = absK
-		if seq.offset > len(seq.buf) {
-			seq.offset = len(seq.buf)
-		}
-
-		seq.dist = NewDistribution()
-
-		for _, b := range seq.buf[seq.offset:] {
-			seq.dist.Add(b)
-		}
-
-		seq.runningHist = NewDistribution()
-	}
-
-	if seq.calibrator != nil && seq.eigen != nil && seq.eigen.Trained {
-		seq.calibrator.ObservePhase(delta)
-	}
-
-	if len(seq.candidates) >= 2 {
-		seq.balanceCandidates()
-	}
-
-	if len(seq.candidates) >= 2 {
-		emitK = seq.candidates[0].k
-
-		events = append(events, seq.classifyDirection(seq.buf, emitK))
-		events = append(events, EventPhaseInversion)
-
-		for _, ev := range events {
-			seq.runningMeta = tagMeta(seq.runningMeta, ev)
-		}
-
-		emitMeta := seq.runningMeta
-		emitDist := seq.getDistribution(0, emitK)
-		emitDensity := emitDist.ShannonDensity()
-		maxBits := float64(emitK * 8)
-		actualBits := float64(emitDist.NumDistinct() * 8)
-		primeCoherence := 0.0
-
-		if maxBits > 0 {
-			primeCoherence = math.Max(0, 1.0-(actualBits/maxBits))
-		}
-
-		phaseCoherence := math.Exp(-seq.emaPhase)
-		seq.emitSplit(emitK)
-		seq.candidates = seq.candidates[1:]
-
-		for i := range seq.candidates {
-			seq.candidates[i].k -= emitK
-		}
-
-		seq.offset -= emitK
-		seq.updateEMA(val, delta, eigenMag)
-
-		if seq.calibrator != nil {
-			seq.calibrator.FeedbackChunk(
-				emitDensity, primeCoherence, phaseCoherence,
-			)
-		}
-
-		return true, emitK, events, emitMeta
-	}
-
-	if seq.hasFlux() {
-		events = append(events, EventLowVarianceFlux)
-		seq.fluxEmitted = true
-		seq.runningMeta = tagMeta(seq.runningMeta, EventLowVarianceFlux)
-	}
-
-	seq.updateEMA(val, delta, eigenMag)
-
-	return false, emitK, events, seq.runningMeta
-}
-
-func (seq *MDL) hasFlux() bool {
-	return seq.prevSegLen > 0 && (len(seq.buf)-seq.offset) >= seq.prevSegLen && !seq.fluxEmitted
-}
-
-func (seq *MDL) computeSignal(byteVal byte) (val, delta, eigenMag float64) {
-	val = float64(byteVal)
-
-	if seq.eigen != nil && seq.eigen.Trained {
-		theta, phi := seq.eigen.PhaseForByte(byteVal)
-		eigenMag = math.Hypot(theta, phi)
-		delta = math.Abs(eigenMag - seq.lastEigenMag)
-
-		return val, delta, eigenMag
-	}
-
-	delta = math.Abs(val - seq.lastByteVal)
-
-	return val, delta, eigenMag
-}
-
-func (seq *MDL) detectBoundary(buf []byte, dist *Distribution) (bool, int, float64) {
-	n := len(buf)
-	minSeg := max(seq.MinSegmentBytes, 2)
+func (mdl *MDL) detectBoundary(stream []uint32, dist *symbolHistogram) (bool, int, float64) {
+	n := len(stream)
+	minSeg := max(mdl.MinSegmentSymbols, 2)
 
 	if n < 2*minSeg {
 		return false, 0, 0
 	}
 
-	penaltyScale := 1.0
-
-	if seq.calibrator != nil && seq.calibrator.SensitivityPop() > 0 {
-		penaltyScale = seq.calibrator.SensitivityPop()
-	}
-
 	bestK := 0
 	maxGain := 0.0
 
-	costFull := dist.Cost()
-	left := NewDistribution()
-	right := dist.Clone()
+	costFull := dist.cost()
+	left := newSymbolHistogram()
+	right := dist.clone()
 
 	for i := 1; i < n; i++ {
-		b := buf[i-1]
+		symID := stream[i-1]
 
-		left.Add(b)
-		right.Remove(b)
+		left.add(symID)
+		right.remove(symID)
 
 		if i < minSeg || n-i < minSeg {
 			continue
 		}
 
-		fullParams := max(dist.NumDistinct()-1, 1)
-		leftParams := max(left.NumDistinct()-1, 1)
-		rightParams := max(right.NumDistinct()-1, 1)
+		fullParams := max(dist.distinct()-1, 1)
+		leftParams := max(left.distinct()-1, 1)
+		rightParams := max(right.distinct()-1, 1)
 
 		penaltyFull := 0.5 * float64(fullParams) * math.Log(float64(n))
 		penaltyLeft := 0.5 * float64(leftParams) * math.Log(float64(i))
 		penaltyRight := 0.5 * float64(rightParams) * math.Log(float64(n-i))
 
-		baseGain := costFull - (left.Cost() + right.Cost())
+		baseGain := costFull - (left.cost() + right.cost())
 		penaltyDiff := (penaltyLeft + penaltyRight) - penaltyFull
-		penalizedGain := baseGain - (penaltyScale * penaltyDiff)
+		penalizedGain := baseGain - penaltyDiff
 
 		if penalizedGain > maxGain {
 			maxGain = penalizedGain
@@ -309,196 +125,83 @@ func (seq *MDL) detectBoundary(buf []byte, dist *Distribution) (bool, int, float
 	return maxGain > 0, bestK, maxGain
 }
 
-func (seq *MDL) emitSplit(k int) {
-	seq.prevSegLen = k
-	seq.buf = append([]byte(nil), seq.buf[k:]...)
-	seq.fluxEmitted = false
-}
-
-func (seq *MDL) balanceCandidates() {
-	if len(seq.candidates) < 2 {
-		return
+func (mdl *MDL) LastGain() float64 {
+	if mdl == nil {
+		return 0
 	}
 
-	if seq.candidates[0].forced || seq.candidates[1].forced {
-		return
-	}
-
-	c1 := &seq.candidates[0]
-	c2 := &seq.candidates[1]
-
-	combinedBuf := seq.buf[:c2.k]
-	jointDist := seq.getDistribution(0, c2.k)
-
-	found, bestK, gain := seq.detectBoundary(combinedBuf, jointDist)
-
-	if !found {
-		seq.candidates = seq.candidates[1:]
-		return
-	}
-
-	d1 := seq.getDistribution(0, bestK)
-	d2 := seq.getDistribution(bestK, c2.k)
-
-	if seq.isSimilar(d1, d2) {
-		seq.candidates = seq.candidates[1:]
-		return
-	}
-
-	c1.k = bestK
-	c1.gain = gain
-}
-
-func (seq *MDL) getDistribution(start, end int) *Distribution {
-	dist := NewDistribution()
-
-	for _, b := range seq.buf[start:end] {
-		dist.Add(b)
-	}
-
-	return dist
-}
-
-func (seq *MDL) isSimilar(d1, d2 *Distribution) bool {
-	if d1.N() == 0 || d2.N() == 0 {
-		return false
-	}
-
-	costSplit := d1.Cost() + d2.Cost()
-	dCombined := d1.Clone()
-	dCombined.AddFrom(d2)
-	costCombined := dCombined.Cost()
-
-	return costCombined <= costSplit
-}
-
-func (seq *MDL) classifyDirection(buf []byte, k int) int {
-	if k <= 0 || k >= len(buf) {
-		return EventDensityTrough
-	}
-
-	var leftSum, rightSum int
-
-	for _, b := range buf[:k] {
-		leftSum += int(b)
-	}
-
-	for _, b := range buf[k:] {
-		rightSum += int(b)
-	}
-
-	leftMean := float64(leftSum) / float64(k)
-	rightMean := float64(rightSum) / float64(len(buf)-k)
-
-	if rightMean > leftMean {
-		return EventDensitySpike
-	}
-
-	return EventDensityTrough
-}
-
-func (seq *MDL) updateEMA(val, delta, eigenMag float64) {
-	seq.lastByteVal = val
-
-	if seq.eigen != nil && seq.eigen.Trained {
-		seq.lastEigenMag = eigenMag
-	}
-
-	n := max(len(seq.buf), 1)
-	alpha := 1.0 / float64(n)
-	seq.emaPop = seq.emaPop*(1-alpha) + val*alpha
-	seq.emaPhase = seq.emaPhase*(1-alpha) + delta*alpha
-}
-
-func (seq *MDL) Forecast(pos int, byteVal byte) (bool, []int, SegmentMeta) {
-	buf := append(seq.buf, byteVal)
-	dist := seq.dist.Clone()
-	dist.Add(byteVal)
-
-	window := buf[seq.offset:]
-	isBoundary, k, _ := seq.detectBoundary(window, dist)
-
-	if !isBoundary {
-		return false, nil, seq.runningMeta
-	}
-
-	events := append([]int{}, seq.classifyDirection(window, k))
-	events = append(events, EventPhaseInversion)
-	tempMeta := seq.runningMeta.RollLeft(1)
-
-	for _, ev := range events {
-		tempMeta = tagMeta(tempMeta, ev)
-	}
-
-	return true, events, tempMeta
-}
-
-func (seq *MDL) FeedbackRetrievalQuality(
-	overDiscriminated, underDiscriminated bool,
-) {
-	if seq.calibrator == nil {
-		return
-	}
-
-	_, stddev := seq.calibrator.WindowStats()
-	adjust := stddev
-
-	if overDiscriminated {
-		seq.calibrator.SetSensitivityPop(
-			seq.calibrator.SensitivityPop() * math.Exp(adjust),
-		)
-	} else if underDiscriminated {
-		seq.calibrator.SetSensitivityPop(
-			seq.calibrator.SensitivityPop() * math.Exp(-adjust),
-		)
-	}
-}
-
-// LastGain returns the normalised boundary gain from the most recent cut.
-// Zero when no boundary has been detected yet. The Sequencer uses this to
-// compute token confidence.
-func (seq *MDL) LastGain() float64 {
-	if seq.lastGain > 1.0 {
+	if mdl.lastGain > 1.0 {
 		return 1.0
 	}
-	return seq.lastGain
+
+	return mdl.lastGain
 }
 
-func (seq *MDL) Phase() (float64, float64) {
-	return seq.emaPhase, seq.dist.Cost() / float64(max(seq.dist.N(), 1))
+type symbolHistogram struct {
+	counts     map[uint32]int
+	total      int
+	numDistinct int
 }
 
-func (seq *MDL) SetEigenMode(eigen *EigenMode) {
-	if eigen == nil {
-		seq.eigen = NewEigenMode()
+func newSymbolHistogram() *symbolHistogram {
+	return &symbolHistogram{counts: make(map[uint32]int)}
+}
+
+func (hist *symbolHistogram) add(id uint32) {
+	if hist.counts[id] == 0 {
+		hist.numDistinct++
+	}
+
+	hist.counts[id]++
+	hist.total++
+}
+
+func (hist *symbolHistogram) remove(id uint32) {
+	if hist.counts[id] <= 0 {
 		return
 	}
 
-	seq.eigen = eigen
+	hist.counts[id]--
+	hist.total--
+
+	if hist.counts[id] == 0 {
+		delete(hist.counts, id)
+		hist.numDistinct--
+	}
 }
 
-func (seq *MDL) Flush() (bool, int, []int, SegmentMeta) {
-	if len(seq.candidates) == 0 {
-		return false, 0, nil, seq.runningMeta
+func (hist *symbolHistogram) distinct() int {
+	return hist.numDistinct
+}
+
+func (hist *symbolHistogram) cost() float64 {
+	if hist.total == 0 {
+		return 0
 	}
 
-	emitK := seq.candidates[0].k
-	events := append([]int{}, seq.classifyDirection(seq.buf, emitK))
-	events = append(events, EventPhaseInversion)
+	cost := 0.0
+	n := float64(hist.total)
 
-	for _, ev := range events {
-		seq.runningMeta = tagMeta(seq.runningMeta, ev)
+	for _, count := range hist.counts {
+		if count == 0 {
+			continue
+		}
+
+		p := float64(count) / n
+		cost -= float64(count) * math.Log(p)
 	}
 
-	emitMeta := seq.runningMeta
-	seq.emitSplit(emitK)
-	seq.candidates = seq.candidates[1:]
+	return cost
+}
 
-	for i := range seq.candidates {
-		seq.candidates[i].k -= emitK
+func (hist *symbolHistogram) clone() *symbolHistogram {
+	out := newSymbolHistogram()
+	out.total = hist.total
+	out.numDistinct = hist.numDistinct
+
+	for id, count := range hist.counts {
+		out.counts[id] = count
 	}
 
-	seq.offset -= emitK
-
-	return true, emitK, events, emitMeta
+	return out
 }

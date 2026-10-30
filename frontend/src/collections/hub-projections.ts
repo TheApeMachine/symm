@@ -15,10 +15,7 @@ import {
 	ingestLongtailTick,
 } from "#/collections/longtail";
 import { ingestPaperRecord, parsePaperRecord } from "#/collections/paper";
-import {
-	ingestSequiturFrame,
-	ingestTrainingStep,
-} from "#/collections/sequitur";
+import { ingestTrainingStep } from "#/collections/sequitur";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { ingestDeskSnapshot, ingestS3PositionHistory } from "#/lib/lifecycle";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
@@ -66,10 +63,6 @@ watchScopes(signals.paper, (value) => {
 		})),
 	);
 	ingestPaperRecord(record);
-});
-
-watchScopes(signals.sequitur, (value) => {
-	decodeLayers(value, ingestSequiturFrame);
 });
 
 watchScopes(signals.cognition, (value) => {

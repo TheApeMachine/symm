@@ -44,7 +44,7 @@ type hubDeskExiter struct {
 }
 
 func (exiter hubDeskExiter) Exit(symbol string, virtual bool) error {
-	position := exiter.desk.Position(symbol, virtual)
+	position := exiter.desk.Position(symbol)
 	path := ""
 	if position != nil {
 		if exiter.path != nil {
@@ -93,8 +93,14 @@ func NewBooter(ctx context.Context, name string) *Booter {
 		Level: viper.GetString("system.log.level"),
 	})
 
-	// This process signs Kraken REST calls with its own role's key pair.
-	if err := kraken.UseCredentials(kraken.RoleCollector); err != nil {
+	// Paper signs with the collector key. Live orders use the main key so
+	// they do not share a nonce stream with a collector process.
+	role := kraken.RoleCollector
+	if viper.GetString("market.model") == "real" {
+		role = kraken.RoleMain
+	}
+
+	if err := kraken.UseCredentials(role); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "[booter] kraken credentials unavailable", err,
 		))
@@ -152,7 +158,7 @@ func (booter *Booter) Run() error {
 	}
 
 	booter.Transition(nmruntime.READY)
-	
+
 	errnie.Info(fmt.Sprintf(
 		"[booter] trade firehose open %s after boot",
 		time.Since(started).Round(time.Millisecond),
@@ -176,11 +182,10 @@ func (booter *Booter) initTransports() error {
 		)
 	}
 
-	if system.Cfg.Market.Model == "paper" {
+	switch system.Cfg.Market.Model {
+	case "paper":
 		booter.privateTransport = broker.NewPaper(ctx)
-	}
-
-	if booter.privateTransport == nil {
+	case "real":
 		privateWS := network.NewWebsocketClient(ctx)
 
 		if err := privateWS.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
@@ -190,6 +195,12 @@ func (booter *Booter) initTransports() error {
 		}
 
 		booter.privateTransport = privateWS
+	default:
+		return errnie.Err(
+			errnie.Validation,
+			"booter: market.model must be paper or real",
+			nil,
+		)
 	}
 
 	return nil
@@ -244,6 +255,16 @@ func (booter *Booter) initMarket() error {
 	ui.UI.Exiter(hubDeskExiter{desk: booter.desk})
 	booter.startPrivateIngress()
 
+	if err := broker.SubscribeExecutions(ctx, booter.privateTransport, booter.instrument); err != nil {
+		return err
+	}
+
+	if ws, ok := booter.privateTransport.(*network.WebsocketClient); ok {
+		ws.OnReconnect(func() error {
+			return broker.SubscribeExecutions(booter.Context(), ws, booter.instrument)
+		})
+	}
+
 	return nil
 }
 
@@ -281,18 +302,17 @@ func (booter *Booter) initPipeline() error {
 
 	strategyNodes := make([]nmruntime.Node, 0, 1)
 
-	// The collector writes the tape. It shares the paper account with the
-	// dashboard, so it must not place orders of its own.
-	if system.Cfg.Market.Model == "paper" {
+	// paper and real both run the strategy. real posts live market entries
+	// on the private websocket. Any other model does not place orders.
+	if system.Cfg.Market.Model == "paper" || system.Cfg.Market.Model == "real" {
 		booter.training = strategy.NewTraining(
-			ctx, booter.price, booter.desk, stage,
+			ctx, booter.price, booter.desk,
 		)
 
 		if err := booter.training.Error(); err != nil {
 			return err
 		}
 
-		ui.UI.UseStore(booter.training.Store())
 		ui.UI.RegisterCallback(func() {
 			ui.UI.ListPrefix("model/paths/")
 		})

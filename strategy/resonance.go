@@ -30,34 +30,43 @@ func ReadCoder(tick *data.Value, symbol string) CoderReading {
 	scope := strings.ReplaceAll(symbol, "/", "-")
 
 	var surpriseVals []float64
+	
 	tick.Lookup(&surpriseVals, "resonance/"+scope+"/surprise")
 	surprise := 0.0
+	
 	if len(surpriseVals) > 0 {
 		surprise = surpriseVals[0]
 	}
 
 	var supportedVals []float64
+	
 	tick.Lookup(&supportedVals, "resonance/"+scope+"/supported_horizon")
 	supported := 0
+	
 	if len(supportedVals) > 0 {
 		supported = int(supportedVals[0])
 	}
 
 	minHorizon := 2
+	
 	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MinSupportedHorizon > 0 {
 		minHorizon = system.Cfg.Learning.MinSupportedHorizon
 	}
 
 	ready := false
+	
 	var calibratedVals []float64
 	tick.Lookup(&calibratedVals, "resonance/"+scope+"/calibrated")
+	
 	if len(calibratedVals) > 0 && calibratedVals[0] >= 1 {
 		ready = supported >= minHorizon
 	}
 
 	confidence := 0.0
+	
 	var precisionVals []float64
 	tick.Lookup(&precisionVals, "resonance/"+scope+"/task_relative_precision")
+	
 	if len(precisionVals) > 0 {
 		confidence = precisionVals[0]
 	}
@@ -68,16 +77,19 @@ func ReadCoder(tick *data.Value, symbol string) CoderReading {
 
 	curve := readForwardCurve(tick, scope, supported)
 	enterNet, holdNet, exitNet, risk, ok := resonance.ForwardStoryNets(curve)
+	
 	if !ok {
 		return CoderReading{Ready: ready, Bullish: false, Surprise: surprise, Confidence: confidence}
 	}
 
 	peakCurve := enterNet
+	
 	if holdNet > peakCurve {
 		peakCurve = holdNet
 	}
 
 	const minFeatureZ = 0.15
+	
 	bullish := enterNet >= minFeatureZ &&
 		holdNet >= minFeatureZ &&
 		exitNet <= holdNet &&
@@ -98,12 +110,15 @@ func readForwardCurve(tick *data.Value, scope string, supported int) []float64 {
 	}
 
 	curve := make([]float64, 0, supported)
-	for i := 0; i < supported; i++ {
+
+	for i := range supported {
 		var vals []float64
 		tick.Lookup(&vals, "resonance/"+scope+"/forward_curve_"+strconv.Itoa(i))
+	
 		if len(vals) == 0 {
 			break
 		}
+	
 		curve = append(curve, vals[0])
 	}
 

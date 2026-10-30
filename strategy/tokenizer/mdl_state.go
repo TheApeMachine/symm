@@ -1,123 +1,100 @@
 package tokenizer
 
-type mdlCandidateState struct {
-	K      int     `json:"k"`
-	Gain   float64 `json:"gain"`
-	Forced bool    `json:"forced"`
+import "maps"
+
+type symbolHistogramState struct {
+	Counts   map[uint32]int `json:"counts"`
+	Total    int            `json:"total"`
+	Distinct int            `json:"distinct"`
 }
 
-type distributionState struct {
-	Counts   [256]int `json:"counts"`
-	Total    int      `json:"total"`
-	Distinct int      `json:"distinct"`
-}
-
-// MDLState is the segmenter memory a restart has to load before the next
-// letter, or the following boundary would fall in a different place.
+// MDLState is segmenter memory restored before the next grammar symbol.
 type MDLState struct {
-	Buf          []byte              `json:"buf"`
-	Offset       int                 `json:"offset"`
-	Dist         distributionState   `json:"dist"`
-	Running      distributionState   `json:"running"`
-	Candidates   []mdlCandidateState `json:"candidates"`
-	PrevSegLen   int                 `json:"prev_seg_len"`
-	FluxEmitted  bool                `json:"flux_emitted"`
-	LastByteVal  float64             `json:"last_byte_val"`
-	LastEigenMag float64             `json:"last_eigen_mag"`
-	EmaPhase     float64             `json:"ema_phase"`
-	EmaPop       float64             `json:"ema_pop"`
-	RunningMeta  uint64              `json:"running_meta"`
-	LastGain     float64             `json:"last_gain"`
-	EigenTrained bool                `json:"eigen_trained"`
-	Calibrator   calibratorState     `json:"calibrator"`
+	Stream   []uint32             `json:"stream"`
+	Offset   int                  `json:"offset"`
+	Vocab    map[string]uint32    `json:"vocab"`
+	NextID   uint32               `json:"next_id"`
+	Dist     symbolHistogramState `json:"dist"`
+	LastGain float64              `json:"last_gain"`
 }
 
-func (seq *MDL) State() MDLState {
-	if seq == nil {
+func (mdl *MDL) State() MDLState {
+	if mdl == nil {
 		return MDLState{}
 	}
 
-	out := MDLState{
-		Buf:          append([]byte(nil), seq.buf...),
-		Offset:       seq.offset,
-		Dist:         distributionSnapshot(seq.dist),
-		Running:      distributionSnapshot(seq.runningHist),
-		PrevSegLen:   seq.prevSegLen,
-		FluxEmitted:  seq.fluxEmitted,
-		LastByteVal:  seq.lastByteVal,
-		LastEigenMag: seq.lastEigenMag,
-		EmaPhase:     seq.emaPhase,
-		EmaPop:       seq.emaPop,
-		RunningMeta:  uint64(seq.runningMeta),
-		LastGain:     seq.lastGain,
-		Candidates:   make([]mdlCandidateState, 0, len(seq.candidates)),
+	return MDLState{
+		Stream:   append([]uint32(nil), mdl.stream...),
+		Offset:   mdl.offset,
+		Vocab:    cloneVocab(mdl.vocab),
+		NextID:   mdl.nextID,
+		Dist:     histogramSnapshot(mdl.dist),
+		LastGain: mdl.lastGain,
 	}
-	if seq.eigen != nil {
-		out.EigenTrained = seq.eigen.Trained
-	}
-	if seq.calibrator != nil {
-		out.Calibrator = seq.calibrator.state()
-	}
-	for _, item := range seq.candidates {
-		out.Candidates = append(out.Candidates, mdlCandidateState{
-			K:      item.k,
-			Gain:   item.gain,
-			Forced: item.forced,
-		})
-	}
-	return out
 }
 
-func (seq *MDL) Restore(state MDLState) {
-	if seq == nil {
+func (mdl *MDL) Restore(state MDLState) {
+	if mdl == nil {
 		return
 	}
 
-	seq.buf = append([]byte(nil), state.Buf...)
-	seq.offset = state.Offset
-	seq.dist = distributionFrom(state.Dist)
-	seq.runningHist = distributionFrom(state.Running)
-	seq.prevSegLen = state.PrevSegLen
-	seq.fluxEmitted = state.FluxEmitted
-	seq.lastByteVal = state.LastByteVal
-	seq.lastEigenMag = state.LastEigenMag
-	seq.emaPhase = state.EmaPhase
-	seq.emaPop = state.EmaPop
-	seq.runningMeta = SegmentMeta(state.RunningMeta)
-	seq.lastGain = state.LastGain
-	seq.candidates = make([]candidate, 0, len(state.Candidates))
-	for _, item := range state.Candidates {
-		seq.candidates = append(seq.candidates, candidate{
-			k:      item.K,
-			gain:   item.Gain,
-			forced: item.Forced,
-		})
-	}
-	if seq.eigen == nil {
-		seq.eigen = NewEigenMode()
-	}
-	seq.eigen.Trained = state.EigenTrained
-	if seq.calibrator == nil {
-		seq.calibrator = NewCalibrator()
-	}
-	seq.calibrator.restore(state.Calibrator)
-}
+	mdl.stream = append([]uint32(nil), state.Stream...)
+	mdl.offset = state.Offset
+	mdl.vocab = cloneVocab(state.Vocab)
+	mdl.nextID = state.NextID
 
-func distributionSnapshot(dist *Distribution) distributionState {
-	if dist == nil {
-		return distributionState{}
+	if mdl.nextID == 0 {
+		mdl.nextID = 1
 	}
-	return distributionState{
-		Counts:   dist.counts,
-		Total:    dist.total,
-		Distinct: dist.distinct,
+
+	if mdl.vocab == nil {
+		mdl.vocab = make(map[string]uint32)
+	}
+
+	mdl.dist = histogramFrom(state.Dist)
+	mdl.lastGain = state.LastGain
+
+	if mdl.dist == nil {
+		mdl.dist = newSymbolHistogram()
 	}
 }
 
-func distributionFrom(state distributionState) *Distribution {
-	dist := NewDistribution()
-	dist.counts = state.Counts
-	dist.total = state.Total
-	dist.distinct = state.Distinct
-	return dist
+func cloneVocab(vocab map[string]uint32) map[string]uint32 {
+	if len(vocab) == 0 {
+		return make(map[string]uint32)
+	}
+
+	out := make(map[string]uint32, len(vocab))
+	maps.Copy(out, vocab)
+
+	return out
+}
+
+func histogramSnapshot(hist *symbolHistogram) symbolHistogramState {
+	if hist == nil {
+		return symbolHistogramState{Counts: make(map[uint32]int)}
+	}
+
+	counts := make(map[uint32]int, len(hist.counts))
+	for id, n := range hist.counts {
+		counts[id] = n
+	}
+
+	return symbolHistogramState{
+		Counts:   counts,
+		Total:    hist.total,
+		Distinct: hist.numDistinct,
+	}
+}
+
+func histogramFrom(state symbolHistogramState) *symbolHistogram {
+	hist := newSymbolHistogram()
+	hist.total = state.Total
+	hist.numDistinct = state.Distinct
+
+	for id, n := range state.Counts {
+		hist.counts[id] = n
+	}
+
+	return hist
 }

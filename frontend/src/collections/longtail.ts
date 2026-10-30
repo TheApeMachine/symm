@@ -149,26 +149,6 @@ export const surpriseTone = (value: number | null): Tone =>
 					? "warn"
 					: "bad";
 
-/* A maturing grammar reuses its rules; one that mostly creates new rules has not found structure. */
-export const reuseTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 0.5
-			? "good"
-			: value >= 0.25
-				? "warn"
-				: "bad";
-
-/* The share of grammar rules that carry a stored enter/exit action: how much of the grammar is trained. */
-export const coverageTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 0.5
-			? "good"
-			: value >= 0.25
-				? "warn"
-				: "bad";
-
 /* How often the live token path ends on a stored policy path. */
 export const matchTone = (value: number | null): Tone =>
 	value === null
@@ -213,9 +193,7 @@ export type BookDeskStats = {
 
 /*
 One snapshot of the training system, aggregated across every symbol's live
-grammar feed: the grammar's structure, the mix of structural events its last
-append caused, the surprise gate's readings, and how the stored policy met the
-live token path.
+training step: gate readings and how the stored policy met the live token path.
 */
 export type BackendTickMetrics = {
 	symbols: number | null;
@@ -245,15 +223,6 @@ export type BackendTickMetrics = {
 
 export type TrainingSample = {
 	feeds: number;
-	rules: number | null;
-	grammarSymbols: number | null;
-	rawLength: number | null;
-	avgRuleDepth: number | null;
-	maxRuleDepth: number | null;
-	actionCoverage: number | null;
-	createRate: number | null;
-	reuseRate: number | null;
-	inlineRate: number | null;
 	/** Share of symbol steps whose regime.posture letter changed. */
 	tokenEmitRate: number | null;
 	/** Lit ticks that did not append a new letter. */
@@ -269,7 +238,6 @@ export type TrainingSample = {
 	outcomeRate: number | null;
 	outcomeEnterRate: number | null;
 	outcomeExitRate: number | null;
-	violations: number | null;
 	exploredEnter: number | null;
 	venueOpen: number | null;
 	virtualExcursion: number | null;
@@ -452,7 +420,7 @@ export const summarizeBook = (
 };
 
 /*
-summarizeTraining aggregates the live grammar feeds into one TrainingSample.
+summarizeTraining aggregates live training-step feeds into one TrainingSample.
 Rates are null when their denominator is zero: a feed that has not reported
 a gate is not a gate that passes 0%.
 */
@@ -468,21 +436,9 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 	let litTicks = 0;
 	let outcomeEnter = 0;
 	let outcomeExit = 0;
-	let rules = 0;
-	let grammarSymbols = 0;
-	let rawLength = 0;
-	let depthSum = 0;
-	let depthN = 0;
-	let maxDepth = 0;
-	let actionRules = 0;
-	let eventTotal = 0;
-	let eventCreate = 0;
-	let eventReuse = 0;
-	let eventInline = 0;
 	let policyTotal = 0;
 	let stored = 0;
 	let outcomes = 0;
-	let violations = 0;
 
 	for (const feed of feeds) {
 		const frame = feed.latest;
@@ -504,23 +460,6 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 			if (frame.blockedReason === "empty") blockedEmpty += 1;
 		}
 
-		for (const rule of frame.rules) {
-			rules += 1;
-			depthSum += rule.depth;
-			depthN += 1;
-			if (rule.depth > maxDepth) maxDepth = rule.depth;
-			if (rule.action) actionRules += 1;
-		}
-		grammarSymbols += frame.grammarSymbols;
-		rawLength += frame.rawLength;
-
-		for (const event of frame.events) {
-			eventTotal += 1;
-			if (event.kind === "create") eventCreate += 1;
-			else if (event.kind === "reuse") eventReuse += 1;
-			else if (event.kind === "inline") eventInline += 1;
-		}
-
 		policyTotal += 1;
 		if (frame.policy.stored) stored += 1;
 		if (frame.policy.outcome !== "") {
@@ -528,8 +467,6 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 			if (frame.policy.outcome.includes("enter")) outcomeEnter += 1;
 			if (frame.policy.outcome.includes("exit")) outcomeExit += 1;
 		}
-
-		violations += frame.violations.length;
 	}
 
 	const rate = (numerator: number, denominator: number): number | null =>
@@ -551,15 +488,6 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 
 	return {
 		feeds: feedsWithFrame,
-		rules: feedsWithFrame > 0 ? rules : null,
-		grammarSymbols: feedsWithFrame > 0 ? grammarSymbols : null,
-		rawLength: feedsWithFrame > 0 ? rawLength : null,
-		avgRuleDepth: rate(depthSum, depthN),
-		maxRuleDepth: depthN > 0 ? maxDepth : null,
-		actionCoverage: rate(actionRules, rules),
-		createRate: rate(eventCreate, eventTotal),
-		reuseRate: rate(eventReuse, eventTotal),
-		inlineRate: rate(eventInline, eventTotal),
 		tokenEmitRate: backendRate(
 			backend?.gatePass,
 			backend?.gateTotal,
@@ -615,7 +543,6 @@ export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
 			outcomeExit,
 			policyTotal,
 		),
-		violations: feedsWithFrame > 0 ? violations : null,
 		exploredEnter: backend ? backend.exploredEnter : null,
 		venueOpen: backend ? backend.venueOpen : null,
 		virtualExcursion: backend ? backend.virtualExcursion : null,
@@ -689,8 +616,8 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 };
 
 /*
-trainingVerdict reads grammar reuse, policy hits, and path-book growth —
-not desk PnL (that lives in the top bar).
+trainingVerdict reads policy hits and path-book growth — not desk PnL
+(that lives in the top bar).
 */
 export const trainingVerdict = (samples: LongtailSample[]): Verdict => {
 	if (samples.length < 2) {
@@ -701,26 +628,19 @@ export const trainingVerdict = (samples: LongtailSample[]): Verdict => {
 	const prior = samples[Math.max(0, samples.length - 16)].training;
 
 	if (
-		latest.reuseRate === null &&
 		latest.policyStoredRate === null &&
 		latest.developedPaths === null
 	) {
 		return { label: "Warming up", tone: "neutral" };
 	}
 
-	const reuse = latest.reuseRate ?? 0;
-	const create = latest.createRate ?? 0;
 	const policy = latest.policyStoredRate ?? 0;
 	const blocked = latest.blockedRate ?? 0;
 	const pathTrend = trendOf(latest.developedPaths, prior.developedPaths);
 
-	if (reuse >= 0.5 && policy >= 0.25) {
-		if (pathTrend === "up") return { label: "Reusing paths", tone: "good" };
-		return { label: "Reusing paths", tone: "info" };
-	}
-
-	if (create >= 0.55 && reuse < 0.3) {
-		return { label: "Finding structure", tone: "info" };
+	if (policy >= 0.25) {
+		if (pathTrend === "up") return { label: "Matching paths", tone: "good" };
+		return { label: "Matching paths", tone: "info" };
 	}
 
 	if (blocked >= 0.85 && (latest.tokenEmitRate ?? 0) < 0.05) {
@@ -760,33 +680,6 @@ export const buildInsights = (
 	const training = latest.training;
 	const stops = latest.stops;
 	const insights: Insight[] = [];
-
-	if (training.reuseRate === null && training.createRate === null) {
-		insights.push({
-			id: "grammar",
-			title: "Grammar structure",
-			body: "No sequitur event mix yet. Reuse means the spelling already existed; create means a new rule was minted.",
-			tone: "neutral",
-		});
-	} else {
-		const reuseTrend = trendOf(training.reuseRate, prior.training.reuseRate);
-		const trendSentence =
-			reuseTrend === "up"
-				? " Reuse is rising versus the earlier window."
-				: reuseTrend === "down"
-					? " Reuse is falling — more new rules than before."
-					: "";
-		const coverage =
-			training.actionCoverage === null
-				? "—"
-				: pct(training.actionCoverage);
-		insights.push({
-			id: "grammar",
-			title: "Grammar structure",
-			body: `Rule events: ${pct(training.reuseRate ?? 0)} reuse, ${pct(training.createRate ?? 0)} create, ${pct(training.inlineRate ?? 0)} inline. ${training.rules ?? 0} rules; ${coverage} carry a stored enter/exit.${trendSentence}`,
-			tone: reuseTone(training.reuseRate),
-		});
-	}
 
 	if (training.policyStoredRate === null && training.outcomeRate === null) {
 		insights.push({
@@ -1057,15 +950,6 @@ const trainingFromHistory = (value: unknown): TrainingSample | null => {
 
 	return {
 		feeds: countOrZero(row.feeds),
-		rules: finiteOrNull(row.rules),
-		grammarSymbols: finiteOrNull(row.grammarSymbols),
-		rawLength: finiteOrNull(row.rawLength),
-		avgRuleDepth: finiteOrNull(row.avgRuleDepth),
-		maxRuleDepth: finiteOrNull(row.maxRuleDepth),
-		actionCoverage: finiteOrNull(row.actionCoverage),
-		createRate: finiteOrNull(row.createRate),
-		reuseRate: finiteOrNull(row.reuseRate),
-		inlineRate: finiteOrNull(row.inlineRate),
 		tokenEmitRate: finiteOrNull(row.tokenEmitRate ?? row.gatePassRate),
 		blockedRate: finiteOrNull(row.blockedRate),
 		blockedBrightnessRate: finiteOrNull(row.blockedBrightnessRate),
@@ -1076,7 +960,6 @@ const trainingFromHistory = (value: unknown): TrainingSample | null => {
 		outcomeRate: finiteOrNull(row.outcomeRate),
 		outcomeEnterRate: finiteOrNull(row.outcomeEnterRate),
 		outcomeExitRate: finiteOrNull(row.outcomeExitRate),
-		violations: finiteOrNull(row.violations),
 		exploredEnter: finiteOrNull(row.exploredEnter),
 		venueOpen: finiteOrNull(row.venueOpen),
 		virtualExcursion: finiteOrNull(row.virtualExcursion),
@@ -1174,7 +1057,7 @@ export const ingestLongtailHistory = (payload: unknown): boolean => {
 /*
 endLongtailHistory installs the epoch. An empty replay leaves the page's
 own samples alone. A recorder that is already running then takes one live
-reading, so the latest point still carries the grammar feed.
+reading, so the latest point still carries the training step feed.
 */
 export const endLongtailHistory = () => {
 	if (historyBuffer === null) return;

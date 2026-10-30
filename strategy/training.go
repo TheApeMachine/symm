@@ -10,6 +10,7 @@ import (
 	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 	"golang.org/x/sync/errgroup"
 )
@@ -20,43 +21,20 @@ type Training struct {
 	price     *broker.Price
 	desk      *broker.Desk
 	client    *store.Client
-	stage     *Stage
 	telemetry *Telemetry
-}
-
-func (training *Training) Model() *Model {
-	if training == nil {
-		return nil
-	}
-	return training.model
-}
-
-func (training *Training) Store() *store.Client {
-	if training == nil {
-		return nil
-	}
-	return training.client
 }
 
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
-	stage *Stage,
 ) *Training {
-	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
-	if stage != nil {
-		stage.AttachStore(client)
-		stage.RestoreSequencers(ctx)
-	}
-
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, price, stage),
+		model:     NewModel(ctx, desk, price),
 		price:     price,
 		desk:      desk,
-		client:    client,
-		stage:     stage,
+		client:    store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 		telemetry: NewTelemetry(ctx),
 	}
 }
@@ -66,7 +44,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	symbols := SymbolsOnTick(value)
+	symbols := NewSymbols(value).Names()
 
 	for _, symbol := range training.desk.Pending() {
 		if !slices.Contains(symbols, symbol) {
@@ -96,11 +74,19 @@ func (training *Training) Step(value *data.Value) *data.Value {
 
 			training.model.Evaluate(out, observed, value)
 
-			training.telemetry.CompleteSymbolStep(
-				out,
-				training.stage.Sequencer(symbol),
-				training.model,
+			var phase string
+			value.Lookup(&phase, strings.Join([]string{"stage", symbol, "phase"}, "/"))
+			out.Append(phase, "phase")
+
+			cut := data.Get[tokenizer.Tokens](
+				value, strings.Join([]string{"stage", symbol, "cut"}, "/"),
 			)
+
+			if cut.Len() > 0 {
+				out.Append(cut.String(), "livePath")
+			}
+
+			training.telemetry.CompleteSymbolStep(out, training.model)
 
 			training.telemetry.NoteWalk(symbol, out)
 			return nil

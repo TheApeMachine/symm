@@ -162,6 +162,8 @@ kraken:
       secret_env: KRAKEN_API_SECRET
 
 market:
+  # paper uses the simulator. real uses the private websocket and posts
+  # live market entries. Fees come from the account TradeVolume schedule.
   model: paper
   quote_currency: USD
   taker_fee: 0.8

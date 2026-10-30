@@ -5,12 +5,10 @@ import {
 	alertVariant,
 	blockedTone,
 	buildInsights,
-	coverageTone,
 	type LongtailSample,
 	type TrainingSample,
 	matchTone,
 	pct,
-	reuseTone,
 	type Tone,
 	toneColor,
 	toneVariant,
@@ -27,25 +25,16 @@ import { cn } from "#/lib/utils";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
-Path-learning surface: grammar reuse, policy hits, path-book growth, and why
-virtuals close — not desk edge or win rate (those live in the top bar).
+Path-learning surface: policy hits, path-book growth, and why virtuals close
+— not desk edge or win rate (those live in the top bar).
 
-One screen: training verdict, eight KPI tiles, six charts, and a right rail.
+One screen: training verdict, KPI tiles, charts, and a right rail.
 */
 
 const rate = (value: number) => `${Math.round(value * 100)}%`;
 const countLabel = (value: number) => `${Math.round(value)}`;
 
 const levelTone = (_value: number | null): Tone => "neutral";
-
-const createTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value <= 0.35
-			? "good"
-			: value <= 0.55
-				? "warn"
-				: "bad";
 
 /* A flat sparkline sits mid-height instead of pinning to the floor. */
 const sparkPath = (
@@ -91,30 +80,6 @@ type Kpi = {
 
 const kpis: Kpi[] = [
 	{
-		id: "reuse",
-		label: "rule reuse",
-		value: (s) => s.training?.reuseRate ?? null,
-		format: rate,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: reuseTone,
-		higherIsBetter: true,
-		colorDelta: true,
-		epsilon: 0.02,
-	},
-	{
-		id: "create",
-		label: "new rules",
-		value: (s) => s.training?.createRate ?? null,
-		format: rate,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: createTone,
-		higherIsBetter: false,
-		colorDelta: true,
-		epsilon: 0.02,
-	},
-	{
 		id: "policy",
 		label: "policy hit",
 		value: (s) => s.training?.policyStoredRate ?? null,
@@ -122,18 +87,6 @@ const kpis: Kpi[] = [
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
 		tone: matchTone,
-		higherIsBetter: true,
-		colorDelta: true,
-		epsilon: 0.02,
-	},
-	{
-		id: "coverage",
-		label: "action rules",
-		value: (s) => s.training?.actionCoverage ?? null,
-		format: rate,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: coverageTone,
 		higherIsBetter: true,
 		colorDelta: true,
 		epsilon: 0.02,
@@ -273,29 +226,6 @@ const trainingPoint = (
 
 const trainingCharts: ChartDef[] = [
 	{
-		id: "grammar",
-		label: "Rule reuse vs create",
-		caption: "sequitur events on the last append — reuse means the spelling already existed",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					label: "reuse",
-					values: samples.map((s) => trainingPoint(s, "reuseRate")),
-					stroke: toneColor(reuseTone(trainingPoint(latest, "reuseRate"))),
-				},
-				{
-					label: "create",
-					values: samples.map((s) => trainingPoint(s, "createRate")),
-					stroke: toneColor(createTone(trainingPoint(latest, "createRate"))),
-				},
-			];
-		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => reuseTone(trainingPoint(s, "reuseRate")),
-	},
-	{
 		id: "policy",
 		label: "Policy match",
 		caption: "stored path hits and enter/exit outcomes on symbol checks",
@@ -324,26 +254,6 @@ const trainingCharts: ChartDef[] = [
 		formatY: rate,
 		yDomain: [0, 1],
 		tone: (s) => matchTone(trainingPoint(s, "policyStoredRate")),
-	},
-	{
-		id: "coverage",
-		label: "Action coverage",
-		caption: "share of grammar rules that carry a stored enter or exit",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					values: samples.map((s) => trainingPoint(s, "actionCoverage")),
-					stroke: toneColor(
-						coverageTone(trainingPoint(latest, "actionCoverage")),
-					),
-					fill: "color-mix(in srgb, var(--f3) 10%, transparent)",
-				},
-			];
-		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => coverageTone(trainingPoint(s, "actionCoverage")),
 	},
 	{
 		id: "letters",
@@ -719,28 +629,7 @@ export const LongtailDashboard = () => {
 						/>
 					</RailBlock>
 
-					<RailBlock title="Grammar">
-						<RailRow
-							label="rule reuse"
-							value={
-								training?.reuseRate === null ||
-								training?.reuseRate === undefined
-									? "—"
-									: pct(training.reuseRate)
-							}
-							meter={training?.reuseRate ?? null}
-							tone={reuseTone(training?.reuseRate ?? null)}
-						/>
-						<RailRow
-							label="new rules"
-							value={
-								training?.createRate === null ||
-								training?.createRate === undefined
-									? "—"
-									: pct(training.createRate)
-							}
-							tone={createTone(training?.createRate ?? null)}
-						/>
+					<RailBlock title="Policy">
 						<RailRow
 							label="policy hit"
 							value={
@@ -753,15 +642,24 @@ export const LongtailDashboard = () => {
 							tone={matchTone(training?.policyStoredRate ?? null)}
 						/>
 						<RailRow
-							label="action rules"
+							label="enter outcome"
 							value={
-								training?.actionCoverage === null ||
-								training?.actionCoverage === undefined
+								training?.outcomeEnterRate === null ||
+								training?.outcomeEnterRate === undefined
 									? "—"
-									: pct(training.actionCoverage)
+									: pct(training.outcomeEnterRate)
 							}
-							meter={training?.actionCoverage ?? null}
-							tone={coverageTone(training?.actionCoverage ?? null)}
+							tone="info"
+						/>
+						<RailRow
+							label="exit outcome"
+							value={
+								training?.outcomeExitRate === null ||
+								training?.outcomeExitRate === undefined
+									? "—"
+									: pct(training.outcomeExitRate)
+							}
+							tone="info"
 						/>
 					</RailBlock>
 

@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
-export {};
+import { partitionWireBatch } from "#/hub/s3-prefix-compact";
+import { parseWireValues } from "#/types/decoder";
 
 let socket: WebSocket | null = null;
 let connectUrl = "";
@@ -161,15 +162,21 @@ const connect = (url: string) => {
 			}
 
 			if (arrayBuffer) {
-				// The main thread parses (into Value instances — a
-				// structured clone would strip the prototype). The buffer is
-				// transferred, so no copy crosses the boundary.
-				self.postMessage(
-					{ type: "FRAMES", buffer: arrayBuffer },
-					{
-						transfer: [arrayBuffer],
-					},
-				);
+				const wire = parseWireValues(new Uint8Array(arrayBuffer));
+				if (!wire) {
+					return;
+				}
+
+				const { values, s3 } = partitionWireBatch(wire);
+				if (values.length === 0 && s3.length === 0) {
+					return;
+				}
+
+				self.postMessage({
+					type: "VALUES",
+					values,
+					s3: s3.length > 0 ? s3 : undefined,
+				});
 			}
 		} catch (err) {
 			console.error("error", err);

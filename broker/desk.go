@@ -34,9 +34,7 @@ type Desk struct {
 	virtuals       *Cache
 	virtualArchive *sync.Map
 	pending        *sync.Map
-	policies       *sync.Map
-	shadowMu       sync.Mutex
-	shadowJobs     []shadowJob
+	exit           *ExitPolicy
 }
 
 func NewDesk(
@@ -54,10 +52,11 @@ func NewDesk(
 		virtuals:       NewCache(ctx),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
-		policies:       &sync.Map{},
+		exit:           NewExitPolicy(),
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
+	desk.exit.compose(desk)
 
 	for key, cache := range map[string]*Cache{
 		"position": desk.positions,
@@ -69,8 +68,8 @@ func NewDesk(
 	desk.resumePaperOrders()
 	desk.reconcilePaperFills()
 	desk.retireFlatPaper()
-	desk.restoreExitPolicies()
-	desk.resumeShadowJobs()
+	desk.exit.Restore()
+	desk.exit.ResumeShadowJobs()
 	desk.Transition(runtime.READY)
 	return desk
 }
@@ -174,7 +173,7 @@ func (desk *Desk) restoreCache(cacheKey string, cache *Cache) {
 		// whether or not its open record survived the restart. Fold it in
 		// before the settled map can drop it.
 		if hit.role == "closed" && cacheKey == "position" {
-			desk.observePolicy(hit.position)
+			desk.exit.Observe(hit.position)
 		}
 
 		switch hit.role {
@@ -208,19 +207,19 @@ func (desk *Desk) restoreCache(cacheKey string, cache *Cache) {
 
 		desk.bind(hit.position)
 		prepareRestored(hit.position)
-		desk.teachPolicy(hit.position)
+		desk.exit.Teach(hit.position)
 		cache.Restore(hit.position)
 	}
 
 	for _, hit := range closed {
 		desk.bind(hit.position)
 		desk.virtualArchive.Store(hit.position.ID, hit.position)
-		desk.observePolicy(hit.position)
+		desk.exit.Observe(hit.position)
 	}
 
 	// Every symbol that settled something gets a policy before its next lot
 	// opens, so the first entry after a restart is already taught.
-	desk.refreshPolicies()
+	desk.exit.RefreshAll()
 }
 
 func (desk *Desk) dropStaleOpen(prev, next, kept historyHit) {
@@ -309,6 +308,37 @@ func (desk *Desk) Hello() {
 	}
 }
 
+func executionAbandoned(execution kraken.ExecutionData) bool {
+	switch strings.ToLower(execution.ExecType) {
+	case "canceled", "cancelled", "expired", "rejected":
+		return true
+	}
+
+	switch strings.ToLower(execution.OrderStatus) {
+	case "canceled", "cancelled", "expired", "rejected":
+		return true
+	}
+
+	return false
+}
+
+/*
+abandonWorking drops a lot that never filled. It is not an episode: the
+exit policy does not learn from an entry the venue never traded.
+*/
+func (desk *Desk) abandonWorking(position *Position) {
+	if desk == nil || position == nil || position.Symbol == "" {
+		return
+	}
+
+	cache, key := desk.cacheFor(position.Virtual)
+	cache.Drop(position.Symbol)
+
+	if desk.history != nil {
+		_ = desk.history.Drop(key + "/open/" + position.Symbol + "/")
+	}
+}
+
 func (desk *Desk) cacheFor(virtual bool) (*Cache, string) {
 	if virtual {
 		return desk.virtuals, "virtual"
@@ -325,9 +355,14 @@ func (desk *Desk) OpenPositions(virtual bool) []*Position {
 	return cache.OpenPositions()
 }
 
-func (desk *Desk) Position(symbol string, virtual bool) *Position {
-	cache, _ := desk.cacheFor(virtual)
-	return cache.Get(symbol, true)
+func (desk *Desk) Position(symbol string) *Position {
+	position := desk.positions.Get(symbol, true)
+
+	if position == nil {
+		position = desk.virtuals.Get(symbol, true)
+	}
+
+	return position
 }
 
 /*
@@ -469,12 +504,12 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 				continue
 			}
 
+			_, isTraded := traded[position.Symbol]
+
 			mark := desk.price.CurrentMark(position.Symbol)
 			if mark == nil {
 				continue
 			}
-
-			_, isTraded := traded[position.Symbol]
 
 			// Skip idle lots. A green lot is still repriced when the touch
 			// price is unchanged: ExitRoom is size, and a size pull is an
@@ -537,9 +572,8 @@ func lotUpdates(lots []*Position) []*data.Value {
 Has reports whether the desk holds an open position (paper or virtual)
 for the symbol.
 */
-func (desk *Desk) Has(symbol string, virtual bool) bool {
-	cache, _ := desk.cacheFor(virtual)
-	return cache.Has(symbol)
+func (desk *Desk) Has(symbol string) bool {
+	return desk.positions.Has(symbol) || desk.virtuals.Has(symbol)
 }
 
 /*
@@ -581,6 +615,11 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 		}
 
 		if position == nil {
+			continue
+		}
+
+		if executionAbandoned(execution) && position.Unfilled() {
+			desk.abandonWorking(position)
 			continue
 		}
 
@@ -747,7 +786,9 @@ func (desk *Desk) settleFlat(position *Position) {
 		position.ClosedAt = &now
 	}
 
-	position.System.Transition(runtime.BUSY)
+	if position.System != nil {
+		position.System.Transition(runtime.BUSY)
+	}
 
 	if desk.history == nil {
 		desk.positions.Remove(position.Symbol)
@@ -1050,8 +1091,8 @@ func (desk *Desk) Enter(
 
 	// Refresh from settled episodes, then push learned cut/trail/horizon onto
 	// the lot before the first mark (stop reads NurseryCutPct / ExitPullbackPct).
-	desk.refreshPolicy(symbol)
-	desk.teachPolicy(position)
+	desk.exit.Refresh(symbol)
+	desk.exit.Teach(position)
 
 	// Register before Send. Paper publish blocks until the private ingress
 	// reads the fill, and that read calls Apply. The lot has to already be
@@ -1064,17 +1105,13 @@ func (desk *Desk) Enter(
 	}
 
 	if desk.price != nil {
-		if closeNow, ok := desk.price.EntryCloseNowPnLPct(symbol); ok && closeNow != nil {
-			if budget, ok := desk.price.OpenDragBudgetPct(symbol); ok && budget != nil {
-				if closeNow.Float64() < -budget.Float64() {
-					cache.Drop(position.Symbol)
-					return errnie.Err(
-						errnie.Validation,
-						"[desk.Enter] entry close-now drag exceeds budget for "+symbol,
-						nil,
-					)
-				}
-			}
+		if phys := CheckEntryPhysical(desk.price, symbol); !phys.Allowed {
+			cache.Drop(position.Symbol)
+			return errnie.Err(
+				errnie.Validation,
+				"[desk.Enter] "+phys.Reason+" for "+symbol,
+				nil,
+			)
 		}
 	}
 
@@ -1147,8 +1184,8 @@ func (desk *Desk) releaseLocked(position *Position) error {
 
 	// The round trip is over. Its trace is now an episode, and this symbol's
 	// learned exit moment is one step closer to being worth trusting.
-	desk.observePolicy(position)
-	desk.schedulePostExitShadow(position)
+	desk.exit.Observe(position)
+	desk.exit.SchedulePostExitShadow(position)
 
 	value := data.NewValue(
 		key, "closed", position.Symbol,

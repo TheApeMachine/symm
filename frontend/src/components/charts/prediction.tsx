@@ -138,7 +138,7 @@ const keepScalar = (
 const keepOptional = <T,>(next: T | undefined, prev: T | undefined): T | undefined =>
 	next === undefined ? prev : next;
 
-const mergeResonanceData = (
+export const mergeResonanceData = (
 	prior: ResonanceData,
 	patch: ResonanceData,
 	mode: "full" | "workspace",
@@ -149,12 +149,7 @@ const mergeResonanceData = (
 		? patch.forwardCurve
 		: undefined;
 
-	const layers =
-		mode === "full" && patchLayers
-			? patchLayers
-			: patchLayers && !layersHaveSignal(prior.layers)
-				? patchLayers
-				: (prior.layers ?? []);
+	const layers = patchLayers ?? prior.layers ?? [];
 	const latent = patchLatent ?? prior.latent ?? [];
 	const forwardCurve = patchForward ?? prior.forwardCurve ?? [];
 

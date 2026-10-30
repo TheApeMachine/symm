@@ -1,13 +1,14 @@
+import { createStore } from "@tanstack/store";
 import { triePrefix } from "#/collections/book";
 import {
 	EXPLORE_BASE_THRESHOLD,
 	filterExploreKeys,
+	pathBookPolicyKey,
 } from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { parseOneValue } from "#/types/decoder";
 import type { Value } from "#/types/value";
-import { createStore } from "@tanstack/store";
 
 /*
 The live symbol set, as known to the app (it also seeds the symbol
@@ -667,62 +668,27 @@ const sameThresholds = (
 };
 
 /*
-ingestS3Prefix applies a hub ListPrefix frame. Scope is the listed prefix;
-each layer is the stored object (a data.Value on S3). Keys and fields come
-from Value.readings() — no extra backend publish path.
+ingestExploreListPrefix applies trie keys produced from an S3 ListPrefix frame
+(already expanded in the websocket worker).
 */
-export const ingestS3Prefix = (value: Value) => {
-	if (value.origin !== "s3" || value.role !== "prefix") {
-		return false;
+export const ingestExploreListPrefix = (input: {
+	scope: string;
+	epoch: string | null;
+	policyKeys: string[];
+	thresholds: Record<string, number>;
+}) => {
+	if (input.scope !== triePrefix()) {
+		return;
 	}
 
-	if (value.scope !== "model/paths") {
-		return true;
-	}
-
-	if (value.scope !== triePrefix()) {
-		return true;
-	}
-
-	const policyKeys = value.index
-		.map((index) => s3KeyFromIndex(value.prefix, index))
-		.filter((key): key is string => key?.startsWith(`${value.scope}/`) ?? false)
-		.sort();
-
-	const thresholds: Record<string, number> = {};
-	for (let i = 0; i < value.index.length; i++) {
-		const key = s3KeyFromIndex(value.prefix, value.index[i]);
-		if (key === null || !key.startsWith(`${value.scope}/`)) continue;
-
-		const threshold = thresholdFromExploreBytes(value.layers[i]);
-		if (threshold !== null) {
-			thresholds[key] = threshold;
-			continue;
-		}
-
-		/*
-		A stored path book with no scored `threshold` layer is still a path:
-		the tree renders it at the 0.50 desk baseline instead of dropping it,
-		which an empty book would otherwise do.
-		*/
-		thresholds[key] = EXPLORE_BASE_THRESHOLD;
-	}
-
-	const keptKeys = filterExploreKeys(policyKeys, thresholds);
-	const keptThresholds: Record<string, number> = {};
-	for (const key of keptKeys) {
-		const threshold = thresholds[key];
-		if (threshold !== undefined) keptThresholds[key] = threshold;
-	}
-
-	const epoch =
-		value.epoch != null && value.epoch !== 0n ? String(value.epoch) : null;
+	const keptKeys = input.policyKeys;
+	const keptThresholds = input.thresholds;
 
 	cognitionStore.setState((state) => {
-		const nextEpoch = epoch ?? state.epoch;
+		const nextEpoch = input.epoch ?? state.epoch;
 		const nextThresholds = { ...state.thresholds };
 		for (const key of Object.keys(nextThresholds)) {
-			if (key.startsWith(`${value.scope}/`)) {
+			if (key.startsWith(`${input.scope}/`)) {
 				delete nextThresholds[key];
 			}
 		}
@@ -742,6 +708,65 @@ export const ingestS3Prefix = (value: Value) => {
 			policyKeys: keptKeys,
 			thresholds: nextThresholds,
 		};
+	});
+};
+
+/*
+ingestS3Prefix applies a hub ListPrefix frame. Scope is the listed prefix;
+each layer is the stored object (a data.Value on S3). Keys and fields come
+from Value.readings() — no extra backend publish path.
+*/
+export const ingestS3Prefix = (value: Value) => {
+	if (value.origin !== "s3" || value.role !== "prefix") {
+		return false;
+	}
+
+	if (value.scope !== "model/paths") {
+		return true;
+	}
+
+	if (value.scope !== triePrefix()) {
+		return true;
+	}
+
+	const policyKeys: string[] = [];
+	const thresholds: Record<string, number> = {};
+
+	for (let i = 0; i < value.index.length; i++) {
+		const rawKey = s3KeyFromIndex(value.prefix, value.index[i]);
+		if (rawKey === null || !rawKey.startsWith(`${value.scope}/`)) continue;
+
+		const key = pathBookPolicyKey(rawKey, value.layers[i]);
+		if (!policyKeys.includes(key)) {
+			policyKeys.push(key);
+		}
+
+		const threshold = thresholdFromExploreBytes(value.layers[i]);
+		if (threshold !== null) {
+			thresholds[key] = threshold;
+			continue;
+		}
+
+		thresholds[key] = EXPLORE_BASE_THRESHOLD;
+	}
+
+	policyKeys.sort();
+
+	const keptKeys = filterExploreKeys(policyKeys, thresholds);
+	const keptThresholds: Record<string, number> = {};
+	for (const key of keptKeys) {
+		const threshold = thresholds[key];
+		if (threshold !== undefined) keptThresholds[key] = threshold;
+	}
+
+	const epoch =
+		value.epoch != null && value.epoch !== 0n ? String(value.epoch) : null;
+
+	ingestExploreListPrefix({
+		scope: value.scope,
+		epoch,
+		policyKeys: keptKeys,
+		thresholds: keptThresholds,
 	});
 	return true;
 };

@@ -11,6 +11,7 @@ describe("sourceHeadline", () => {
 		expect(sourceHeadline("depthflow")).toBe("bid_ladder_build");
 		expect(sourceHeadline("hawkes")).toBe("supercritical_cascade");
 		expect(sourceHeadline("correlation")).toBe("structural_alignment");
+		expect(sourceHeadline("liquidity")).toBe("spread_expansion");
 	});
 
 	it("returns null for sources with no named headline", () => {

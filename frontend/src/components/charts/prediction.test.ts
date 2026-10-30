@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ResonanceFrame } from "#/collections/types";
 import {
+	mergeResonanceData,
 	parseResonanceData,
 	parseResonanceFromWorkspace,
 	signedVectorTransform,
@@ -141,6 +142,23 @@ const wireResonanceReading = (
 		layers,
 	});
 };
+
+describe("mergeResonanceData", () => {
+	it("replaces hierarchy layers on every workspace patch", () => {
+		const prior = {
+			forwardCurve: [0.1],
+			layers: [{ state: [1], prediction: [0] }],
+		};
+		const patch = {
+			forwardCurve: [0.2],
+			layers: [{ state: [9], prediction: [3] }],
+		};
+
+		const merged = mergeResonanceData(prior, patch, "workspace");
+		expect(merged.layers?.[0]?.state).toEqual([9]);
+		expect(merged.layers?.[0]?.prediction).toEqual([3]);
+	});
+});
 
 describe("parseResonanceData", () => {
 	it("densifies sparse latent and forward_curve metrics into lane vectors", () => {

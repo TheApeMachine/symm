@@ -4,6 +4,8 @@ import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
 import { mergePositionBook } from "#/collections/positions";
+import { applyS3PrefixCompacts } from "#/hub/apply-s3-compact";
+import type { S3PrefixCompact } from "#/hub/s3-prefix-compact";
 import { syncEngineTelemetry } from "#/lib/engine-telemetry";
 import { hubWsUrl } from "#/lib/hub";
 import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
@@ -12,7 +14,7 @@ import {
 	requestClosedPositionHistory,
 	resetClosedHistoryRequest,
 } from "#/lib/lifecycle";
-import { parseValues } from "#/types/decoder";
+import { valueFromWire, type WireValue } from "#/types/decoder";
 import {
 	mergeWorkspaceAggregate,
 	type Value,
@@ -154,9 +156,16 @@ export const WsFeed = () => {
 			const data = event.data;
 			if (!data) return;
 
-			if (data.type === "FRAMES") {
-				const values = parseValues(new Uint8Array(data.buffer));
-				if (values) ingest(values);
+			if (data.type === "VALUES") {
+				const s3 = data.s3 as S3PrefixCompact[] | undefined;
+				if (s3?.length) {
+					applyS3PrefixCompacts(s3);
+				}
+
+				const wire = data.values as WireValue[];
+				if (wire?.length) {
+					ingest(wire.map(valueFromWire));
+				}
 				return;
 			}
 

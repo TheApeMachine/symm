@@ -19,7 +19,6 @@ require (
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.12.1
 	github.com/theapemachine/nomagique v0.0.10
 	golang.org/x/sync v0.24.0
 	golang.org/x/time v0.15.0

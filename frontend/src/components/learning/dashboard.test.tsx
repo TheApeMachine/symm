@@ -50,7 +50,7 @@ describe("LearningDashboard", () => {
 		});
 
 		expect(tabAtom.get()).toBe("cognitive");
-		expect(container.textContent).toContain("waiting for model/policy");
+		expect(container.textContent).toContain("waiting for model/paths");
 	});
 
 	it("switches to impulse map view when tab is selected", () => {
@@ -64,14 +64,4 @@ describe("LearningDashboard", () => {
 		expect(container.textContent).toContain("Grid regions");
 	});
 
-	it("switches to sequitur grammar view when tab is selected", () => {
-		const { container, getByText } = render(<LearningDashboard />);
-
-		act(() => {
-			fireEvent.click(getByText("Sequitur grammar"));
-		});
-
-		expect(tabAtom.get()).toBe("sequitur");
-		expect(container.textContent).toContain("Sequitur Grammar");
-	});
 });

@@ -3,7 +3,6 @@ package broker
 import (
 	"fmt"
 	"math"
-	"time"
 )
 
 type StopLoss struct {
@@ -29,7 +28,7 @@ type StopState struct {
 	Trailing float64 `json:"trailing"`
 	// Evaporation: full-lot slippage vs 2x friction (3-tick persistent).
 	Evaporation float64 `json:"evaporation"`
-	// Expiry: bars held vs the empirical winning horizon.
+	// Expiry is unused. How long a lot has been open does not close it.
 	Expiry float64 `json:"expiry"`
 	// Peak and current in percent, so the UI can show the trajectory.
 	PeakPct    float64 `json:"peakPct"`
@@ -39,7 +38,10 @@ type StopState struct {
 }
 
 func (stoploss *StopLoss) State(position *Position) StopState {
-	state := StopState{BarsHeld: int(position.BarsHeld), MaxBars: position.MaxLifetimeBars}
+	state := StopState{}
+	if position != nil {
+		state.BarsHeld = int(position.BarsHeld)
+	}
 
 	if position == nil || position.PnLPct == nil {
 		return state
@@ -89,11 +91,6 @@ func (stoploss *StopLoss) State(position *Position) StopState {
 		}
 	}
 
-	// 4. Expiry: bars held vs the empirical winning horizon.
-	if position.MaxLifetimeBars > 0 && state.PeakPct <= 0 {
-		state.Expiry = float64(state.BarsHeld) / float64(position.MaxLifetimeBars)
-	}
-
 	return state
 }
 
@@ -102,15 +99,14 @@ func NewStopLoss() *StopLoss {
 }
 
 /*
-Evaluate is the single source of truth for position exits. It runs four checks
-in order, all in the same tape/mark timebase (no wall-clock rules):
+Evaluate is the single source of truth for position exits. It runs three checks:
  1. Invalidation Stop: cut loss when PnL crosses the Causal MCTS learned cut.
  2. Liquidity Evaporation: the full-lot exit walk cannot fill, or slippage
     doubles the round-trip friction, sustained across 3 marks — regardless of
     PnL sign, so an underwater lot is protected the same as one in profit.
  3. Trailing Profit Stop: exit when giveback from peak crosses the learned trail.
- 4. Move Expiry: exit when the lot has held past the empirical winning horizon
-    (in bars) without ever reaching profit.
+
+How long the lot has been open is not a check. A flat mark stays open.
 */
 func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool) {
 	if position == nil || position.PnL == nil || position.PnLPct == nil || position.ClosedAt != nil {
@@ -140,7 +136,6 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 
 	learnedCut := position.NurseryCutPct
 	learnedTrail := position.ExitPullbackPct
-	maxLifetimeNs := position.MaxLifetimeNs
 
 	// ------------------------------------------------------------------------
 	// 1. CAUSAL MCTS LEARNED INVALIDATION STOP
@@ -153,9 +148,13 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 
 	adverseMove := stoploss.entryPnLPct - currentPct
 
-	if adverseMove >= cutTolerance {
-		return fmt.Sprintf("invalidation stop: adverse drop %.2f%% exceeded causal cut threshold %.2f%% (current PnL %.2f%%)",
-			adverseMove, cutTolerance, currentPct), true
+	// Entry drag (already underwater on the first mark) is not an adverse *move*.
+	// With zero friction on the first ticks, 0 >= 0 must not instant-stop (WBTC-class).
+	if cutTolerance > 0 && adverseMove > 0 && adverseMove >= cutTolerance {
+		return fmt.Sprintf(
+			"invalidation stop: adverse drop %.2f%% exceeded causal cut threshold %.2f%% (current PnL %.2f%%)",
+			adverseMove, cutTolerance, currentPct,
+		), true
 	}
 
 	// Calculate how close the trade came to being wiped out before bouncing
@@ -241,6 +240,7 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 		// trail; small winners keep the full learned trail so profit is not
 		// clipped at the first green flicker.
 		dynamicTrail := baseTrail
+
 		if stoploss.peakPnLPct >= 2*baseTrail {
 			compression := stoploss.peakPnLPct / baseTrail
 			dynamicTrail = friction + ((baseTrail - friction) / math.Sqrt(compression))
@@ -259,32 +259,6 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 		}
 	}
 
-	// ------------------------------------------------------------------------
-	// 4. EMPIRICAL MOVE EXPIRY (bar-count, not wall-clock)
-	// ------------------------------------------------------------------------
-	// maxLifetimeBars is the 75th-percentile bar index of winning excursions
-	// derived from the trace peak in observePolicy. A bar is one reprice event,
-	// so a slow microcap's 8-bar move is not expired a third faster than a hot
-	// one's. Falls back to the legacy wall-clock horizon only for a position
-	// that has not yet repriced once.
-	barsHeld := int(position.BarsHeld)
-	if position.MaxLifetimeBars > 0 && barsHeld > position.MaxLifetimeBars && stoploss.peakPnLPct <= 0 {
-		return fmt.Sprintf(
-			"move expired: %d bars exceeded empirical winning horizon %d without reaching profit",
-			barsHeld, position.MaxLifetimeBars,
-		), true
-	}
-
-	if maxLifetimeNs > 0 && !position.OpenedAt.IsZero() && position.BarsHeld == 0 {
-		elapsed := time.Since(position.OpenedAt).Nanoseconds()
-		if elapsed > maxLifetimeNs && stoploss.peakPnLPct <= 0 {
-			return fmt.Sprintf(
-				"move expired: elapsed %s exceeded empirical winning horizon without reaching profit",
-				time.Duration(elapsed).Round(time.Second),
-			), true
-		}
-	}
-
 	return "", false
 }
 
@@ -293,16 +267,20 @@ func (stoploss *StopLoss) ProfitLocked(position *Position) bool {
 	return position.PeakPnLPct.Float64() > friction
 }
 
-// func watchGreenBook(position *Position) bool {
-// 	if position == nil || position.PnL == nil {
-// 		return false
-// 	}
-// 	return position.PnL.Sign() > 0
-// }
-
 func frictionPts(position *Position) float64 {
-	if position == nil || position.frictionPct == nil {
+	if position == nil {
 		return 0
 	}
-	return position.frictionPct.Float64() * 100
+
+	if position.frictionPct != nil && position.frictionPct.Sign() > 0 {
+		return position.frictionPct.Float64() * 100
+	}
+
+	if position.price != nil && position.Symbol != "" {
+		if friction, ok := position.price.Friction(position.Symbol); ok && friction != nil && friction.Sign() > 0 {
+			return friction.Float64() * 100
+		}
+	}
+
+	return 0
 }

@@ -1,13 +1,16 @@
+import { closeNowReturnPct } from "#/components/book-readout";
+
 export type ChoiceSample = { t: number; pnl: number };
 
 const trails = new Map<string, ChoiceSample[]>();
-const sampleAt = new Map<string, number>();
-
-export const CHOICE_SAMPLE_MS = 250;
 
 /** Ring buffer length shared by ui/Trail on cards and the open-choices chart. */
 export const CHOICE_TRAIL_LENGTH = 90;
 
+/*
+noteOpenChoice appends one close-now sample. Call it when the positions store
+delivers a new mark, not on a wall-clock timer.
+*/
 export const noteOpenChoice = (
 	id: string,
 	pnl: number,
@@ -16,11 +19,6 @@ export const noteOpenChoice = (
 	if (!Number.isFinite(pnl)) return false;
 
 	const prior = trails.get(id) ?? [];
-	const last = prior[prior.length - 1];
-	const lastAt = sampleAt.get(id) ?? 0;
-	const changed = !last || last.pnl !== pnl;
-	if (!changed && now - lastAt < CHOICE_SAMPLE_MS) return false;
-
 	const next = [...prior, { t: now, pnl }];
 	trails.set(
 		id,
@@ -28,7 +26,7 @@ export const noteOpenChoice = (
 			? next.slice(next.length - CHOICE_TRAIL_LENGTH)
 			: next,
 	);
-	sampleAt.set(id, now);
+
 	return true;
 };
 
@@ -44,7 +42,6 @@ export const dropOpenChoices = (live: Set<string>): boolean => {
 	for (const id of trails.keys()) {
 		if (!live.has(id)) {
 			trails.delete(id);
-			sampleAt.delete(id);
 			dropped = true;
 		}
 	}
@@ -53,10 +50,17 @@ export const dropOpenChoices = (live: Set<string>): boolean => {
 
 export const resetOpenChoices = () => {
 	trails.clear();
-	sampleAt.clear();
 };
 
 export type OpenChoiceLot = { id: string; pnl: number | null };
+
+export const openChoiceLotsFromRows = (
+	rows: Record<string, unknown>[],
+): OpenChoiceLot[] =>
+	rows.map((row) => ({
+		id: String(row.id ?? row.symbol),
+		pnl: closeNowReturnPct(row),
+	}));
 
 /** Record close-now samples for the open lot set; returns true if trails changed. */
 export const syncOpenChoiceLots = (rows: OpenChoiceLot[]): boolean => {

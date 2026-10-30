@@ -10,7 +10,7 @@ export GOEXPERIMENT := arenas
 # the real Metal solver per frame and legitimately need more than Go's 600s
 # default per-binary budget.
 OVERLAY_FLAG := $(if $(wildcard overlay.json),-overlay=$(CURDIR)/overlay.json,)
-GO_TEST_FLAGS := -p 1 -timeout 30m
+GO_TEST_FLAGS := -p 1 -timeout 30m -tags=integration
 
 SYMM_BIN := bin/symm
 # Leave CONFIG empty to use the binary's default configuration search.
