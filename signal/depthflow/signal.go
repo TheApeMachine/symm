@@ -15,13 +15,14 @@ import (
 )
 
 type symbolState struct {
-	prevBids     map[float64]float64
-	prevAsks     map[float64]float64
-	prevFullBid  bool
-	prevFullAsk  bool
-	prevBidWorst float64
-	prevAskWorst float64
-	hasPrev      bool
+	prevBids        map[float64]float64
+	prevAsks        map[float64]float64
+	prevFullBid     bool
+	prevFullAsk     bool
+	prevBidWorst    float64
+	prevAskWorst    float64
+	hasPrev         bool
+	lastBidRelease  float64
 }
 
 type Signal struct {
@@ -38,6 +39,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		keys: []string{
 			"bid_ladder_build",
 			"bid_ladder_release",
+			"ask_ladder_release",
 		},
 	}
 
@@ -61,11 +63,13 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.Error(err)
 	}
 
+	signal.appendBoardBidRelease(value)
+
 	return value
 }
 
 func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 
@@ -107,7 +111,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			currentAsks[ask[0]] = notional
 		}
 
-		var netBid float64
+		var netBid, netAsk float64
 		if state.hasPrev {
 			bidWorst := bids[len(bids)-1][0]
 			askWorst := asks[len(asks)-1][0]
@@ -122,8 +126,7 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			)
 
 			netBid = addedBid - removedBid
-			_ = addedAsk
-			_ = removedAsk
+			netAsk = addedAsk - removedAsk
 		}
 
 		state.prevBids = currentBids
@@ -151,20 +154,54 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			release = 0
 		}
 
+		state.lastBidRelease = release
+
+		askRelease := -netAsk
+		if askRelease < 0 {
+			askRelease = 0
+		}
+
 		value.Append([]float64{
 			build,
 			release,
+			askRelease,
 		}, append(keys, signal.keys...)...)
 
 		audit.Record.Write(map[string]any{
-			"signal":  signal.Name(),
-			"symbol":  symbol,
-			"build":   build,
-			"release": release,
+			"signal":      signal.Name(),
+			"symbol":      symbol,
+			"build":       build,
+			"release":     release,
+			"ask_release": askRelease,
 		})
 	})
 
 	return value
+}
+
+func (signal *Signal) appendBoardBidRelease(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.states.Range(func(_, untyped any) bool {
+		state := untyped.(*symbolState)
+		if state.hasPrev {
+			scores = append(scores, state.lastBidRelease)
+		}
+		return true
+	})
+
+	median, ok := parent.Median(scores)
+	if !ok {
+		return
+	}
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_bid_release")...)
 }
 
 /*

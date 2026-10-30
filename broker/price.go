@@ -410,6 +410,40 @@ func (price *Price) PnLPct(
 	return profit.Div(cost).Mul(decimalHundred)
 }
 
+/*
+PnLPctAtSellPrice is net percent PnL if the lot closed at sellPrice, using the
+same fee basis as PnL. It does not walk the book; shadow regret on stored ticks
+uses the last print as a sell mark.
+*/
+func (price *Price) PnLPctAtSellPrice(
+	symbol string,
+	quantity, entry, fee, sellPrice *decimal.Decimal,
+) *decimal.Decimal {
+	if price == nil || quantity == nil || entry == nil || sellPrice == nil ||
+		quantity.Sign() <= 0 || entry.Sign() <= 0 || sellPrice.Sign() <= 0 {
+		return nil
+	}
+
+	if fee == nil {
+		fee = price.Fee(symbol)
+	}
+
+	if fee == nil {
+		return nil
+	}
+
+	entryGross := notional(entry, quantity)
+	cost := price.afterFee(entryGross, fee, BUY)
+	grossExit := notional(sellPrice, quantity)
+	netExit := price.afterFee(grossExit, fee, SELL)
+
+	if cost == nil || netExit == nil || cost.Sign() <= 0 {
+		return nil
+	}
+
+	return netExit.Sub(cost).Div(cost).Mul(decimalHundred)
+}
+
 func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
 	if price == nil || quantity == nil || quantity.Sign() <= 0 {
 		return nil

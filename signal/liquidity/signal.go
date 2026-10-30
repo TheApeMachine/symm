@@ -33,7 +33,7 @@ Step samples relative spread for every symbol on the tick, then publishes
 board-wide friction and capacity oracles (no per-symbol layers).
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 

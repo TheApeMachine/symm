@@ -3,7 +3,6 @@ package pumpdump
 import (
 	"context"
 	"math"
-	"slices"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -89,44 +88,39 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.Error(err)
 	}
 
-	signal.appendBoardStarvation(value)
+	signal.appendBoardCoiled(value)
 
 	return value
 }
 
 /*
-appendBoardStarvation publishes the median last starved_tape across symbols
-as a regime oracle (flat / dead board), not a single-name reading.
+appendBoardCoiled publishes the median last coiled_compression across symbols
+as the enter-confidence oracle (R09): board-wide quiet coiling before ignition.
 */
-func (signal *Signal) appendBoardStarvation(value *data.Value) {
+func (signal *Signal) appendBoardCoiled(value *data.Value) {
 	if signal.Status() != runtime.READY || value == nil {
 		return
 	}
 
 	var scores []float64
 	signal.states.Range(func(_, untyped any) bool {
-		scores = append(scores, untyped.(*symbolState).lastStarved)
+		scores = append(scores, untyped.(*symbolState).lastCoiled)
 		return true
 	})
 
-	if len(scores) == 0 {
+	median, ok := parent.Median(scores)
+	if !ok {
 		return
-	}
-
-	slices.Sort(scores)
-	median := scores[len(scores)/2]
-	if len(scores)%2 == 0 {
-		median = (scores[len(scores)/2-1] + scores[len(scores)/2]) / 2
 	}
 
 	value.Append([]float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
-	}, "board_starvation")...)
+	}, "board_coiled")...)
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 

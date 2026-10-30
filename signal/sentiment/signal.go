@@ -182,7 +182,7 @@ func (signal *Signal) appendCohortRecurrence(value *data.Value) {
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 

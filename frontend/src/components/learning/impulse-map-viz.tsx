@@ -43,7 +43,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 }) => {
 	const currentFocus = useSelector(atoms.focus, (s) => s);
 	const activeSymbol = propSymbol || currentFocus || "BTC/USD";
-	const liveData = useImpulseData(propData ? "" : activeSymbol);
+	const [isPlaying, setIsPlaying] = useState(true);
+	const liveData = useImpulseData(propData ? "" : activeSymbol, {
+		paused: propData ? false : !isPlaying,
+	});
+	const marketTick = propData ? 0 : liveData.marketTick;
 
 	const data = propData ?? liveData.data;
 	const regions =
@@ -67,7 +71,6 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-	const [isPlaying, setIsPlaying] = useState(true);
 	const [layoutMode, setLayoutMode] = useState<"grid" | "regions">("grid");
 	const [subTab, setSubTab] = useState<"map" | "topography" | "sympathy">(
 		"map",
@@ -846,9 +849,24 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 				>
 					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between gap-2">
 						<span>Grid regions · {activeSymbol.replace("/USD", "")}</span>
-						{isPlaying && (
-							<span className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse shrink-0" />
-						)}
+						<span className="flex items-center gap-1.5 shrink-0 normal-case tracking-normal">
+							{isPlaying ? (
+								<span
+									key={marketTick}
+									className="w-1.5 h-1.5 rounded-full bg-(--up) animate-pulse"
+									title="Live feed"
+								/>
+							) : (
+								<span className="text-[9px] text-(--warn)">paused</span>
+							)}
+							<span
+								data-l="impulse-market-tick"
+								className="tabular-nums text-(--f3)"
+								title="Market tick index (observations in engine panel)"
+							>
+								{marketTick > 0 ? `#${marketTick}` : "—"}
+							</span>
+						</span>
 					</div>
 					<div className="space-y-1 text-[10px] max-h-[min(420px,55vh)] overflow-y-auto pr-0.5">
 						{REGION_KEYS.map((regionKey, idx) => {

@@ -180,14 +180,35 @@ func (gate *Gate) EvaluateEnter(
 	}
 
 	brightness := regionBrightness(observed)
-
-	// NET SPARK VECTOR: Detector (R00) + Support (R01) - Opposition (R02)
-	netSpark := (brightness[0] + brightness[1]) - brightness[2]
-
-	// NET HOLD VECTOR: Detector (R06) + Support (R07) - Opposition (R08)
-	netHold := (brightness[6] + brightness[7]) - brightness[8]
+	netSpark, netHold := entryNets(brightness)
 
 	risk := max(brightness[12], brightness[13], brightness[14]) // R12-R14: Risk Oracle
+
+	if netSpark <= 0 {
+		return GateDecision{
+			Allowed: false,
+			Reason:  "enter band net negative (detector+support does not beat opposition)",
+		}
+	}
+
+	if cfg := system.Cfg.Learning; cfg != nil {
+		if cfg.RequireFrictionGate && cfg.FrictionMinBrightness > 0 &&
+			brightness[12] >= cfg.FrictionMinBrightness {
+			return GateDecision{
+				Allowed: false,
+				Reason:  "board friction hurdle (R12): spread cost dominates entry",
+			}
+		}
+
+		if cfg.RequireIgnitionRegime && cfg.IgnitionMinBrightness > 0 {
+			if brightness[6] < cfg.IgnitionMinBrightness || brightness[7] < cfg.IgnitionMinBrightness {
+				return GateDecision{
+					Allowed: false,
+					Reason:  "hold ignition not lit (R06/R07 below minimum — tape/book not supportive yet)",
+				}
+			}
+		}
+	}
 
 	// Environmental Test A: Is hold confluence still supportive vs fading?
 	lacksIgnition := netHold < gate.ignition
@@ -227,11 +248,11 @@ func (gate *Gate) EvaluateExit(
 
 	brightness := regionBrightness(observed)
 
-	// NET REJECTION VECTOR: Detector (R03) + Support (R04) - Opposition (R05)
-	netRejection := (brightness[3] + brightness[4]) - brightness[5]
+	// NET REJECTION: story exit band + board exit confidence (R11).
+	netRejection := (brightness[3] + brightness[4] + brightness[11]) - brightness[5]
 
-	// EXHAUSTION: hold opposition (R08) plus any legacy R09 pin still wired
-	exhaustion := max(brightness[8], brightness[9])
+	// EXHAUSTION: hold opposition (R08) alone — board deadness is not wired here.
+	exhaustion := brightness[8]
 
 	// TOTAL EXIT FORCE
 	exitForce := math.Max(netRejection, exhaustion)

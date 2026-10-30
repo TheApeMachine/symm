@@ -32,7 +32,7 @@ describe("region pin balance", () => {
 		expect(counts[6]).toBe(1);
 	});
 
-	it("wires regime and risk oracles on R09–R14 including R11 sentiment", () => {
+	it("wires board confidence and risk oracles on R09–R14", () => {
 		const counts = getCanonicalRegionCounts();
 		expect(counts[9]).toBeGreaterThanOrEqual(1);
 		expect(counts[10]).toBe(1);

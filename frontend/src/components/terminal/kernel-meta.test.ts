@@ -11,7 +11,6 @@ describe("sourceHeadline", () => {
 		expect(sourceHeadline("depthflow")).toBe("bid_ladder_build");
 		expect(sourceHeadline("hawkes")).toBe("supercritical_cascade");
 		expect(sourceHeadline("correlation")).toBe("structural_alignment");
-		expect(sourceHeadline("sentiment")).toBe("cohort_still_aligned");
 	});
 
 	it("returns null for sources with no named headline", () => {
@@ -33,6 +32,7 @@ describe("sourceHeadlineMetric", () => {
 		);
 		expect(sourceMetrics("depthflow")).toContain("bid_ladder_build");
 		expect(sourceMetrics("depthflow")).toContain("bid_ladder_release");
+		expect(sourceMetrics("depthflow")).toContain("ask_ladder_release");
 		expect(sourceMetrics("depthflow")).not.toContain("snr");
 	});
 
@@ -48,12 +48,15 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceHeadline("pumpdump")).toBe("coiled_compression");
 		expect(sourceMetrics("pumpdump")).toContain("coiled_compression");
 		expect(sourceMetrics("pumpdump")).toContain("rejection_tick");
-		expect(sourceMetrics("pumpdump")).toContain("board_starvation");
+		expect(sourceMetrics("pumpdump")).toContain("board_coiled");
 	});
 
 	it("rejects dormant or unsupported sources", () => {
 		expect(() => sourceHeadlineMetric("toxicity")).toThrow(
 			"unsupported measurement source: toxicity",
+		);
+		expect(() => sourceHeadlineMetric("sentiment")).toThrow(
+			"unsupported measurement source: sentiment",
 		);
 		expect(() => sourceMetrics("cvd")).toThrow(
 			"unsupported measurement source: cvd",

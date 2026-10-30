@@ -38,18 +38,9 @@ describe("meter inline typography", () => {
 		}
 	});
 
-	it("preserves existing s and m inline classes", () => {
-		expect(meterInlineLabelClass.s).toBe(
-			"w-[58px] shrink-0 text-[10px] text-(--f4)",
-		);
-		expect(meterInlineLabelClass.m).toBe(
-			"w-[38px] shrink-0 font-mono text-[10px] text-(--f3)",
-		);
-		expect(meterInlineValueClass.s).toBe(
-			"w-[18px] shrink-0 text-right font-mono text-[10px] text-(--f2)",
-		);
-		expect(meterInlineValueClass.m).toBe(
-			"w-14 shrink-0 text-right font-mono text-[9px] text-(--f4)",
-		);
+	it("keeps inline value wide enough for stop words on one line", () => {
+		expect(meterInlineValueClass.s).toContain("w-[4rem]");
+		expect(meterInlineValueClass.s).toContain("whitespace-nowrap");
+		expect(meterInlineLabelClass.s).toContain("whitespace-nowrap");
 	});
 });

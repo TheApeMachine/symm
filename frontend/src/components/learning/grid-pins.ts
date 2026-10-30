@@ -7,25 +7,25 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		rejection_tick: [3],
 		starved_tape: [2],
 		blowoff_dip: [8],
-		board_starvation: [9],
+		board_coiled: [9],
 	},
 	correlation: {
-		structural_alignment: [1, 10],
+		structural_alignment: [1],
 		structure_uncoupling: [13],
 	},
 	depthflow: {
-		bid_ladder_build: [5, 7],
+		ask_ladder_release: [5],
+		bid_ladder_build: [7],
 		bid_ladder_release: [4],
+		board_bid_release: [11],
 	},
 	hawkes: {
 		supercritical_cascade: [6],
+		board_cascade: [10],
 	},
 	liquidity: {
 		market_friction: [12],
 		capacity_stress: [14],
-	},
-	sentiment: {
-		cohort_still_aligned: [11],
 	},
 };
 
@@ -80,9 +80,10 @@ export interface CanonicalPinDef {
 
 const AGGREGATE_METRICS: Record<string, Set<string>> = {
 	correlation: new Set(["structural_alignment", "structure_uncoupling"]),
-	pumpdump: new Set(["board_starvation"]),
+	pumpdump: new Set(["board_coiled"]),
+	depthflow: new Set(["board_bid_release"]),
+	hawkes: new Set(["board_cascade"]),
 	liquidity: new Set(["market_friction", "capacity_stress"]),
-	sentiment: new Set(["cohort_still_aligned"]),
 };
 
 const pinScope = (source: string, metric: string): "aggregate" | undefined =>

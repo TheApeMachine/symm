@@ -1,9 +1,8 @@
 export type ChoiceSample = { t: number; pnl: number };
 
 /*
-The plot keeps this much time. Now stays on the right; anything older
-leaves on the left. Fitting the whole open life into the width squeezes
-the trace instead.
+Clock-window helpers for a fixed lookback. The open-choices chart does not
+use them: it draws the same sample trail as the position-card sparkline.
 */
 export const CHOICE_WINDOW_MS = 1 * 60 * 1000;
 
@@ -116,6 +115,20 @@ export const dropOpenChoices = (live: Set<string>): boolean => {
 export const resetOpenChoices = () => {
 	trails.clear();
 	sampleAt.clear();
+};
+
+export type OpenChoiceLot = { id: string; pnl: number | null };
+
+/** Record close-now samples for the open lot set; returns true if trails changed. */
+export const syncOpenChoiceLots = (rows: OpenChoiceLot[]): boolean => {
+	const live = new Set<string>();
+	let dirty = false;
+	for (const { id, pnl } of rows) {
+		live.add(id);
+		if (pnl !== null && noteOpenChoice(id, pnl)) dirty = true;
+	}
+	if (dropOpenChoices(live)) dirty = true;
+	return dirty;
 };
 
 export const extendToNow = (

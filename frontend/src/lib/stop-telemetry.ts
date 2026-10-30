@@ -260,7 +260,7 @@ export const trailingCheck = (
 				? `${Math.round(pct ?? 0)}% back`
 				: peak !== null && peak !== undefined && peak > 0
 					? "at peak"
-					: "not green",
+					: "flat",
 			title: `Causal-MCTS trailing stop: giveback from the peak vs the learned pullback, ratcheted tighter the larger the peak. ${
 				peak !== null && peak !== undefined && peak > 0
 					? `Peak ${fmtPct(peak)}${

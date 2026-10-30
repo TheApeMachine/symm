@@ -43,14 +43,12 @@ var TradeReceivers = []SourceType{
 	SourceCorrelation,
 	SourceHawkes,
 	SourcePumpDump,
-	SourceSentiment,
 }
 
 var TradeReceiverStrings = []string{
 	"correlation",
 	"hawkes",
 	"pumpdump",
-	"sentiment",
 }
 
 var BookReceivers = []SourceType{

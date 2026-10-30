@@ -27,7 +27,9 @@ type symbolModel struct {
 	sample  *excitation.Sample
 	process *excitation.Process
 
-	gates *gates
+	gates        *gates
+	lastCascade  float64
+	hasCascade   bool
 }
 
 // gates is a short retained history of fit statistics from which the regime
@@ -97,11 +99,13 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.Error(err)
 	}
 
+	signal.appendBoardCascade(value)
+
 	return value
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 
@@ -181,6 +185,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	}
 
 	state.gates.observe(outcome.Fit.SpectralRadius, outcome.Fit.Asymmetry(false))
+	state.lastCascade = outcome.Fit.SpectralRadius
+	state.hasCascade = true
 
 	keys := []string{
 		signal.Name(),
@@ -198,4 +204,31 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	})
 
 	return out
+}
+
+func (signal *Signal) appendBoardCascade(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.models.Range(func(_, untyped any) bool {
+		model := untyped.(*symbolModel)
+		model.mu.Lock()
+		if model.hasCascade {
+			scores = append(scores, model.lastCascade)
+		}
+		model.mu.Unlock()
+		return true
+	})
+
+	median, ok := parent.Median(scores)
+	if !ok {
+		return
+	}
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_cascade")...)
 }

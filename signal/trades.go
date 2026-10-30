@@ -5,15 +5,9 @@ import (
 	"runtime"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"
 	"golang.org/x/sync/errgroup"
 )
-
-// HasFrame reports whether value is non-nil and already carries ingress layers.
-func HasFrame(value *data.Value) bool {
-	return value != nil && value.HasLayers()
-}
 
 // LastTradePerSymbol keeps one print per pair (last in frame order).
 func LastTradePerSymbol(trades []kraken.TradeData) []kraken.TradeData {

@@ -6,5 +6,9 @@ export const Route = createFileRoute("/longtail")({
 });
 
 function RouteComponent() {
-	return <LongtailDashboard />;
+	return (
+		<div className="flex h-full min-h-0 flex-col overflow-hidden">
+			<LongtailDashboard />
+		</div>
+	);
 }

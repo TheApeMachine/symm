@@ -64,24 +64,28 @@ const meterHeaderVariants = cva("mb-1 flex justify-between font-mono", {
 	},
 });
 
+const inlineLabelBase = "shrink-0 whitespace-nowrap overflow-hidden text-ellipsis";
+const inlineValueBase =
+	"shrink-0 text-right font-mono whitespace-nowrap overflow-hidden text-ellipsis tabular-nums";
+
 export const meterInlineLabelClass: Record<Size, string> = {
-	xxs: "w-[50px] shrink-0 text-[9px] text-(--f4)",
-	xs: "w-[54px] shrink-0 text-[9px] text-(--f4)",
-	s: "w-[58px] shrink-0 text-[10px] text-(--f4)",
-	m: "w-[38px] shrink-0 font-mono text-[10px] text-(--f3)",
-	lg: "w-10 shrink-0 font-mono text-[11px] text-(--f3)",
-	xl: "w-11 shrink-0 font-mono text-[11px] text-(--f3)",
-	xxl: "w-12 shrink-0 font-mono text-xs text-(--f3)",
+	xxs: `w-[50px] ${inlineLabelBase} text-[9px] text-(--f4)`,
+	xs: `w-[54px] ${inlineLabelBase} text-[9px] text-(--f4)`,
+	s: `w-[58px] ${inlineLabelBase} text-[10px] text-(--f4)`,
+	m: `w-[38px] ${inlineLabelBase} font-mono text-[10px] text-(--f3)`,
+	lg: `w-10 ${inlineLabelBase} font-mono text-[11px] text-(--f3)`,
+	xl: `w-11 ${inlineLabelBase} font-mono text-[11px] text-(--f3)`,
+	xxl: `w-12 ${inlineLabelBase} font-mono text-xs text-(--f3)`,
 };
 
 export const meterInlineValueClass: Record<Size, string> = {
-	xxs: "w-4 shrink-0 text-right font-mono text-[9px] text-(--f2)",
-	xs: "w-[18px] shrink-0 text-right font-mono text-[9px] text-(--f2)",
-	s: "w-[18px] shrink-0 text-right font-mono text-[10px] text-(--f2)",
-	m: "w-14 shrink-0 text-right font-mono text-[9px] text-(--f4)",
-	lg: "w-14 shrink-0 text-right font-mono text-[10px] text-(--f4)",
-	xl: "w-16 shrink-0 text-right font-mono text-[10.5px] text-(--f4)",
-	xxl: "w-[4.5rem] shrink-0 text-right font-mono text-[11px] text-(--f4)",
+	xxs: `w-10 ${inlineValueBase} text-[9px] text-(--f2)`,
+	xs: `w-11 ${inlineValueBase} text-[9px] text-(--f2)`,
+	s: `w-[4rem] ${inlineValueBase} text-[10px] text-(--f2)`,
+	m: `w-14 ${inlineValueBase} text-[9px] text-(--f4)`,
+	lg: `w-14 ${inlineValueBase} text-[10px] text-(--f4)`,
+	xl: `w-16 ${inlineValueBase} text-[10.5px] text-(--f4)`,
+	xxl: `w-[4.5rem] ${inlineValueBase} text-[11px] text-(--f4)`,
 };
 
 type MeterTrackVariantProps = VariantProps<typeof meterTrackVariants>;

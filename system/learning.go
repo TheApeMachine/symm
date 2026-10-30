@@ -48,6 +48,7 @@ type Learning struct {
 	SalienceRatio           float64
 	ExcursionTimeout        time.Duration
 	MaxExcursionBars        int
+	PolicyShadowBars        int
 	TimeoutLossPenalty      float64
 	EmergencyExitBrightness float64
 	MinSupportedHorizon     int
@@ -113,6 +114,7 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.salience_ratio", 0.40)
 	viper.SetDefault("learning.excursion_timeout", 45*time.Minute)
 	viper.SetDefault("learning.max_excursion_bars", 8)
+	viper.SetDefault("learning.policy_shadow_bars", 32)
 	viper.SetDefault("learning.timeout_loss_penalty", 0.02)
 	viper.SetDefault("learning.emergency_exit_brightness", 0.75)
 	viper.SetDefault("learning.min_supported_horizon", 2)
@@ -165,6 +167,7 @@ func NewLearning() *Learning {
 		SalienceRatio:           viper.GetFloat64("learning.salience_ratio"),
 		ExcursionTimeout:        viper.GetDuration("learning.excursion_timeout"),
 		MaxExcursionBars:        viper.GetInt("learning.max_excursion_bars"),
+		PolicyShadowBars:        viper.GetInt("learning.policy_shadow_bars"),
 		TimeoutLossPenalty:      viper.GetFloat64("learning.timeout_loss_penalty"),
 		EmergencyExitBrightness: viper.GetFloat64("learning.emergency_exit_brightness"),
 		MinSupportedHorizon:     viper.GetInt("learning.min_supported_horizon"),

@@ -237,10 +237,14 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 		}
 
 		// --- PARABOLIC PROFIT RATCHET ---
-		// Compresses the allowed giveback from the base trail down towards the
-		// friction floor using an inverse-square curve based on peak multiples.
-		compression := math.Max(1.0, stoploss.peakPnLPct/baseTrail)
-		dynamicTrail := friction + ((baseTrail - friction) / math.Sqrt(compression))
+		// Tightens giveback only after the move has clearly cleared the base
+		// trail; small winners keep the full learned trail so profit is not
+		// clipped at the first green flicker.
+		dynamicTrail := baseTrail
+		if stoploss.peakPnLPct >= 2*baseTrail {
+			compression := stoploss.peakPnLPct / baseTrail
+			dynamicTrail = friction + ((baseTrail - friction) / math.Sqrt(compression))
+		}
 
 		if giveback >= dynamicTrail {
 			reason := "ratcheted trailing stop"

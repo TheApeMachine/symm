@@ -142,7 +142,7 @@ export const MetricChart = ({
 			<div
 				ref={ref}
 				className={cn(
-					"relative flex min-h-0 min-w-0 items-center justify-center bg-(--bg) font-mono text-[10px] text-(--f4)",
+					"relative flex min-h-0 min-w-0 flex-1 items-center justify-center bg-(--bg) font-mono text-[10px] text-(--f4)",
 					className,
 				)}
 			>
@@ -191,7 +191,10 @@ export const MetricChart = ({
 			.join(" · ") || "training metric";
 
 	return (
-		<div ref={ref} className={cn("relative min-h-0 min-w-0", className)}>
+		<div
+			ref={ref}
+			className={cn("relative min-h-0 min-w-0 flex-1", className)}
+		>
 			<svg
 				width={size.width}
 				height={size.height}

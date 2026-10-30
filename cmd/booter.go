@@ -26,7 +26,6 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/pumpdump"
-	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -148,7 +147,11 @@ func (booter *Booter) Run() error {
 	}
 
 	booter.Transition(nmruntime.READY)
-	errnie.Info(fmt.Sprintf("[booter] trade firehose open %s after boot", time.Since(started).Round(time.Millisecond)))
+	
+	errnie.Info(fmt.Sprintf(
+		"[booter] trade firehose open %s after boot",
+		time.Since(started).Round(time.Millisecond),
+	))
 
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
@@ -248,7 +251,6 @@ func (booter *Booter) initPipeline() error {
 		hawkes.NewSignal(ctx),
 		liquidity.NewSignal(ctx, booter.book),
 		pumpdump.NewSignal(ctx, booter.book),
-		sentiment.NewSignal(ctx),
 	}
 
 	for _, node := range booter.signals {
@@ -532,11 +534,12 @@ func (booter *Booter) startIngress(
 				// Step blocks until signals, the sequencer, and the model
 				// have written this tick. The frame copied below is that result.
 				out := booter.workspace.Step(value)
+
 				io.Copy(ui.UI, out)
 				if booter.store != nil {
 					snapshot := out.Bytes()
 					prefix := out.Prefix
-					go booter.store.WriteAtPrefix(prefix, snapshot)
+					booter.store.WriteAtPrefix(prefix, snapshot)
 				}
 			case "heartbeat", "status":
 			default:

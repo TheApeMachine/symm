@@ -121,6 +121,19 @@ The gate must not demote it to Virtual on the strength of opposition alone;
 opposition is the risk input that raises the risk-to-net-spark test, not a
 force that cancels the spark. With net spark positive the gate permits Paper.
 */
+func TestGateNegativeEnterNetBlocks(t *testing.T) {
+	gate := newTestGate(t)
+	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{
+		region(0, 0.2),
+		region(1, 0.2),
+		region(2, 0.9),
+	}, CoderReading{Bullish: true})
+
+	if decision.Allowed {
+		t.Fatalf("opposition-led enter net must block, got %+v", decision)
+	}
+}
+
 func TestGateContestedBreakoutNotCancelledByOpposition(t *testing.T) {
 	gate := newTestGate(t)
 	// Force the ignition hurdle below the ignition we present, and the risk
@@ -157,11 +170,12 @@ func TestGateRiskDominanceDemotesToVirtual(t *testing.T) {
 	gate.risk = 0.3 // tight risk tolerance
 
 	observed := []*nmstore.Region{
-		region(0, 0.4),  // detector
-		region(1, 0.3),  // support
-		region(2, 0.9),  // opposition dominates
-		region(12, 0.9), // risk oracle bright
+		region(0, 0.9),  // detector
+		region(1, 0.8),  // support
+		region(2, 0.4),  // opposition present but enter net stays positive
+		region(6, 0.9),  // ignition (when require_ignition_regime is on)
 		region(7, 0.9),
+		region(12, 2.5), // risk oracle dominates net spark
 	}
 
 	decision := gate.EvaluateEnter("BTC/USD", observed, CoderReading{Bullish: true})
@@ -203,10 +217,17 @@ func TestGateUncalibratedCoderVirtual(t *testing.T) {
 func TestReadCoderPopulatesConfidence(t *testing.T) {
 	tick := data.NewValue("training", "step", "BTC/USD")
 	tick.Append([]float64{1}, "resonance", "BTC-USD", "calibrated")
-	tick.Append([]float64{4}, "resonance", "BTC-USD", "supported_horizon")
+	tick.Append([]float64{15}, "resonance", "BTC-USD", "supported_horizon")
 	tick.Append([]float64{1.2}, "resonance", "BTC-USD", "task_relative_precision")
-	for h := 0; h < 4; h++ {
-		tick.Append([]float64{0.25}, "resonance", "BTC-USD", "forward_curve_"+itoa(h))
+	for h := 0; h < 15; h++ {
+		z := 0.25
+		if h == 2 || h == 5 || h == 8 {
+			z = 0.05
+		}
+		if h >= 12 {
+			z = 0.1
+		}
+		tick.Append([]float64{z}, "resonance", "BTC-USD", "forward_curve_"+itoa(h))
 	}
 
 	reading := ReadCoder(tick, "BTC/USD")

@@ -51,7 +51,7 @@ Step retains reprices for every symbol, then publishes one board-wide
 structural_alignment reading on correlation/aggregate/….
 */
 func (signal *Signal) Step(value *data.Value) *data.Value {
-	if signal.Status() != runtime.READY || !parent.HasFrame(value) {
+	if signal.Status() != runtime.READY {
 		return value
 	}
 
@@ -72,6 +72,11 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 				signal.Name(),
 				"aggregate",
 			}, "structural_alignment")...)
+
+			value.Append([]float64{1 - score}, append([]string{
+				signal.Name(),
+				"aggregate",
+			}, "structure_uncoupling")...)
 		}
 
 		audit.Record.Write(map[string]any{

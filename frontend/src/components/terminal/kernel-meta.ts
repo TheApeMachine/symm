@@ -29,7 +29,6 @@ export const TERMINAL_KERNEL_ORDER = [
 	"pumpdump",
 	"depthflow",
 	"liquidity",
-	"sentiment",
 	"training",
 ] as const;
 
@@ -52,7 +51,6 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	hawkes: "supercritical_cascade",
 	liquidity: "relative_spread",
 	pumpdump: "coiled_compression",
-	sentiment: "cohort_still_aligned",
 	training: "confidence",
 };
 
@@ -82,8 +80,13 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"structural_alignment",
 		"structure_uncoupling",
 	],
-	depthflow: ["bid_ladder_build", "bid_ladder_release"],
-	hawkes: ["supercritical_cascade"],
+	depthflow: [
+		"bid_ladder_build",
+		"bid_ladder_release",
+		"ask_ladder_release",
+		"board_bid_release",
+	],
+	hawkes: ["supercritical_cascade", "board_cascade"],
 	liquidity: [
 		"best_price:bid",
 		"best_price:ask",
@@ -96,9 +99,8 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"rejection_tick",
 		"starved_tape",
 		"blowoff_dip",
-		"board_starvation",
+		"board_coiled",
 	],
-	sentiment: ["cohort_still_aligned"],
 	training: [
 		"steps",
 		"decisions",
@@ -230,12 +232,6 @@ const KERNEL_COPY: Record<
 		name: "Depthflow",
 		sub: "depthflow · ladder",
 		blurb: "Depth flow measurement from backend frames.",
-	},
-	sentiment: {
-		name: "Sentiment",
-		sub: "sentiment · cohort alignment",
-		blurb:
-			"Cross-symbol directional agreement: how many peers still move with the focal name over a cohort horizon.",
 	},
 	training: {
 		name: "Cognitive Training",

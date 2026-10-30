@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -18,8 +19,8 @@ type CoderReading struct {
 
 /*
 ReadCoder interprets the resonance layers the solver publishes on the tick.
-forward_curve_i is the task head's prediction for standardized feature i at the
-next epoch, not a price return or a multi-step horizon index.
+forward_curve_i is the task head's prediction for standardized Features[i] at
+the next epoch (see logic/resonance/features.go), not a price return.
 */
 func ReadCoder(tick *data.Value, symbol string) CoderReading {
 	if tick == nil || symbol == "" {
@@ -65,42 +66,46 @@ func ReadCoder(tick *data.Value, symbol string) CoderReading {
 		return CoderReading{Ready: false, Bullish: false, Surprise: surprise, Confidence: confidence}
 	}
 
-	// Require cooperative positive shifts across the predicted feature vector.
-	bullish := true
-	foundAny := false
-	peakCurve := 0.0
-
-	for i := 0; i < supported; i++ {
-		var curveVals []float64
-		tick.Lookup(&curveVals, "resonance/"+scope+"/forward_curve_"+strconv.Itoa(i))
-		if len(curveVals) == 0 {
-			break
-		}
-
-		val := curveVals[0]
-		foundAny = true
-
-		if val <= 0 {
-			bullish = false
-			break
-		}
-
-		if val > peakCurve {
-			peakCurve = val
-		}
+	curve := readForwardCurve(tick, scope, supported)
+	enterNet, holdNet, exitNet, risk, ok := resonance.ForwardStoryNets(curve)
+	if !ok {
+		return CoderReading{Ready: ready, Bullish: false, Surprise: surprise, Confidence: confidence}
 	}
 
-	// Minimal conviction in standardized feature space (z-scores), not price %.
+	peakCurve := enterNet
+	if holdNet > peakCurve {
+		peakCurve = holdNet
+	}
+
 	const minFeatureZ = 0.15
-	if peakCurve < minFeatureZ {
-		bullish = false
-	}
+	bullish := enterNet >= minFeatureZ &&
+		holdNet >= minFeatureZ &&
+		exitNet <= holdNet &&
+		risk <= enterNet
 
 	return CoderReading{
 		Ready:      ready,
-		Bullish:    foundAny && bullish && ready,
+		Bullish:    bullish,
 		Surprise:   surprise,
 		Confidence: confidence,
 		PeakCurve:  peakCurve,
 	}
+}
+
+func readForwardCurve(tick *data.Value, scope string, supported int) []float64 {
+	if supported <= 0 {
+		return nil
+	}
+
+	curve := make([]float64, 0, supported)
+	for i := 0; i < supported; i++ {
+		var vals []float64
+		tick.Lookup(&vals, "resonance/"+scope+"/forward_curve_"+strconv.Itoa(i))
+		if len(vals) == 0 {
+			break
+		}
+		curve = append(curve, vals[0])
+	}
+
+	return curve
 }

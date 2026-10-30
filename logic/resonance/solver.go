@@ -46,32 +46,13 @@ type Solver struct {
 }
 
 /*
-Feature is one signal metric the solver reads: the label a source writes
-(the same labels the grid pins, nomagique/store/grid_pins.go).
+Feature is one grid-pinned metric (see features.go for the ordered Features slice).
 */
 type Feature struct {
 	Source string
 	Label  string
 	// Scope "aggregate" reads source/aggregate/<label>; empty uses the symbol.
 	Scope string
-}
-
-/*
-Features are the solver's inputs, one headline metric per signal source, in
-coder order. A source the tick does not carry (signals arrive with trades, so
-not every tick carries every source) holds its last standardized value, zero
-until its first arrival.
-*/
-var Features = []Feature{
-	{"pumpdump", "coiled_compression", ""},
-	{"correlation", "structural_alignment", "aggregate"},
-	{"pumpdump", "starved_tape", ""},
-	{"pumpdump", "rejection_tick", ""},
-	{"depthflow", "bid_ladder_release", ""},
-	{"depthflow", "bid_ladder_build", ""},
-	{"hawkes", "supercritical_cascade", ""},
-	{"depthflow", "bid_ladder_build", ""},
-	{"pumpdump", "blowoff_dip", ""},
 }
 
 /*
@@ -395,6 +376,11 @@ func (solver *Solver) manifold(name string, featureDim int) *learning.ResonanceM
 	loaded, _ := solver.manifolds.LoadOrStore(name, &sync.Map{})
 	bucket := loaded.(*sync.Map)
 
+	if prior, ok := bucket.Load("feature_dim"); ok && prior.(int) != featureDim {
+		bucket.Delete("manifold")
+		solver.pending.Delete(name)
+	}
+
 	if held, ok := bucket.Load("manifold"); ok {
 		return held.(*learning.ResonanceManifold)
 	}
@@ -414,6 +400,7 @@ func (solver *Solver) manifold(name string, featureDim int) *learning.ResonanceM
 		return nil
 	}
 
+	bucket.Store("feature_dim", featureDim)
 	bucket.Store("manifold", manifold)
 	return manifold
 }

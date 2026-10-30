@@ -34,8 +34,7 @@ export const ExitPolicyPanel = ({
 	row: Record<string, unknown>;
 	className?: string;
 }) => {
-	const num = (v: unknown): number | null =>
-		decimal(v) !== null ? decimal(v)! : null;
+	const num = (v: unknown): number | null => decimal(v);
 
 	const trailing = num(row.exit_pullback_pct);
 	const cut = num(row.nursery_cut_pct);
@@ -75,7 +74,7 @@ export const ExitPolicyPanel = ({
 
 	return (
 		<Flex.Column
-			gap={1.5}
+			gap={2}
 			className={cn(
 				"rounded-xs border border-(--line) bg-(--surface) p-2 font-mono text-[10.5px]",
 				className,
@@ -86,7 +85,7 @@ export const ExitPolicyPanel = ({
 			</div>
 
 			{anyBoundary ? (
-				<Grid cols={2} gap={1.5} responsive={false}>
+				<Grid cols={2} gap={2} responsive={false}>
 					<BoundaryFact
 						{...policyBoundary("Invalidation cut", cut)}
 					/>
@@ -116,7 +115,7 @@ export const ExitPolicyPanel = ({
 			)}
 
 			{/* P&L trajectory: the episode the exit policy learns from. */}
-			<Flex.Column gap={0.5}>
+			<Flex.Column gap={1}>
 				<Flex.Row justify="between" className="text-[9px] text-(--f4)">
 					<span>Net P&L path (one mark per reprice)</span>
 					<span className="text-(--f3)">
@@ -207,18 +206,15 @@ const PnlTrace = memo(
 		const height = 32;
 		const pad = 3;
 
-		if (trace.length < 2) {
-			return (
-				<div className="h-8 rounded-xs border border-dashed border-(--line) bg-(--sunken) flex items-center justify-center text-[9px] text-(--f4)">
-					{peak !== null || current !== null
-						? "marking the first reprice…"
-						: "waiting for the lot's first marks"}
-				</div>
-			);
-		}
+		const plotTrace =
+			trace.length >= 2
+				? trace
+				: trace.length === 1
+					? [trace[0], trace[0]]
+					: [entry, entry];
 
 		const all = [
-			...trace,
+			...plotTrace,
 			entry,
 			...(peak !== null ? [peak] : []),
 			...(cut !== null ? [cut] : []),
@@ -228,14 +224,14 @@ const PnlTrace = memo(
 		const max = Math.max(...all);
 		const span = max - min || 1;
 		const x = (i: number) =>
-			pad + (i / (trace.length - 1)) * (width - pad * 2);
+			pad + (i / (plotTrace.length - 1)) * (width - pad * 2);
 		const y = (v: number) =>
 			height - pad - ((v - min) / span) * (height - pad * 2);
 
-		const line = trace
+		const line = plotTrace
 			.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`)
 			.join(" ");
-		const last = trace[trace.length - 1];
+		const last = plotTrace[plotTrace.length - 1];
 		const tone =
 			current !== null
 				? current > 0
@@ -264,7 +260,12 @@ const PnlTrace = memo(
 					<line x1={0} x2={width} y1={y(peak)} y2={y(peak)} stroke="var(--up)" strokeDasharray="2 3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" opacity="0.7" />
 				) : null}
 				<path d={line} fill="none" stroke={tone} strokeWidth="1.1" vectorEffect="non-scaling-stroke" />
-				<circle cx={x(trace.length - 1)} cy={y(last)} r="1.4" fill={tone} />
+				<circle
+					cx={x(plotTrace.length - 1)}
+					cy={y(last)}
+					r="1.4"
+					fill={tone}
+				/>
 			</svg>
 		);
 	},

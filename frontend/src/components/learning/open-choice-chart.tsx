@@ -3,11 +3,10 @@ import { positionReadout } from "#/components/book-readout";
 import { cn } from "#/lib/utils";
 import {
 	CHOICE_SAMPLE_MS,
-	dropOpenChoices,
 	indexMean,
 	linePath,
-	noteOpenChoice,
 	openChoiceTrail,
+	syncOpenChoiceLots,
 } from "./open-choice-trail";
 
 const STROKES = [
@@ -31,6 +30,17 @@ const strokeFor = (id: string) => {
 	return STROKES[hash % STROKES.length];
 };
 
+const closeNowPct = (row: Record<string, unknown>) => {
+	const readout = positionReadout(row);
+	return (
+		readout.returnPctDisplay ??
+		(readout.returnPct === null ? null : readout.returnPct * 100)
+	);
+};
+
+const trailPayload = (rows: Record<string, unknown>[]) =>
+	rows.map((row) => ({ id: lotId(row), pnl: closeNowPct(row) }));
+
 const pctText = (value: number) => {
 	const digits = Math.abs(value) >= 10 ? 0 : 1;
 	const sign = value > 0 ? "+" : "";
@@ -45,31 +55,28 @@ export const OpenChoiceChart = ({
 	const [now, setNow] = useState(() => Date.now());
 	const [revision, setRevision] = useState(0);
 	const plotRef = useRef<HTMLDivElement>(null);
+	const lotsRef = useRef(lots);
 	const [plotSize, setPlotSize] = useState({ w: 0, h: 168 });
 	const [legendOpen, setLegendOpen] = useState(false);
 	const clipId = useId().replace(/:/g, "");
+	lotsRef.current = lots;
+
+	useLayoutEffect(() => {
+		if (syncOpenChoiceLots(trailPayload(lots))) {
+			setRevision((value) => value + 1);
+		}
+	}, [lots]);
 
 	useEffect(() => {
 		const sample = () => {
-			const live = new Set<string>();
-			let dirty = false;
-			for (const row of lots) {
-				const id = lotId(row);
-				live.add(id);
-				const readout = positionReadout(row);
-				const pnl =
-					readout.returnPctDisplay ??
-					(readout.returnPct === null ? null : readout.returnPct * 100);
-				if (pnl !== null && noteOpenChoice(id, pnl)) dirty = true;
+			if (syncOpenChoiceLots(trailPayload(lotsRef.current))) {
+				setRevision((value) => value + 1);
 			}
-			if (dropOpenChoices(live)) dirty = true;
-			if (dirty) setRevision((value) => value + 1);
 		};
-
 		sample();
 		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
 		return () => window.clearInterval(timer);
-	}, [lots]);
+	}, []);
 
 	useEffect(() => {
 		const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -164,30 +171,30 @@ export const OpenChoiceChart = ({
 						The heavy line is the book average.
 					</div>
 				</div>
-				{latestMean !== null && (
-					<div
-						className="text-[12px] font-bold tabular-nums"
-						style={{
-							color:
-								bookTone === "ahead"
+				<div
+					className="min-w-22 text-right text-[12px] font-bold tabular-nums"
+					style={{
+						color:
+							latestMean === null
+								? "var(--f4)"
+								: bookTone === "ahead"
 									? "var(--up)"
 									: bookTone === "behind"
 										? "var(--down)"
 										: "var(--warn)",
-						}}
-					>
-						book {pctText(latestMean)}
-					</div>
-				)}
-			</div>
-			{watching ? (
-				<div
-					ref={plotRef}
-					className={cn(
-						"w-full min-w-0",
-						legendOpen ? "h-44" : "h-[min(22rem,42vh)]",
-					)}
+					}}
 				>
+					{latestMean === null ? "book …" : `book ${pctText(latestMean)}`}
+				</div>
+			</div>
+			<div
+				ref={plotRef}
+				className={cn(
+					"w-full min-w-0",
+					legendOpen ? "h-44" : "h-[min(22rem,42vh)]",
+				)}
+			>
+				{watching ? (
 					<svg
 						viewBox={`0 0 ${width} ${height}`}
 						preserveAspectRatio="none"
@@ -285,9 +292,7 @@ export const OpenChoiceChart = ({
 								<path
 									d={linePath(
 										meanSeries.flatMap((pnl, i) =>
-											Number.isFinite(pnl)
-												? [{ x: xAt(i), y: yOf(pnl) }]
-												: [],
+											Number.isFinite(pnl) ? [{ x: xAt(i), y: yOf(pnl) }] : [],
 										),
 									)}
 									fill="none"
@@ -297,12 +302,12 @@ export const OpenChoiceChart = ({
 							)}
 						</g>
 					</svg>
-				</div>
-			) : (
-				<div className="flex h-24 items-center justify-center text-[11px] text-(--f4)">
-					close-now return is not on these lots yet
-				</div>
-			)}
+				) : (
+					<div className="relative flex h-full w-full items-center justify-center rounded border border-dashed border-(--line) bg-(--sunken) text-[11px] text-(--f4)">
+						close-now return is not on these lots yet
+					</div>
+				)}
+			</div>
 			<button
 				type="button"
 				className="mt-1 flex w-full items-center justify-between gap-2 rounded border border-(--line) bg-(--sunken) px-2 py-0.5 text-left text-[10px] text-(--f3) transition-colors hover:border-(--acc)/40 hover:text-(--f2)"

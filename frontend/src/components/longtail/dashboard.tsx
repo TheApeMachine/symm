@@ -23,6 +23,7 @@ import {
 	triggerTone,
 } from "#/lib/trigger-labels";
 import { Flex } from "#/components/ui/flex";
+import { cn } from "#/lib/utils";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
@@ -466,14 +467,18 @@ const trainingCharts: ChartDef[] = [
 },
 ];
 
+const CHART_ROW_COUNT = Math.ceil(trainingCharts.length / 2);
+
 const ChartPanel = ({
 	chart,
 	samples,
 	times,
+	className,
 }: {
 	chart: ChartDef;
 	samples: LongtailSample[];
 	times: number[];
+	className?: string;
 }) => {
 	const latestSample = samples[samples.length - 1];
 	const series = chart.series(samples);
@@ -493,7 +498,10 @@ const ChartPanel = ({
 	return (
 		<div
 			data-chart={chart.id}
-			className="flex min-h-0 min-w-0 flex-col border-b border-r border-(--line) bg-(--bg)"
+			className={cn(
+				"flex h-full min-h-0 min-w-0 flex-col border-b border-r border-(--line) bg-(--bg)",
+				className,
+			)}
 		>
 			<div className="flex shrink-0 items-baseline justify-between gap-2 border-b border-(--line) px-2.5 py-1">
 				<div className="min-w-0">
@@ -510,7 +518,7 @@ const ChartPanel = ({
 				</span>
 			</div>
 			<MetricChart
-				className="flex-1"
+				className="min-h-0 flex-1"
 				times={times}
 				series={series}
 				formatY={chart.formatY}
@@ -642,14 +650,25 @@ export const LongtailDashboard = () => {
 				))}
 			</div>
 
-			<Flex.Row className="min-h-0 flex-1">
-				<div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 grid-rows-7">
-					{trainingCharts.map((chart) => (
+			<Flex.Row className="min-h-0 flex-1 overflow-hidden">
+				<div
+					className="grid h-full min-h-0 min-w-0 flex-1 grid-cols-2"
+					style={{
+						gridTemplateRows: `repeat(${CHART_ROW_COUNT}, minmax(0, 1fr))`,
+					}}
+				>
+					{trainingCharts.map((chart, index) => (
 						<ChartPanel
 							key={chart.id}
 							chart={chart}
 							samples={samples}
 							times={times}
+							className={
+								index === trainingCharts.length - 1 &&
+								trainingCharts.length % 2 === 1
+									? "col-span-2"
+									: undefined
+							}
 						/>
 					))}
 				</div>

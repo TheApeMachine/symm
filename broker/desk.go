@@ -35,6 +35,8 @@ type Desk struct {
 	virtualArchive *sync.Map
 	pending        *sync.Map
 	policies       *sync.Map
+	shadowMu       sync.Mutex
+	shadowJobs     []shadowJob
 }
 
 func NewDesk(
@@ -67,6 +69,8 @@ func NewDesk(
 	desk.resumePaperOrders()
 	desk.reconcilePaperFills()
 	desk.retireFlatPaper()
+	desk.restoreExitPolicies()
+	desk.resumeShadowJobs()
 	desk.Transition(runtime.READY)
 	return desk
 }
@@ -1046,9 +1050,9 @@ func (desk *Desk) Enter(
 		desk.onPositionSettled,
 	)
 
-	// Search on this symbol's settled record, then push what it learned onto
-	// the lot. The stop reads the pullback off the lot, so the policy has to
-	// be on it before the first mark reprices it.
+	// Refresh from settled episodes, then push learned cut/trail/horizon onto
+	// the lot before the first mark (stop reads NurseryCutPct / ExitPullbackPct).
+	desk.refreshPolicy(symbol)
 	desk.teachPolicy(position)
 
 	// Register before Send. Paper publish blocks until the private ingress
@@ -1131,7 +1135,7 @@ func (desk *Desk) releaseLocked(position *Position) error {
 	// The round trip is over. Its trace is now an episode, and this symbol's
 	// learned exit moment is one step closer to being worth trusting.
 	desk.observePolicy(position)
-	go desk.refreshPolicy(position.Symbol)
+	desk.schedulePostExitShadow(position)
 
 	value := data.NewValue(
 		key, "closed", position.Symbol,

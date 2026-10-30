@@ -87,9 +87,8 @@ func (sequencer *Sequencer) Reset() {
 }
 
 var (
-	// Regimes 6..11:
-	// 6: Compression, 7: Ignition, 8: Friction, 9: Starved/Dead,
-	// 10: Macro Recurrence, 11: Sentiment Recurrence
+	// Regimes 6..11 (brightest labels the path letter):
+	// 6–8: hold story pins; 9–11: board enter / hold / exit confidence oracles.
 	flatRegime  = []uint8{6, 7, 8, 9, 10, 11}
 	flatPosture = []uint8{0, 1, 2} // Enter postures: Spark, Support, Opposition
 

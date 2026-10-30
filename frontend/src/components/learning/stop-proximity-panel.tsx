@@ -27,10 +27,11 @@ const num = (value: unknown): number | null =>
 const readStop = (row: StopRow) => {
 	const state = row.stop_state as Record<string, unknown> | null | undefined;
 	const stop =
-		state && typeof state === "object" ? (state as Record<string, unknown>) : null;
+		state && typeof state === "object"
+			? (state as Record<string, unknown>)
+			: null;
 
-	const current =
-		num(stop?.current_pct) ?? num(row.pnl_pct) ?? null;
+	const current = num(stop?.current_pct) ?? num(row.pnl_pct) ?? null;
 	const peak = num(stop?.peak_pct) ?? num(row.peak_pnl_pct) ?? null;
 
 	return {
@@ -55,13 +56,6 @@ export const StopProximityPanel = ({
 	const stop = readStop(row);
 	const checks = buildStopChecks(stop);
 	const verdict = heldVerdict(stop);
-	const hasTelemetry =
-		(stop.invalidation ?? 0) > 0 ||
-		(stop.evaporation ?? 0) > 0 ||
-		(stop.trailing ?? 0) > 0 ||
-		(stop.expiry ?? 0) > 0 ||
-		stop.peak !== null;
-
 	return (
 		<Flex.Column
 			gap={1}
@@ -83,30 +77,23 @@ export const StopProximityPanel = ({
 				</span>
 			</Flex.Row>
 
-			{hasTelemetry ? (
-				<Flex.Column gap={1}>
-					{checks.map((check) => (
-						<Meter
-							key={check.id}
-							size="s"
-							layout="inline"
-							variant={meterTone(check.tone)}
-							label={check.name}
-							value={check.word.short}
-							percent={check.percent ?? 0}
-							animated
-							title={check.word.title}
-							labelClassName="text-(--f3)"
-							valueClassName="text-(--f1)"
-						/>
-					))}
-				</Flex.Column>
-			) : (
-				<span className="text-(--f4) py-1">
-					No stop telemetry yet — meters light up once the desk reprices
-					the lot.
-				</span>
-			)}
+			<Flex.Column gap={1}>
+				{checks.map((check) => (
+					<Meter
+						key={check.id}
+						size="s"
+						layout="inline"
+						variant={meterTone(check.tone)}
+						label={check.name}
+						value={check.word.short}
+						percent={check.percent ?? 0}
+						animated
+						title={check.word.title}
+						labelClassName="text-(--f3)"
+						valueClassName="text-(--f1)"
+					/>
+				))}
+			</Flex.Column>
 		</Flex.Column>
 	);
 };

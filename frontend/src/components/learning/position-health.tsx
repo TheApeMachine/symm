@@ -31,110 +31,111 @@ export interface RegionMeta {
 export const REGIONS: Record<string, RegionMeta> = {
 	R00: {
 		id: "R00",
-		title: "Enter Detector",
-		subtitle: "Point-Process Spark",
+		title: "Enter detector",
+		subtitle: "Coiled compression",
 		role: "entry_detector",
 		tone: "up",
 		description:
-			"Point-process arrival of aggressive buyers, volume spike, and orderbook pressure sparks.",
+			"Quiet tape with rising participation — volume rate over baseline while midpoint barely moves.",
 	},
 	R01: {
 		id: "R01",
-		title: "Enter Support",
-		subtitle: "Bid Replenishment",
+		title: "Enter support",
+		subtitle: "Structural alignment",
 		role: "entry_support",
 		tone: "up",
 		description:
-			"Limit order bid replenishment, book depth skew on bid side, positive delta accumulation.",
+			"Board-wide peer reprices moving together; enter with the cohort, not a lone name.",
 	},
 	R02: {
 		id: "R02",
-		title: "Enter Opposition",
-		subtitle: "Offer Depletion",
+		title: "Enter opposition",
+		subtitle: "Starved tape",
 		role: "entry_opposition",
 		tone: "info",
 		description:
-			"Ask side thinning/depletion, low seller resistance (inelasticity on offer side).",
+			"Participation collapsed vs this symbol’s recent norm — flat lines and fake tries.",
 	},
 	R03: {
 		id: "R03",
-		title: "Exit Detector",
-		subtitle: "Sell Cascade",
+		title: "Exit detector",
+		subtitle: "Rejection tick",
 		role: "exit_detector",
 		tone: "down",
 		description:
-			"Aggressive seller arrival cascade, sudden volume dump, negative midpoint return ignition.",
+			"Down bar on the volume clock — midpoint rejected lower on the closed bar.",
 	},
 	R04: {
 		id: "R04",
-		title: "Exit Support",
-		subtitle: "Ask Loading",
+		title: "Exit support",
+		subtitle: "Bid ladder release",
 		role: "exit_support",
 		tone: "down",
 		description:
-			"Ask replenishment, resistance wall loading, negative delta accumulation.",
+			"Displayed bid depth peeling off between L3 snapshots — sell while bids are still shown.",
 	},
 	R05: {
 		id: "R05",
-		title: "Exit Opposition",
-		subtitle: "Bid Evaporation",
+		title: "Exit opposition",
+		subtitle: "Ask ladder release",
 		role: "exit_opposition",
 		tone: "down",
 		description:
-			"Bid side depletion/pulling, high bid slippage, collapse of buy support.",
+			"Displayed ask depth peeling off between L3 snapshots — thinning offers, precursor that the leg may still have room.",
 	},
 	R06: {
 		id: "R06",
-		title: "Coiled Compression",
-		subtitle: "Energy Building",
+		title: "Hold detector",
+		subtitle: "Supercritical cascade",
 		role: "regime",
 		tone: "neutral",
 		description:
-			"Low volatility, narrow spread ratio, tight range, energy building.",
+			"Hawkes branching at or above criticality — self-exciting trade feedback on the tape.",
 	},
 	R07: {
 		id: "R07",
-		title: "Explosive Ignition",
-		subtitle: "Supercritical Burst",
+		title: "Hold support",
+		subtitle: "Bid ladder build",
 		role: "regime",
 		tone: "acc",
 		description:
-			"Rapid spread opening, extreme volume burst, high tick velocity. Enter votes only with bullish flow or co-fired R00/R01.",
+			"Net bid size stacking in on the visible ladder — book building under the mark.",
 	},
 	R08: {
 		id: "R08",
-		title: "Turbulent Friction",
-		subtitle: "Two-Sided Churn",
+		title: "Hold opposition",
+		subtitle: "Blowoff dip",
 		role: "regime",
 		tone: "warn",
 		description:
-			"Choppy two-sided churn, high cancellation rate, spread dislocation.",
+			"Strong down bar after a remembered strong up bar — blow-off pullback while still holding.",
 	},
 	R09: {
 		id: "R09",
-		title: "Dead / Starved",
-		subtitle: "Sparse Liquidity",
+		title: "Enter confidence",
+		subtitle: "Board coiled",
 		role: "regime",
-		tone: "neutral",
+		tone: "up",
 		description:
-			"Illiquid book, wide spread, sparse arrivals, insufficient trading activity.",
+			"Median coiled compression across the board — quiet names before ignition.",
 	},
 	R10: {
 		id: "R10",
-		title: "Macro Recurrence",
-		subtitle: "Leader Concordance",
+		title: "Hold confidence",
+		subtitle: "Board cascade",
 		role: "history",
-		tone: "up",
+		tone: "neutral",
 		description:
-			"Correlated peer alignment, market-wide leader advance concordance.",
+			"Median Hawkes feedback across the board — tape still self-exciting.",
 	},
 	R11: {
 		id: "R11",
-		title: "Sentiment Recurrence",
-		subtitle: "Peer Consensus",
+		title: "Exit confidence",
+		subtitle: "Board bid release",
 		role: "history",
-		tone: "info",
-		description: "Cross-asset sentiment agreement, peer directional consensus.",
+		tone: "down",
+		description:
+			"Median bid-ladder release across the board — support fading before the crowd.",
 	},
 	R12: {
 		id: "R12",
@@ -987,10 +988,6 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 		});
 	}, [activeToken, entryTokens, liveTokens, maxBrightness, metricMap]);
 
-	const hasEvidence = Object.keys(metricMap).some((k) =>
-		k.startsWith("region_brightness:"),
-	);
-
 	return (
 		<Section
 			surface="surface"
@@ -998,12 +995,6 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 			className="h-full font-mono text-[11px]"
 		>
 			<Section.Body className="p-1.5 space-y-1 overflow-auto">
-				{!hasEvidence && (
-					<div className="p-2 rounded-xs border border-(--line) bg-(--sunken) text-(--f4) text-[10px] text-center">
-						Awaiting live frame telemetry for {activeSymbol}...
-					</div>
-				)}
-
 				{regionScores.map((r) => (
 					<div
 						key={r.key}

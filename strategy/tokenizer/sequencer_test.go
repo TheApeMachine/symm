@@ -157,7 +157,7 @@ func TestSequencerState(t *testing.T) {
 			So(labelCode("R11.R05"), ShouldEqual, codeR11R05)
 		})
 
-		Convey("flat macro recurrence regime R10", func() {
+		Convey("board hold confidence regime R10", func() {
 			step := NewSequencer().Step([]*store.Region{
 				litRegion(6, 0.1),
 				litRegion(10, 0.85),
@@ -167,7 +167,7 @@ func TestSequencerState(t *testing.T) {
 			So(step.Token.String(), ShouldEqual, "R10.R00")
 		})
 
-		Convey("hold sentiment recurrence regime R11", func() {
+		Convey("board exit confidence regime R11", func() {
 			step := NewSequencer().Step([]*store.Region{
 				litRegion(11, 0.7),
 				litRegion(6, 0.1),

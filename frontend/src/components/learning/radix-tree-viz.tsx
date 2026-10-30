@@ -2,16 +2,13 @@ import * as d3 from "d3";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import { Flex } from "../ui/flex";
+import { EXPLORE_BASE_THRESHOLD, explorePathKept } from "./explore-path";
 import {
 	formatTrieLinkToken,
 	paintRadixTreeStructure,
 	type TreeNode,
 	updateRadixTreeHighlights,
 } from "./radix-tree-paint";
-import {
-	EXPLORE_BASE_THRESHOLD,
-	explorePathKept,
-} from "./explore-path";
 import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
 
 interface RadixTreeVizProps {

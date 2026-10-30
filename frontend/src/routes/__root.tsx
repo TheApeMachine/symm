@@ -138,7 +138,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 							<Dialog />
 							<Flex.Row className="min-h-0 flex-1">
 								<TerminalNav active={surface} />
-								<main className="min-w-0 flex-1 overflow-auto bg-(--bg)">
+								<main className="min-h-0 min-w-0 flex-1 overflow-auto bg-(--bg)">
 									<div className="h-full min-h-180">{children}</div>
 								</main>
 							</Flex.Row>

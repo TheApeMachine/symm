@@ -258,11 +258,11 @@ describe("ImpulseMapViz", () => {
 		const regionCountEl = container.querySelector(
 			'[data-l="grid-region-count"]',
 		);
-		expect(metricCountEl?.textContent).toBe("76");
+		expect(metricCountEl?.textContent).toBe("15");
 		expect(regionCountEl?.textContent).toBe("15");
 
 		const circles = container.querySelectorAll(".nodes circle");
-		expect(circles).toHaveLength(76);
+		expect(circles).toHaveLength(15);
 	});
 
 	it("lights up grid regions when live telemetry arrives on signals.training", () => {

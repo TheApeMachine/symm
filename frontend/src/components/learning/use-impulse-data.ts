@@ -31,6 +31,8 @@ export interface ImpulseDataState {
 	}>;
 	gridCells: number;
 	gridRegions: number;
+	/** Workspace aggregate tick index; advances even when held readings are unchanged. */
+	marketTick: number;
 }
 
 const CANONICAL_PINS = getCanonicalPinDefs();
@@ -141,7 +143,16 @@ const regionStrength = (
 useImpulseData tracks the live SOM grid cells and confluence regions from the
 workspace aggregate tick (and training step frames when present) for the symbol.
 */
-export const useImpulseData = (symbol: string): ImpulseDataState => {
+export type UseImpulseDataOptions = {
+	/** When true, held readings and the map freeze until resumed. */
+	paused?: boolean;
+};
+
+export const useImpulseData = (
+	symbol: string,
+	options: UseImpulseDataOptions = {},
+): ImpulseDataState => {
+	const paused = options.paused ?? false;
 	const initialNodes = useMemo(() => createCanonicalGridNodes(), []);
 
 	/*
@@ -170,8 +181,11 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			activeEvents: [],
 			gridCells: initialNodes.length,
 			gridRegions: 15,
+			marketTick: 0,
 		};
 	});
+
+	const lastPublishedTick = useRef(0);
 
 	useEffect(() => {
 		if (!symbol) return;
@@ -182,7 +196,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 			Math.round(CANONICAL_COUNTS[idx] ?? 0),
 		);
 
-		const publish = () => {
+		const publish = (marketTick: number) => {
 			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
 				const reading = heldPins.current[pin.id];
 				const regionLit = regionStrength(
@@ -233,17 +247,28 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				};
 			});
 
+			lastPublishedTick.current = marketTick;
+
 			setState({
 				data: updatedNodes,
 				regions: regionsList,
 				activeEvents: activeEventsList,
 				gridCells: updatedNodes.length,
 				gridRegions: 15,
+				marketTick,
 			});
 		};
 
 		const updateFromTelemetry = () => {
+			if (paused) {
+				return;
+			}
+
 			const aggregate = workspaceFrame();
+			const marketTick =
+				aggregate && aggregate.tick !== undefined
+					? Number(aggregate.tick)
+					: lastPublishedTick.current;
 			const querySymbol = kernelSymbolForAggregate(symbol, aggregate);
 			const trainingState = signals.training?.state;
 
@@ -460,11 +485,18 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				}
 			}
 
-			if (changed) publish();
+			const tickMoved =
+				Number.isFinite(marketTick) &&
+				marketTick > 0 &&
+				marketTick !== lastPublishedTick.current;
+
+			if (changed || tickMoved) {
+				publish(Number.isFinite(marketTick) ? marketTick : lastPublishedTick.current);
+			}
 		};
 
 		// A symbol change drops the previous symbol's readings first.
-		publish();
+		publish(lastPublishedTick.current);
 		updateFromTelemetry();
 
 		const unsubs: Array<(() => void) | undefined> = [];
@@ -489,7 +521,7 @@ export const useImpulseData = (symbol: string): ImpulseDataState => {
 				u?.();
 			}
 		};
-	}, [symbol]);
+	}, [symbol, paused]);
 
 	return state;
 };

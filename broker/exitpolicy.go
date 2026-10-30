@@ -3,6 +3,7 @@ package broker
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -24,10 +25,13 @@ const (
 )
 
 type episode struct {
-	trace      []float64
-	banked     float64
-	duration   time.Duration
-	timeToPeak time.Duration
+	trace          []float64
+	banked         float64
+	duration       time.Duration
+	timeToPeak     time.Duration
+	postExitMaxPct float64
+	regretPct      float64
+	shadowBars     int
 }
 
 type learnedExitPolicy struct {
@@ -40,6 +44,7 @@ type learnedExitPolicy struct {
 }
 
 type policyRecord struct {
+	mu       sync.Mutex
 	episodes []episode
 	rows     [][]float64
 	policy   learnedExitPolicy
@@ -81,16 +86,12 @@ func (desk *Desk) observePolicy(position *Position) {
 		timeToPeak = time.Duration(float64(duration) * (float64(peakIdx) / float64(len(trace)-1)))
 	}
 
-	known := desk.recordPolicy(position.Symbol)
+	known := desk.ensurePolicyRecord(position.Symbol)
 	if known == nil {
-		known = &policyRecord{}
-		if _, raced := desk.policies.LoadOrStore(position.Symbol, known); raced {
-			known = desk.recordPolicy(position.Symbol)
-			if known == nil {
-				return
-			}
-		}
+		return
 	}
+
+	known.mu.Lock()
 
 	known.episodes = append(known.episodes, episode{
 		trace:      trace,
@@ -109,6 +110,10 @@ func (desk *Desk) observePolicy(position *Position) {
 
 	known.policy.samples++
 	known.rows = policyRows(known.episodes)
+	symbol := position.Symbol
+	known.mu.Unlock()
+
+	desk.persistExitPolicy(symbol)
 }
 
 func (desk *Desk) recordPolicy(symbol string) *policyRecord {
@@ -123,12 +128,43 @@ func (desk *Desk) recordPolicy(symbol string) *policyRecord {
 	return known
 }
 
+func (desk *Desk) ensurePolicyRecord(symbol string) *policyRecord {
+	if desk == nil || desk.policies == nil || symbol == "" {
+		return nil
+	}
+
+	if known := desk.recordPolicy(symbol); known != nil {
+		return known
+	}
+
+	known := &policyRecord{}
+	if actual, loaded := desk.policies.LoadOrStore(symbol, known); loaded {
+		return actual.(*policyRecord)
+	}
+
+	return known
+}
+
 /*
 refreshPolicy derives candidate stopping boundaries from empirical quantiles
 and executes the Causal MCTS search.
 */
 func (desk *Desk) refreshPolicy(symbol string) {
 	known := desk.recordPolicy(symbol)
+	if known == nil {
+		return
+	}
+
+	known.mu.Lock()
+	desk.refreshPolicyLocked(known)
+	known.mu.Unlock()
+
+	if symbol != "" {
+		desk.persistExitPolicy(symbol)
+	}
+}
+
+func (desk *Desk) refreshPolicyLocked(known *policyRecord) {
 	if known == nil {
 		return
 	}
@@ -181,12 +217,63 @@ func (desk *Desk) refreshPolicy(symbol string) {
 
 	optCut, optTrail := extractOptimalPolicy(bestNode)
 
+	if cap := worstCaseAdverseDrop(known.episodes); cap > 0 && optCut > cap {
+		optCut = cap
+	}
+
 	if optCut > 0 && optTrail > 0 {
+		optTrail = widenTrailForRegret(optTrail, known.episodes)
 		known.policy.invalidationCut = optCut
 		known.policy.trailingStop = optTrail
 		known.policy.maxHoldDuration = maxDuration
 		known.policy.maxHoldBars = maxBars
 	}
+}
+
+func widenTrailForRegret(trail float64, episodes []episode) float64 {
+	if trail <= 0 {
+		return trail
+	}
+
+	var regrets []float64
+	for _, ep := range episodes {
+		if ep.regretPct > 0 {
+			regrets = append(regrets, ep.regretPct)
+		}
+	}
+
+	if len(regrets) == 0 {
+		return trail
+	}
+
+	sort.Float64s(regrets)
+	median := regrets[len(regrets)/2]
+	return trail + 0.5*median
+}
+
+/*
+worstCaseAdverseDrop is the largest entry-to-trough drawdown seen on losing
+episodes; it caps how wide the learned invalidation cut can be so stops stay
+tight after the tape has already shown deeper damage on this symbol.
+*/
+func worstCaseAdverseDrop(episodes []episode) float64 {
+	worst := 0.0
+	for _, ep := range episodes {
+		if ep.banked > 0 || len(ep.trace) == 0 {
+			continue
+		}
+		entryVal := ep.trace[0]
+		minVal := entryVal
+		for _, v := range ep.trace {
+			if v < minVal {
+				minVal = v
+			}
+		}
+		if drop := entryVal - minVal; drop > worst {
+			worst = drop
+		}
+	}
+	return worst
 }
 
 func (desk *Desk) refreshPolicies() {
@@ -213,7 +300,9 @@ func (desk *Desk) teachPolicy(position *Position) {
 		return
 	}
 
+	known.mu.Lock()
 	pol := known.policy
+	known.mu.Unlock()
 
 	if pol.samples == 0 {
 		return
@@ -239,6 +328,10 @@ func (desk *Desk) Policy(symbol string) (exitPullbackPct float64, worstPct float
 	if known == nil {
 		return 0, 0, false
 	}
+
+	known.mu.Lock()
+	defer known.mu.Unlock()
+
 	if known.policy.samples == 0 {
 		return 0, 0, false
 	}
@@ -297,6 +390,10 @@ func extractPullbackQuantiles(episodes []episode) []float64 {
 			if diff > 0 {
 				pullbacks = append(pullbacks, diff)
 			}
+		}
+
+		if ep.regretPct > 0 {
+			pullbacks = append(pullbacks, ep.regretPct)
 		}
 	}
 

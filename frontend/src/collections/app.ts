@@ -10,7 +10,6 @@ export const DEFAULT_KERNELS = [
 	"hawkes",
 	"liquidity",
 	"pumpdump",
-	"sentiment",
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
@@ -348,8 +347,10 @@ export const kernelSymbolForAggregate = (
 /** Kernels that publish their layers under the "aggregate" scope. */
 const aggregateScopedKernels = new Set<string>([
 	"correlation",
+	"depthflow",
+	"hawkes",
 	"liquidity",
-	"sentiment",
+	"pumpdump",
 ]);
 
 export const signalFor = (

@@ -54,6 +54,36 @@ describe("choice window", () => {
 		]);
 	});
 
+	it("joins samples in order the way the card trail does", () => {
+		expect(
+			linePath([
+				{ x: 0, y: 1 },
+				{ x: 10, y: 4 },
+			]),
+		).toBe("M0.0,1.0 L10.0,4.0");
+	});
+
+	it("right-aligns a shorter lot so now stays the last slot", () => {
+		expect(
+			indexMean([
+				[
+					{ t: 1, pnl: 1 },
+					{ t: 2, pnl: 3 },
+				],
+				[{ t: 2, pnl: 5 }],
+			]),
+		).toEqual([1, 4]);
+	});
+
+	it("keeps the same trail length as the position card", () => {
+		resetOpenChoices();
+		for (let i = 0; i < CHOICE_TRAIL_LENGTH + 5; i++) {
+			noteOpenChoice("doge", i, 1_000 + i * CHOICE_SAMPLE_MS);
+		}
+		expect(openChoiceTrail("doge")).toHaveLength(CHOICE_TRAIL_LENGTH);
+		expect(openChoiceTrail("doge")[0].pnl).toBe(5);
+	});
+
 	it("steps at the sample instead of ramping across the gap", () => {
 		expect(
 			stepPath(

@@ -46,28 +46,14 @@ export const Trail = ({
 	}, [fluid]);
 
 	const width = fluid ? Math.max(fluidWidth, 120) : widthProp;
-	const pts = values.filter(Number.isFinite);
-	if (pts.length < 2) {
-		const empty = (
-			<div
-				className={cn(
-					"flex items-center justify-center text-[10px] text-(--f4) border border-dashed border-(--line) rounded bg-(--sunken)",
-					fluid && "w-full",
-					className,
-				)}
-				style={fluid ? { height } : { width, height }}
-			>
-				collecting history…
-			</div>
-		);
-		return fluid ? (
-			<div ref={shellRef} className="w-full min-w-0">
-				{empty}
-			</div>
-		) : (
-			empty
-		);
-	}
+	const finite = values.filter(Number.isFinite);
+	const collecting = finite.length < 2;
+	const pts =
+		finite.length >= 2
+			? finite
+			: finite.length === 1
+				? [finite[0], finite[0]]
+				: [baseline, baseline];
 
 	const min = Math.min(baseline, ...pts);
 	const max = Math.max(baseline, ...pts);
@@ -151,14 +137,14 @@ export const Trail = ({
 				fill="none"
 				stroke="var(--f1)"
 				strokeWidth={1.4}
-				opacity={0.9}
+				opacity={collecting ? 0.35 : 0.9}
 			/>
 			<circle
 				cx={x(pts.length - 1)}
 				cy={y(last)}
 				r={3}
 				fill={lastUp ? "var(--up)" : "var(--down)"}
-				fillOpacity={lastUp ? 0.9 : 0.65}
+				fillOpacity={collecting ? 0.35 : lastUp ? 0.9 : 0.65}
 				stroke="var(--bg)"
 				strokeWidth={1.5}
 			/>

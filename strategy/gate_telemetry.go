@@ -33,9 +33,10 @@ type gateFrame struct {
 
 func (gate *Gate) frameForEnter(observed []*nmstore.Region, dec GateDecision, tree Decision) gateFrame {
 	b := regionBrightness(observed)
-	netSpark := (b[0] + b[1]) - b[2]
-	netHold := (b[6] + b[7]) - b[8]
+	netSpark, netHold := entryNets(b)
 	risk := max(b[12], b[13], b[14])
+	netRejection := (b[3] + b[4] + b[11]) - b[5]
+	exhaustion := b[8]
 
 	return gateFrame{
 		Phase:           "enter",
@@ -47,9 +48,9 @@ func (gate *Gate) frameForEnter(observed []*nmstore.Region, dec GateDecision, tr
 		RejectionHurdle: gate.rejection,
 		NetSpark:        netSpark,
 		NetHold:         netHold,
-		NetRejection:    (b[3] + b[4]) - b[5],
-		Exhaustion:      math.Max(b[8], b[9]),
-		ExitForce:       math.Max((b[3]+b[4])-b[5], math.Max(b[8], b[9])),
+		NetRejection:    netRejection,
+		Exhaustion:      exhaustion,
+		ExitForce:       math.Max(netRejection, exhaustion),
 		Risk:            risk,
 		CapacityRisk:    b[14],
 		TreeAction:      tree.Action.String(),
@@ -61,8 +62,10 @@ func (gate *Gate) frameForEnter(observed []*nmstore.Region, dec GateDecision, tr
 
 func (gate *Gate) frameForHold(observed []*nmstore.Region, tree Decision) gateFrame {
 	b := regionBrightness(observed)
-	netHold := (b[6] + b[7]) - b[8]
+	netSpark, netHold := entryNets(b)
 	risk := max(b[12], b[13], b[14])
+	netRejection := (b[3] + b[4] + b[11]) - b[5]
+	exhaustion := b[8]
 
 	return gateFrame{
 		Phase:           "hold",
@@ -70,11 +73,11 @@ func (gate *Gate) frameForHold(observed []*nmstore.Region, tree Decision) gateFr
 		IgnitionHurdle:  gate.ignition,
 		RiskTolerance:   gate.risk,
 		RejectionHurdle: gate.rejection,
-		NetSpark:        (b[0] + b[1]) - b[2],
+		NetSpark:        netSpark,
 		NetHold:         netHold,
-		NetRejection:    (b[3] + b[4]) - b[5],
-		Exhaustion:      math.Max(b[8], b[9]),
-		ExitForce:       math.Max((b[3]+b[4])-b[5], math.Max(b[8], b[9])),
+		NetRejection:    netRejection,
+		Exhaustion:      exhaustion,
+		ExitForce:       math.Max(netRejection, exhaustion),
 		Risk:            risk,
 		CapacityRisk:    b[14],
 		TreeAction:      tree.Action.String(),
@@ -86,8 +89,9 @@ func (gate *Gate) frameForHold(observed []*nmstore.Region, tree Decision) gateFr
 
 func (gate *Gate) frameForExit(observed []*nmstore.Region, dec GateDecision, tree Decision) gateFrame {
 	b := regionBrightness(observed)
-	netRejection := (b[3] + b[4]) - b[5]
-	exhaustion := math.Max(b[8], b[9])
+	netSpark, netHold := entryNets(b)
+	netRejection := (b[3] + b[4] + b[11]) - b[5]
+	exhaustion := b[8]
 	exitForce := math.Max(netRejection, exhaustion)
 	risk := max(b[12], b[13], b[14])
 
@@ -99,8 +103,8 @@ func (gate *Gate) frameForExit(observed []*nmstore.Region, dec GateDecision, tre
 		IgnitionHurdle:  gate.ignition,
 		RiskTolerance:   gate.risk,
 		RejectionHurdle: gate.rejection,
-		NetSpark:        (b[0] + b[1]) - b[2],
-		NetHold:         (b[6] + b[7]) - b[8],
+		NetSpark:        netSpark,
+		NetHold:         netHold,
 		NetRejection:    netRejection,
 		Exhaustion:      exhaustion,
 		ExitForce:       exitForce,

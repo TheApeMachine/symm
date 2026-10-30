@@ -29,7 +29,6 @@ export const PIPELINE_TOPOLOGY: Record<
 	liquidity: { group: "signal", stage: 1 },
 	morphology: { group: "signal", stage: 1 },
 	pumpdump: { group: "signal", stage: 1 },
-	sentiment: { group: "signal", stage: 1 },
 	toxicity: { group: "signal", stage: 1 },
 
 	manifold: { group: "logic", stage: 2 },

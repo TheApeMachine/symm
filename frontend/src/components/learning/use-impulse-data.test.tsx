@@ -7,12 +7,16 @@ import { useImpulseData } from "./use-impulse-data";
 
 const SYMBOL = "BTC/USD";
 
-const frame = (layers: Array<{ key: string; payload: unknown }>): Value =>
+const frame = (
+	layers: Array<{ key: string; payload: unknown }>,
+	tick = 1n,
+): Value =>
 	new Value({
 		origin: "workspace",
 		role: "tick",
 		scope: "aggregate",
 		prefix: "workspace/tick/aggregate",
+		tick,
 		index: layers.map((layer) => `workspace/tick/aggregate/${layer.key}`),
 		layers: layers.map((layer) =>
 			new TextEncoder().encode(JSON.stringify(layer.payload)),
@@ -187,5 +191,55 @@ describe("useImpulseData", () => {
 		expect(
 			pin(result.current.data, "hawkes:supercritical_cascade:R06")?.activation,
 		).toBeCloseTo(snm(1.2));
+	});
+
+	it("advances marketTick when the aggregate tick moves but held readings stay the same", () => {
+		const lit = frame(
+			[
+				{
+					key: "train/regions",
+					payload: [
+						{
+							symbol: SYMBOL,
+							key: 2,
+							brightness: 0.5,
+							counts: 2,
+							deformation: 0,
+						},
+					],
+				},
+			],
+			10n,
+		);
+
+		publish(lit);
+
+		const { result } = renderHook(() => useImpulseData(SYMBOL));
+
+		expect(result.current.regions[2]?.strength).toBe(0.5);
+		expect(result.current.marketTick).toBe(10);
+
+		publish(
+			frame(
+				[
+					{
+						key: "train/regions",
+						payload: [
+							{
+								symbol: SYMBOL,
+								key: 2,
+								brightness: 0.5,
+								counts: 2,
+								deformation: 0,
+							},
+						],
+					},
+				],
+				11n,
+			),
+		);
+
+		expect(result.current.regions[2]?.strength).toBe(0.5);
+		expect(result.current.marketTick).toBe(11);
 	});
 });
