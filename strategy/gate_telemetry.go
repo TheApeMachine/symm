@@ -15,9 +15,13 @@ type gateFrame struct {
 	Passed           bool    `json:"passed"`
 	Virtual          bool    `json:"virtual"`
 	Reason           string  `json:"reason,omitempty"`
-	IgnitionHurdle   float64 `json:"ignitionHurdle"`
-	RiskTolerance    float64 `json:"riskTolerance"`
-	RejectionHurdle  float64 `json:"rejectionHurdle"`
+	IgnitionHurdle        float64 `json:"ignitionHurdle"`
+	RiskTolerance         float64 `json:"riskTolerance"`
+	RejectionHurdle       float64 `json:"rejectionHurdle"`
+	OppositionHurdle      float64 `json:"oppositionHurdle"`
+	RegimeIgnitionHurdle  float64 `json:"regimeIgnitionHurdle"`
+	RegimeFrictionHurdle  float64 `json:"regimeFrictionHurdle"`
+	MaturityHurdle        float64 `json:"maturityHurdle"`
 	NetSpark         float64 `json:"netSpark"`
 	NetHold          float64 `json:"netHold"`
 	NetRejection     float64 `json:"netRejection"`
@@ -38,26 +42,34 @@ func (gate *Gate) frameForEnter(observed []*nmstore.Region, dec GateDecision, tr
 	netRejection := (b[3] + b[4] + b[11]) - b[5]
 	exhaustion := b[8]
 
-	return gateFrame{
-		Phase:           "enter",
-		Passed:          dec.Allowed && !dec.Virtual,
-		Virtual:         dec.Virtual,
-		Reason:          dec.Reason,
-		IgnitionHurdle:  gate.ignition,
-		RiskTolerance:   gate.risk,
-		RejectionHurdle: gate.rejection,
-		NetSpark:        netSpark,
-		NetHold:         netHold,
-		NetRejection:    netRejection,
-		Exhaustion:      exhaustion,
-		ExitForce:       math.Max(netRejection, exhaustion),
-		Risk:            risk,
-		CapacityRisk:    b[14],
-		TreeAction:      tree.Action.String(),
-		TreeVirtual:     tree.Virtual,
-		TreeImpulse:     tree.Impulse,
-		TreeResistance:  tree.Resistance,
+	gate.mu.RLock()
+	frame := gateFrame{
+		Phase:                "enter",
+		Passed:               dec.Allowed && !dec.Virtual,
+		Virtual:              dec.Virtual,
+		Reason:               dec.Reason,
+		IgnitionHurdle:       gate.ignition,
+		RiskTolerance:        gate.risk,
+		RejectionHurdle:      gate.rejection,
+		OppositionHurdle:     gate.opposition,
+		RegimeIgnitionHurdle: gate.regimeIgnition,
+		RegimeFrictionHurdle: gate.regimeFriction,
+		MaturityHurdle:       gate.maturityMin,
+		NetSpark:             netSpark,
+		NetHold:              netHold,
+		NetRejection:         netRejection,
+		Exhaustion:           exhaustion,
+		ExitForce:            math.Max(netRejection, exhaustion),
+		Risk:                 risk,
+		CapacityRisk:         b[14],
+		TreeAction:           tree.Action.String(),
+		TreeVirtual:          tree.Virtual,
+		TreeImpulse:          tree.Impulse,
+		TreeResistance:       tree.Resistance,
 	}
+	gate.mu.RUnlock()
+
+	return frame
 }
 
 func (gate *Gate) frameForHold(observed []*nmstore.Region, tree Decision) gateFrame {

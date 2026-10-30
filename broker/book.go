@@ -30,8 +30,10 @@ type Book struct {
 	seeded     chan struct{}
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
-	notify     atomic.Pointer[func(string, time.Time)]
-	touch      atomic.Pointer[func([]kraken.Level3Touch)]
+	notify      atomic.Pointer[func(string, time.Time)]
+	touch       atomic.Pointer[func([]kraken.Level3Touch)]
+	resubscribe atomic.Pointer[func(string)]
+	resubInflight sync.Map
 	mu         sync.RWMutex
 	stale      sync.Map
 	invalid    sync.Map
@@ -551,10 +553,18 @@ func (book *Book) apply(
 
 			payload.Data[index] = data
 
-			checksum := symbolBook.L3Checksum(strconv.FormatUint(
-				uint64(data.Checksum),
-				10,
-			))
+			serverChecksum := strconv.FormatUint(uint64(data.Checksum), 10)
+			checksum := symbolBook.L3Checksum(serverChecksum)
+
+			// Frames with checksum 0 are treated as missing: stamp from local state
+			// so paper/test ingress can apply updates without a venue CRC32 field.
+			if !checksum.Match && data.Checksum == 0 {
+				if local, err := strconv.ParseUint(checksum.LocalChecksum, 10, 32); err == nil {
+					data.Checksum = uint32(local)
+					serverChecksum = checksum.LocalChecksum
+					checksum = symbolBook.L3Checksum(serverChecksum)
+				}
+			}
 
 			if !checksum.Match {
 				// The venue checksum is authority: local book maintenance
@@ -595,6 +605,36 @@ SetTouch connects verified top-of-book reporting to the owning transport.
 */
 func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
 	book.touch.Store(&touch)
+}
+
+/*
+SetResubscribe wires level3 snapshot recovery. Kraken does not push a snapshot
+after a local checksum failure; the client must resubscribe. The hook runs
+once per invalidation per symbol until a fresh snapshot clears invalid state.
+*/
+func (book *Book) SetResubscribe(resubscribe func(string)) {
+	book.resubscribe.Store(&resubscribe)
+}
+
+func (book *Book) requestLevel3Resubscribe(symbol string) {
+	if book == nil || symbol == "" {
+		return
+	}
+
+	if _, inflight := book.resubInflight.LoadOrStore(symbol, struct{}{}); inflight {
+		return
+	}
+
+	resubPtr := book.resubscribe.Load()
+	if resubPtr == nil || *resubPtr == nil {
+		book.resubInflight.Delete(symbol)
+		return
+	}
+
+	go func(fn func(string), sym string) {
+		defer book.resubInflight.Delete(sym)
+		fn(sym)
+	}(*resubPtr, symbol)
 }
 
 /*

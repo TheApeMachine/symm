@@ -127,7 +127,7 @@ func TestGateNegativeEnterNetBlocks(t *testing.T) {
 		region(0, 0.2),
 		region(1, 0.2),
 		region(2, 0.9),
-	}, CoderReading{Bullish: true})
+	}, CoderReading{Ready: true, Bullish: true})
 
 	if decision.Allowed {
 		t.Fatalf("opposition-led enter net must block, got %+v", decision)
@@ -146,10 +146,12 @@ func TestGateContestedBreakoutNotCancelledByOpposition(t *testing.T) {
 		region(0, 0.9), // detector
 		region(1, 0.9), // support
 		region(2, 0.6), // opposition: bright wall
+		region(6, 0.9), // hold ignition regime
 		region(7, 0.9), // ignition clears the 0.1 floor
+		region(12, 0.1),
 	}
 
-	decision := gate.EvaluateEnter("BTC/USD", observed, CoderReading{Bullish: true})
+	decision := gate.EvaluateEnter("BTC/USD", observed, CoderReading{Ready: true, Bullish: true})
 
 	if !decision.Allowed {
 		t.Fatalf("contested breakout must be allowed, got %q", decision.Reason)
@@ -168,6 +170,7 @@ func TestGateRiskDominanceDemotesToVirtual(t *testing.T) {
 	gate := newTestGate(t)
 	gate.ignition = 0.1
 	gate.risk = 0.3 // tight risk tolerance
+	gate.regimeFriction = 5.0
 
 	observed := []*nmstore.Region{
 		region(0, 0.9),  // detector
@@ -178,7 +181,7 @@ func TestGateRiskDominanceDemotesToVirtual(t *testing.T) {
 		region(12, 2.5), // risk oracle dominates net spark
 	}
 
-	decision := gate.EvaluateEnter("BTC/USD", observed, CoderReading{Bullish: true})
+	decision := gate.EvaluateEnter("BTC/USD", observed, CoderReading{Ready: true, Bullish: true})
 
 	if !decision.Allowed {
 		t.Fatalf("risk dominance demotes to Virtual, never blocks; got blocked %q", decision.Reason)
@@ -189,16 +192,15 @@ func TestGateRiskDominanceDemotesToVirtual(t *testing.T) {
 }
 
 /*
-A non-bullish coder hard-rejects the entry regardless of how bright the grid is.
-This is the seam #20 cares about: the coder is the entry gate.
+A calibrated non-bullish coder must not earn paper; it may still virtual-explore.
 */
-func TestGateNonBullishCoderBlocks(t *testing.T) {
+func TestGateNonBullishCoderVirtualOnly(t *testing.T) {
 	gate := newTestGate(t)
 
 	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{region(0, 1), region(7, 1)}, CoderReading{Ready: true, Bullish: false})
 
-	if decision.Allowed {
-		t.Fatal("a calibrated non-bullish coder must block the entry")
+	if !decision.Allowed || !decision.Virtual {
+		t.Fatalf("a calibrated non-bullish coder must allow virtual only, got %+v", decision)
 	}
 }
 
@@ -209,6 +211,58 @@ func TestGateUncalibratedCoderVirtual(t *testing.T) {
 	decision := gate.EvaluateEnter("BTC/USD", []*nmstore.Region{region(0, 1), region(7, 1)}, CoderReading{})
 	if !decision.Allowed || !decision.Virtual {
 		t.Fatalf("an uncalibrated coder must allow virtual entry, got %+v", decision)
+	}
+}
+
+func TestGateUpdateRegimeHurdlesFromVirtualRoundTrip(t *testing.T) {
+	gate := newTestGate(t)
+	gate.opposition = 0.5
+	gate.maturityMin = 0.5
+	gate.regimeIgnition = 0.5
+	gate.regimeFriction = 0.5
+
+	gate.Update(GateResult{
+		ReturnFraction: -0.1,
+		Virtual:        true,
+		EnterR02:       0.6,
+		EnterNetHold:   0.1,
+		GridMaturity:   0.4,
+	})
+
+	gate.mu.RLock()
+	defer gate.mu.RUnlock()
+	if gate.opposition >= 0.5 {
+		t.Fatalf("loss at weak hold should lower opposition hurdle, got %v", gate.opposition)
+	}
+	if gate.maturityMin <= 0.5 {
+		t.Fatalf("virtual loss should raise maturity hurdle, got %v", gate.maturityMin)
+	}
+	if gate.regimeIgnition <= 0.5 {
+		t.Fatalf("virtual loss should raise regime ignition hurdle, got %v", gate.regimeIgnition)
+	}
+	if gate.regimeFriction >= 0.5 {
+		t.Fatalf("virtual loss should lower friction hurdle (tighter R12 gate), got %v", gate.regimeFriction)
+	}
+}
+
+func TestGateEnterOppositionIgnitionConflictBlocks(t *testing.T) {
+	gate := newTestGate(t)
+	gate.ignition = 1.0
+
+	observed := []*nmstore.Region{
+		region(0, 0.5),
+		region(1, 0.5),
+		region(9, 0.5),
+		region(2, 0.5),
+		region(6, 0.1),
+		region(7, 0.1),
+		region(8, 0.2),
+	}
+
+	decision := gate.EvaluateEnter("DCR/USD", observed, CoderReading{Ready: true, Bullish: true})
+
+	if decision.Allowed {
+		t.Fatalf("bright enter opposition with dead hold ignition must block, got %+v", decision)
 	}
 }
 

@@ -139,9 +139,30 @@ describe("position-health components", () => {
 		expect(markup).toContain("R00");
 		expect(markup).toContain("2.85 σ");
 		expect(markup).toContain("ACTIVE TRIGGER");
-		expect(markup).toContain("7 metrics");
+		expect(markup).toContain("7/2 reporting");
+		expect(markup).toContain("4/2 reporting");
 		expect(markup).toContain("1.42 σ");
 		expect(markup).toContain("PATH COMPONENT");
+	});
+
+	it("renders TradeRegionScores from lit regions when brightness metrics are missing", () => {
+		const frame = new Value({
+			scope: "ZAMA/USD",
+			origin: "training",
+			prefix: "training/step/ZAMA-USD",
+		});
+		frame.layers = [
+			new TextEncoder().encode(
+				JSON.stringify([{ key: 6, brightness: 1.8, counts: 3 }]),
+			),
+		];
+		frame.index = [`${frame.prefix}/lit`];
+		signals.training.setState(() => ({ "ZAMA/USD": frame }));
+
+		const markup = renderToStaticMarkup(<TradeRegionScores life={mockLife} />);
+		expect(markup).toContain("1.80 σ");
+		expect(markup).toContain("3/2 reporting");
+		expect(markup).toContain("ELEVATED");
 	});
 
 	it("renders PositionRegionMonitor with default Position & Region Radar tab", () => {

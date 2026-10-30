@@ -34,6 +34,8 @@ func NewModel(
 ) *Model {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
+	gate := NewGate(ctx, desk, price, client)
+
 	model := &Model{
 		System: runtime.NewSystem(ctx, "model"),
 		desk:   desk,
@@ -41,10 +43,10 @@ func NewModel(
 		stage:  stage,
 		store:  client,
 		tree:   &atomic.Pointer[Tree]{},
-		gate:   NewGate(ctx, desk, price, client),
+		gate:   gate,
 	}
 
-	tree := NewTree(ctx, "model/paths/")
+	tree := NewTree(ctx, "model/paths/", gate)
 	model.tree.Store(tree)
 
 	return model
@@ -91,9 +93,14 @@ func (model *Model) Evaluate(
 
 	if cut.String() == "" && !holding {
 		audit.Record.Write(map[string]any{
-			"model":   "evaluate",
-			"symbol":  symbol,
-			"outcome": "empty-cut",
+			"model":       "evaluate",
+			"symbol":      symbol,
+			"outcome":     "empty-cut",
+			"holding":     holding,
+			"stepToken":   step.Token.String(),
+			"spellLen":    len(step.Spell),
+			"stepSilence": string(step.Silence),
+			"regions":     litKeys(observed),
 		})
 		return out
 	}
@@ -138,6 +145,13 @@ func (model *Model) evaluateEnter(
 	tokens := tokensFromSpell(spell, cut)
 	decision := model.tree.Load().PredictDefault(tokens, coder, ActionEnter)
 	out.Append(decision.Action.String(), "action")
+	if decision.FuzzySimilarity > 0 {
+		out.Append(decision.FuzzySimilarity, "policyFuzzySimilarity")
+		out.Append(decision.PolicyKey, "policyFuzzyKey")
+	}
+	if decision.Promoted {
+		out.Append(true, "policyPromoted")
+	}
 
 	switch decision.Action {
 	case ActionEnter:
@@ -147,7 +161,10 @@ func (model *Model) evaluateEnter(
 		out.Append(model.gate.frameForEnter(observed, gateDec, decision), "gate")
 
 		if !gateDec.Allowed {
-			errnie.Warn("[model.evaluateEnter] gate blocked", "symbol", symbol, "reason", gateDec.Reason, "coder", coder)
+			writeEnterAudit(
+				model.gate, "gate-blocked", symbol, pathKey,
+				gateDec, decision, coder, observed, step, cut, false, nil,
+			)
 			out.Append(true, "blocked")
 			out.Append(gateDec.Reason, "blockedReason")
 			return out
@@ -155,19 +172,31 @@ func (model *Model) evaluateEnter(
 
 		isVirtual := decision.Virtual || gateDec.Virtual
 
+		if model.stage != nil && model.gate != nil {
+			if !isVirtual && coder.Ready && coder.Bullish {
+				if maturity := model.stage.SymbolMaturity(symbol); maturity < model.gate.gridMaturityMin() {
+					reason := "grid maturity below minimum (signals still warming up)"
+					writeEnterAudit(
+						model.gate, "gate-blocked", symbol, pathKey,
+						GateDecision{Allowed: false, Reason: reason},
+						decision, coder, observed, step, cut, false, nil,
+					)
+					out.Append(true, "blocked")
+					out.Append(reason, "blockedReason")
+					return out
+				}
+			}
+		}
+
 		if model.desk.Has(symbol, isVirtual) {
 			return out
 		}
 
 		if err := model.desk.Enter(symbol, pathKey, isVirtual, true); err != nil {
-			audit.Record.Write(map[string]any{
-				"model":   "enter",
-				"symbol":  symbol,
-				"virtual": isVirtual,
-				"path":    pathKey,
-				"outcome": "rejected",
-				"err":     err.Error(),
-			})
+			writeEnterAudit(
+				model.gate, "rejected", symbol, pathKey,
+				gateDec, decision, coder, observed, step, cut, isVirtual, err,
+			)
 			return out
 		}
 
@@ -176,17 +205,21 @@ func (model *Model) evaluateEnter(
 			outcome = "virtual enter submitted"
 		}
 		out.Append(outcome, "outcome")
-		audit.Record.Write(map[string]any{
-			"model":   "enter",
-			"symbol":  symbol,
-			"virtual": isVirtual,
-			"path":    pathKey,
-			"outcome": outcome,
-		})
+		writeEnterAudit(
+			model.gate, outcome, symbol, pathKey,
+			gateDec, decision, coder, observed, step, cut, isVirtual, nil,
+		)
 
 		if pos := model.desk.Position(symbol, isVirtual); pos != nil {
 			pos.OpenSurprise = coder.Surprise
 			pos.ExitPath = pathKey
+			b := regionBrightness(observed)
+			_, netHold := entryNets(b)
+			pos.EnterR02 = b[2]
+			pos.EnterNetHold = netHold
+			if model.stage != nil {
+				pos.EnterGridMaturity = model.stage.SymbolMaturity(symbol)
+			}
 		}
 
 		if model.stage != nil {
@@ -230,7 +263,9 @@ func (model *Model) evaluateHold(
 	for _, virtual := range []bool{false, true} {
 		if pos := model.desk.Position(symbol, virtual); pos != nil {
 			pos.HoldPath = holdPath
-			pos.ExitPath = exitPath
+			if exitPath != "" {
+				pos.ExitPath = exitPath
+			}
 		}
 	}
 
@@ -253,6 +288,11 @@ func (model *Model) evaluateHold(
 				out.Append(model.gate.frameForExit(observed, gateDec, exitDecision), "gate")
 
 				if !gateDec.Allowed {
+					writeExitGateAudit(
+						model.gate, symbol, exitPath,
+						gateDec, exitDecision, coder, observed,
+						exitStep, exitCut, virtual, pos,
+					)
 					out.Append(true, "blocked")
 					out.Append(gateDec.Reason, "blockedReason")
 					continue
@@ -293,19 +333,27 @@ func (model *Model) completeExit(
 		returnFraction = position.PnLPct.Float64() / 100.0
 	}
 
+	virtual := position.Virtual
 	if position.EntryPath != "" {
-		model.tree.Load().UpdateResistance(position.EntryPath, ActionEnter, returnFraction)
+		model.tree.Load().UpdateResistance(position.EntryPath, ActionEnter, returnFraction, virtual)
 	}
 
 	if position.HoldPath != "" {
-		model.tree.Load().UpdateResistance(position.HoldPath, ActionHold, returnFraction)
+		model.tree.Load().UpdateResistance(position.HoldPath, ActionHold, returnFraction, virtual)
 	}
 
 	if position.ExitPath != "" && position.ExitPath != position.EntryPath {
-		model.tree.Load().UpdateResistance(position.ExitPath, ActionExit, returnFraction)
+		model.tree.Load().UpdateResistance(position.ExitPath, ActionExit, returnFraction, virtual)
 	}
 
-	result := GateResult{ReturnFraction: returnFraction}
+	result := GateResult{
+		ReturnFraction: returnFraction,
+		Virtual:        virtual,
+		EnterR02:       position.EnterR02,
+		EnterNetHold:   position.EnterNetHold,
+		GridMaturity:   position.EnterGridMaturity,
+		ExitTrigger:    position.ExitTrigger,
+	}
 	trigger := position.ExitTrigger
 	result.StoppedOut = trigger != "" && (strings.Contains(trigger, "invalidation") || strings.Contains(trigger, "evaporation") || strings.Contains(trigger, "expired") || strings.Contains(trigger, "expiry"))
 

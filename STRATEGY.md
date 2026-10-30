@@ -16,7 +16,7 @@ This is how live ticks become trades, paths, and learning updates.
    - `…/enter.bin` — open a lot (paper vs virtual from impulse vs resistance + gate).
    - `…/hold.bin` — reinforce staying in the hold sentence (trained on virtual settle).
    - `…/exit.bin` — cognitive profit exit (gate must allow; underwater exits are stop-owned).
-6. **`Gate`** learns three hurdles (`ignition`, `risk`, `rejection`) from virtual round trips; each step publishes a **`gate`** frame on `training/step/{symbol}`.
+6. **`Gate`** always learns enter/exit hurdles from virtual and paper round trips (ignition, risk, rejection, regime rails, fuzzy path match, salience, emergency exit, stop damage/evaporation, path prune book). Values persist in `model/parameters/gate.bin`; `learning.*` only sets tokenizer geometry and gate rail bounds. Each enter publishes a **`gate`** frame on `training/step/{symbol}`.
 7. **`broker.Desk`** applies MCTS **exit policy** at entry (`teachPolicy`); **`StopLoss`** runs invalidation, evaporation, trail, expiry on every mark.
 8. On **virtual or paper settle**, `completeExit` updates enter/hold/exit path resistance and gate hurdles.
 

@@ -428,6 +428,55 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 }
 
 /*
+ResubscribeLevel3 requests a fresh level3 snapshot for one symbol on the
+socket batch that already carries it. This is the recovery path when local
+book maintenance diverged from the venue checksum.
+*/
+func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
+	if instrument == nil || symbol == "" {
+		return nil
+	}
+
+	var resErr error
+
+	instrument.Level3.Range(func(key, value any) bool {
+		batchKey, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		if !slices.Contains(strings.Split(batchKey, "|"), symbol) {
+			return true
+		}
+
+		client, ok := value.(*network.WebsocketClient)
+		if !ok || client == nil {
+			resErr = errnie.Err(
+				errnie.Internal,
+				"[instrument] level3 client missing for "+symbol,
+				nil,
+			)
+			return false
+		}
+
+		errnie.Info("[instrument] level3 resubscribe after book invalidation for " + symbol)
+
+		if err := instrument.SubscribeLevel3(client.Write, []string{symbol}); err != nil {
+			resErr = errnie.Err(
+				errnie.IO,
+				"[instrument] level3 invalidation resubscribe failed for "+symbol,
+				err,
+			)
+			return false
+		}
+
+		return false
+	})
+
+	return resErr
+}
+
+/*
 SubscribeTrades opens the trade firehose on the public socket, the sole frame
 type the workspace pipeline consumes. It is the last startup phase: the
 workspace and every book it reads are already READY. A failed resubscribe after

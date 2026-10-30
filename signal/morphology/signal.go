@@ -27,8 +27,10 @@ type point struct {
 }
 
 type symbolState struct {
-	hasPrev  bool
-	prevBook []point
+	hasPrev           bool
+	prevBook          []point
+	askTop3Baseline   float64
+	lastAskVacuum     float64
 }
 
 type Signal struct {
@@ -44,6 +46,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		states: &sync.Map{},
 		keys: []string{
 			"book_shape_stable",
+			"ask_vacuum",
 		},
 	}
 
@@ -114,13 +117,14 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	}
 
 	stable := bookShapeStable(res)
+	askVacuum := signal.askVacuum(symbol, asks)
 
 	keys := []string{
 		signal.Name(),
 		symbol,
 	}
 
-	value.Append([]float64{stable}, append(keys, signal.keys...)...)
+	value.Append([]float64{stable, askVacuum}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{
 		"signal": signal.Name(),
@@ -135,6 +139,40 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 bookShapeStable is high when the normalized depth curve is barely morphing
 between snapshots — ladder shape holding steady under the move.
 */
+func (signal *Signal) askVacuum(symbol string, asks []float64) float64 {
+	if len(asks) < 8 {
+		return 0
+	}
+
+	top3 := 0.0
+	levels := (len(asks) - 2) / 2
+	for index := 0; index < levels && index < 3; index++ {
+		price := asks[2+index*2]
+		qty := asks[2+index*2+1]
+		top3 += price * qty
+	}
+
+	if top3 <= 0 {
+		return 0
+	}
+
+	untypedState, _ := signal.states.LoadOrStore(symbol, &symbolState{})
+	state := untypedState.(*symbolState)
+
+	if state.askTop3Baseline <= 0 {
+		state.askTop3Baseline = top3
+	} else {
+		state.askTop3Baseline = 0.94*state.askTop3Baseline + 0.06*top3
+	}
+
+	if state.askTop3Baseline <= 0 {
+		return 0
+	}
+
+	state.lastAskVacuum = math.Max(0, 1-top3/state.askTop3Baseline)
+	return state.lastAskVacuum
+}
+
 func bookShapeStable(res []float64) float64 {
 	if len(res) < 7 {
 		return 0

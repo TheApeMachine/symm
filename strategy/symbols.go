@@ -54,7 +54,12 @@ func SymbolsOnTick(value *data.Value) []string {
 }
 
 func isBookDependent(source string) bool {
-	return source == "liquidity" || source == "depthflow"
+	switch source {
+	case "liquidity", "depthflow", "cvd", "morphology", "toxicity", "pumpdump":
+		return true
+	default:
+		return false
+	}
 }
 
 /*

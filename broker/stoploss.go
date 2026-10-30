@@ -84,7 +84,7 @@ func (stoploss *StopLoss) State(position *Position) StopState {
 		if mark > 0 {
 			slipPct := ((mark - vwap) / mark) * 100.0
 			if friction > 0 {
-				state.Evaporation = slipPct / (2.0 * friction)
+				state.Evaporation = slipPct / (LearnedStops.EvaporationMult() * friction)
 			}
 		}
 	}
@@ -166,7 +166,7 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 		damageRatio = maxAdverseMove / cutTolerance
 	}
 
-	isDamaged := damageRatio >= 0.75 // Consumed 75% or more of its risk budget
+	isDamaged := damageRatio >= LearnedStops.DamageRatio()
 
 	// ------------------------------------------------------------------------
 	// 2. REAL PHYSICAL LIQUIDITY EVAPORATION
@@ -200,7 +200,7 @@ func (stoploss *StopLoss) Evaluate(position *Position) (trigger string, ok bool)
 			// True evaporation: slippage more than doubles the round-trip friction.
 			// A slippage that merely exceeds friction (e.g. 1.89% vs 1.88%) is
 			// the normal state of a thin alt book, not a book pull.
-			evaporationHurdle := friction * 2.0
+			evaporationHurdle := friction * LearnedStops.EvaporationMult()
 
 			if slippagePct > evaporationHurdle && currentPct < stoploss.peakPnLPct {
 				evaporated = true

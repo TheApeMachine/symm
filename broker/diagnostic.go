@@ -94,6 +94,7 @@ func (book *Book) invalidate(
 	))
 
 	book.invalid.Store(entry.Symbol, &invalidBook{diagnostic: diagnostic})
+	book.requestLevel3Resubscribe(entry.Symbol)
 
 	message := fmt.Sprintf(
 		"level3 %s for %s: %s (local checksum %s, server %s, frame %s); book invalid until a fresh snapshot; diagnostic %s",

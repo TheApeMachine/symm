@@ -7,25 +7,15 @@ import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
+import {
+	formatGateBadge,
+	formatTrieLine,
+	type GateForces,
+	gateBadgeClassName,
+} from "./gate-labels";
 import { REGION_KEYS, REGIONS, TradeRegionScores } from "./position-health";
 
-export type GateForces = {
-	phase?: string;
-	passed?: boolean;
-	virtual?: boolean;
-	reason?: string;
-	ignitionHurdle?: number;
-	riskTolerance?: number;
-	rejectionHurdle?: number;
-	netSpark?: number;
-	netHold?: number;
-	netRejection?: number;
-	exitForce?: number;
-	risk?: number;
-	treeAction?: string;
-	treeImpulse?: number;
-	treeResistance?: number;
-};
+export type { GateForces };
 
 const EMPTY_GATE: GateForces = {
 	phase: "hold",
@@ -113,10 +103,19 @@ export const PositionLiveIntel = ({
 
 	const gate = readGate(trainingFrame ?? null);
 	const gateLive = Boolean(trainingFrame?.reading("gate"));
+	const enterBlocked = Boolean(trainingFrame?.reading("blocked"));
 	const blockedReason =
 		(trainingFrame?.reading("blockedReason") as string | undefined) ??
 		undefined;
 	const phase = gate.phase ?? "hold";
+	const positionBook = life.book === "virtual" ? "virtual" : "paper";
+	const gateBadge = formatGateBadge({
+		gateLive,
+		phase,
+		gate,
+		blocked: enterBlocked,
+		positionBook,
+	});
 	const exitArm =
 		gate.treeAction === "exit" &&
 		(gate.treeImpulse ?? 0) >= (gate.treeResistance ?? 0);
@@ -175,27 +174,16 @@ export const PositionLiveIntel = ({
 							className="text-[10px] uppercase tracking-wider text-(--f4)"
 						>
 							<span>Gate · {gateLive ? phase : "waiting"}</span>
-							<span
-								className={
-									!gateLive
-										? "text-(--f4)"
-										: gate.passed
-											? "text-(--up)"
-											: "text-(--warn)"
-								}
-							>
-								{!gateLive
-									? "…"
-									: gate.virtual
-										? "virtual"
-										: gate.passed
-											? "paper ok"
-											: "blocked"}
+							<span className={gateBadgeClassName(gateBadge.tone)}>
+								{gateBadge.label}
 							</span>
 						</Flex.Row>
+						<p className="text-[9px] leading-snug text-(--f4)">
+							{gateBadge.hint}
+						</p>
 						<p
 							className={cn(
-								"min-h-[2.5rem] text-[10px] leading-snug",
+								"min-h-8 text-[10px] leading-snug",
 								gate.reason || blockedReason
 									? gate.reason
 										? "text-(--f3)"
@@ -220,7 +208,7 @@ export const PositionLiveIntel = ({
 							},
 						)}
 						{forceBar("risk oracle", gate.risk)}
-						<p className="min-h-[2.75rem] text-[9px] leading-snug text-(--f4)">
+						<p className="min-h-11 text-[9px] leading-snug text-(--f4)">
 							Exit band pressure is R03–R08 on this tick. A cognitive exit still
 							needs the exit trie (impulse ≥ resistance), close-now profit, and
 							the gate hurdle.
@@ -229,9 +217,7 @@ export const PositionLiveIntel = ({
 								: " Exit trie is still hold/noop."}
 						</p>
 						<p className="text-[10px] text-(--f2)">
-							trie {gate.treeAction ?? "—"} · impulse{" "}
-							{(gate.treeImpulse ?? 0).toFixed(2)} vs resistance{" "}
-							{(gate.treeResistance ?? 1).toFixed(2)}
+							{formatTrieLine(gate, phase)}
 						</p>
 					</Flex.Column>
 

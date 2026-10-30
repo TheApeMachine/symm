@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/nomagique/data"
@@ -44,10 +45,13 @@ func (action Action) String() string {
 Decision carries the predicted action and whether it earned Paper or Virtual.
 */
 type Decision struct {
-	Action     Action  // ActionEnter, ActionExit, ActionNone
-	Virtual    bool    // false = Paper, true = Virtual
-	Impulse    float64 // Live force: Brightness * (1 + Coder Confidence)
-	Resistance float64 // exp of the path book: the force the live impulse must clear
+	Action          Action  // ActionEnter, ActionExit, ActionNone
+	Virtual         bool    // false = Paper, true = Virtual
+	Impulse         float64 // Live force: Brightness * (1 + Coder Confidence)
+	Resistance      float64 // exp of the path book: the force the live impulse must clear
+	FuzzySimilarity float64 // >0 when policy matched approximately
+	PolicyKey       string  // stored trie key when fuzzy matched
+	Promoted        bool    // virtual wins earned paper from the tree
 }
 
 /*
@@ -64,10 +68,11 @@ the recency weights that fold into the mean, so the book survives restart
 without carrying a running product.
 */
 type pathValue struct {
-	Threshold float64 `json:"threshold"`
-	Action    string  `json:"action"`
-	Deltas    float64 `json:"res_deltas"`
-	Weights   float64 `json:"res_weights"`
+	Threshold   float64 `json:"threshold"`
+	Action      string  `json:"action"`
+	Deltas      float64 `json:"res_deltas"`
+	Weights     float64 `json:"res_weights"`
+	VirtualWins int     `json:"virtual_wins"`
 }
 
 /*
@@ -88,36 +93,33 @@ Tree is a radix tree of path keys and their associated data values.
 type Tree struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	mu     sync.RWMutex
 	root   *iradix.Tree[*pathValue]
 	store  *store.Client
+	gate   *Gate
 
-	pruneThreshold float64 // retire paths whose book crosses this (a realized loss)
-	maxObjects     int     // bound the resident path count
+	maxObjects int // bound the resident path count
 }
 
 /*
 NewTree creates a new tree with the given context and seed prefix and restores
 it from S3 in a bounded group.
 */
-func NewTree(ctx context.Context, seedPrefix string) *Tree {
+func NewTree(ctx context.Context, seedPrefix string, gate *Gate) *Tree {
 	ctx, cancel := context.WithCancel(ctx)
 
-	prune := 0.80
 	maxObjects := 0
 	if cfg := system.Cfg.Learning; cfg != nil {
-		if cfg.PathPruneResistance > 0 {
-			prune = cfg.PathPruneResistance
-		}
 		maxObjects = cfg.MaxPathObjects
 	}
 
 	tree := &Tree{
-		ctx:            ctx,
-		cancel:         cancel,
-		root:           iradix.New[*pathValue](),
-		store:          store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		pruneThreshold: prune,
-		maxObjects:     maxObjects,
+		ctx:        ctx,
+		cancel:     cancel,
+		root:       iradix.New[*pathValue](),
+		store:      store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		gate:       gate,
+		maxObjects: maxObjects,
 	}
 
 	var keys []string
@@ -157,11 +159,13 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 	group.Wait()
 	close(results)
 
+	tree.mu.Lock()
 	for r := range results {
 		if r.value != nil {
 			tree.root, _, _ = tree.root.Insert(r.key, r.value)
 		}
 	}
+	tree.mu.Unlock()
 
 	return tree
 }
@@ -187,14 +191,38 @@ func (tree *Tree) PredictDefault(
 		return Decision{Action: defaultAction, Virtual: true, Resistance: 1.0}
 	}
 
+	if tree.gate != nil {
+		if tokens[len(tokens)-1].Brightness < tree.gate.minTokenBrightness() {
+			return Decision{
+				Action:     defaultAction,
+				Virtual:    true,
+				Impulse:    0,
+				Resistance: 1.0,
+			}
+		}
+		totalBright := tokens.Brightness()
+		if totalBright > 0 && tree.gate.salienceMin() > 0 {
+			share := tokens[len(tokens)-1].Brightness / totalBright
+			if share < tree.gate.salienceMin() {
+				return Decision{
+					Action:     defaultAction,
+					Virtual:    true,
+					Impulse:    0,
+					Resistance: 1.0,
+				}
+			}
+		}
+	}
+
 	prefix := tokens.String()
 	action := ActionNone
-	// A geometric (recency-weighted) mean of the matching paths' resistances.
-	// Summing the log of each path's resistance gives the geometric mean, so a
-	// single frequent prefix cannot dominate the sum.
 	totalLog := 0.0
 	matchCount := 0
+	maxVirtualWins := 0
+	fuzzySim := 0.0
+	fuzzyKey := ""
 
+	tree.mu.RLock()
 	tree.root.Root().WalkPrefix([]byte(prefix), func(key []byte, value *pathValue) bool {
 		if value == nil {
 			return false
@@ -211,9 +239,45 @@ func (tree *Tree) PredictDefault(
 
 		totalLog += math.Log(pathResistance(value))
 		matchCount++
+		if value.VirtualWins > maxVirtualWins {
+			maxVirtualWins = value.VirtualWins
+		}
 
 		return false
 	})
+
+	if matchCount == 0 || action == ActionNone {
+		minSim := 0.75
+		if tree.gate != nil {
+			minSim = tree.gate.fuzzyMatchMin()
+		}
+		bestSim := 0.0
+		var bestKey []byte
+		var bestValue *pathValue
+
+		tree.root.Root().Walk(func(key []byte, value *pathValue) bool {
+			if value == nil || NewAction(value.Action) != defaultAction {
+				return false
+			}
+			sim := pathSimilarity(prefix, string(key))
+			if sim >= minSim && sim > bestSim {
+				bestSim = sim
+				bestKey = key
+				bestValue = value
+			}
+			return false
+		})
+
+		if bestValue != nil && bestSim > 0 {
+			fuzzySim = bestSim
+			fuzzyKey = string(bestKey)
+			action = defaultAction
+			totalLog = math.Log(pathResistance(bestValue))
+			matchCount = 1
+			maxVirtualWins = bestValue.VirtualWins
+		}
+	}
+	tree.mu.RUnlock()
 
 	if matchCount == 0 || action == ActionNone {
 		return Decision{
@@ -238,13 +302,20 @@ func (tree *Tree) PredictDefault(
 		impulse = brightness
 	}
 
+	promoted := maxVirtualWins >= virtualPromoteWins
 	isVirtual := impulse < resistance
+	if promoted {
+		isVirtual = false
+	}
 
 	return Decision{
-		Action:     action,
-		Virtual:    isVirtual,
-		Impulse:    impulse,
-		Resistance: resistance,
+		Action:          action,
+		Virtual:         isVirtual,
+		Impulse:         impulse,
+		Resistance:      resistance,
+		FuzzySimilarity: fuzzySim,
+		PolicyKey:       fuzzyKey,
+		Promoted:        promoted,
 	}
 }
 
@@ -253,7 +324,7 @@ UpdateResistance folds one settled round trip into every path that co-signed
 the action, then prunes any path whose book crosses the prune threshold and
 bounds the resident path count.
 */
-func (tree *Tree) UpdateResistance(pathKey string, action Action, returnFraction float64) {
+func (tree *Tree) UpdateResistance(pathKey string, action Action, returnFraction float64, virtual bool) {
 	prefix := []byte(pathKey)
 	actionStr := action.String()
 
@@ -264,6 +335,9 @@ func (tree *Tree) UpdateResistance(pathKey string, action Action, returnFraction
 
 	var updated []changed
 
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+
 	tree.root.Root().WalkPrefix(prefix, func(key []byte, value *pathValue) bool {
 		if value == nil {
 			return false
@@ -273,7 +347,15 @@ func (tree *Tree) UpdateResistance(pathKey string, action Action, returnFraction
 			return false
 		}
 
-		updated = append(updated, changed{key: key, value: foldOutcome(value, actionStr, returnFraction)})
+		next := foldOutcome(value, actionStr, returnFraction)
+		if virtual {
+			if returnFraction > 0 {
+				next.VirtualWins = value.VirtualWins + 1
+			} else {
+				next.VirtualWins = 0
+			}
+		}
+		updated = append(updated, changed{key: key, value: next})
 		return false
 	})
 
@@ -284,6 +366,9 @@ func (tree *Tree) UpdateResistance(pathKey string, action Action, returnFraction
 			Action:    actionStr,
 			Deltas:    -returnFraction,
 			Weights:   1.0,
+		}
+		if virtual && returnFraction > 0 {
+			next.VirtualWins = 1
 		}
 		tree.root, _, _ = tree.root.Insert(key, next)
 		tree.persist(key, next)
@@ -339,7 +424,14 @@ func (tree *Tree) prune() {
 		return
 	}
 
-	if tree.maxObjects <= 0 && tree.pruneThreshold <= 0 {
+	// Caller holds tree.mu.
+
+	pruneThreshold := 0.80
+	if tree.gate != nil {
+		pruneThreshold = tree.gate.pathPruneThreshold()
+	}
+
+	if tree.maxObjects <= 0 && pruneThreshold <= 0 {
 		return
 	}
 
@@ -358,7 +450,7 @@ func (tree *Tree) prune() {
 	})
 
 	for _, p := range all {
-		if tree.pruneThreshold > 0 && p.value.Threshold > tree.pruneThreshold {
+		if pruneThreshold > 0 && p.value.Threshold > pruneThreshold {
 			tree.root, _, _ = tree.root.Delete(p.key)
 			if tree.store != nil {
 				_ = tree.store.DeletePrefix("model/paths/" + string(p.key))
@@ -398,10 +490,12 @@ func (tree *Tree) Has(pathKey string) bool {
 
 	found := false
 
+	tree.mu.RLock()
 	tree.root.Root().WalkPrefix([]byte(pathKey), func(key []byte, value *pathValue) bool {
 		found = true
 		return true
 	})
+	tree.mu.RUnlock()
 
 	return found
 }
@@ -418,6 +512,7 @@ func (tree *Tree) Catalog() ([]string, map[string]float64) {
 	keys := make([]string, 0)
 	thresholds := make(map[string]float64)
 
+	tree.mu.RLock()
 	tree.root.Root().Walk(func(key []byte, value *pathValue) bool {
 		k := string(key)
 		keys = append(keys, k)
@@ -428,6 +523,7 @@ func (tree *Tree) Catalog() ([]string, map[string]float64) {
 
 		return false
 	})
+	tree.mu.RUnlock()
 
 	slices.Sort(keys)
 	return keys, thresholds
@@ -445,6 +541,7 @@ func encodePathValue(value *pathValue) *data.Value {
 	out.Set(value.Threshold, "threshold")
 	out.Set(value.Deltas, "res_deltas")
 	out.Set(value.Weights, "res_weights")
+	out.Set(float64(value.VirtualWins), "virtual_wins")
 	return out
 }
 
@@ -458,10 +555,11 @@ func decodePathValue(value *data.Value) *pathValue {
 	}
 
 	out := &pathValue{
-		Action:    value.GetString("action"),
-		Deltas:    value.GetFloat64("res_deltas"),
-		Weights:   value.GetFloat64("res_weights"),
-		Threshold: value.GetFloat64("threshold"),
+		Action:      value.GetString("action"),
+		Deltas:      value.GetFloat64("res_deltas"),
+		Weights:     value.GetFloat64("res_weights"),
+		Threshold:   value.GetFloat64("threshold"),
+		VirtualWins: int(value.GetFloat64("virtual_wins")),
 	}
 
 	if out.Threshold <= 0 && out.Weights > 0 {

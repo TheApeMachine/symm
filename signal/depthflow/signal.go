@@ -23,6 +23,11 @@ type symbolState struct {
 	prevAskWorst    float64
 	hasPrev         bool
 	lastBidRelease  float64
+	hasPrevAsk      bool
+	prevBestAsk     float64
+	prevBestAskQty  float64
+	buyVolAtAsk     float64
+	lastAbsorption  float64
 }
 
 type Signal struct {
@@ -40,6 +45,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 			"bid_ladder_build",
 			"bid_ladder_release",
 			"ask_ladder_release",
+			"ask_absorption",
 		},
 	}
 
@@ -61,6 +67,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.step(value, symbol)
 	}); err != nil {
 		signal.Error(err)
+	}
+
+	for _, trade := range trades {
+		signal.ingestTrade(trade)
 	}
 
 	signal.appendBoardBidRelease(value)
@@ -161,10 +171,23 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			askRelease = 0
 		}
 
+		bestAsk := asks[0][0]
+		bestAskQty := asks[0][1]
+		if state.hasPrevAsk && bestAsk != state.prevBestAsk && state.prevBestAskQty > 0 {
+			state.lastAbsorption = state.buyVolAtAsk / state.prevBestAskQty
+			state.buyVolAtAsk = 0
+		} else if state.hasPrevAsk && bestAsk == state.prevBestAsk && state.prevBestAskQty > 0 {
+			state.lastAbsorption = state.buyVolAtAsk / state.prevBestAskQty
+		}
+		state.prevBestAsk = bestAsk
+		state.prevBestAskQty = bestAskQty
+		state.hasPrevAsk = true
+
 		value.Append([]float64{
 			build,
 			release,
 			askRelease,
+			state.lastAbsorption,
 		}, append(keys, signal.keys...)...)
 
 		audit.Record.Write(map[string]any{
@@ -177,6 +200,29 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 	})
 
 	return value
+}
+
+func (signal *Signal) ingestTrade(trade kraken.TradeData) {
+	if signal.Status() != runtime.READY || trade.Side != "buy" || trade.Price.Float64() <= 0 {
+		return
+	}
+
+	untypedState, ok := signal.states.Load(trade.Symbol)
+	if !ok {
+		return
+	}
+
+	state := untypedState.(*symbolState)
+	if !state.hasPrevAsk {
+		return
+	}
+
+	price := trade.Price.Float64()
+	if price < state.prevBestAsk {
+		return
+	}
+
+	state.buyVolAtAsk += trade.Qty * price
 }
 
 func (signal *Signal) appendBoardBidRelease(value *data.Value) {

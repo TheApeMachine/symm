@@ -9,6 +9,10 @@ import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
+import {
+	regionMapsFromTrainingFrame,
+	regionPinLabel,
+} from "./training-regions";
 
 export interface RegionMeta {
 	id: string;
@@ -884,8 +888,8 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const activeSymbol = life?.symbol ?? "BTC/USD";
 	const latestValue = useTrainingFrame(activeSymbol);
 
-	const metricMap = useMemo(
-		() => (latestValue ? latestValue.metrics() : {}),
+	const regionMaps = useMemo(
+		() => regionMapsFromTrainingFrame(latestValue),
 		[latestValue],
 	);
 
@@ -913,13 +917,13 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 	const maxBrightness = useMemo(() => {
 		let maxVal = 0.001;
 		for (const key of REGION_KEYS) {
-			const val = metricMap[`region_brightness:${key}`];
+			const val = regionMaps.brightness[key];
 			if (val !== undefined && val > maxVal) {
 				maxVal = val;
 			}
 		}
 		return maxVal;
-	}, [metricMap]);
+	}, [regionMaps.brightness]);
 
 	// Stable R00-R14 order: never sort dynamically to prevent jumping rows during live streaming
 	const regionScores = useMemo(() => {
@@ -930,8 +934,8 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 			const isLivePath = liveTokens.includes(key);
 			const isExitCandidate = key === "R03" || key === "R04" || key === "R05";
 
-			const rawBrightness = metricMap[`region_brightness:${key}`];
-			const members = Math.round(metricMap[`region_members:${key}`] ?? 0);
+			const rawBrightness = regionMaps.brightness[key];
+			const pinLabel = regionPinLabel(key, regionMaps);
 
 			let percent = 0;
 			let statusLabel = "Quiescent";
@@ -964,8 +968,11 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 				} else if (rawBrightness >= 1.5) {
 					statusLabel = "ELEVATED";
 					variant = "brand";
-				} else if (members > 0) {
+				} else if (rawBrightness > 0) {
 					statusLabel = "Active";
+					variant = "disabled";
+				} else {
+					statusLabel = "Quiescent";
 					variant = "disabled";
 				}
 			} else {
@@ -977,7 +984,7 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 				key,
 				meta,
 				rawBrightness,
-				members,
+				pinLabel,
 				percent,
 				statusLabel,
 				variant,
@@ -986,7 +993,7 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 				isExitCandidate,
 			};
 		});
-	}, [activeToken, entryTokens, liveTokens, maxBrightness, metricMap]);
+	}, [activeToken, entryTokens, liveTokens, maxBrightness, regionMaps]);
 
 	return (
 		<Section
@@ -1057,9 +1064,7 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 						>
 							<span className="truncate max-w-[70%]">{r.meta.description}</span>
 							<span className="shrink-0 font-mono text-(--f3)">
-								{r.rawBrightness !== undefined
-									? `${r.members} metrics`
-									: "no signal"}
+								{r.pinLabel}
 							</span>
 						</Flex.Row>
 					</div>

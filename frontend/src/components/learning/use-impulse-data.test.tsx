@@ -63,12 +63,15 @@ describe("useImpulseData", () => {
 		).toBeCloseTo(snm(0.8));
 
 		publish(
-			frame([
-				{
-					key: "pumpdump/BTC/USD/blowoff_dip",
-					payload: [0.4],
-				},
-			]),
+			frame(
+				[
+					{
+						key: "pumpdump/BTC/USD/blowoff_dip",
+						payload: [0.4],
+					},
+				],
+				2n,
+			),
 		);
 
 		expect(
@@ -159,6 +162,10 @@ describe("useImpulseData", () => {
 				{
 					key: "correlation/aggregate/structural_alignment",
 					payload: [0.8],
+				},
+				{
+					key: "hawkes/aggregate/board_cascade",
+					payload: [0.7],
 				},
 			]),
 		);

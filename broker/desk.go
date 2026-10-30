@@ -450,8 +450,6 @@ whose book mark actually moved are also updated so exits see a live mark.
 Unchanged, non-traded lots are skipped to prevent false momentum stalls.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
-	errnie.Debug("[desk] Update", "trades", trades)
-
 	if len(trades) == 0 {
 		return
 	}
@@ -1063,6 +1061,21 @@ func (desk *Desk) Enter(
 	if err := position.Enter(path, qty); err != nil {
 		cache.Drop(position.Symbol)
 		return err
+	}
+
+	if desk.price != nil {
+		if closeNow, ok := desk.price.EntryCloseNowPnLPct(symbol); ok && closeNow != nil {
+			if budget, ok := desk.price.OpenDragBudgetPct(symbol); ok && budget != nil {
+				if closeNow.Float64() < -budget.Float64() {
+					cache.Drop(position.Symbol)
+					return errnie.Err(
+						errnie.Validation,
+						"[desk.Enter] entry close-now drag exceeds budget for "+symbol,
+						nil,
+					)
+				}
+			}
+		}
 	}
 
 	if err := desk.history.ReplaceOpen(data.NewValue(

@@ -17,21 +17,32 @@ import (
 )
 
 const (
-	maxCorrSamples  = 64
-	minBoardSamples = 3
-	maxBoardSymbols = 32
-	maxBoardPairs   = 256
-	maxInterval     = 0
+	maxCorrSamples     = 64
+	minBoardSamples    = 3
+	maxBoardSymbols    = 32
+	maxBoardPairs      = 256
+	maxInterval        = 0
+	boardAlignInterval = time.Second
 )
 
 type path struct {
 	samples []nmcorrelation.Sample
 }
 
+type boardCache struct {
+	score   float64
+	ok      bool
+	at      time.Time
+	squeeze float64
+	squeezeOK bool
+}
+
 type Signal struct {
 	*runtime.System
-	paths *sync.Map
-	keys  []string
+	paths       *sync.Map
+	boardMu     sync.RWMutex
+	boardCached boardCache
+	keys        []string
 }
 
 func NewSignal(ctx context.Context) *Signal {
@@ -58,9 +69,13 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	var trades []kraken.TradeData
 	value.Lookup(&trades, "spot:trade")
 
+	keep := make(map[string]struct{}, len(trades))
+
 	for _, trade := range parent.LastTradePerSymbol(trades) {
 		signal.ingest(trade, value)
-		score, ok := signal.boardAlignment()
+		keep[trade.Symbol] = struct{}{}
+
+		score, ok := signal.boardAlignmentCached()
 
 		if ok {
 			value.Append([]float64{score}, append([]string{
@@ -77,6 +92,13 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 				signal.Name(),
 				"aggregate",
 			}, "structure_uncoupling")...)
+
+			if squeeze, squeezeOK := signal.boardDispersionSqueezeCached(); squeezeOK {
+				value.Append([]float64{squeeze}, append([]string{
+					signal.Name(),
+					"aggregate",
+				}, "board_dispersion_squeeze")...)
+			}
 		}
 
 		audit.Record.Write(map[string]any{
@@ -87,6 +109,12 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 			"eligible": len(signal.eligibleSymbols()),
 		})
 	}
+
+	for _, sym := range signal.eligibleSymbols() {
+		keep[sym] = struct{}{}
+	}
+
+	parent.PruneSyncMap(signal.paths, keep)
 
 	return value
 }
@@ -103,6 +131,79 @@ func (signal *Signal) ingest(trade kraken.TradeData, value *data.Value) {
 	untyped, _ := signal.paths.LoadOrStore(symbol, &path{})
 	focal := untyped.(*path)
 	focal.append(at, price)
+}
+
+func (signal *Signal) boardAlignmentCached() (float64, bool) {
+	signal.boardMu.RLock()
+	cached := signal.boardCached
+	signal.boardMu.RUnlock()
+
+	if cached.ok && time.Since(cached.at) < boardAlignInterval {
+		return cached.score, true
+	}
+
+	score, ok := signal.boardAlignment()
+	squeeze, squeezeOK := signal.boardDispersionSqueeze()
+
+	signal.boardMu.Lock()
+	signal.boardCached = boardCache{
+		score:     score,
+		ok:        ok,
+		at:        time.Now(),
+		squeeze:   squeeze,
+		squeezeOK: squeezeOK,
+	}
+	signal.boardMu.Unlock()
+
+	return score, ok
+}
+
+func (signal *Signal) boardDispersionSqueezeCached() (float64, bool) {
+	signal.boardMu.RLock()
+	cached := signal.boardCached
+	signal.boardMu.RUnlock()
+
+	if cached.squeezeOK && time.Since(cached.at) < boardAlignInterval {
+		return cached.squeeze, true
+	}
+
+	return signal.boardDispersionSqueeze()
+}
+
+func (signal *Signal) boardDispersionSqueeze() (float64, bool) {
+	eligible := signal.eligibleSymbols()
+	if len(eligible) < 4 {
+		return 0, false
+	}
+
+	returns := make([]float64, 0, len(eligible))
+	for _, symbol := range eligible {
+		path := signal.pathFor(symbol)
+		if path == nil || len(path.samples) < 2 {
+			continue
+		}
+		last := path.samples[len(path.samples)-1]
+		prev := path.samples[len(path.samples)-2]
+		if prev.Value <= 0 || last.Value <= 0 {
+			continue
+		}
+		returns = append(returns, math.Log(last.Value/prev.Value))
+	}
+
+	if len(returns) < 4 {
+		return 0, false
+	}
+
+	sorted := append([]float64(nil), returns...)
+	slices.Sort(sorted)
+	q1 := sorted[len(sorted)/4]
+	q3 := sorted[(3*len(sorted))/4]
+	iqr := q3 - q1
+	if iqr < 0 {
+		iqr = -iqr
+	}
+
+	return 1 / (1 + iqr), true
 }
 
 /*

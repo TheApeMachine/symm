@@ -278,6 +278,17 @@ export const positionReadout = (
 	};
 };
 
+/** Close-now return in display percent — shared by position Trail and open-choices chart. */
+export const closeNowReturnPct = (
+	row: Record<string, unknown>,
+): number | null => {
+	const readout = positionReadout(row);
+	return (
+		readout.returnPctDisplay ??
+		(readout.returnPct === null ? null : readout.returnPct * 100)
+	);
+};
+
 /*
 A paper lot leaves virtual off the wire. Only an explicit true is a virtual lot.
 */

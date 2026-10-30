@@ -2,6 +2,7 @@ package cvd
 
 import (
 	"context"
+	"math"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -20,9 +21,13 @@ type window struct {
 }
 
 type symbolState struct {
-	clock        volumeclock.Clock
-	window       window
-	prevMidpoint float64
+	clock           volumeclock.Clock
+	window          window
+	prevMidpoint    float64
+	cumulativeCVD   float64
+	peakMid         float64
+	peakCVD         float64
+	lastDivergence  float64
 }
 
 type Signal struct {
@@ -38,6 +43,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		states: &sync.Map{},
 		keys: []string{
 			"aggressor_backing",
+			"cvd_divergence",
 		},
 	}
 
@@ -85,6 +91,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	var (
 		signedFraction float64
+		cvdDivergence  float64
 		appendMetrics  bool
 	)
 
@@ -124,6 +131,28 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 				signedFraction = netNotional / grossNotional
 			}
 
+			barMid := tick.Bar.AtMid
+			if barMid <= 0 {
+				barMid = midpoint
+			}
+
+			state.cumulativeCVD += netNotional
+			cvdDivergence = state.lastDivergence
+
+			if barMid > state.peakMid {
+				priceScale := math.Max(math.Abs(state.peakMid), 1e-12)
+				cvdScale := math.Max(math.Abs(state.peakCVD), 1e-12)
+				priceLeg := (barMid - state.peakMid) / priceScale
+				cvdLeg := (state.cumulativeCVD - state.peakCVD) / cvdScale
+				if priceLeg > 0 && priceLeg > cvdLeg {
+					state.lastDivergence = priceLeg - cvdLeg
+					cvdDivergence = state.lastDivergence
+				}
+
+				state.peakMid = barMid
+				state.peakCVD = state.cumulativeCVD
+			}
+
 			appendMetrics = true
 		}
 
@@ -141,6 +170,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	value.Append([]float64{
 		signedFraction,
+		cvdDivergence,
 	}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{

@@ -21,6 +21,12 @@ const midReturnDeadband = 5e-4
 // peakReturnFloor is the minimum recent up-bar needed before a dip counts as blowoff.
 const peakReturnFloor = 5 * midReturnDeadband
 
+// starvedRegimeNeff is the EMA window for chronic thin-tape posture on starved_tape.
+const starvedRegimeNeff = 64.0
+
+// minCompletedVolumeBars before starved_tape publishes non-zero opposition evidence.
+const minCompletedVolumeBars = 1.0
+
 type causalEstimator struct {
 	count float64
 	mean  float64
@@ -50,9 +56,12 @@ type symbolState struct {
 	barDurationEstimator  causalEstimator
 	recentPeakPos         float64
 	lastStarved           float64
+	starvedRegime         float64
 	lastCoiled            float64
 	lastRejection         float64
 	lastBlowoff           float64
+	prevBarDuration       float64
+	lastClockAcceleration float64
 }
 
 type Signal struct {
@@ -71,6 +80,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 			"rejection_tick",
 			"starved_tape",
 			"blowoff_dip",
+			"clock_acceleration",
 		},
 	}
 
@@ -119,6 +129,14 @@ func (signal *Signal) appendBoardCoiled(value *data.Value) {
 	}, "board_coiled")...)
 }
 
+func publishedStarved(state *symbolState, instant float64) float64 {
+	starved := math.Max(instant, state.starvedRegime)
+	if state.clock.CompletedBars < minCompletedVolumeBars {
+		return 0
+	}
+	return starved
+}
+
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
 	if signal.Status() != runtime.READY {
 		return value
@@ -159,7 +177,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	tick := state.clock.Step(price, qty, atNanos, midpoint)
 	bar, closed := tick.Bar, tick.Closed
 
-	var coiled, rejection, starved, blowoffDip float64
+	var coiled, rejection, starved, blowoffDip, clockAccel float64
 	if closed {
 		var volumeRate, volRatio, posReturn, negReturn float64
 
@@ -213,6 +231,18 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 			state.recentPeakPos *= 0.92
 		}
 
+		if bar.Duration > 0 && state.prevBarDuration > 0 {
+			clockAccel = (state.prevBarDuration - bar.Duration) / state.prevBarDuration
+		}
+		state.prevBarDuration = bar.Duration
+		state.lastClockAcceleration = clockAccel
+
+		if state.starvedRegime == 0 {
+			state.starvedRegime = starved
+		} else {
+			alpha := 2.0 / (starvedRegimeNeff + 1.0)
+			state.starvedRegime = (1-alpha)*state.starvedRegime + alpha*starved
+		}
 		state.lastStarved = starved
 		state.lastCoiled = coiled
 		state.lastRejection = rejection
@@ -222,7 +252,10 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		rejection = state.lastRejection
 		starved = state.lastStarved
 		blowoffDip = state.lastBlowoff
+		clockAccel = state.lastClockAcceleration
 	}
+
+	starved = publishedStarved(state, starved)
 
 	keys := []string{
 		signal.Name(),
@@ -234,6 +267,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		rejection,
 		starved,
 		blowoffDip,
+		clockAccel,
 	}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{

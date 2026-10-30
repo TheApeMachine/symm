@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/audit"
@@ -16,12 +15,13 @@ import (
 )
 
 type symbolState struct {
-	hasPrev           bool
-	prevBid           float64
-	prevBidQty        float64
-	prevAtNano        float64
-	pendingTradeQty   float64
-	pendingMatchedBid float64
+	hasPrev             bool
+	prevBid             float64
+	prevBidQty          float64
+	prevAtNano          float64
+	pendingTradeQty     float64
+	pendingMatchedBid   float64
+	lastWithdrawalRate  float64
 }
 
 type Signal struct {
@@ -36,8 +36,7 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 		books:  books,
 		states: &sync.Map{},
 		keys: []string{
-			"spoof_pressure",
-			"floor_evaporation",
+			"retreat_fraction",
 		},
 	}
 
@@ -59,12 +58,12 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		signal.Error(err)
 	}
 
+	signal.appendBoardWithdrawalRate(value)
+
 	return value
 }
 
 func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	errnie.Debug("[toxicity] step", "trade", trade)
-
 	if signal.Status() != runtime.READY {
 		return value
 	}
@@ -136,6 +135,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 			retreatFraction = unfilled / state.prevBidQty
 		}
 
+		state.lastWithdrawalRate = withdrawalRate
 		state.observe(bid, bidQty, atNano)
 		appendMetrics = true
 	})
@@ -151,7 +151,6 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	value.Append([]float64{
 		retreatFraction,
-		withdrawalRate,
 	}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{
@@ -162,6 +161,31 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	})
 
 	return value
+}
+
+func (signal *Signal) appendBoardWithdrawalRate(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var rates []float64
+	signal.states.Range(func(_, untyped any) bool {
+		rate := untyped.(*symbolState).lastWithdrawalRate
+		if rate > 0 {
+			rates = append(rates, rate)
+		}
+		return true
+	})
+
+	median, ok := parent.Median(rates)
+	if !ok {
+		return
+	}
+
+	value.Append([]float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_withdrawal_rate")...)
 }
 
 func (state *symbolState) observe(bid, bidQty, atNano float64) {

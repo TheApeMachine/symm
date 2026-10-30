@@ -22,10 +22,15 @@ import (
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/hawkes"
+	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/morphology"
 	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
@@ -247,10 +252,15 @@ func (booter *Booter) initPipeline() error {
 
 	booter.signals = []nmruntime.Node{
 		correlation.NewSignal(ctx),
+		cvd.NewSignal(ctx, booter.book),
 		depthflow.NewSignal(ctx, booter.book),
 		hawkes.NewSignal(ctx),
-		liquidity.NewSignal(ctx, booter.book),
+		leadlag.NewSignal(ctx),
+		liquidity.NewSignal(ctx, booter.book, booter.price),
+		morphology.NewSignal(ctx, booter.book),
 		pumpdump.NewSignal(ctx, booter.book),
+		sentiment.NewSignal(ctx),
+		toxicity.NewSignal(ctx, booter.book),
 	}
 
 	for _, node := range booter.signals {
@@ -331,6 +341,12 @@ func (booter *Booter) seedBooks() error {
 	// Every socket is read while it subscribes: Kraken rejects Level3
 	// snapshot requests on a socket whose earlier snapshots sit unread.
 	booter.book.Expect(booter.instrument.Symbols())
+
+	booter.book.SetResubscribe(func(symbol string) {
+		if err := booter.instrument.ResubscribeLevel3(symbol); err != nil {
+			errnie.Error(err)
+		}
+	})
 
 	if err := booter.instrument.SubscribeBooks(broker.Level3{
 		Stale: booter.book.Stale,

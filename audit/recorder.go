@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/nomagique/runtime"
@@ -43,6 +44,8 @@ func (r *Recorder) Write(obj any) (n int, err error) {
 		return 0, nil
 	}
 
+	obj = stampRecord(obj)
+
 	buf, err := sonic.Marshal(obj)
 	if err != nil {
 		return 0, err
@@ -56,4 +59,22 @@ func (r *Recorder) Write(obj any) (n int, err error) {
 	}
 
 	return len(buf) + 1, nil
+}
+
+func stampRecord(obj any) any {
+	m, ok := obj.(map[string]any)
+	if !ok {
+		return obj
+	}
+
+	if _, has := m["ts"]; has {
+		return obj
+	}
+
+	stamped := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		stamped[k] = v
+	}
+	stamped["ts"] = time.Now().UTC().Format(time.RFC3339Nano)
+	return stamped
 }

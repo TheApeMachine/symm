@@ -92,6 +92,14 @@ func (stage *Stage) ResetSequencer(symbol string) {
 	loaded.(*tokenizer.Sequencer).Reset()
 }
 
+// SymbolMaturity returns grid warm-up readiness for one pair (0..1).
+func (stage *Stage) SymbolMaturity(symbol string) float64 {
+	if stage == nil || stage.grid == nil || symbol == "" {
+		return 0
+	}
+	return stage.grid.SymbolMaturity(symbol)
+}
+
 func (stage *Stage) isBookStale(symbol string) bool {
 	if stage == nil || stage.desk == nil {
 		return false
@@ -114,11 +122,13 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 
 	for symbol, sources := range bySymbol {
 		group.Go(func() error {
-			observed, err := stage.grid.Observe(
-				symbol, sources, stage.desk.Has(symbol, true),
-			)
+			holdingPaper := stage.desk.Has(symbol, false)
+			holdingVirtual := stage.desk.Has(symbol, true)
+			holding := holdingPaper || holdingVirtual
 
-			errnie.Debug("[stage.Step] Observed regions", "symbol", symbol, "observed_len", len(observed), "err", err)
+			observed, err := stage.grid.Observe(
+				symbol, sources, !holding,
+			)
 
 			if err != nil {
 				errnie.Warn("[stage.Step] grid.Observe failed", "symbol", symbol, "err", err)
@@ -130,10 +140,6 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 			if parts := strings.Split(symbol, "/"); len(parts) == 2 {
 				tick.Append(observed, append([]string{"train", "regions"}, parts...)...)
 			}
-
-			holdingPaper := stage.desk.Has(symbol, false)
-			holdingVirtual := stage.desk.Has(symbol, true)
-			holding := holdingPaper || holdingVirtual
 
 			sequencer := stage.Sequencer(symbol)
 			phase := tokenizer.PhaseEnter

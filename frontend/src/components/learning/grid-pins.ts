@@ -2,30 +2,55 @@ import type { ImpulseNode } from "./types";
 
 /** Metric → region indices; mirrors nomagique/store/grid_pins.go and SIGNALS.md. */
 export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
+	cvd: {
+		aggressor_backing: [0],
+		cvd_divergence: [3],
+	},
 	pumpdump: {
 		coiled_compression: [0],
-		rejection_tick: [3],
 		starved_tape: [2],
+		rejection_tick: [3],
+		clock_acceleration: [6],
 		blowoff_dip: [8],
 		board_coiled: [9],
 	},
 	correlation: {
 		structural_alignment: [1],
+		board_dispersion_squeeze: [9],
 		structure_uncoupling: [13],
 	},
+	leadlag: {
+		led_peer_share: [1],
+		anchor_breakdown: [13],
+	},
 	depthflow: {
+		ask_absorption: [2],
+		bid_ladder_release: [4],
 		ask_ladder_release: [5],
 		bid_ladder_build: [7],
-		bid_ladder_release: [4],
 		board_bid_release: [11],
+	},
+	toxicity: {
+		retreat_fraction: [4],
+		board_withdrawal_rate: [11],
+	},
+	morphology: {
+		ask_vacuum: [5],
+		book_shape_stable: [7],
 	},
 	hawkes: {
 		supercritical_cascade: [6],
 		board_cascade: [10],
 	},
+	sentiment: {
+		cohort_still_aligned: [10],
+	},
 	liquidity: {
+		spread_expansion: [8],
 		market_friction: [12],
+		friction_drag_ratio: [12],
 		capacity_stress: [14],
+		liquidation_impact: [14],
 	},
 };
 
@@ -79,11 +104,22 @@ export interface CanonicalPinDef {
 }
 
 const AGGREGATE_METRICS: Record<string, Set<string>> = {
-	correlation: new Set(["structural_alignment", "structure_uncoupling"]),
+	correlation: new Set([
+		"structural_alignment",
+		"board_dispersion_squeeze",
+		"structure_uncoupling",
+	]),
 	pumpdump: new Set(["board_coiled"]),
 	depthflow: new Set(["board_bid_release"]),
 	hawkes: new Set(["board_cascade"]),
-	liquidity: new Set(["market_friction", "capacity_stress"]),
+	liquidity: new Set([
+		"market_friction",
+		"friction_drag_ratio",
+		"capacity_stress",
+	]),
+	sentiment: new Set(["cohort_still_aligned"]),
+	toxicity: new Set(["board_withdrawal_rate"]),
+	leadlag: new Set(["anchor_breakdown"]),
 };
 
 const pinScope = (source: string, metric: string): "aggregate" | undefined =>

@@ -28,17 +28,15 @@ describe("region pin balance", () => {
 		for (let region = 0; region <= 8; region++) {
 			expect(counts[region]).toBeGreaterThanOrEqual(1);
 		}
-		expect(counts[0]).toBe(1);
-		expect(counts[6]).toBe(1);
+		for (let region = 0; region <= 8; region++) {
+			expect(counts[region]).toBe(2);
+		}
 	});
 
 	it("wires board confidence and risk oracles on R09–R14", () => {
 		const counts = getCanonicalRegionCounts();
-		expect(counts[9]).toBeGreaterThanOrEqual(1);
-		expect(counts[10]).toBe(1);
-		expect(counts[11]).toBe(1);
-		expect(counts[12]).toBe(1);
-		expect(counts[13]).toBe(1);
-		expect(counts[14]).toBe(1);
+		for (let region = 9; region <= 14; region++) {
+			expect(counts[region]).toBe(2);
+		}
 	});
 });

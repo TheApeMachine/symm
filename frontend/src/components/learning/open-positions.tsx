@@ -7,20 +7,22 @@ import {
 	framePositionRows,
 } from "#/collections/positions";
 import {
+	closeNowReturnPct,
 	exploreExitGaugeMarks,
 	onBook,
 	pnlGaugeValue,
 	positionReadout,
 } from "#/components/book-readout";
+import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import {
 	CHOICE_SAMPLE_MS,
-	CHOICE_TRAIL_LENGTH,
+	noteOpenChoice,
+	openChoiceValues,
 } from "#/components/learning/open-choice-trail";
+import { PositionLiveIntel } from "#/components/learning/position-live-intel";
 import { PositionLotVisual } from "#/components/learning/position-lot-visual";
 import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
-import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
-import { PositionLiveIntel } from "#/components/learning/position-live-intel";
 import {
 	BadgeButton,
 	Flex,
@@ -37,9 +39,6 @@ Open positions are the desk's per-lot frames. The connect snapshot and each
 later mark tick land on the positions store; a tick names only the lots
 that moved, and the book keeps every lot that tick did not mention.
 */
-
-const trails = new Map<string, number[]>();
-const trailAt = new Map<string, number>();
 
 /* Match default Gauge SVG height so the P&L trail aligns with the dials. */
 const GAUGE_SIZE = 96;
@@ -144,6 +143,7 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 	const qty = readout.qty;
 	const vwap = readout.exitVwap;
 	const pnlPct = readout.returnPct ?? undefined;
+	const trailPct = closeNowReturnPct(row) ?? undefined;
 	const room = readout.exitRoom ?? undefined;
 	const pnlTone: GaugeTone =
 		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";
@@ -153,31 +153,20 @@ const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
 	const lotId = String(row.id ?? row.symbol);
 
 	useEffect(() => {
-		if (pnlPct === undefined) {
+		if (trailPct === undefined) {
 			setPnlTrail([]);
 			return;
 		}
 
 		const sample = () => {
-			const prior = trails.get(lotId) ?? [];
-			const now = Date.now();
-			const last = trailAt.get(lotId) ?? 0;
-			const changed = prior.length === 0 || prior[prior.length - 1] !== pnlPct;
-			if (!changed && now - last < CHOICE_SAMPLE_MS) {
-				setPnlTrail(prior);
-				return;
-			}
-
-			const next = [...prior, pnlPct].slice(-CHOICE_TRAIL_LENGTH);
-			trails.set(lotId, next);
-			trailAt.set(lotId, now);
-			setPnlTrail(next);
+			noteOpenChoice(lotId, trailPct);
+			setPnlTrail(openChoiceValues(lotId));
 		};
 
 		sample();
 		const timer = window.setInterval(sample, CHOICE_SAMPLE_MS);
 		return () => window.clearInterval(timer);
-	}, [lotId, pnlPct]);
+	}, [lotId, trailPct]);
 	const selling = !positionReadout(row).closed && qty === 0;
 	const pnlMarks = exploreExitGaugeMarks(row);
 

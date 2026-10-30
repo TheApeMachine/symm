@@ -215,14 +215,16 @@ export const layerRelativeToPrefix = (
 
 /*
 mergeWorkspaceAggregate unions workspace aggregate layers by path below the
-frame prefix. Incoming layers win on conflict; prior layers stay until the
-same relative path appears on a later tick or sparse fan-out.
+frame prefix when the hub fans out multiple partial frames for one tick.
+Incoming layers win on conflict. A new tick replaces the prior frame entirely
+so the client does not accumulate every layer path seen since load.
 */
 export const mergeWorkspaceAggregate = (
 	prior: Value | undefined,
 	incoming: Value,
 ): Value => {
 	if (!prior) return incoming;
+	if (prior.tick !== incoming.tick) return incoming;
 
 	const byRelative = new Map<string, Uint8Array>();
 

@@ -358,6 +358,35 @@ func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 }
 
 /*
+EntryCloseNowPnLPct is the fee-net percent PnL if the desk lot size opened at
+the ask walk and closed immediately into the bid book. This is the entry drag
+the gate must not exceed for paper or virtual.
+*/
+func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) {
+	if price == nil {
+		return nil, false
+	}
+
+	qty, _ := price.Allocate(symbol)
+	if qty == nil || qty.Sign() <= 0 {
+		return nil, false
+	}
+
+	fill, err := price.EntryCost(symbol, qty)
+	if err != nil || fill == nil || fill.EntryPrice == nil || fill.EntryPrice.Sign() <= 0 {
+		return nil, false
+	}
+
+	fee := price.Fee(symbol)
+	pct := price.PnLPct(symbol, qty, fill.EntryPrice, fee)
+	if pct == nil {
+		return nil, false
+	}
+
+	return pct, true
+}
+
+/*
 Return is fee-net round-trip profit as a fraction of entry cost.
 ok is false when the bid book cannot take the whole quantity.
 */

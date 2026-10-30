@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -28,6 +29,7 @@ const positionTraceCap = 4096
 
 type Position struct {
 	mu              sync.Mutex
+	exitInProgress  uint32
 	*runtime.System
 	stopLoss        *StopLoss
 	transport       Transport
@@ -80,6 +82,9 @@ type Position struct {
 	Virtual         bool    `json:"virtual"`
 	PathFound       bool    `json:"path_found,omitempty"`
 	OpenSurprise    float64 `json:"open_surprise,omitempty"`
+	EnterR02        float64 `json:"enter_r02_brightness,omitempty"`
+	EnterNetHold    float64 `json:"enter_net_hold,omitempty"`
+	EnterGridMaturity float64 `json:"enter_grid_maturity,omitempty"`
 	BarsHeld        int64   `json:"bars_held,omitempty"`    // Repress events since entry (tape timebase)
 	RealizedPct     float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
 }
@@ -126,11 +131,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 			if trigger, ok := position.stopLoss.Evaluate(position); ok {
 				position.ExitTrigger = trigger
 				position.OutcomeTriggers = []string{trigger}
-				errnie.Info("[exit] triggered by " + trigger + " for " + position.Symbol)
-
-				if position.ExitPath != "" {
-					path = position.ExitPath
-				}
+				path = position.exitPathForStop()
 			}
 		}
 	}
@@ -141,7 +142,29 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		return
 	}
 
+	if !atomic.CompareAndSwapUint32(&position.exitInProgress, 0, 1) {
+		return
+	}
+
+	errnie.Info("[exit] triggered by " + position.ExitTrigger + " for " + position.Symbol)
 	go position.finishExit(path)
+}
+
+/*
+exitPathForStop is the path key used when a stop fires. Hold ticks must not
+wipe the enter path before the exit grammar has spelled; fall back to entry.
+*/
+func (position *Position) exitPathForStop() string {
+	if position == nil {
+		return ""
+	}
+	if position.ExitPath != "" {
+		return position.ExitPath
+	}
+	if position.HoldPath != "" {
+		return position.HoldPath
+	}
+	return position.EntryPath
 }
 
 /*
@@ -172,6 +195,15 @@ func (position *Position) ShouldReprice(mark *decimal.Decimal, isTraded bool) bo
 }
 
 func (position *Position) finishExit(path string) {
+	defer func() {
+		position.mu.Lock()
+		closed := position.ClosedAt != nil
+		position.mu.Unlock()
+		if !closed {
+			atomic.StoreUint32(&position.exitInProgress, 0)
+		}
+	}()
+
 	err := position.Exit(path)
 
 	if err != nil && !errors.Is(err, ErrVenueFlat) {
@@ -241,6 +273,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
+	position.ExitPath = path
 
 	if position.Virtual {
 		fill, err := position.price.EntryCost(position.Symbol, qty)
@@ -504,14 +537,13 @@ func (position *Position) recordTraceLocked(value float64) {
 		return
 	}
 
-	position.PnLTrace = append(position.PnLTrace, value)
-
-	if len(position.PnLTrace) > positionTraceCap {
-		position.PnLTrace = append(
-			[]float64(nil),
-			position.PnLTrace[len(position.PnLTrace)-positionTraceCap:]...,
-		)
+	if len(position.PnLTrace) >= positionTraceCap {
+		copy(position.PnLTrace, position.PnLTrace[1:])
+		position.PnLTrace[len(position.PnLTrace)-1] = value
+		return
 	}
+
+	position.PnLTrace = append(position.PnLTrace, value)
 }
 
 /*

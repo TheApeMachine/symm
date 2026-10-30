@@ -346,24 +346,24 @@ learning:
   explore_temporal_penalty: 0.0
   threshold_floor: 0.05
   threshold_ceil: 0.95
-  virtual_promote: 3
   vocab_size: 15
   default_window_size: 15
   shannon_capacity: 0.45
-  fuzzy_match_enabled: true
-  fuzzy_match_threshold: 0.75
-  salience_ratio: 0.40
   excursion_timeout: 45m
   max_excursion_bars: 8
-  timeout_loss_penalty: 0.02
-  emergency_exit_brightness: 0.75
+  policy_shadow_bars: 32
   min_supported_horizon: 2
   cliff_horizon_drop: 2
   cliff_energy_mult: 1.4
-  require_friction_gate: true
-  require_ignition_regime: true
-  ignition_min_brightness: 0.25
-  friction_min_brightness: 0.25
+  gate_opposition_floor: 0.05
+  gate_opposition_ceil: 0.95
+  gate_regime_ignition_floor: 0.05
+  gate_regime_ignition_ceil: 0.95
+  gate_regime_friction_floor: 0.05
+  gate_regime_friction_ceil: 0.95
+  gate_maturity_floor: 0.05
+  gate_maturity_ceil: 0.95
+  max_path_objects: 8192
   # Append-only JSONL: virtual/venue open, review, close, emergency (empty = off).
   position_trace_path: logs/position_trace.jsonl
 
