@@ -140,18 +140,31 @@ export class Value {
 	}
 
 	/*
-	Metrics collects the value's scalar readings keyed by the index suffix
-	after the prefix — the kernel's metric name, or a training frame's
-	metric name. Layers whose payload is not a single float are skipped.
+	Metrics collects scalar readings keyed by metric name. A single Append
+	with several trailing key segments and a matching float array expands
+	to one entry per name (cvd's aggressor_backing/cvd_divergence/…).
 	*/
 	metrics(): Record<string, number> {
 		const out: Record<string, number> = {};
 
 		for (const { suffix, payload } of this.readings()) {
+			if (suffix === "") continue;
+
+			const names = suffix.split("/").filter(Boolean);
+			if (Array.isArray(payload) && names.length > 1) {
+				const count = Math.min(names.length, payload.length);
+				for (let n = 0; n < count; n++) {
+					const value = payload[n];
+					if (typeof value === "number" && Number.isFinite(value)) {
+						out[names[n]] = value;
+					}
+				}
+				continue;
+			}
+
 			const first = Array.isArray(payload) ? payload[0] : payload;
 			if (typeof first !== "number" || !Number.isFinite(first)) continue;
-			if (suffix === "") continue;
-			out[suffix] = first;
+			out[names.length === 1 ? names[0] : suffix] = first;
 		}
 
 		return out;
@@ -211,6 +224,74 @@ export const layerRelativeToPrefix = (
 	const root = `${prefix}/`;
 	if (!index.startsWith(root)) return null;
 	return index.slice(root.length);
+};
+
+const LIT_LAYER_KEYS = ["regions", "active", "lit"] as const;
+
+const nonEmptyArrayLayer = (bytes: Uint8Array | undefined): boolean => {
+	if (!bytes || bytes.byteLength === 0) return false;
+	const payload = tryDecodeJsonBytes(bytes);
+	return Array.isArray(payload) && payload.length > 0;
+};
+
+/*
+preserveLitLayers keeps the last non-empty regions/active/lit payload when a
+newer frame omits them or carries []. Cold training/grid ticks must not wipe
+the Impulse Map's last brightness.
+*/
+export const preserveLitLayers = (
+	prior: Value | undefined,
+	incoming: Value,
+): Value => {
+	if (!prior || prior.origin !== incoming.origin) return incoming;
+
+	const byRelative = new Map<string, Uint8Array>();
+
+	for (let i = 0; i < incoming.index.length; i++) {
+		const rel = layerRelativeToPrefix(incoming.index[i], incoming.prefix);
+		if (rel === null) continue;
+		byRelative.set(rel, incoming.layers[i]);
+	}
+
+	let changed = false;
+
+	for (const key of LIT_LAYER_KEYS) {
+		const incomingBytes = byRelative.get(key);
+		if (nonEmptyArrayLayer(incomingBytes)) continue;
+
+		for (let i = 0; i < prior.index.length; i++) {
+			const rel = layerRelativeToPrefix(prior.index[i], prior.prefix);
+			if (rel !== key) continue;
+			if (!nonEmptyArrayLayer(prior.layers[i])) break;
+
+			byRelative.set(key, prior.layers[i]);
+			changed = true;
+			break;
+		}
+	}
+
+	if (!changed) return incoming;
+
+	const index: string[] = [];
+	const layers: Uint8Array[] = [];
+	for (const [rel, layer] of byRelative) {
+		index.push(`${incoming.prefix}/${rel}`);
+		layers.push(layer);
+	}
+
+	return new Value({
+		id: incoming.id,
+		epoch: incoming.epoch,
+		tick: incoming.tick,
+		seqIdx: incoming.seqIdx,
+		timestamp: incoming.timestamp,
+		origin: incoming.origin,
+		role: incoming.role,
+		scope: incoming.scope,
+		prefix: incoming.prefix,
+		index,
+		layers,
+	});
 };
 
 /*

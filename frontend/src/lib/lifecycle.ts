@@ -77,19 +77,21 @@ export type LearnedExitPolicy = {
 };
 
 /*
-LiveStopState is the per-mark proximity of each of the four stop checks, as
+LiveStopState is the per-mark proximity of the simplified stop checks, as
 computed by broker.StopLoss.State and published on every position frame. Each
 ratio is current-value-over-threshold: >1 means firing, <1 means armed.
+Damage is 0–1 of the 2pp invalidation budget burned on the worst print.
 */
 export type LiveStopState = {
 	invalidation?: number;
 	trailing?: number;
-	evaporation?: number;
-	expiry?: number;
+	damage?: number;
 	peak_pct?: number;
 	current_pct?: number;
-	bars_held?: number;
-	max_bars?: number;
+	entry_pct?: number;
+	giveback_pct?: number;
+	allowed_giveback_pct?: number;
+	remaining_giveback_pct?: number;
 };
 
 export type Lifecycle = {

@@ -50,18 +50,24 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceMetrics("pumpdump")).toContain("coiled_compression");
 		expect(sourceMetrics("pumpdump")).toContain("rejection_tick");
 		expect(sourceMetrics("pumpdump")).toContain("board_coiled");
+		expect(sourceMetrics("pumpdump")).toContain("board_starved");
 	});
 
-	it("rejects dormant or unsupported sources", () => {
-		expect(() => sourceHeadlineMetric("toxicity")).toThrow(
-			"unsupported measurement source: toxicity",
+	it("lists third-channel grid metrics on live signal kernels", () => {
+		expect(sourceMetrics("cvd")).toContain("initiative_lock");
+		expect(sourceMetrics("depthflow")).toContain("touch_bid_decay");
+		expect(sourceMetrics("hawkes")).toContain("branching_asymmetry");
+		expect(sourceMetrics("leadlag")).toContain("cohort_lift");
+		expect(sourceMetrics("liquidity")).toContain("spread_tail_gap");
+		expect(sourceMetrics("morphology")).toContain("bid_notional_lean");
+	});
+
+	it("supports every booter signal kernel in the inspector", () => {
+		expect(sourceHeadlineMetric("toxicity")).toBe("metrics.retreat_fraction");
+		expect(sourceHeadlineMetric("sentiment")).toBe(
+			"metrics.cohort_still_aligned",
 		);
-		expect(() => sourceHeadlineMetric("sentiment")).toThrow(
-			"unsupported measurement source: sentiment",
-		);
-		expect(() => sourceMetrics("cvd")).toThrow(
-			"unsupported measurement source: cvd",
-		);
+		expect(sourceHeadlineMetric("cvd")).toBe("metrics.aggressor_backing");
 	});
 });
 

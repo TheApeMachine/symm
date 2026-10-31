@@ -3,16 +3,17 @@ import {
 	positionReadout,
 	settledOutcome,
 } from "#/components/book-readout";
-import type {
-	Lifecycle,
-	LifeOutcome,
-	LiveStopState,
-	LearnedExitPolicy,
-} from "#/lib/lifecycle";
 import {
 	policyEpochFromRow,
 	tapeMarksFromDeskRow,
 } from "#/lib/desk-tape-marks";
+import type {
+	LearnedExitPolicy,
+	Lifecycle,
+	LifeOutcome,
+	LiveStopState,
+} from "#/lib/lifecycle";
+
 /*
 Desk lifecycle rows mirror the broker position JSON. A row without a
 complete close or stable identity is not a closed round trip.
@@ -30,19 +31,20 @@ const stopStateFromRow = (
 	const record = value as Record<string, unknown>;
 	const num = (key: string): number | undefined => {
 		const item = record[key];
-		return typeof item === "number" && Number.isFinite(item)
-			? item
-			: undefined;
+		return typeof item === "number" && Number.isFinite(item) ? item : undefined;
 	};
 	return {
 		invalidation: num("invalidation"),
 		trailing: num("trailing"),
-		evaporation: num("evaporation"),
-		expiry: num("expiry"),
+		damage: num("damage"),
 		peak_pct: num("peakPct") ?? num("peak_pct"),
 		current_pct: num("currentPct") ?? num("current_pct"),
-		bars_held: num("barsHeld") ?? num("bars_held"),
-		max_bars: num("maxBars") ?? num("max_bars"),
+		entry_pct: num("entryPct") ?? num("entry_pct"),
+		giveback_pct: num("givebackPct") ?? num("giveback_pct"),
+		allowed_giveback_pct:
+			num("allowedGivebackPct") ?? num("allowed_giveback_pct"),
+		remaining_giveback_pct:
+			num("remainingGivebackPct") ?? num("remaining_giveback_pct"),
 	};
 };
 
@@ -64,8 +66,8 @@ const policyFromRow = (
 		(maxBars ?? 0) > 0 ||
 		worst !== null;
 	if (!hasAny) return null;
-return {
-	trailing: trailing !== null && trailing > 0 ? trailing : null,
+	return {
+		trailing: trailing !== null && trailing > 0 ? trailing : null,
 		cut: cut !== null && cut > 0 ? cut : null,
 		maxBars: maxBars !== null && maxBars > 0 ? maxBars : null,
 		worst,
@@ -82,15 +84,20 @@ const stopFieldsFromRow = (
 	row: Record<string, unknown>,
 ): Pick<
 	Lifecycle,
-	"stop_state" | "policy" | "peak_pct" | "realized_pct" | "bars_held" | "pnl_trace" | "exit_trigger"
+	| "stop_state"
+	| "policy"
+	| "peak_pct"
+	| "realized_pct"
+	| "bars_held"
+	| "pnl_trace"
+	| "exit_trigger"
 > => {
 	const peakPct = decimal(row.peak_pnl_pct);
 	const realized = decimal(row.realized_pct);
 	const barsHeld = decimal(row.bars_held);
 	const trace = Array.isArray(row.pnl_trace)
 		? row.pnl_trace.filter(
-				(v): v is number =>
-					typeof v === "number" && Number.isFinite(v),
+				(v): v is number => typeof v === "number" && Number.isFinite(v),
 			)
 		: null;
 	const exitTrigger =
@@ -157,8 +164,8 @@ export const lifecycleFromDeskOpen = (
 				at: readout.openedAt,
 				kind: "opened",
 				detail: row.virtual ? "virtual trial opened" : "desk lot opened",
-				},
-			],
+			},
+		],
 	};
 };
 
@@ -204,8 +211,7 @@ export const lifecycleFromDeskClosed = (
 		? `virtual open · tick ${tape?.b ?? "—"}${entryPath ? ` · ${entryPath}` : ""}`
 		: `desk open · tick ${tape?.b ?? "—"}`;
 	const exitTick = tape?.c;
-	const exitTickText =
-		exitTick === undefined ? "" : ` · tick ${exitTick}`;
+	const exitTickText = exitTick === undefined ? "" : ` · tick ${exitTick}`;
 	const closeDetail =
 		triggers.length > 0
 			? `${triggers.join(", ")}${exitTickText}`

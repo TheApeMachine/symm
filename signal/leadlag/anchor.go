@@ -46,7 +46,7 @@ func (signal *Signal) appendAnchorBreakdown(value *data.Value) {
 		return
 	}
 
-	value.Append([]float64{breakdown}, append([]string{
+	signal.emit.Metric(value, []float64{breakdown}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "anchor_breakdown")...)

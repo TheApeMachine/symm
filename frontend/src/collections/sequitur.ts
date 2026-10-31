@@ -1,9 +1,13 @@
 import { createStore } from "@tanstack/store";
+import {
+	signals,
+	symbolScopeAliases,
+	workspaceFrame,
+} from "#/collections/app";
 import { triePrefix } from "#/collections/book";
 import { trySendCommand } from "#/lib/hub-socket";
 import type { Value } from "#/types/value";
 import { cognitionStore, ingestPolicyKeys } from "./cognition";
-import { stageCutReading } from "./stage-cut";
 
 /*
 Per-symbol training step readings from hub training/step frames: gate, cut,
@@ -167,6 +171,79 @@ const isFrame = (value: unknown): value is SequiturFrame => {
 	);
 };
 
+type WireToken = {
+	symbols?: string[];
+	brightness?: number;
+};
+
+const tokenLabel = (token: WireToken): string => {
+	const symbols = token.symbols ?? [];
+	if (symbols.length === 0) return "";
+	if (symbols.length === 1) return symbols[0];
+	return `[${symbols.join("-")}]`;
+};
+
+const parseCut = (payload: unknown): WireToken[] => {
+	if (!Array.isArray(payload)) return [];
+	return payload.filter(
+		(entry): entry is WireToken =>
+			entry != null && typeof entry === "object" && !Array.isArray(entry),
+	);
+};
+
+const cutLayer = (frame: Value, layerKey: string): WireToken[] => {
+	const direct = parseCut(frame.reading(layerKey));
+	if (direct.length > 0) return direct;
+
+	for (const { payload } of frame.layersUnder(layerKey)) {
+		const tokens = parseCut(payload);
+		if (tokens.length > 0) return tokens;
+	}
+
+	return [];
+};
+
+const sequencerCutReading = (
+	symbol: string,
+): { fired: string[]; midpoint: number; path: string } => {
+	const fromCut = (tokens: WireToken[]) => {
+		if (tokens.length === 0) {
+			return null;
+		}
+
+		const last = tokens[tokens.length - 1];
+		const fired = [...(last.symbols ?? [])];
+		const midpoint =
+			typeof last.brightness === "number" ? last.brightness : 0;
+		const path = tokens
+			.map(tokenLabel)
+			.filter((segment) => segment !== "")
+			.join("/");
+
+		return { fired, midpoint, path };
+	};
+
+	for (const alias of symbolScopeAliases(symbol)) {
+		const live = signals.sequencer?.state[alias];
+		if (live) {
+			const hit = fromCut(cutLayer(live, "cut"));
+			if (hit) return hit;
+		}
+	}
+
+	const aggregate = workspaceFrame();
+	if (!aggregate) {
+		return { fired: [], midpoint: 0, path: "" };
+	}
+
+	for (const alias of symbolScopeAliases(symbol)) {
+		const hit = fromCut(cutLayer(aggregate, `sequencer/${alias}/cut`));
+		if (hit) return hit;
+	}
+
+	return { fired: [], midpoint: 0, path: "" };
+};
+
 const normalizeGate = (gate: unknown): SequiturGate | null => {
 	if (gate === null || gate === undefined) return null;
 	if (!gate || typeof gate !== "object") return null;
@@ -186,7 +263,7 @@ export const ingestTrainingStep = (value: Value, now = Date.now()) => {
 		return false;
 	}
 
-	const cut = stageCutReading(value.scope);
+	const cut = sequencerCutReading(value.scope);
 	const firedFromStep = (value.reading("fired") as string[] | undefined) ?? [];
 	const stepHasCut = firedFromStep.length > 0;
 	const fired = stepHasCut ? firedFromStep : cut.fired;

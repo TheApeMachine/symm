@@ -1,47 +1,24 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo, useLayoutEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import {
 	comparePositionRows,
 	framePositionRows,
 } from "#/collections/positions";
-import {
-	closeNowReturnPct,
-	exploreExitGaugeMarks,
-	onBook,
-	pnlGaugeValue,
-	positionReadout,
-} from "#/components/book-readout";
-import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
+import { onBook, positionReadout } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import {
 	openChoiceLotsFromRows,
-	openChoiceValues,
 	syncOpenChoiceLots,
 } from "#/components/learning/open-choice-trail";
-import { PositionLiveIntel } from "#/components/learning/position-live-intel";
-import { PositionLotVisual } from "#/components/learning/position-lot-visual";
-import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
-import {
-	BadgeButton,
-	Flex,
-	formatValue,
-	Gauge,
-	type GaugeTone,
-	Trail,
-} from "#/components/ui";
-import { cn } from "#/lib/utils";
-import { sendCommand } from "#/providers/websocket";
+import { Flex } from "#/components/ui";
 
 /*
 Open positions are the desk's per-lot frames. The connect snapshot and each
 later mark tick land on the positions store; a tick names only the lots
 that moved, and the book keeps every lot that tick did not mention.
 */
-
-/* Match default Gauge SVG height so the P&L trail aligns with the dials. */
-const GAUGE_SIZE = 96;
 
 /*
 positionRows decodes every lot frame the store holds into its row objects.
@@ -91,7 +68,7 @@ export const positionRows = (
 	return rows;
 };
 
-/** Cheap fingerprint so cards re-render when lot marks move, not on unrelated scopes. */
+/** Cheap fingerprint of position-store ticks across scopes. */
 export const positionsRevision = (
 	state: Record<string, { tick?: bigint }>,
 ): string => {
@@ -109,188 +86,15 @@ export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 		.map((row) => row.symbol)
 		.sort();
 
-/** Close-now return after fees; used for the in-profit filter on this page. */
+/** Close-now return after fees. */
 export const lotInProfit = (row: Record<string, unknown>) => {
 	const pct = positionReadout(row).returnPct;
 	return pct !== null && pct > 0;
 };
 
-const duration = (seconds?: number) => {
-	if (seconds === undefined) return "—";
-	const m = Math.floor(seconds / 60);
-	const h = Math.floor(m / 60);
-	return h > 0
-		? `${h}h ${m % 60}m`
-		: m > 0
-			? `${m}m ${Math.floor(seconds % 60)}s`
-			: `${Math.floor(seconds)}s`;
-};
-
-const heldSeconds = (row: Record<string, unknown>) => {
-	if ((row.hold_ns as number) > 0) return (row.hold_ns as number) / 1e9;
-	if (row.opened_at === "" || row.opened_at == null) return undefined;
-	const at = Date.parse(row.opened_at as string);
-	if (Number.isNaN(at)) return undefined;
-	return Math.max(0, (Date.now() - at) / 1000);
-};
-
-const PositionCard = memo(({ row }: { row: Record<string, unknown> }) => {
-	const [exiting, setExiting] = useState(false);
-	const readout = positionReadout(row);
-	const entry = readout.entryPrice;
-	const mark = readout.mark;
-	const qty = readout.qty;
-	const vwap = readout.exitVwap;
-	const pnlPct = readout.returnPct ?? undefined;
-	const trailPct = closeNowReturnPct(row) ?? undefined;
-	const room = readout.exitRoom ?? undefined;
-	const pnlTone: GaugeTone =
-		pnlPct === undefined ? "muted" : pnlPct >= 0 ? "up" : "down";
-	const roomTone: GaugeTone =
-		room === undefined ? "muted" : room < 1 ? "down" : room < 3 ? "warn" : "up";
-
-	const lotId = String(row.id ?? row.symbol);
-	const pnlTrail =
-		trailPct === undefined ? [] : openChoiceValues(lotId);
-
-	const selling = !positionReadout(row).closed && qty === 0;
-	const pnlMarks = exploreExitGaugeMarks(row);
-
-	return (
-		<Flex.Column
-			gap={2}
-			padding={3}
-			className={cn(
-				"border-r border-b border-(--line) bg-(--surface)",
-				selling && "animate-pulse",
-			)}
-		>
-			<Flex.Row align="center" justify="between">
-				<Flex.Row align="center" gap={2}>
-					<span
-						className="w-2.5 h-2.5 rounded-full"
-						style={{
-							background: `var(--${pnlTone === "muted" ? "f4" : pnlTone})`,
-						}}
-					/>
-					<span className="text-(--f1) font-bold text-sm">
-						{row.symbol as string}
-					</span>
-					{selling && (
-						<span className="text-[10px] px-1.5 rounded bg-(--down)/20 text-(--down)">
-							flat
-						</span>
-					)}
-				</Flex.Row>
-				<span className="text-[10px] text-(--f3)">
-					held {duration(heldSeconds(row))}
-				</span>
-			</Flex.Row>
-
-			<Flex.Row gap={1} wrap="wrap">
-				<Gauge
-					value={pnlGaugeValue(pnlPct)}
-					tone={pnlTone}
-					marks={pnlMarks}
-					label={
-						pnlPct === undefined ? undefined : (
-							<span style={{ color: `var(--${pnlTone})` }}>
-								{formatValue(pnlPct, "pct")}
-							</span>
-						)
-					}
-					caption="P&L"
-				/>
-				<Gauge
-					value={
-						room === undefined
-							? undefined
-							: Math.max(
-									0,
-									Math.min(
-										1,
-										Math.log10(Math.max(room, 1e-3) * 10) / Math.log10(200),
-									),
-								)
-					}
-					tone={roomTone}
-					ticks={[Math.log10(10) / Math.log10(200)]}
-					label={
-						room === undefined
-							? undefined
-							: `${room >= 100 ? Math.round(room) : room.toFixed(1)}×`
-					}
-					caption="exit room"
-				/>
-			</Flex.Row>
-			<div className="w-full min-w-0">
-				<Trail values={pnlTrail} height={GAUGE_SIZE} className="w-full" />
-				<span className="-mt-3 block text-[10px] text-(--f3) leading-tight">
-					Close-now P&amp;L trail
-				</span>
-			</div>
-
-			<div className="border-t border-(--line) pt-3">
-				<PositionLotVisual
-					pnlPct={pnlPct}
-					exitRoom={room}
-					entry={entry ?? undefined}
-					mark={mark ?? undefined}
-					exitVwap={vwap ?? undefined}
-					waitingOnBranch={row.path_found === true}
-				/>
-			</div>
-
-			{/*
-			The system's view of this lot's own protection: the four live stop
-			checks and the learned exit policy, so a held lot reads as a reason,
-			not a mystery.
-			*/}
-			<Flex.Column gap={1} className="border-t border-(--line) pt-3">
-				<StopProximityPanel row={row} />
-				<ExitPolicyPanel row={row} />
-				<PositionLiveIntel symbol={String(row.symbol)} row={row} />
-			</Flex.Column>
-
-			{/*
-			Manual exit: the desk settles the lot (hub position.exit), and
-			the closed round trip lands on the Position Life-Cycle tab for
-			annotation.
-			*/}
-			<BadgeButton
-				data-l="position-exit"
-				disabled={exiting}
-				size="xs"
-				variant="error"
-				className={cn(
-					"self-start mt-0.5",
-					exiting
-						? "cursor-wait opacity-60"
-						: "hover:bg-[color-mix(in_srgb,var(--error)_18%,transparent)]",
-				)}
-				onClick={() => {
-					setExiting(true);
-
-					try {
-						sendCommand({
-							type: "position.exit",
-							symbol: row.symbol,
-							virtual: row.virtual,
-						});
-					} catch (cause) {
-						console.error(cause);
-					}
-				}}
-				label={exiting ? "closing" : "exit"}
-			/>
-		</Flex.Column>
-	);
-});
-
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const positionsState = useSelector(signals.positions, (state) => state);
-	const [profitOnly, setProfitOnly] = useState(false);
 	const held = useMemo(
 		() =>
 			positionRows(positionsState)
@@ -298,20 +102,14 @@ export const OpenPositions = () => {
 				.sort(comparePositionRows),
 		[book, positionsState],
 	);
-	const shown = useMemo(
-		() => (profitOnly ? held.filter(lotInProfit) : held),
-		[held, profitOnly],
-	);
 
-	const [choiceTrailRev, setChoiceTrailRev] = useState(0);
+	const [trailGen, setTrailGen] = useState(0);
 
 	useLayoutEffect(() => {
-		if (syncOpenChoiceLots(openChoiceLotsFromRows(shown))) {
-			setChoiceTrailRev((rev) => rev + 1);
+		if (syncOpenChoiceLots(openChoiceLotsFromRows(held))) {
+			setTrailGen((gen) => gen + 1);
 		}
-	}, [shown]);
-
-	void choiceTrailRev;
+	}, [held]);
 
 	if (held.length === 0) {
 		return (
@@ -327,81 +125,16 @@ export const OpenPositions = () => {
 				</span>
 				<span className="text-[10px] text-(--f4)">
 					{book === "virtual"
-						? "a card appears when a finished rule opens a virtual trade"
-						: "cards appear here as soon as the desk holds a symbol"}
+						? "a chart appears when a finished rule opens a virtual trade"
+						: "the chart fills as soon as the desk holds a symbol"}
 				</span>
 			</Flex.Column>
 		);
 	}
 
 	return (
-		<Flex.Column className="flex-1 min-h-0 w-full min-w-0 overflow-auto">
-			<Flex.Row
-				align="center"
-				justify="between"
-				gap={2}
-				className="shrink-0 border-b border-(--line) bg-(--surface) px-3 py-1.5"
-			>
-				<span className="text-[10px] uppercase tracking-wider text-(--f4)">
-					Show
-				</span>
-				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
-					<legend className="sr-only">Open position filter</legend>
-					<button
-						type="button"
-						data-l="positions-filter-all"
-						aria-pressed={!profitOnly}
-						onClick={() => setProfitOnly(false)}
-						className={cn(
-							"rounded px-2.5 py-0.5 text-[11px] transition-colors cursor-pointer",
-							!profitOnly
-								? "bg-(--raised) font-bold text-(--f1) shadow-xs"
-								: "text-(--f3) hover:text-(--f1)",
-						)}
-					>
-						All
-						<span className="ml-1 tabular-nums text-(--f4)">{held.length}</span>
-					</button>
-					<button
-						type="button"
-						data-l="positions-filter-profit"
-						aria-pressed={profitOnly}
-						onClick={() => setProfitOnly(true)}
-						className={cn(
-							"rounded px-2.5 py-0.5 text-[11px] transition-colors cursor-pointer",
-							profitOnly
-								? "bg-(--raised) font-bold text-(--up) shadow-xs"
-								: "text-(--f3) hover:text-(--f1)",
-						)}
-					>
-						In profit
-						<span className="ml-1 tabular-nums text-(--f4)">
-							{held.filter(lotInProfit).length}
-						</span>
-					</button>
-				</fieldset>
-			</Flex.Row>
-			<OpenChoiceChart lots={shown} />
-			{shown.length === 0 ? (
-				<Flex.Column
-					align="center"
-					justify="center"
-					gap={2}
-					className="flex-1 px-3 py-10 text-(--f3)"
-				>
-					<span className="text-sm">No lots ahead after fees</span>
-					<span className="max-w-sm text-center text-[10px] text-(--f4)">
-						Every open lot is flat or behind on close-now P&amp;L. Switch to All
-						to see them.
-					</span>
-				</Flex.Column>
-			) : (
-				<div className="grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] content-start">
-					{shown.map((row) => (
-						<PositionCard key={String(row.id ?? row.symbol)} row={row} />
-					))}
-				</div>
-			)}
+		<Flex.Column className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
+			<OpenChoiceChart lots={held} trailGen={trailGen} />
 		</Flex.Column>
 	);
 };

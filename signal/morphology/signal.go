@@ -38,15 +38,18 @@ type Signal struct {
 	books  *broker.Book
 	states *sync.Map
 	keys   []string
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"book_shape_stable",
 			"ask_vacuum",
+			"bid_notional_lean",
 		},
 	}
 
@@ -118,13 +121,14 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 
 	stable := bookShapeStable(res)
 	askVacuum := signal.askVacuum(symbol, asks)
+	bidLean := bidNotionalLean(bids, asks)
 
 	keys := []string{
 		signal.Name(),
 		symbol,
 	}
 
-	value.Append([]float64{stable, askVacuum}, append(keys, signal.keys...)...)
+	signal.emit.Metric(value, []float64{stable, askVacuum, bidLean}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{
 		"signal": signal.Name(),
@@ -171,6 +175,29 @@ func (signal *Signal) askVacuum(symbol string, asks []float64) float64 {
 
 	state.lastAskVacuum = math.Max(0, 1-top3/state.askTop3Baseline)
 	return state.lastAskVacuum
+}
+
+/*
+bidNotionalLean is high when displayed ask notional dominates bid notional —
+enter-band opposition from book imbalance, not thin offers alone.
+*/
+func bidNotionalLean(bids, asks []float64) float64 {
+	bidNotional := 0.0
+	for index := 2; index+1 < len(bids); index += 2 {
+		bidNotional += bids[index] * bids[index+1]
+	}
+
+	askNotional := 0.0
+	for index := 2; index+1 < len(asks); index += 2 {
+		askNotional += asks[index] * asks[index+1]
+	}
+
+	total := bidNotional + askNotional
+	if total <= 0 {
+		return 0
+	}
+
+	return math.Max(0, (askNotional-bidNotional)/total)
 }
 
 func bookShapeStable(res []float64) float64 {

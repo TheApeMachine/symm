@@ -1,6 +1,12 @@
 import { batch, type Store } from "@tanstack/store";
 import { useEffect } from "react";
-import { atoms, signals, updateClock, valueAtoms } from "#/collections/app";
+import {
+	atoms,
+	ensureSignalStore,
+	signals,
+	updateClock,
+	valueAtoms,
+} from "#/collections/app";
 import "#/collections/hub-projections";
 import { ensureLongtailRecorder } from "#/collections/longtail";
 import { mergePositionBook } from "#/collections/positions";
@@ -18,14 +24,13 @@ import { valueFromWire, type WireValue } from "#/types/decoder";
 import {
 	mergeWorkspaceAggregate,
 	type Value,
-	workspaceAggregateEqual,
 } from "#/types/value";
 
 type SignalStore = Store<Record<string, Value>>;
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
-const workspaceAggregateScope = (value: Value): string => {
+const frameScope = (value: Value): string => {
 	if (
 		value.origin === "workspace" &&
 		value.role === "tick" &&
@@ -33,16 +38,13 @@ const workspaceAggregateScope = (value: Value): string => {
 	) {
 		return "aggregate";
 	}
-	return value.scope;
+
+	return value.scope || "aggregate";
 };
 
 const advanceMarketTick = (value: Value) => {
-	if (value.origin !== "workspace") {
-		return;
-	}
-	if (workspaceAggregateScope(value) !== "aggregate") {
-		return;
-	}
+	if (value.origin !== "workspace") return;
+	if (frameScope(value) !== "aggregate") return;
 
 	const tick = typeof value.tick === "bigint" ? Number(value.tick) : value.tick;
 	if (atoms.tickCount.get() !== tick) {
@@ -51,57 +53,39 @@ const advanceMarketTick = (value: Value) => {
 	updateClock(value.timestamp);
 };
 
-const patchSignalStores = (pending: Map<SignalStore, Map<string, Value>>) => {
-	for (const [store, scopes] of pending) {
+/*
+Put one frame at origin/scope. Same tick keeps prior layers so multiple
+metric publishes for one symbol in one tick do not wipe each other; a new
+tick replaces the slot. Grid/train frames are replaced wholesale each tick
+so the Impulse Map tracks live brightness, not a historical peak.
+*/
+const putFrame = (
+	store: SignalStore,
+	scope: string,
+	frame: Value,
+) => {
+	store.setState((prev) => {
+		const prior = prev[scope];
+		let next = frame;
+
 		if (store === signals.positions) {
-			store.setState((prev) => {
-				let next = prev;
-				for (const frame of scopes.values()) {
-					next = mergePositionBook(next, frame);
-				}
-				return next;
-			});
-			continue;
+			return mergePositionBook(prev, frame);
 		}
 
-		store.setState((prev) => {
-			let next: Record<string, Value> | null = null;
+		if (prior && prior.tick === frame.tick) {
+			next = mergeWorkspaceAggregate(prior, frame);
+			if (next === prior) return prev;
+		}
 
-			for (const [scope, frame] of scopes) {
-				if (prev[scope] === frame) {
-					continue;
-				}
-
-				let nextFrame = frame;
-				if (store === signals.workspace && scope === "aggregate") {
-					nextFrame = mergeWorkspaceAggregate(prev[scope], frame);
-					if (workspaceAggregateEqual(prev[scope], nextFrame)) {
-						continue;
-					}
-				}
-
-				if (prev[scope] === nextFrame) {
-					continue;
-				}
-
-				if (next === null) {
-					next = { ...prev };
-				}
-				next[scope] = nextFrame;
-			}
-
-			return next ?? prev;
-		});
-	}
+		if (prior === next) return prev;
+		return { ...prev, [scope]: next };
+	});
 };
 
 export const ingest = (values: Value[]) => {
-	const pending = new Map<SignalStore, Map<string, Value>>();
-
 	batch(() => {
 		for (const value of values) {
 			const atom = valueAtoms[value.origin];
-
 			if (atom) {
 				atom.set(value);
 				continue;
@@ -115,31 +99,15 @@ export const ingest = (values: Value[]) => {
 				continue;
 			}
 
-			const store = signals[value.origin];
+			if (!value.origin) continue;
 
-			if (!store) {
-				continue;
-			}
-
-			const scope = workspaceAggregateScope(value);
-
-			let scopes = pending.get(store);
-			if (!scopes) {
-				scopes = new Map();
-				pending.set(store, scopes);
-			}
-			scopes.set(scope, value);
-
+			const store = ensureSignalStore(value.origin);
+			const scope = frameScope(value);
+			putFrame(store, scope, value);
 			advanceMarketTick(value);
 		}
-
-		patchSignalStores(pending);
 	});
 
-	/*
-	Projections run when the batch flushes, so the engine readout has to
-	read them after that, once matches and the tick are both current.
-	*/
 	syncEngineTelemetry();
 };
 

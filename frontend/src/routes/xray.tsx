@@ -4,10 +4,8 @@ import { useEffect, useState } from "react";
 import {
 	atoms,
 	DEFAULT_FOCUS_SYMBOL,
-	kernelSymbolForAggregate,
 	signals,
 	symbolScopeAliases,
-	symbolsOnAggregate,
 } from "#/collections/app";
 import { parseResonanceFromWorkspace } from "#/components/charts/prediction";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
@@ -38,22 +36,14 @@ const XrayPaintBridge = () => {
 			}
 
 			const aggregate = signals.workspace.state.aggregate;
-			const carriers = new Set<string>([
-				focusSymbol,
-				kernelSymbolForAggregate(focusSymbol, aggregate),
-				...symbolsOnAggregate(aggregate),
-			]);
-
-			for (const sym of carriers) {
-				for (const alias of symbolScopeAliases(sym)) {
-					const folded = parseResonanceFromWorkspace(alias, aggregate);
-					if (!folded) continue;
-					retainResonanceRow(sym, {
-						symbol: sym,
-						...folded,
-					});
-					break;
-				}
+			for (const alias of symbolScopeAliases(focusSymbol)) {
+				const folded = parseResonanceFromWorkspace(alias, aggregate);
+				if (!folded) continue;
+				retainResonanceRow(focusSymbol, {
+					symbol: focusSymbol,
+					...folded,
+				});
+				break;
 			}
 
 			const universe = getAllRetainedResonance();

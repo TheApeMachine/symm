@@ -2,53 +2,54 @@ package broker
 
 import (
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestHoldDurationDoesNotClose(t *testing.T) {
-	Convey("reprice count, a learned bar horizon, and wall-clock age leave the lot open", t, func() {
+func TestStopLossInvalidation(t *testing.T) {
+	Convey("a 2pp adverse drop from the entry mark fires invalidation", t, func() {
 		stop := NewStopLoss()
-		pos := &Position{
-			Symbol:          "UNZ/USD",
-			PnL:             pct(-1),
-			PnLPct:          pct(-1.6),
-			OpenedAt:        time.Now().Add(-3 * time.Hour),
-			BarsHeld:        33,
-			MaxLifetimeBars: 32,
-			MaxLifetimeNs:   int64(time.Minute),
-		}
 
-		_, first := stop.Evaluate(pos)
-		So(first, ShouldBeFalse)
+		_, armed := stop.Update(-1.0)
+		So(armed, ShouldBeFalse)
 
-		pos.BarsHeld = 10_000
-		trigger, closed := stop.Evaluate(pos)
-		So(closed, ShouldBeFalse)
-		So(trigger, ShouldEqual, "")
+		trigger, fired := stop.Update(-3.0)
+		So(fired, ShouldBeTrue)
+		So(trigger, ShouldContainSubstring, "invalidation stop")
 	})
 }
 
-func TestStopStateDoesNotArmExpiry(t *testing.T) {
-	Convey("the expiry meter stays disarmed however many bars have passed", t, func() {
+func TestStopLossTrailing(t *testing.T) {
+	Convey("giveback past the allowed trail fires take-profit once green", t, func() {
 		stop := NewStopLoss()
-		pos := &Position{
-			Symbol:          "UNZ/USD",
-			PnLPct:          pct(-1.6),
-			PeakPnLPct:      pct(-1.6),
-			BarsHeld:        33,
-			MaxLifetimeBars: 32,
-		}
 
-		state := stop.State(pos)
-		So(state.Expiry, ShouldEqual, 0)
-		So(state.MaxBars, ShouldEqual, 0)
-		So(state.BarsHeld, ShouldEqual, 33)
+		stop.Update(0.0)
+		stop.Update(3.0)
+
+		state := stop.State(3.0)
+		So(state.PeakPct, ShouldEqual, 3.0)
+		So(state.Trailing, ShouldEqual, 0)
+
+		trigger, fired := stop.Update(1.0)
+		So(fired, ShouldBeTrue)
+		So(trigger, ShouldContainSubstring, "trailing take-profit")
 	})
 }
 
-func pct(v float64) *decimal.Decimal {
-	return decimal.NewFromFloat64(v)
+func TestStopStateDamageTightensTrail(t *testing.T) {
+	Convey("damage from a deep drawdown shrinks allowed giveback", t, func() {
+		clean := NewStopLoss()
+		clean.Update(0.0)
+		clean.Update(4.0)
+		cleanState := clean.State(4.0)
+
+		hurt := NewStopLoss()
+		hurt.Update(0.0)
+		hurt.Update(-1.5)
+		hurt.Update(4.0)
+		hurtState := hurt.State(4.0)
+
+		So(hurtState.Damage, ShouldBeGreaterThan, 0)
+		So(hurtState.AllowedGivebackPct, ShouldBeLessThan, cleanState.AllowedGivebackPct)
+	})
 }

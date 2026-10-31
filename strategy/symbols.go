@@ -5,17 +5,37 @@ import (
 	"strings"
 
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
 // Symbols groups signal layers on one workspace trade tick for grid.Observe.
 type Symbols struct {
-	tick *data.Value
+	tick  *data.Value
+	price *broker.Price
 }
 
 func NewSymbols(tick *data.Value) *Symbols {
 	return &Symbols{tick: tick}
+}
+
+/*
+WithPrice attaches the book so Names / GroupBySymbol can apply the active
+mover pre-filter (24h volume + day change + spread).
+*/
+func (symbols *Symbols) WithPrice(price *broker.Price) *Symbols {
+	if symbols == nil {
+		return nil
+	}
+
+	symbols.price = price
+	return symbols
+}
+
+func (symbols *Symbols) active(symbol string) bool {
+	return symbols.blockReason(symbol) == ""
 }
 
 func (symbols *Symbols) Names() []string {
@@ -24,25 +44,44 @@ func (symbols *Symbols) Names() []string {
 	}
 
 	list := []string{}
-	
+	rejects := make(map[string]string)
+
 	var trades []kraken.TradeData
 	symbols.tick.Lookup(&trades, "spot:trade")
-	
+
 	for _, trade := range trades {
-		if trade.Symbol != "" {
-			list = append(list, trade.Symbol)
+		if trade.Symbol == "" {
+			continue
 		}
+
+		if reason := symbols.blockReason(trade.Symbol); reason != "" {
+			rejects[trade.Symbol] = reason
+			continue
+		}
+
+		list = append(list, trade.Symbol)
 	}
 
 	for _, source := range types.SignalSourceStrings {
 		for _, layer := range symbols.tick.LookupPrefix(source) {
 			parts := strings.Split(layer.Key, "/")
-			
-			if len(parts) >= 4 && parts[1] != "aggregate" {
-				list = append(list, parts[1]+"/"+parts[2])
+
+			if len(parts) < 4 || parts[1] == "aggregate" {
+				continue
 			}
+
+			symbol := parts[1] + "/" + parts[2]
+
+			if reason := symbols.blockReason(symbol); reason != "" {
+				rejects[symbol] = reason
+				continue
+			}
+
+			list = append(list, symbol)
 		}
 	}
+
+	auditMoverRejects(rejects)
 
 	if len(list) == 0 {
 		return nil
@@ -50,6 +89,25 @@ func (symbols *Symbols) Names() []string {
 
 	slices.Sort(list)
 	return slices.Compact(list)
+}
+
+func (symbols *Symbols) blockReason(symbol string) string {
+	if symbols == nil || symbols.price == nil {
+		return ""
+	}
+
+	return symbols.price.ActiveReason(symbol)
+}
+
+func auditMoverRejects(rejects map[string]string) {
+	for symbol, reason := range rejects {
+		audit.Record.Write(map[string]any{
+			"node":   "entry",
+			"phase":  "mover",
+			"symbol": symbol,
+			"reason": reason,
+		})
+	}
 }
 
 func (symbols *Symbols) GroupBySymbol(bookStale func(string) bool) map[string]map[string]map[string]float64 {
@@ -62,33 +120,38 @@ func (symbols *Symbols) GroupBySymbol(bookStale func(string) bool) map[string]ma
 	for _, source := range types.SignalSourceStrings {
 		for _, layer := range symbols.tick.LookupPrefix(source) {
 			parts := strings.Split(layer.Key, "/")
-			
+
 			if len(parts) < 4 || parts[1] == "aggregate" {
 				continue
 			}
 
+			symbol := parts[1] + "/" + parts[2]
+
+			if !symbols.active(symbol) {
+				continue
+			}
+
 			var metrics []float64
-			
+
 			if layer.Decode(&metrics) != nil {
 				continue
 			}
 
-			symbol := parts[1] + "/" + parts[2]
 			labels := parts[3:]
 
 			for i, label := range labels {
 				if i >= len(metrics) {
 					break
 				}
-			
+
 				if grouped[symbol] == nil {
 					grouped[symbol] = make(map[string]map[string]float64)
 				}
-			
+
 				if grouped[symbol][source] == nil {
 					grouped[symbol][source] = make(map[string]float64)
 				}
-			
+
 				grouped[symbol][source][label] = metrics[i]
 			}
 		}
@@ -97,13 +160,13 @@ func (symbols *Symbols) GroupBySymbol(bookStale func(string) bool) map[string]ma
 	for _, source := range types.SignalSourceStrings {
 		for _, layer := range symbols.tick.LookupPrefix(source) {
 			parts := strings.Split(layer.Key, "/")
-			
+
 			if len(parts) != 3 || parts[1] != "aggregate" {
 				continue
 			}
 
 			var metrics []float64
-			
+
 			if layer.Decode(&metrics) != nil || len(metrics) == 0 {
 				continue
 			}

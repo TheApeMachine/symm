@@ -2,6 +2,7 @@ package depthflow
 
 import (
 	"context"
+	"math"
 	"sort"
 	"sync"
 
@@ -22,12 +23,18 @@ type symbolState struct {
 	prevBidWorst    float64
 	prevAskWorst    float64
 	hasPrev         bool
-	lastBidRelease  float64
-	hasPrevAsk      bool
-	prevBestAsk     float64
-	prevBestAskQty  float64
-	buyVolAtAsk     float64
-	lastAbsorption  float64
+	lastBidRelease      float64
+	lastAskBuild        float64
+	lastTouchBidDecay   float64
+	lastBidTouchRefresh float64
+	hasPrevAsk          bool
+	prevBestAsk         float64
+	prevBestAskQty      float64
+	hasPrevBestBid      bool
+	prevBestBid         float64
+	prevBestBidQty      float64
+	buyVolAtAsk         float64
+	lastAbsorption      float64
 }
 
 type Signal struct {
@@ -35,17 +42,22 @@ type Signal struct {
 	books  *broker.Book
 	states *sync.Map
 	keys   []string
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"bid_ladder_build",
 			"bid_ladder_release",
 			"ask_ladder_release",
 			"ask_absorption",
+			"touch_bid_decay",
+			"bid_touch_refresh",
+			"ask_ladder_build",
 		},
 	}
 
@@ -74,6 +86,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	signal.appendBoardBidRelease(value)
+	signal.appendBoardAskRelease(value)
 
 	return value
 }
@@ -171,6 +184,32 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 			askRelease = 0
 		}
 
+		askBuild := netAsk
+		if askBuild < 0 {
+			askBuild = 0
+		}
+		state.lastAskBuild = askBuild
+
+		bestBid := bids[0][0]
+		bestBidQty := bids[0][1]
+		touchBidDecay := 0.0
+		bidTouchRefresh := 0.0
+
+		if state.hasPrevBestBid && bestBid == state.prevBestBid && state.prevBestBidQty > 0 {
+			delta := bestBidQty - state.prevBestBidQty
+			if delta < 0 {
+				touchBidDecay = math.Min(1, (-delta)/state.prevBestBidQty)
+			} else if delta > 0 {
+				bidTouchRefresh = math.Min(1, delta/state.prevBestBidQty)
+			}
+		}
+
+		state.prevBestBid = bestBid
+		state.prevBestBidQty = bestBidQty
+		state.hasPrevBestBid = true
+		state.lastTouchBidDecay = touchBidDecay
+		state.lastBidTouchRefresh = bidTouchRefresh
+
 		bestAsk := asks[0][0]
 		bestAskQty := asks[0][1]
 		if state.hasPrevAsk && bestAsk != state.prevBestAsk && state.prevBestAskQty > 0 {
@@ -183,11 +222,14 @@ func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
 		state.prevBestAskQty = bestAskQty
 		state.hasPrevAsk = true
 
-		value.Append([]float64{
+		signal.emit.Metric(value, []float64{
 			build,
 			release,
 			askRelease,
 			state.lastAbsorption,
+			touchBidDecay,
+			bidTouchRefresh,
+			askBuild,
 		}, append(keys, signal.keys...)...)
 
 		audit.Record.Write(map[string]any{
@@ -244,10 +286,35 @@ func (signal *Signal) appendBoardBidRelease(value *data.Value) {
 		return
 	}
 
-	value.Append([]float64{median}, append([]string{
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "board_bid_release")...)
+}
+
+func (signal *Signal) appendBoardAskRelease(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.states.Range(func(_, untyped any) bool {
+		state := untyped.(*symbolState)
+		if state.hasPrev {
+			scores = append(scores, state.lastAskBuild)
+		}
+		return true
+	})
+
+	median, ok := parent.Median(scores)
+	if !ok {
+		return
+	}
+
+	signal.emit.Metric(value, []float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_ask_release")...)
 }
 
 /*

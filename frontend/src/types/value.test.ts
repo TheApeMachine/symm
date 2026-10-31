@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeWorkspaceAggregate, Value } from "./value";
+import { mergeWorkspaceAggregate, preserveLitLayers, Value } from "./value";
 
 describe("mergeWorkspaceAggregate", () => {
 	it("unions layers on the same tick", () => {
@@ -57,5 +57,39 @@ describe("mergeWorkspaceAggregate", () => {
 		expect(merged.tick).toBe(11n);
 		expect(merged.index.length).toBe(1);
 		expect(merged.index[0]).toContain("spot:trade");
+	});
+});
+
+describe("preserveLitLayers", () => {
+	it("keeps prior non-empty active when the next training step carries []", () => {
+		const lit = [{ key: 2, brightness: 0.8 }];
+		const prior = new Value({
+			origin: "training",
+			role: "step",
+			scope: "BTC/USD",
+			prefix: "training/step/BTC/USD/1/10",
+			tick: 10n,
+			index: ["training/step/BTC/USD/1/10/active"],
+			layers: [new TextEncoder().encode(JSON.stringify(lit))],
+		});
+		const incoming = new Value({
+			origin: "training",
+			role: "step",
+			scope: "BTC/USD",
+			prefix: "training/step/BTC/USD/1/11",
+			tick: 11n,
+			index: [
+				"training/step/BTC/USD/1/11/active",
+				"training/step/BTC/USD/1/11/gate",
+			],
+			layers: [
+				new TextEncoder().encode(JSON.stringify([])),
+				new TextEncoder().encode(JSON.stringify({ passed: false })),
+			],
+		});
+
+		const kept = preserveLitLayers(prior, incoming);
+		expect(kept.reading("active")).toEqual(lit);
+		expect(kept.reading("gate")).toEqual({ passed: false });
 	});
 });

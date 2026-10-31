@@ -63,7 +63,7 @@ export function regionMapsFromTrainingFrame(
 }
 
 /*
-regionPinLabel separates wiring (always two pinned metrics per R00–R14) from
+regionPinLabel separates wiring (always three pinned metrics per R00–R14) from
 how many of those metrics reported on this tick (grid Region.counts).
 */
 export function regionPinLabel(

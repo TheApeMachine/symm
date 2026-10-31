@@ -29,9 +29,9 @@ longer needs.
 const positionTraceCap = 4096
 
 type Position struct {
-	mu             sync.Mutex
-	exitInProgress uint32
 	*runtime.System
+	mu                sync.Mutex
+	exitInProgress    uint32
 	stopLoss          *StopLoss
 	transport         Transport
 	price             *Price
@@ -62,9 +62,9 @@ type Position struct {
 	ExitRoom          *decimal.Decimal        `json:"exit_room,omitempty"`
 	PnL               *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`   // First mark-to-exit PnL after open
-	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`   // Previous tick PnL for momentum checks
-	PnLTrace          []float64               `json:"pnl_trace,omitempty"`  // Net percent, one entry per reprice
+	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`  // First mark-to-exit PnL after open
+	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`  // Previous tick PnL for momentum checks
+	PnLTrace          []float64               `json:"pnl_trace,omitempty"` // Net percent, one entry per reprice
 	StopState         StopState               `json:"stop_state,omitempty"` // Live proximity of each stop check
 	PeakPnLPct        *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
 	PeakStep          *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
@@ -79,15 +79,15 @@ type Position struct {
 	frictionPct       *decimal.Decimal
 	stallTicks        int
 	lastMark          *decimal.Decimal
-	HoldNs            int64            `json:"hold_ns,omitempty"`
-	Virtual           bool             `json:"virtual"`
-	PathFound         bool             `json:"path_found,omitempty"`
-	OpenSurprise      float64          `json:"open_surprise,omitempty"`
-	EnterR02          float64          `json:"enter_r02_brightness,omitempty"`
-	EnterNetHold      float64          `json:"enter_net_hold,omitempty"`
-	EnterGridMaturity float64          `json:"enter_grid_maturity,omitempty"`
-	BarsHeld          int64            `json:"bars_held,omitempty"`    // Reprice events since entry (tape timebase)
-	RealizedPct float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
+	HoldNs            int64   `json:"hold_ns,omitempty"`
+	Virtual           bool    `json:"virtual"`
+	PathFound         bool    `json:"path_found,omitempty"`
+	OpenSurprise      float64 `json:"open_surprise,omitempty"`
+	EnterR02          float64 `json:"enter_r02_brightness,omitempty"`
+	EnterNetHold      float64 `json:"enter_net_hold,omitempty"`
+	EnterGridMaturity float64 `json:"enter_grid_maturity,omitempty"`
+	BarsHeld          int64   `json:"bars_held,omitempty"`    // Reprice events since entry (tape timebase)
+	RealizedPct       float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
 }
 
 func NewPosition(
@@ -129,6 +129,23 @@ func (position *Position) IsClosed() bool {
 }
 
 /*
+stopExitPath is the path argument passed into Exit when a stop fires.
+exit_path on the lot is still empty until Exit runs. Never use entry_path —
+only the latest hold spell, or a fixed stop tag.
+*/
+func stopExitPath(position *Position) string {
+	if position == nil {
+		return "stop"
+	}
+
+	if n := len(position.HoldPaths); n > 0 {
+		return position.HoldPaths[n-1]
+	}
+
+	return "stop"
+}
+
+/*
 Update refreshes the mark and reprices open PnL. A fired exit starts on
 its own goroutine so the trade ingress can publish the next tick.
 */
@@ -141,12 +158,14 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.Mark = mark
 		position.repriceLocked()
 
-		if position.stopLoss != nil {
-			if trigger, ok := position.stopLoss.Evaluate(position); ok {
+		if position.stopLoss != nil && position.PnLPct != nil {
+			current := position.PnLPct.Float64()
+			if trigger, ok := position.stopLoss.Update(current); ok {
 				position.ExitTrigger = trigger
 				position.OutcomeTriggers = []string{trigger}
-				path = position.ExitPath
+				path = stopExitPath(position)
 			}
+			position.StopState = position.stopLoss.State(current)
 		}
 	}
 
@@ -179,16 +198,7 @@ func (position *Position) ShouldReprice(mark *decimal.Decimal, isTraded bool) bo
 
 	markUnchanged := position.Mark != nil && position.Mark.Cmp(mark) == 0
 
-	watchProfit := false
-	if position.stopLoss != nil {
-		watchProfit = position.stopLoss.ProfitLocked(position)
-	}
-
-	if position.PnL != nil && position.PnL.Sign() > 0 {
-		watchProfit = true
-	}
-
-	return isTraded || !markUnchanged || watchProfit
+	return isTraded || !markUnchanged
 }
 
 func (position *Position) finishExit(path string) {
@@ -270,7 +280,6 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 	position.PolicyEpoch = data.Epoch.Load()
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
-	position.ExitPath = path
 
 	if position.Virtual {
 		if err := position.fillTakerEntryLocked(); err != nil {
@@ -500,7 +509,7 @@ func (position *Position) repriceLocked() {
 	now := time.Now().UTC()
 	position.UpdatedAt = &now
 
-	fee := position.price.Fee(position.Symbol)
+	fee := position.price.feeForTrade(position.Symbol)
 
 	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, position.Qty)
 	position.ExitRoom = position.price.ExitRoom(position.Symbol, position.Qty)
@@ -544,13 +553,6 @@ func (position *Position) repriceLocked() {
 	// BarsHeld counts reprices since entry. It is a trace statistic. It does
 	// not close the lot.
 	position.BarsHeld++
-
-	// Refresh the live stop-check proximity for the dashboard frame. This is
-	// what lets the operator see, per mark, how close each of the four checks
-	// is to firing, so a held lot is never a black box.
-	if position.stopLoss != nil {
-		position.StopState = position.stopLoss.State(position)
-	}
 
 	// Capture the fee-net realized return the moment the exit is priced
 	// (ExitVWAP/ExitPrice set above, then repriceLocked ran). PnLPct is

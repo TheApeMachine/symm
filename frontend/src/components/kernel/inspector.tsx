@@ -1,10 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	atoms,
-	kernelMeasurement,
-	kernelSymbolForAggregate,
+	latest,
 	resonanceFrameForSymbol,
 	signals,
 } from "#/collections/app";
@@ -92,28 +91,12 @@ export const KernelInspector = () => {
 	const active = source !== null && source !== "";
 	const resonance = active && isResonance(source);
 
-	/*
-	Kernels publish into the workspace tick; resonance is the one origin
-	with a store of its own. The frame is the latest reading, the sparkline
-	series is chart-local history the modal folds frame by frame.
-	*/
-	const aggregate = useSelector(
-		signals.workspace,
-		(state) => state.aggregate,
-	);
-	const querySymbol = useMemo(
-		() => kernelSymbolForAggregate(focusSymbol, aggregate),
-		[focusSymbol, aggregate],
-	);
-
 	const frame = useSelector(signals.resonance, (state) => {
 		if (!resonance) return undefined;
 		return resonanceFrameForSymbol(state, focusSymbol);
 	});
 	const signalReading =
-		!resonance && source
-			? (kernelMeasurement(source, querySymbol, aggregate) ?? null)
-			: null;
+		!resonance && source ? (latest(source, focusSymbol) ?? null) : null;
 	const kernelFrame = resonance ? (frame ?? null) : signalReading;
 
 	const [signalHistory, setSignalHistory] = useState<number[]>([]);
@@ -140,13 +123,14 @@ export const KernelInspector = () => {
 		: signalHistory.length > 0
 			? signalHistory
 			: livePoints;
-	const latest = points.length > 0 ? points[points.length - 1] : null;
-	const status: SignalHealthStatus = latest === null ? "waiting" : "measured";
+	const latestPoint = points.length > 0 ? points[points.length - 1] : null;
+	const status: SignalHealthStatus =
+		latestPoint === null ? "waiting" : "measured";
 	const badge = kernelStatusMeta(status);
 
 	const relativePoints = resonance ? points : scaleSparklineValues(points);
 	const paths = kernelSparkPaths(relativePoints, status);
-	const level = meterPercent(latest);
+	const level = meterPercent(latestPoint);
 
 	const metrics = resonance ? [] : sourceMetrics(source);
 	const metricReadouts = metrics.map((name) => {
@@ -168,10 +152,10 @@ export const KernelInspector = () => {
 		: (sourceHeadline(source) ?? "");
 
 	const valueLabel = resonance
-		? `${((latest ?? 0) * 100).toFixed(0)}%`
-		: latest === null
+		? `${((latestPoint ?? 0) * 100).toFixed(0)}%`
+		: latestPoint === null
 			? "—"
-			: latest.toFixed(2);
+			: latestPoint.toFixed(2);
 
 	const openInSignalInsight = () => {
 		selectSource(source);
@@ -290,9 +274,9 @@ export const KernelInspector = () => {
 						{headline === "" ? "" : ` · ${headline}`}
 					</Typography.Mono>
 					<Typography.Mono size="xxs" tone="f4">
-						{latest === null
+						{latestPoint === null
 							? "awaiting first reading"
-							: `latest ${resonance ? "confidence" : (sourceHeadline(source) ?? "reading")} ${latest.toFixed(resonance ? 3 : 4)}`}
+							: `latest ${resonance ? "confidence" : (sourceHeadline(source) ?? "reading")} ${latestPoint.toFixed(resonance ? 3 : 4)}`}
 					</Typography.Mono>
 				</Flex.Column>
 				<Button

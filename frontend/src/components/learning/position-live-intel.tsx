@@ -1,6 +1,4 @@
-import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
-import { signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
@@ -13,6 +11,7 @@ import {
 	gateBadgeClassName,
 } from "./gate-labels";
 import { REGION_KEYS, REGIONS, TradeRegionScores } from "./position-health";
+import { useTrainingFrame } from "./use-training-frame";
 
 export type { GateForces };
 
@@ -84,7 +83,7 @@ export const PositionLiveIntel = ({
 	symbol: string;
 	row: Record<string, unknown>;
 }) => {
-	const trainingFrame = useSelector(signals.training, (state) => state[symbol]);
+	const trainingFrame = useTrainingFrame(symbol);
 	const life = useMemo(
 		(): Lifecycle =>
 			({

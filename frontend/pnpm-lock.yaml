@@ -98,6 +98,12 @@ importers:
       react-use:
         specifier: ^17.6.0
         version: 17.6.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      scichart:
+        specifier: ^6.0.15
+        version: 6.0.15
+      scichart-react:
+        specifier: ^2.1.0
+        version: 2.1.0(react@19.2.6)(scichart@6.0.15)
       tailwind-merge:
         specifier: ^3.0.2
         version: 3.6.0
@@ -2473,6 +2479,16 @@ packages:
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
+
+  scichart-react@2.1.0:
+    resolution: {integrity: sha512-mCn8T0zrUztBLoMrVlIdua9kobL80YclD6BMXT4KomVXxYdkS7TD7A66qiOu05zt0bq1teJ2HPYcDa/qGsdAPQ==}
+    peerDependencies:
+      react: '>=16.14.0'
+      scichart: '>=6.0.13'
+
+  scichart@6.0.15:
+    resolution: {integrity: sha512-o1IGIbtkjl/+jGOjB/59mcGnzonOozpcLDH0isEJ2SPyodbTQtDCwYFbqxOO6bGxOiPysmmMu3MFlQE+fAHUuQ==}
+    engines: {node: '>=22'}
 
   screenfull@5.2.0:
     resolution: {integrity: sha512-9BakfsO2aUQN2K9Fdbj87RJIEZ82Q9IGim7FqM5OsebfoFC6ZHXgDq/KvniuLTPdeM8wY2o6Dj3WQ7KeQCj3cA==}
@@ -5223,6 +5239,13 @@ snapshots:
       xmlchars: 2.2.0
 
   scheduler@0.27.0: {}
+
+  scichart-react@2.1.0(react@19.2.6)(scichart@6.0.15):
+    dependencies:
+      react: 19.2.6
+      scichart: 6.0.15
+
+  scichart@6.0.15: {}
 
   screenfull@5.2.0: {}
 

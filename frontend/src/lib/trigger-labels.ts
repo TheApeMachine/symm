@@ -26,14 +26,15 @@ export const EXIT_TRIGGER_LABEL: Record<string, string> = {
 	"spike retrace": "SPIKE RETRACE",
 	"statistical invalidation stop": "STAT STOP",
 	"entry drag exceeded": "DRAG STOP",
-	// broker/stoploss.go check 1: causal-MCTS learned invalidation cut.
+	// broker/stoploss.go check 1: hard 2pp invalidation cut.
 	"invalidation stop": "STOP",
-	// broker/stoploss.go check 2: physical book liquidity evaporation (3-tick persistence).
+	// Legacy: physical book liquidity evaporation (removed from stop).
 	"liquidity evaporation": "EVAP",
-	// broker/stoploss.go check 3: causal-MCTS learned trailing / ratcheted profit stop.
+	// broker/stoploss.go check 2: damage-ratcheted trailing take-profit.
+	"trailing take-profit": "TRAIL",
 	"ratcheted trailing stop": "TRAIL",
 	"damaged recovery ratcheted stop": "TRAIL",
-	// broker/stoploss.go check 4: empirical move expiry (bar-count, tape timebase).
+	// Legacy: empirical move expiry (removed from stop).
 	"move expired": "EXPIRE",
 	// Gate exit path.
 	"policy exit match": "EXIT",

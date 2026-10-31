@@ -28,10 +28,11 @@ func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
+	stage *Stage,
 ) *Training {
 	return &Training{
 		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, price),
+		model:     NewModel(ctx, desk, price, stage),
 		price:     price,
 		desk:      desk,
 		client:    store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
@@ -44,7 +45,7 @@ func (training *Training) Step(value *data.Value) *data.Value {
 		return nil
 	}
 
-	symbols := NewSymbols(value).Names()
+	symbols := NewSymbols(value).WithPrice(training.price).Names()
 
 	for _, symbol := range training.desk.Pending() {
 		if !slices.Contains(symbols, symbol) {
@@ -70,16 +71,12 @@ func (training *Training) Step(value *data.Value) *data.Value {
 			out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
 
 			var observed []*nmstore.Region
-			value.Lookup(&observed, strings.Join([]string{"stage", symbol, "regions"}, "/"))
+			value.Lookup(&observed, strings.Join([]string{"grid", symbol, "regions"}, "/"))
 
 			training.model.Evaluate(out, observed, value)
 
-			var phase string
-			value.Lookup(&phase, strings.Join([]string{"stage", symbol, "phase"}, "/"))
-			out.Append(phase, "phase")
-
 			cut := data.Get[tokenizer.Tokens](
-				value, strings.Join([]string{"stage", symbol, "cut"}, "/"),
+				value, strings.Join([]string{"sequencer", symbol, "cut"}, "/"),
 			)
 
 			if cut.Len() > 0 {
@@ -96,6 +93,8 @@ func (training *Training) Step(value *data.Value) *data.Value {
 	if err := group.Wait(); err != nil {
 		training.Error(err)
 	}
+
+	training.model.CommitEntries()
 
 	training.telemetry.PublishWalks()
 	training.telemetry.EndTick(training.model, training.desk)

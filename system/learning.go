@@ -36,6 +36,7 @@ type Learning struct {
 	MaxExcursionBars       int
 	PolicyShadowBars       int
 	MinSupportedHorizon    int
+	MinEnterZ              float64
 	CliffHorizonDrop       int
 	CliffEnergyMult        float64
 	PositionTracePath      string
@@ -85,6 +86,7 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.max_excursion_bars", 8)
 	viper.SetDefault("learning.policy_shadow_bars", 32)
 	viper.SetDefault("learning.min_supported_horizon", 2)
+	viper.SetDefault("learning.min_enter_z", 0.35)
 	viper.SetDefault("learning.cliff_horizon_drop", 2)
 	viper.SetDefault("learning.cliff_energy_mult", 1.4)
 	viper.SetDefault("learning.position_trace_path", "")
@@ -133,6 +135,7 @@ func NewLearning() *Learning {
 		MaxExcursionBars:        viper.GetInt("learning.max_excursion_bars"),
 		PolicyShadowBars:        viper.GetInt("learning.policy_shadow_bars"),
 		MinSupportedHorizon:     viper.GetInt("learning.min_supported_horizon"),
+		MinEnterZ:               viper.GetFloat64("learning.min_enter_z"),
 		CliffHorizonDrop:        viper.GetInt("learning.cliff_horizon_drop"),
 		CliffEnergyMult:         viper.GetFloat64("learning.cliff_energy_mult"),
 		PositionTracePath:       viper.GetString("learning.position_trace_path"),

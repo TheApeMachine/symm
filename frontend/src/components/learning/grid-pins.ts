@@ -5,6 +5,8 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	cvd: {
 		aggressor_backing: [0],
 		cvd_divergence: [3],
+		initiative_lock: [0],
+		flow_sign_flip: [3],
 	},
 	pumpdump: {
 		coiled_compression: [0],
@@ -13,6 +15,7 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		clock_acceleration: [6],
 		blowoff_dip: [8],
 		board_coiled: [9],
+		board_starved: [9],
 	},
 	correlation: {
 		structural_alignment: [1],
@@ -22,6 +25,8 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	leadlag: {
 		led_peer_share: [1],
 		anchor_breakdown: [13],
+		cohort_lift: [1],
+		lag_dispersion: [13],
 	},
 	depthflow: {
 		ask_absorption: [2],
@@ -29,6 +34,10 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		ask_ladder_release: [5],
 		bid_ladder_build: [7],
 		board_bid_release: [11],
+		touch_bid_decay: [4],
+		bid_touch_refresh: [7],
+		ask_ladder_build: [5],
+		board_ask_release: [11],
 	},
 	toxicity: {
 		retreat_fraction: [4],
@@ -37,10 +46,13 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	morphology: {
 		ask_vacuum: [5],
 		book_shape_stable: [7],
+		bid_notional_lean: [2],
 	},
 	hawkes: {
 		supercritical_cascade: [6],
 		board_cascade: [10],
+		branching_asymmetry: [6],
+		board_branching_asymmetry: [10],
 	},
 	sentiment: {
 		cohort_still_aligned: [10],
@@ -51,6 +63,9 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		friction_drag_ratio: [12],
 		capacity_stress: [14],
 		liquidation_impact: [14],
+		move_per_spread: [8],
+		touch_friction: [12],
+		spread_tail_gap: [14],
 	},
 };
 
@@ -109,17 +124,18 @@ const AGGREGATE_METRICS: Record<string, Set<string>> = {
 		"board_dispersion_squeeze",
 		"structure_uncoupling",
 	]),
-	pumpdump: new Set(["board_coiled"]),
-	depthflow: new Set(["board_bid_release"]),
-	hawkes: new Set(["board_cascade"]),
+	pumpdump: new Set(["board_coiled", "board_starved"]),
+	depthflow: new Set(["board_bid_release", "board_ask_release"]),
+	hawkes: new Set(["board_cascade", "board_branching_asymmetry"]),
 	liquidity: new Set([
 		"market_friction",
 		"friction_drag_ratio",
 		"capacity_stress",
+		"spread_tail_gap",
 	]),
 	sentiment: new Set(["cohort_still_aligned"]),
 	toxicity: new Set(["board_withdrawal_rate"]),
-	leadlag: new Set(["anchor_breakdown"]),
+	leadlag: new Set(["anchor_breakdown", "lag_dispersion"]),
 };
 
 const pinScope = (source: string, metric: string): "aggregate" | undefined =>

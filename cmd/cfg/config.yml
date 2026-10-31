@@ -80,6 +80,7 @@ system:
       futures: "wss://futures.kraken.com/ws/v1"
       tradebalance: "/0/private/TradeBalance"
       tradevolume: "/0/private/TradeVolume"
+      ticker: "/0/public/Ticker"
     # How often a session sends its keepalive. A half-open connection — one
     # side gone without a close, as when a mobile link drops out of reception —
     # is invisible to a socket that only reads. The periodic write is what
@@ -337,6 +338,32 @@ trading:
 
 risk:
   max_fraction: 0.20
+  # 24h quote-volume floor for the mover pre-filter (USD).
+  min_mover_volume_usd: 100000
+  # Open-to-last day move floor (%) — liquid-but-flat names stay out.
+  min_mover_change_pct: 0.5
+  # Touch spread cap for mover pre-filter and desk entry (% of mid).
+  max_entry_spread_pct: 2.0
+  # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
+  max_entry_open_drag_pct: 2.0
+  # Quote notional that must rest on the top bids at entry (USD).
+  min_touch_bid_cash: 100
+  # Prints inside this lookback count toward tape liveness at entry.
+  tape_window: 10m
+  # Minimum in-window prints before a silent book can clear entry.
+  min_tape_trades: 8
+  # Adverse PnL drop from entry that fires invalidation (percentage points).
+  max_allowed_loss_pct: 2.0
+  # Peak PnL (%) before the trailing take-profit arms.
+  trail_peak_arm_pct: 0.5
+  # Base giveback room before the peak/damage ratchet.
+  trail_base_giveback_pct: 0.8
+  # Noise floor so spread flicker does not exit a trailed lot.
+  trail_min_giveback_pct: 0.35
+  # Mid-relative band for bid/ask support cash at entry.
+  backing_band_frac: 0.01
+  # Minimum bidCash/askCash inside that band (thin bids fail).
+  min_backing_ratio: 0.6
 
 learning:
   policy_prefix: "model/current/"
@@ -351,12 +378,20 @@ learning:
   vocab_size: 15
   default_window_size: 15
   shannon_capacity: 0.45
+  # Sequencer cut depth: reject / ignore leaves shorter than min.
+  max_path_length: 8
+  min_path_length: 2
   excursion_timeout: 45m
   max_excursion_bars: 8
   policy_shadow_bars: 32
   min_supported_horizon: 2
+  # Minimum enterNet z before the coder marks bullish.
+  min_enter_z: 0.35
   cliff_horizon_drop: 2
   cliff_energy_mult: 1.4
+  # Volume-clock acceleration floor at rank (bars must speed up).
+  gate_ignition_floor: 0.15
+  gate_ignition_ceil: 1.00
   gate_opposition_floor: 0.05
   gate_opposition_ceil: 0.95
   gate_regime_ignition_floor: 0.05

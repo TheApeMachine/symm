@@ -2,7 +2,6 @@ import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
 import {
 	atoms,
-	kernelSymbolForAggregate,
 	resonanceFrameForSymbol,
 	signals,
 } from "#/collections/app";
@@ -20,17 +19,12 @@ export const XrayFactsPanel = () => {
 	const storeReading = useSelector(signals.resonance, (state) =>
 		resonanceFrameForSymbol(state, focusSymbol),
 	);
-	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
 
 	const reading = useMemo((): Value | undefined => {
 		if (storeReading) return storeReading;
-		const querySymbol = kernelSymbolForAggregate(focusSymbol, aggregate);
-		const retained =
-			getRetainedResonance(focusSymbol) ??
-			getRetainedResonance(querySymbol);
-
+		const retained = getRetainedResonance(focusSymbol);
 		return valueFromRetainedRow(focusSymbol, retained);
-	}, [focusSymbol, storeReading, aggregate]);
+	}, [focusSymbol, storeReading]);
 
 	return (
 		<Component value={reading ?? null} className="flex h-full flex-col">

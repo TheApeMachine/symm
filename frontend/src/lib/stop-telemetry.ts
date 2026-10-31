@@ -1,17 +1,17 @@
 /*
-Human words and tones for the stop-loss checks and the learned exit policy, so
-a held lot is never a black box. Each helper reads the live proximity the desk
-publishes (broker.StopLoss.State) or a learned boundary and says what it means:
-what check is armed, how close it is to firing, and whether the lot is safe.
+Human words and tones for the simplified stop-loss checks so a held lot is
+never a black box. Each helper reads the live proximity the desk publishes
+(broker.StopLoss.State) and says what it means: what check is armed, how close
+it is to firing, and whether the lot is safe.
 
-The four checks, in priority order (broker/stoploss.go Evaluate):
-  1. invalidation  — adverse drop below entry vs the learned cut (defence)
-  2. evaporation   — full-lot slippage doubles friction, 3-tick persistence
-  3. trailing      — giveback from the peak vs the learned trail (harvest)
-  4. expiry        — bars held past the empirical winning horizon
+The two checks (broker/stoploss.go Update), in priority order:
+  1. invalidation — adverse drop from entry vs a fixed 2.0pp cut (defence)
+  2. trailing     — giveback from peak vs a damage-ratcheted trail (harvest)
+
+Damage (0–1) is how much of the 2pp invalidation budget the worst print burned;
+it tightens the trail but is not itself an exit.
 */
 
-/* A neutral reading that a meter or badge can paint. */
 export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
 export const toneColor = (tone: Tone): string =>
@@ -25,7 +25,6 @@ export const toneColor = (tone: Tone): string =>
 					? "var(--info)"
 					: "var(--f3)";
 
-/* Meter fill variants match the UI library so stops paint the same way. */
 export type MeterTone =
 	| "success"
 	| "warning"
@@ -44,8 +43,6 @@ export const meterTone = (tone: Tone): MeterTone =>
 					? "info"
 					: "disabled";
 
-/* A ratio is current-value-over-threshold. A null/undefined ratio means the
-   check is not armed (no price, no learned boundary, or below its trigger). */
 export const proximityPct = (ratio: number | null | undefined): number | null => {
 	if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
 		return null;
@@ -53,7 +50,6 @@ export const proximityPct = (ratio: number | null | undefined): number | null =>
 	return Math.max(0, Math.min(100, ratio * 100));
 };
 
-/* A defence check's tone flips the meaning: far is safe, close is bad. */
 const defenceTone = (ratio: number | null | undefined): Tone => {
 	if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
 		return "neutral";
@@ -64,8 +60,6 @@ const defenceTone = (ratio: number | null | undefined): Tone => {
 	return "good";
 };
 
-/* A harvest check only matters once the lot is green; a null ratio (not yet
-   in profit, or peak never exceeded friction) reads armed-but-far. */
 const harvestTone = (ratio: number | null | undefined): Tone => {
 	if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
 		return "neutral";
@@ -77,39 +71,21 @@ const harvestTone = (ratio: number | null | undefined): Tone => {
 
 export type StopWord = { label: string; short: string; title: string };
 
-/* The one-sentence story a held lot tells: the single most relevant check and
-   why. This is the "why is it still held, or about to exit" line. */
 export const heldVerdict = (args: {
 	current: number | null;
 	peak: number | null;
 	invalidation: number | null;
-	evaporation: number | null;
 	trailing: number | null;
-	expiry: number | null;
-	barsHeld?: number | null;
-	maxBars?: number | null;
+	damage?: number | null;
+	giveback?: number | null;
+	allowedGiveback?: number | null;
+	remainingGiveback?: number | null;
 }): { text: string; tone: Tone } => {
-	const {
-		current,
-		peak,
-		invalidation,
-		evaporation,
-		trailing,
-		expiry,
-		barsHeld,
-		maxBars,
-	} = args;
+	const { current, peak, invalidation, trailing } = args;
 
 	const currentKnown = current !== null && Number.isFinite(current);
 	const peakKnown = peak !== null && Number.isFinite(peak);
 
-	// A check already firing means the exit is in motion.
-	if ((evaporation ?? 0) >= 1) {
-		return {
-			text: "Book pulling — liquidity evaporation armed, exit in motion",
-			tone: "bad",
-		};
-	}
 	if ((invalidation ?? 0) >= 1) {
 		return {
 			text: "Invalidation cut reached — stop loss arming",
@@ -123,52 +99,41 @@ export const heldVerdict = (args: {
 		};
 	}
 
-	// Expiry only arms on a lot that has never gone green.
-	if (peakKnown && peak !== null && peak <= 0) {
-		if ((expiry ?? 0) >= 1) {
-			return {
-				text: "Move expired — horizon passed without profit",
-				tone: "warn",
-			};
-		}
-		if (
-			expiry !== null &&
-			expiry !== undefined &&
-			barsHeld !== null &&
-			maxBars !== null &&
-			maxBars > 0
-		) {
-			return {
-				text: `Holding ${barsHeld}/${maxBars} bars, no profit yet — expiry ${Math.round(
-					expiry * 100,
-				)}% used`,
-				tone: expiry >= 0.7 ? "warn" : "info",
-			};
-		}
-	}
-
 	if (!currentKnown) {
 		return { text: "Waiting for the desk book to price the lot", tone: "neutral" };
 	}
 
-	// Trailing is the live story once green.
-	if (peakKnown && peak !== null && peak > 0) {
-		if (trailing !== null && trailing !== undefined && trailing > 0) {
+	if (peakKnown && peak !== null && peak > 0.5) {
+		if ((trailing ?? 0) >= 0.999 || (args.remainingGiveback ?? 1) <= 0.001) {
 			return {
-				text: `In profit, giveback ${Math.round(trailing * 100)}% of the trail — trail holds the peak`,
-				tone: trailing >= 0.6 ? "warn" : "good",
+				text: "Trail hit — desk should exit on this mark",
+				tone: "warn",
+			};
+		}
+
+		const room = args.remainingGiveback;
+		if (room !== null && room !== undefined && Number.isFinite(room)) {
+			const damage =
+				args.damage !== null &&
+				args.damage !== undefined &&
+				Number.isFinite(args.damage) &&
+				args.damage > 0
+					? `, damage ${Math.round(args.damage * 100)}%`
+					: "";
+			return {
+				text: `In profit — can drop ${Math.max(0, room).toFixed(1)}% more before trail exit${damage}`,
+				tone: room <= (args.allowedGiveback ?? room) * 0.25 ? "warn" : "good",
 			};
 		}
 		return {
-			text: `Ahead ${peak.toFixed(2)}%, holding — trailing stop watching the peak`,
+			text: `In profit (peak ${peak.toFixed(1)}%) — trail exit armed`,
 			tone: "good",
 		};
 	}
 
-	// Underwater: the invalidation budget is the story.
 	if (invalidation !== null && invalidation !== undefined && invalidation > 0) {
 		return {
-			text: `Underwater, ${Math.round(invalidation * 100)}% of the stop budget consumed — stop armed`,
+			text: `Underwater, ${Math.round(invalidation * 100)}% of the 2pp stop budget consumed`,
 			tone: invalidation >= 0.7 ? "bad" : invalidation >= 0.4 ? "warn" : "info",
 		};
 	}
@@ -179,12 +144,10 @@ export const heldVerdict = (args: {
 	};
 };
 
-/* One row of the four checks, ready for a meter. The word states the rule and
-   the current distance so a glance says why. */
 export type StopCheck = {
-	id: "invalidation" | "evaporation" | "trailing" | "expiry";
+	id: "invalidation" | "trailing" | "damage";
 	name: string;
-	role: "defence" | "harvest" | "time";
+	role: "defence" | "harvest" | "context";
 	word: StopWord;
 	percent: number | null;
 	tone: Tone;
@@ -205,10 +168,11 @@ export const invalidationCheck = (
 		name: "Stop loss",
 		role: "defence",
 		word: {
+			label: "Stop loss",
 			short: armed ? `${Math.round(pct ?? 0)}% used` : "far",
-			title: `Causal-MCTS invalidation cut: adverse drop below entry vs the learned cut. ${
+			title: `Hard invalidation: adverse drop from the entry mark vs a fixed 2.0pp cut. ${
 				armed
-					? `Now ${Math.round((pct ?? 0) * 100) / 100} of the cut budget consumed${
+					? `Now ${Math.round((pct ?? 0) * 100) / 100}% of the budget consumed${
 							current !== undefined && current !== null
 								? `, current ${fmtPct(current)}`
 								: ""
@@ -221,129 +185,125 @@ export const invalidationCheck = (
 	};
 };
 
-export const evaporationCheck = (ratio: number | null | undefined): StopCheck => {
-	const armed =
-		ratio !== null && ratio !== undefined && Number.isFinite(ratio) && ratio > 0;
-	const pct = proximityPct(ratio);
-	return {
-		id: "evaporation",
-		name: "Liquidity",
-		role: "defence",
-		word: {
-			short: armed ? `${Math.round(pct ?? 0)}%` : "liquid",
-			title: `Full-lot exit slippage vs 2× round-trip friction. Fires on a book that stays pulled 3 marks in a row, regardless of P&L — this is why a thin book is a real exit, not a flicker.`,
-		},
-		percent: pct,
-		tone: defenceTone(ratio),
-	};
-};
-
 export const trailingCheck = (
 	ratio: number | null | undefined,
 	peak: number | null | undefined,
+	remainingGiveback: number | null | undefined,
+	allowedGiveback: number | null | undefined,
+	giveback: number | null | undefined,
+	current: number | null | undefined,
 ): StopCheck => {
-	const armed =
-		peak !== null &&
-		peak !== undefined &&
-		peak > 0 &&
-		ratio !== null &&
-		ratio !== undefined &&
-		Number.isFinite(ratio) &&
-		ratio > 0;
+	const green =
+		peak !== null && peak !== undefined && Number.isFinite(peak) && peak > 0.5;
+	const room =
+		remainingGiveback !== null &&
+		remainingGiveback !== undefined &&
+		Number.isFinite(remainingGiveback)
+			? remainingGiveback
+			: null;
+	const allowed =
+		allowedGiveback !== null &&
+		allowedGiveback !== undefined &&
+		Number.isFinite(allowedGiveback)
+			? allowedGiveback
+			: null;
 	const pct = proximityPct(ratio);
+
+	const atTrail =
+		(ratio !== null &&
+			ratio !== undefined &&
+			Number.isFinite(ratio) &&
+			ratio >= 0.999) ||
+		(room !== null && room <= 0.001);
+
+	let short = "flat";
+	if (green && atTrail) {
+		short = "exit now";
+	} else if (green && room !== null) {
+		short = `${Math.max(0, room).toFixed(1)}% until exit`;
+	} else if (green && allowed !== null) {
+		short = `${allowed.toFixed(1)}% max drop`;
+	}
+
+	const detail =
+		green && allowed !== null
+			? `Peak ${fmtPct(peak)}, now ${fmtPct(current ?? null)}. Already gave back ${fmtPct(giveback ?? null)}. Trail exits after ${allowed.toFixed(1)}% off the peak${
+					room !== null ? ` — ${room.toFixed(1)}% left.` : "."
+				}`
+			: "Arms once peak clears +0.5% and the lot is still green.";
+
 	return {
 		id: "trailing",
 		name: "Trail",
 		role: "harvest",
 		word: {
-			short: armed
-				? `${Math.round(pct ?? 0)}% back`
-				: peak !== null && peak !== undefined && peak > 0
-					? "at peak"
-					: "flat",
-			title: `Causal-MCTS trailing stop: giveback from the peak vs the learned pullback, ratcheted tighter the larger the peak. ${
-				peak !== null && peak !== undefined && peak > 0
-					? `Peak ${fmtPct(peak)}${
-							armed ? `, now ${Math.round((pct ?? 0) * 100) / 100} of the trail given back` : ", holding near peak"
-						}`
-					: "Arms once the lot has been in profit."
-			}`,
+			label: "Trail",
+			short,
+			title: detail,
 		},
-		percent: armed ? pct : null,
+		percent: pct,
 		tone: harvestTone(ratio),
 	};
 };
 
-export const expiryCheck = (
-	ratio: number | null | undefined,
-	barsHeld: number | null | undefined,
-	maxBars: number | null | undefined,
-	peak: number | null | undefined,
-): StopCheck => {
+export const damageCheck = (ratio: number | null | undefined): StopCheck => {
+	const armed =
+		ratio !== null && ratio !== undefined && Number.isFinite(ratio) && ratio > 0;
 	const pct = proximityPct(ratio);
-	// Expiry only arms on a move that never went green, so a null peak or a
-	// green peak reads neutral: time is not the exit pressure on a winner.
-	const neverGreen = peak !== null && peak !== undefined && peak <= 0;
 	return {
-		id: "expiry",
-		name: "Expiry",
-		role: "time",
+		id: "damage",
+		name: "Damage",
+		role: "context",
 		word: {
-			short:
-				maxBars && maxBars > 0 && barsHeld !== null && barsHeld !== undefined
-					? `${Math.min(barsHeld, maxBars)}/${maxBars} bars`
-					: pct !== null
-						? `${Math.round(pct)}%`
-						: "—",
-			title: `Move expiry: bars held past the empirical winning horizon of winning excursions. Arms only while the lot has never been in profit — a winning move is never time-cut.`,
+			label: "Damage",
+			short: armed ? `${Math.round(pct ?? 0)}%` : "clean",
+			title: armed
+				? `Worst drawdown from entry has burned ${Math.round(pct ?? 0)}% of the 2pp invalidation budget — trail giveback tightens with damage.`
+				: "No adverse excursion yet; trail uses the full base giveback room.",
 		},
 		percent: pct,
-		tone: neverGreen ? defenceTone(ratio) : "neutral",
+		tone:
+			!armed
+				? "neutral"
+				: (ratio ?? 0) >= 0.8
+					? "warn"
+					: (ratio ?? 0) >= 0.4
+						? "info"
+						: "good",
 	};
 };
 
 /*
-buildStopChecks assembles the four checks in priority order from a live stop
-state. Peak/current come from stop_state (falling back to the lifecycle fields)
-so an open lot and a restored closed lot both render the same way.
+buildStopChecks assembles invalidation, trailing, and damage from a live stop
+state. Peak/current come from stop_state (falling back to lifecycle fields).
 */
 export const buildStopChecks = (args: {
 	invalidation: number | null | undefined;
-	evaporation: number | null | undefined;
 	trailing: number | null | undefined;
-	expiry: number | null | undefined;
+	damage?: number | null | undefined;
 	current?: number | null | undefined;
 	peak?: number | null | undefined;
-	barsHeld?: number | null | undefined;
-	maxBars?: number | null | undefined;
+	giveback?: number | null | undefined;
+	allowedGiveback?: number | null | undefined;
+	remainingGiveback?: number | null | undefined;
 }): StopCheck[] => {
 	return [
 		invalidationCheck(args.invalidation, args.current),
-		evaporationCheck(args.evaporation),
-		trailingCheck(args.trailing, args.peak),
-		expiryCheck(args.expiry, args.barsHeld, args.maxBars, args.peak),
+		trailingCheck(
+			args.trailing,
+			args.peak,
+			args.remainingGiveback,
+			args.allowedGiveback,
+			args.giveback,
+			args.current,
+		),
+		damageCheck(args.damage),
 	];
 };
 
-/* A learned boundary rendered as a fact: the threshold the stop is actually
-   enforcing, and whether it is learned (positive) or still at the friction
-   floor. A null is "not learned yet" and paints neutral, never a fake 0%. */
-export const policyBoundary = (
+/* Fixed stop rule rendered as a fact on the position card. */
+export const stopRule = (
 	label: string,
-	value: number | null | undefined,
-	option?: { fraction?: boolean },
-): StopWord => {
-	const learned = value !== null && value !== undefined && Number.isFinite(value);
-	const text = !learned
-		? "not learned"
-		: option?.fraction
-			? `${(100 * value).toFixed(1)}%`
-			: `${value.toFixed(1)}%`;
-	return {
-		label,
-		short: text,
-		title: learned
-			? `${label}: ${text} — derived by Causal MCTS from this symbol's settled excursions`
-			: `${label}: the desk has not learned this boundary yet; the stop falls back to the friction floor`,
-	};
-};
+	short: string,
+	title: string,
+): StopWord => ({ label, short, title });

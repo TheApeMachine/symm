@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -11,16 +10,13 @@ import (
 	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"golang.org/x/sync/errgroup"
 )
 
-/*
-Stage is the grammar fork: grid observation and sequencer tokens for each
-symbol on the tick. It appends only under stage/<symbol>/… on the shared
-workspace value; it never touches the desk.
-*/
+// Stage runs grid observe and the per-symbol sequencer on each tick.
 type Stage struct {
 	*runtime.System
 	grid       *nmstore.Grid
@@ -28,6 +24,8 @@ type Stage struct {
 	client     *store.Client
 	sequencers *sync.Map
 	grammar    tokenizer.GrammarCatalog
+	emit       *signal.Emit
+	regions    *Regions
 }
 
 func NewStage(ctx context.Context, desk *broker.Desk) *Stage {
@@ -36,6 +34,8 @@ func NewStage(ctx context.Context, desk *broker.Desk) *Stage {
 		grid:       nmstore.NewGrid(ctx),
 		desk:       desk,
 		sequencers: &sync.Map{},
+		emit:       signal.NewEmit(),
+		regions:    NewRegions(),
 	}
 }
 
@@ -43,6 +43,7 @@ func (stage *Stage) AttachStore(client *store.Client) {
 	if stage == nil {
 		return
 	}
+
 	stage.client = client
 }
 
@@ -72,20 +73,6 @@ func (stage *Stage) RestoreSequencer(symbol string, state tokenizer.SequencerSta
 	stage.sequencers.Store(symbol, stage.Sequencer(symbol))
 }
 
-func (stage *Stage) PersistSequencer(ctx context.Context, symbol string) {
-	if stage == nil || stage.client == nil || symbol == "" {
-		return
-	}
-
-	seq := stage.Sequencer(symbol)
-	value := data.NewValue("model", "grammar", symbol)
-	value.Append(seq.State(), "state")
-
-	if _, err := stage.client.WriteAtPrefix(stage.grammar.ObjectKey(symbol), value.Bytes()); err != nil {
-		errnie.Error(errnie.Err(errnie.IO, "[stage] persist grammar "+symbol, err))
-	}
-}
-
 func (stage *Stage) ResetSequencer(symbol string) {
 	if stage == nil || symbol == "" {
 		return
@@ -99,10 +86,11 @@ func (stage *Stage) ResetSequencer(symbol string) {
 	loaded.(*tokenizer.Sequencer).Reset()
 }
 
-func (stage *Stage) isBookStale(symbol string) bool {
+func (stage *Stage) bookStale(symbol string) bool {
 	if stage == nil || stage.desk == nil {
 		return false
 	}
+
 	return stage.desk.BookStale(symbol)
 }
 
@@ -111,7 +99,7 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 		return tick
 	}
 
-	bySymbol := NewSymbols(tick).GroupBySymbol(stage.isBookStale)
+	bySymbol := NewSymbols(tick).WithPrice(stage.desk.Price()).GroupBySymbol(stage.bookStale)
 
 	if len(bySymbol) == 0 {
 		return tick
@@ -121,52 +109,48 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 
 	for symbol, sources := range bySymbol {
 		group.Go(func() error {
-			holding := stage.desk.Has(symbol)
+			symbol, sources := symbol, sources
 
-			observed, err := stage.grid.Observe(symbol, sources)
+			reading, err := stage.grid.Observe(symbol, sources)
 
 			if err != nil {
 				errnie.Warn("[stage.Step] grid.Observe failed", "symbol", symbol, "err", err)
 				return stage.Error(err)
 			}
 
-			tick.Append(observed, "stage", symbol, "regions")
+			lit := reading.Lit()
 
-			if parts := strings.Split(symbol, "/"); len(parts) == 2 {
-				tick.Append(observed, append([]string{"train", "regions"}, parts...)...)
-			}
+			stage.regions.Publish(tick, symbol, lit)
 
 			seq := stage.Sequencer(symbol)
-			cut := stage.stepCut(seq, observed)
+			var cut tokenizer.Tokens
 
-			phase := "enter"
-			if holding {
-				phase = "hold"
+			if reading.HasToken() {
+				cut = seq.Step(reading.TokenSymbol(), reading.TokenBrightness())
 			}
 
 			audit.Record.Write(map[string]any{
-				"stage":   "sequencer",
+				"node":    "sequencer",
 				"symbol":  symbol,
-				"phase":   phase,
 				"cut":     cut.String(),
 				"cutLen":  cut.Len(),
-				"regions": litKeys(observed),
+				"regions": stage.litKeys(lit),
 			})
 
-			tick.Append(cut, "stage", symbol, "cut")
-			tick.Append(phase, "stage", symbol, "phase")
+			stage.emit.Metric(tick, cut, "sequencer", symbol, "cut")
 
 			if cut.Len() > 0 && stage.client != nil {
 				client := stage.client
 				saved := seq.State()
 
-				go func() {
-					value := data.NewValue("model", "grammar", symbol)
-					value.Append(saved, "state")
-					if _, err := client.WriteAtPrefix(stage.grammar.ObjectKey(symbol), value.Bytes()); err != nil {
-						errnie.Error(errnie.Err(errnie.IO, "[sequencer] persist "+symbol, err))
-					}
-				}()
+				value := data.NewValue("model", "grammar", symbol)
+				value.Append(saved, "state")
+
+				if _, err := client.WriteAtPrefix(
+					stage.grammar.ObjectKey(symbol), value.Bytes(),
+				); err != nil {
+					errnie.Error(errnie.Err(errnie.IO, "[sequencer] persist "+symbol, err))
+				}
 			}
 
 			return nil
@@ -180,33 +164,16 @@ func (stage *Stage) Step(tick *data.Value) *data.Value {
 	return tick
 }
 
-func (stage *Stage) stepCut(seq *tokenizer.Sequencer, lit []*nmstore.Region) tokenizer.Tokens {
-	var best *nmstore.Region
-
-	for _, region := range lit {
-		if region == nil || region.Brightness <= 0 {
-			continue
-		}
-
-		if best == nil || region.Brightness > best.Brightness {
-			best = region
-		}
-	}
-
-	if best == nil {
-		return tokenizer.Tokens{}
-	}
-
-	return seq.Step(tokenizer.RegionLabel(uint8(best.Key)), best.Brightness)
-}
-
-func litKeys(regions []*nmstore.Region) []int {
+func (stage *Stage) litKeys(regions []*nmstore.Region) []int {
 	keys := make([]int, 0, len(regions))
+
 	for _, region := range regions {
 		if region == nil || region.Brightness <= 0 {
 			continue
 		}
+
 		keys = append(keys, int(region.Key))
 	}
+
 	return keys
 }

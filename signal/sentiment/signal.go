@@ -14,55 +14,6 @@ import (
 	parent "github.com/theapemachine/symm/signal"
 )
 
-// minPrior is the minimum observations a running moment must hold before its
-// predictive scale is treated as usable. Below this the centre and spread are
-// estimated from too few samples for the predictive correction to be
-// meaningful.
-const minPrior = 9
-
-type causalEstimator struct {
-	count float64
-	mean  float64
-	m2    float64
-}
-
-func (ce *causalEstimator) Step(value float64) (
-	hasBaseline bool, baseline, residual float64, hasZ bool, zScore float64,
-) {
-	priorCount := ce.count
-	priorMean := ce.mean
-	priorM2 := ce.m2
-
-	ce.count++
-	delta := value - ce.mean
-	ce.mean += delta / ce.count
-	ce.m2 += delta * (value - ce.mean)
-
-	if priorCount == 0 {
-		return false, 0, 0, false, 0
-	}
-
-	residual = value - priorMean
-
-	variance := priorM2 / float64(priorCount-1)
-
-	if priorCount < minPrior || variance <= 0 {
-		return true, priorMean, residual, false, 0
-	}
-
-	stddev := math.Sqrt(variance)
-	count := float64(priorCount)
-
-	// Predictive scale: estimating the centre and the spread from the same
-	// priorCount observations inflates the spread a new sample is drawn from.
-	centreInflation := math.Sqrt(1 + 1/count)
-	spreadInflation := 1 + 1/math.Sqrt(2*(count-1))
-
-	scale := stddev * centreInflation * spreadInflation
-
-	return true, priorMean, residual, true, residual / scale
-}
-
 type observation struct {
 	at    float64
 	price float64
@@ -100,28 +51,19 @@ func median(values []float64) float64 {
 	return (sorted[mid-1] + sorted[mid]) / 2
 }
 
-type focalState struct {
-	breadthEstimator causalEstimator
-	medianEstimator  causalEstimator
-	hasPrevBreadth   bool
-	prevBreadth      float64
-	historyPoints    [][2]float64
-	historyDistances []float64
-}
-
 type Signal struct {
 	*runtime.System
 	members     *sync.Map
-	focals      *sync.Map
 	lastAligned *sync.Map
 	keys        []string
+	emit        *parent.Emit
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		members:     &sync.Map{},
-		focals:      &sync.Map{},
 		lastAligned: &sync.Map{},
+		emit:        parent.NewEmit(),
 		keys: []string{
 			"cohort_still_aligned",
 		},
@@ -150,7 +92,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 
 /*
 appendCohortRecurrence publishes the median same-direction peer count across
-symbols as the board sentiment oracle (R11), not a single-name reading.
+symbols as the board hold-confidence oracle (R10), not a single-name reading.
 */
 func (signal *Signal) appendCohortRecurrence(value *data.Value) {
 	if signal.Status() != runtime.READY || value == nil {
@@ -175,7 +117,7 @@ func (signal *Signal) appendCohortRecurrence(value *data.Value) {
 		median = (scores[len(scores)/2-1] + scores[len(scores)/2]) / 2
 	}
 
-	value.Append([]float64{median}, append([]string{
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "cohort_still_aligned")...)
@@ -303,7 +245,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 
 	signal.lastAligned.Store(symbol, sameDirPeer)
 
-	out := value.Append([]float64{
+	out := signal.emit.Metric(value, []float64{
 		sameDirPeer,
 	}, append(keys, signal.keys...)...)
 
@@ -314,37 +256,4 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	})
 
 	return out
-}
-
-func (focal *focalState) historyPath(target [2]float64) (minDist float64, percentile float64) {
-	if len(focal.historyPoints) > 0 {
-		minDist = math.Inf(1)
-		for _, point := range focal.historyPoints {
-			dx := target[0] - point[0]
-			dy := target[1] - point[1]
-			minDist = math.Min(minDist, math.Sqrt(dx*dx+dy*dy))
-		}
-
-		if len(focal.historyDistances) > 0 {
-			below := 0
-			for _, past := range focal.historyDistances {
-				if past <= minDist {
-					below++
-				}
-			}
-			percentile = float64(below) / float64(len(focal.historyDistances))
-		}
-
-		focal.historyDistances = append(focal.historyDistances, minDist)
-		if len(focal.historyDistances) > 256 {
-			focal.historyDistances = focal.historyDistances[len(focal.historyDistances)-256:]
-		}
-	}
-
-	focal.historyPoints = append(focal.historyPoints, target)
-	if len(focal.historyPoints) > 256 {
-		focal.historyPoints = focal.historyPoints[len(focal.historyPoints)-256:]
-	}
-
-	return minDist, percentile
 }

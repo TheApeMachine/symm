@@ -306,7 +306,7 @@ func (booter *Booter) initPipeline() error {
 	// on the private websocket. Any other model does not place orders.
 	if system.Cfg.Market.Model == "paper" || system.Cfg.Market.Model == "real" {
 		booter.training = strategy.NewTraining(
-			ctx, booter.price, booter.desk,
+			ctx, booter.price, booter.desk, stage,
 		)
 
 		if err := booter.training.Error(); err != nil {
@@ -567,11 +567,18 @@ func (booter *Booter) startIngress(
 				value := data.NewValue("workspace", "tick", "aggregate")
 				value.Append(trade.Data, "spot:trade", msgType)
 
+				// Pulse the tick header before the workspace pass so dashboards
+				// advance the counter while signals, stage, and training run.
+				// Signals and resonance send their own focus-scoped frames.
+				if ui.UI != nil && ui.UI.Active() {
+					io.Copy(ui.UI, data.NewValue("workspace", "tick", "aggregate"))
+				}
+
 				// Step blocks until signals, the sequencer, and the model
-				// have written this tick. The frame copied below is that result.
+				// have written this tick. The full frame is for S3 only;
+				// the dashboard already received per-source messages.
 				out := booter.workspace.Step(value)
 
-				io.Copy(ui.UI, out)
 				if booter.store != nil {
 					snapshot := out.Bytes()
 					prefix := out.Prefix

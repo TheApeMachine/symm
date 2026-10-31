@@ -29,12 +29,14 @@ type Signal struct {
 	books  *broker.Book
 	states *sync.Map
 	keys   []string
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"retreat_fraction",
 		},
@@ -149,7 +151,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	value.Append([]float64{
+	signal.emit.Metric(value, []float64{
 		retreatFraction,
 	}, append(keys, signal.keys...)...)
 
@@ -182,7 +184,7 @@ func (signal *Signal) appendBoardWithdrawalRate(value *data.Value) {
 		return
 	}
 
-	value.Append([]float64{median}, append([]string{
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "board_withdrawal_rate")...)

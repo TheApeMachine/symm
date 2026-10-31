@@ -10,6 +10,7 @@ import (
 	nmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -64,14 +65,14 @@ pathWalk is the live token path for one symbol. The dashboard gets a batch of
 these once per tick, and only for symbols whose path changed.
 */
 type pathWalk struct {
-	Symbol      string `json:"symbol"`
-	Phase       string `json:"phase"`
-	Live        string `json:"live,omitempty"`
-	Trigger     string `json:"trigger,omitempty"`
-	Policy      string `json:"policy,omitempty"`
-	Enter       bool   `json:"enter"`
-	StoryPhase  string `json:"storyPhase,omitempty"`
-	Outcome     string `json:"outcome,omitempty"`
+	Symbol     string `json:"symbol"`
+	Phase      string `json:"phase"`
+	Live       string `json:"live,omitempty"`
+	Trigger    string `json:"trigger,omitempty"`
+	Policy     string `json:"policy,omitempty"`
+	Enter      bool   `json:"enter"`
+	StoryPhase string `json:"storyPhase,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
 }
 
 type Telemetry struct {
@@ -285,7 +286,7 @@ func (telemetry *Telemetry) EndTick(model *Model, desk *broker.Desk) {
 }
 
 func (telemetry *Telemetry) publishStep(out *data.Value) {
-	if !uiActive() || out == nil {
+	if out == nil {
 		return
 	}
 
@@ -301,6 +302,11 @@ func (telemetry *Telemetry) publishStep(out *data.Value) {
 	out.Append(fired, "fired")
 
 	telemetry.recordStep(out)
+
+	if !uiActive() || !types.Allows(out.Scope) {
+		return
+	}
+
 	io.Copy(ui.UI, out)
 }
 
@@ -384,8 +390,8 @@ func (telemetry *Telemetry) enrichLedger(desk *broker.Desk) {
 		return
 	}
 
-	telemetry.rollup.VenueOpen = len(desk.OpenPositions(false))
-	telemetry.rollup.VirtualExcursion = len(desk.OpenPositions(true))
+	telemetry.rollup.VenueOpen = len(desk.OpenPositions())
+	telemetry.rollup.VirtualExcursion = len(desk.Virtuals())
 }
 
 func litFired(cut tokenizer.Token) ([]string, float64) {

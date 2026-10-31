@@ -44,10 +44,11 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 	const currentFocus = useSelector(atoms.focus, (s) => s);
 	const activeSymbol = propSymbol || currentFocus || "BTC/USD";
 	const [isPlaying, setIsPlaying] = useState(true);
-	const liveData = useImpulseData(propData ? "" : activeSymbol, {
+	const liveData = useImpulseData(activeSymbol, {
 		paused: propData ? false : !isPlaying,
 	});
 	const marketTick = propData ? 0 : liveData.marketTick;
+	const litSymbols = propData ? [] : liveData.litSymbols;
 
 	const data = propData ?? liveData.data;
 	const regions =
@@ -848,7 +849,18 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					className="absolute top-4 left-4 w-72 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl font-mono"
 				>
 					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between gap-2">
-						<span>Grid regions · {activeSymbol.replace("/USD", "")}</span>
+						<span
+							title={
+								litSymbols.length > 0
+									? litSymbols.join(", ")
+									: "Board-wide lit regions"
+							}
+						>
+							Grid regions ·{" "}
+							{litSymbols.length > 0
+								? `${litSymbols.length} sym`
+								: "board"}
+						</span>
 						<span className="flex items-center gap-1.5 shrink-0 normal-case tracking-normal">
 							{isPlaying ? (
 								<span

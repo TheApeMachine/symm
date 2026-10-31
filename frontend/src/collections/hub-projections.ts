@@ -42,14 +42,27 @@ const decodeLayers = (value: Value, onLayer: (payload: unknown) => void) => {
 };
 
 const projectTrainRegions = (value: Value) => {
-	if (!value.index.some((index) => index.includes("train/regions"))) {
+	const fromTrainOrigin = value.origin === "train";
+	const fromWorkspace = value.index.some((index) =>
+		index.includes("train/regions"),
+	);
+	if (!fromTrainOrigin && !fromWorkspace) {
 		return;
 	}
+
 	for (let i = 0; i < value.index.length; i++) {
-		if (!value.index[i].includes("train/regions")) continue;
+		const index = value.index[i];
+		const trainLayer =
+			fromTrainOrigin || index.includes("train/regions");
+		if (!trainLayer) continue;
+
 		const payload = tryDecodeJsonBytes(value.layers[i]);
 		if (payload === undefined) continue;
-		ingestTrainRegions(Number(value.tick), value.index[i], payload);
+
+		const ingestIndex = fromTrainOrigin
+			? `train/regions/${value.scope}`
+			: index;
+		ingestTrainRegions(Number(value.tick), ingestIndex, payload);
 	}
 };
 
@@ -137,6 +150,7 @@ watchScopes(signals.training, (value) => {
 });
 
 watchScopes(signals.workspace, projectTrainRegions);
+watchScopes(signals.train, projectTrainRegions);
 
 let positionsFlush: ReturnType<typeof setTimeout> | null = null;
 

@@ -32,15 +32,20 @@ Signal is the asynchronous price-path lead-lag instrument.
 */
 type Signal struct {
 	*runtime.System
-	paths *sync.Map
-	keys  []string
+	paths         *sync.Map
+	lastLedShare  *sync.Map
+	keys          []string
+	emit          *parent.Emit
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
-		paths: &sync.Map{},
+		paths:        &sync.Map{},
+		lastLedShare: &sync.Map{},
+		emit:         parent.NewEmit(),
 		keys: []string{
 			"led_peer_share",
+			"cohort_lift",
 		},
 	}
 
@@ -61,6 +66,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	signal.appendAnchorBreakdown(value)
+	signal.appendLagDispersion(value)
 
 	return value
 }
@@ -145,17 +151,29 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		})
 	}
 
-	ledShare, ok := ledPeerShare(readings)
-	if !ok {
+	ledShare, ledOK := ledPeerShare(readings)
+	cohortLift, cohortOK := cohortDirectionLift(currentPath, signal.paths, symbol, at)
+
+	if !ledOK && !cohortOK {
 		return value
 	}
+
+	if !ledOK {
+		ledShare = 0
+	}
+
+	if !cohortOK {
+		cohortLift = 0
+	}
+
+	signal.lastLedShare.Store(symbol, ledShare)
 
 	keys := []string{
 		signal.Name(),
 		trade.Symbol,
 	}
 
-	out := value.Append([]float64{ledShare}, append(keys, signal.keys...)...)
+	out := signal.emit.Metric(value, []float64{ledShare, cohortLift}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{
 		"signal":         signal.Name(),

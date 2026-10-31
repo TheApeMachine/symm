@@ -833,10 +833,9 @@ const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
 };
 
 /*
-lifecycleRow projects a lifecycle back to the raw desk-row shape the stop and
-exit-policy panels read. A closed life with a P&L trace is the full episode the
-exit policy learned from; an open life carries only the live stop_state. The
-panels are null-aware, so a life with none of these fields renders waiting.
+lifecycleRow projects a lifecycle back to the raw desk-row shape the stop
+panels read. A closed life with a P&L trace is the episode; an open life
+carries the live stop_state. The panels are null-aware.
 */
 const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 	const outcome = life.outcome;
@@ -860,10 +859,6 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		exit_path: undefined,
 		pnl_pct: typeof current === "number" ? current : undefined,
 		peak_pnl_pct: typeof peak === "number" ? peak : undefined,
-		exit_pullback_pct: life.policy?.trailing ?? undefined,
-		nursery_cut_pct: life.policy?.cut ?? undefined,
-		max_lifetime_bars: life.policy?.maxBars ?? outcome?.max_lifetime_bars ?? undefined,
-		worst_pct: life.policy?.worst ?? undefined,
 		bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
 		realized_pct: life.realized_pct ?? outcome?.realized ?? undefined,
 		exit_trigger: life.exit_trigger ?? undefined,
@@ -873,8 +868,6 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 			stop ?? {
 				current_pct: typeof current === "number" ? current : undefined,
 				peak_pct: typeof peak === "number" ? peak : undefined,
-				bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
-				maxBars: life.policy?.maxBars ?? outcome?.max_lifetime_bars ?? undefined,
 			},
 	};
 };

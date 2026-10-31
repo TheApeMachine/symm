@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,6 +327,8 @@ func TestBookUpdate(t *testing.T) {
 			So(err.Error(), ShouldContainSubstring, "checksum_mismatch for CELR/USD")
 			So(err.Error(), ShouldContainSubstring, "server 1")
 
+			So(managed.BlockReason("CELR/USD"), ShouldContainSubstring, "level3 book invalid")
+
 			// The invalid book is never served and the tick says why.
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				t.Fatal("invalid book was exposed to a reader")
@@ -336,6 +339,61 @@ func TestBookUpdate(t *testing.T) {
 			So(managed.Update(diverged), ShouldBeNil)
 			// Only a fresh snapshot makes the book valid again.
 			So(managed.Update(knownGood), ShouldBeNil)
+			So(managed.BlockReason("CELR/USD"), ShouldEqual, "")
+		})
+
+		Convey("Dropped deltas retry level3 recovery while the book stays invalid", func() {
+			t.Chdir(t.TempDir())
+
+			var calls atomic.Int64
+			saw := make(chan struct{}, 4)
+
+			managed.SetResubscribe(func(symbol string) {
+				if symbol != "CELR/USD" {
+					t.Errorf("resubscribe symbol = %q, want CELR/USD", symbol)
+				}
+
+				calls.Add(1)
+
+				select {
+				case saw <- struct{}{}:
+				default:
+				}
+			})
+
+			So(managed.Update(knownGood), ShouldBeNil)
+
+			diverged := &kraken.Level3{Raw: []byte(`{"channel":"level3"}`), Data: []kraken.Level3Data{{
+				Symbol:   "CELR/USD",
+				Checksum: 1,
+				Bids: []kraken.Level3Order{{
+					Event: "add", OrderID: "late-bid",
+					LimitPrice: lateBidPrice,
+					OrderQty:   lateBidQuantity, Timestamp: time.Unix(2, 0).UTC(),
+				}},
+			}}}
+
+			So(managed.Update(diverged), ShouldNotBeNil)
+
+			select {
+			case <-saw:
+			case <-time.After(time.Second):
+				t.Fatal("expected invalidation resubscribe")
+			}
+
+			So(calls.Load(), ShouldEqual, 1)
+
+			for range 100 {
+				So(managed.Update(diverged), ShouldBeNil)
+			}
+
+			select {
+			case <-saw:
+			case <-time.After(time.Second):
+				t.Fatal("expected recovery retry after dropped deltas")
+			}
+
+			So(calls.Load(), ShouldBeGreaterThanOrEqualTo, 2)
 		})
 
 		Convey("The same price in different decimal text is one level, keyed at the pair's precision", func() {
@@ -362,6 +420,7 @@ func TestBookUpdate(t *testing.T) {
 		Convey("A stale book is hidden from readers until a fresh snapshot", func() {
 			So(managed.Update(knownGood), ShouldBeNil)
 			managed.Stale([]string{"CELR/USD"})
+			So(managed.BlockReason("CELR/USD"), ShouldContainSubstring, "stale")
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				t.Fatal("stale book was exposed to a reader")
 			})
@@ -370,6 +429,11 @@ func TestBookUpdate(t *testing.T) {
 			read := false
 			managed.Book("CELR/USD", func(book *spotbook.Book) { read = true })
 			So(read, ShouldBeTrue)
+			So(managed.BlockReason("CELR/USD"), ShouldEqual, "")
+		})
+
+		Convey("BlockReason names an absent book", func() {
+			So(managed.BlockReason("MISSING/USD"), ShouldEqual, "symbol not in book manager")
 		})
 	})
 

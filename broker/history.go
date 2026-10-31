@@ -2,8 +2,7 @@ package broker
 
 import (
 	"context"
-	"iter"
-	"strings"
+	"fmt"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
@@ -18,20 +17,51 @@ entered, and drops them when the paper wallet resets.
 */
 type History struct {
 	*runtime.System
-	store *store.Client
+	price     *Price
+	positions *Cache
+	virtuals  *Cache
+	store     *store.Client
+	transport Transport
+	onSettled func(*Position)
 }
 
-func NewHistory(ctx context.Context) *History {
+func NewHistory(
+	ctx context.Context,
+	price *Price,
+	positions *Cache,
+	virtuals *Cache,
+	transport Transport,
+	onSettled func(*Position),
+) *History {
 	history := &History{
-		System: runtime.NewSystem(ctx, "history"),
-		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		System:    runtime.NewSystem(ctx, "history"),
+		price:     price,
+		positions: positions,
+		virtuals:  virtuals,
+		transport: transport,
+		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+	}
+
+	for key, cache := range map[string]*Cache{
+		"position": positions,
+		"virtual":  virtuals,
+	} {
+		for _, state := range []string{"open", "closed"} {
+			for value := range history.store.Stream(
+				history.Context(), fmt.Sprintf("%s/%s", key, state),
+			) {
+				position := data.Get[Position](value, "position")
+				position.price = price
+				position.transport = transport
+				position.stopLoss = NewStopLoss()
+				position.onSettled = onSettled
+
+				cache.Add(position.Symbol, &position, state == "open")
+			}
+		}
 	}
 
 	return history
-}
-
-func (history *History) Restore(prefix string) iter.Seq[*data.Value] {
-	return history.store.Stream(history.Context(), prefix)
 }
 
 /*
@@ -53,41 +83,12 @@ func (history *History) Store(value *data.Value) error {
 	return nil
 }
 
-/*
-ReplaceOpen stores this snapshot and deletes every other open object for the
-same lot. A restart used to leave the previous epoch's object in place, so
-one symbol showed two open records.
-*/
-func (history *History) ReplaceOpen(value *data.Value) error {
-	if history == nil || history.store == nil || value == nil {
-		return nil
-	}
-
-	// Run cleanup in background so trading tick is never blocked by S3 latency
-	go func(prefix, keep string) {
-		if err := history.store.DeleteOtherKeys(prefix, keep); err != nil {
-			errnie.Error(err)
-		}
-	}(openDir(value.Prefix), value.Prefix)
-
-	return history.Store(value)
-}
-
 func (history *History) Drop(prefix string) error {
 	if history == nil || history.store == nil || prefix == "" {
 		return nil
 	}
 
 	return history.store.DeleteOtherKeys(prefix, "")
-}
-
-func openDir(prefix string) string {
-	parts := strings.Split(prefix, "/")
-	if len(parts) < 3 {
-		return prefix
-	}
-
-	return strings.Join(parts[:len(parts)-2], "/") + "/"
 }
 
 /*

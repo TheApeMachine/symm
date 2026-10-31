@@ -258,24 +258,43 @@ type Level3Subscription struct {
 }
 
 type Level3SubscriptionParams struct {
-	Channel string   `json:"channel"`
-	Symbol  []string `json:"symbol"`
-	Depth   int      `json:"depth,omitempty"`
-	Token   string   `json:"token,omitempty"`
+	Channel  string   `json:"channel"`
+	Symbol   []string `json:"symbol"`
+	Depth    int      `json:"depth,omitempty"`
+	Snapshot bool     `json:"snapshot,omitempty"`
+	Token    string   `json:"token,omitempty"`
 }
 
 /*
 NewLevel3Subscription builds a Level3 subscribe frame. depth is sent
 explicitly so the venue's per-symbol snapshot cost matches the budget the
-caller paced for.
+caller paced for. Snapshot is always requested: after an unsubscribe the
+venue only rebuilds the book when a fresh subscribe asks for one.
 */
 func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subscription {
 	return Level3Subscription{
 		Method: "subscribe",
 		Params: Level3SubscriptionParams{
+			Channel:  "level3",
+			Symbol:   symbols,
+			Depth:    depth,
+			Snapshot: true,
+			Token:    token,
+		},
+	}
+}
+
+/*
+NewLevel3Unsubscription builds a Level3 unsubscribe frame. Checksum recovery
+on a live socket must drop the channel before re-subscribing; a second
+subscribe alone does not force a snapshot.
+*/
+func NewLevel3Unsubscription(symbols []string, token string) Level3Subscription {
+	return Level3Subscription{
+		Method: "unsubscribe",
+		Params: Level3SubscriptionParams{
 			Channel: "level3",
 			Symbol:  symbols,
-			Depth:   depth,
 			Token:   token,
 		},
 	}

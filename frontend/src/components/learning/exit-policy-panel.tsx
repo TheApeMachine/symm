@@ -6,26 +6,23 @@ import { Meter } from "#/components/ui/meter";
 import {
 	buildStopChecks,
 	meterTone,
-	policyBoundary,
+	stopRule,
 } from "#/lib/stop-telemetry";
 import { cn } from "#/lib/utils";
 
 /*
-ExitPolicyPanel shows the learned exit policy the desk has tuned for this symbol
-and how this particular lot is running against it. It answers "what has the
-system learned for this pair, and where does this lot sit under it":
+ExitPolicyPanel shows the fixed stop rules this lot is under and how the mark
+path is running against them. The simplified stop uses a hard 2pp invalidation
+cut and a damage-ratcheted trail (base 1.5pp, floor 0.35pp) — not learned
+Causal-MCTS boundaries.
 
-  - the two learned boundaries Causal MCTS derived from this symbol's settled
-    excursions (invalidation cut, trailing giveback), plus the empirical
-    winning horizon in bars and the worst return seen;
-  - a P&L trace sparkline of the lot's net path (the episode the policy learns
-    from) with entry, peak, and the stop line;
-  - the same four proximity meters as the live panel, so open and settled lots
-    read identically.
+  - the two fixed rules plus live damage / allowed giveback;
+  - a P&L trace sparkline of the lot's net path;
+  - the same proximity meters as the live panel so open and settled lots read
+    identically.
 
 Every figure is optional and null-aware: a restored lot with no trace renders a
-waiting sparkline, and a boundary the desk has not learned reads "not learned"
-rather than a fabricated zero.
+waiting sparkline rather than a fabricated line.
 */
 export const ExitPolicyPanel = ({
 	row,
@@ -36,18 +33,16 @@ export const ExitPolicyPanel = ({
 }) => {
 	const num = (v: unknown): number | null => decimal(v);
 
-	const trailing = num(row.exit_pullback_pct);
-	const cut = num(row.nursery_cut_pct);
-	const maxBars = num(row.max_lifetime_bars);
-	const worst = num(row.worst_pct);
 	const peak = num(row.peak_pnl_pct);
 	const current = num(row.pnl_pct);
-	const barsHeld = num(row.bars_held);
 
+	const PNL_TRACE_CAP = 120;
 	const trace = Array.isArray(row.pnl_trace)
-		? row.pnl_trace.filter(
-				(v): v is number => typeof v === "number" && Number.isFinite(v),
-			)
+		? row.pnl_trace
+				.filter(
+					(v): v is number => typeof v === "number" && Number.isFinite(v),
+				)
+				.slice(-PNL_TRACE_CAP)
 		: [];
 
 	const state = row.stop_state as Record<string, unknown> | null | undefined;
@@ -58,19 +53,76 @@ export const ExitPolicyPanel = ({
 		return typeof v === "number" && Number.isFinite(v) ? v : null;
 	};
 
+	const peakStop = sNum("peak_pct") ?? sNum("peakPct") ?? peak;
+	const currentStop = sNum("current_pct") ?? sNum("currentPct") ?? current;
+	const trailRatio = sNum("trailing");
+	const damage = sNum("damage");
+	const giveback =
+		sNum("giveback_pct") ??
+		sNum("givebackPct") ??
+		(peakStop !== null && currentStop !== null
+			? Math.max(0, peakStop - currentStop)
+			: null);
+	let allowedGiveback =
+		sNum("allowed_giveback_pct") ?? sNum("allowedGivebackPct");
+	let remainingGiveback =
+		sNum("remaining_giveback_pct") ?? sNum("remainingGivebackPct");
+	if (
+		allowedGiveback === null &&
+		giveback !== null &&
+		trailRatio !== null &&
+		trailRatio > 0
+	) {
+		allowedGiveback = giveback / trailRatio;
+	}
+	if (
+		remainingGiveback === null &&
+		allowedGiveback !== null &&
+		giveback !== null
+	) {
+		remainingGiveback = Math.max(0, allowedGiveback - giveback);
+	}
+
 	const checks = buildStopChecks({
 		invalidation: sNum("invalidation") ?? undefined,
-		evaporation: sNum("evaporation") ?? undefined,
-		trailing: sNum("trailing") ?? undefined,
-		expiry: sNum("expiry") ?? undefined,
-		current: sNum("current_pct") ?? current,
-		peak: sNum("peak_pct") ?? peak,
-		barsHeld: sNum("bars_held") ?? barsHeld ?? undefined,
-		maxBars: sNum("maxBars") ?? maxBars ?? undefined,
+		trailing: trailRatio ?? undefined,
+		damage: damage ?? undefined,
+		current: currentStop,
+		peak: peakStop,
+		giveback: giveback ?? undefined,
+		allowedGiveback: allowedGiveback ?? undefined,
+		remainingGiveback: remainingGiveback ?? undefined,
 	});
 
-	const anyBoundary =
-		(trailing ?? 0) > 0 || (cut ?? 0) > 0 || (maxBars ?? 0) > 0 || worst !== null;
+	const invalidationRule = stopRule(
+		"Invalidation cut",
+		"2.0pp",
+		"Hard invalidation: exit when adverse drop from the entry mark reaches 2.0 percentage points.",
+	);
+	const trailRule = stopRule(
+		"Trail base",
+		allowedGiveback !== null
+			? `${allowedGiveback.toFixed(2)}pp live`
+			: "1.5pp base",
+		allowedGiveback !== null
+			? `Live allowed giveback ${allowedGiveback.toFixed(2)}pp (base 1.5pp, ratcheted by peak and damage, floor 0.35pp).`
+			: "Trailing take-profit arms once peak clears +0.5% while still green; base giveback 1.5pp, floor 0.35pp.",
+	);
+	const damageRule = stopRule(
+		"Damage",
+		damage !== null ? `${Math.round(damage * 100)}%` : "clean",
+		damage !== null && damage > 0
+			? `Worst drawdown has burned ${Math.round(damage * 100)}% of the 2pp cut — trail tightens with damage.`
+			: "No adverse excursion yet; trail uses the full base giveback room.",
+	);
+	const entryRule = stopRule(
+		"Entry mark",
+		(() => {
+			const entry = sNum("entry_pct") ?? sNum("entryPct");
+			return entry !== null ? `${entry.toFixed(2)}%` : "—";
+		})(),
+		"First mark PnL the stop treats as entry — adverse drop is measured from here.",
+	);
 
 	return (
 		<Flex.Column
@@ -81,40 +133,16 @@ export const ExitPolicyPanel = ({
 			)}
 		>
 			<div className="text-[10px] font-bold uppercase tracking-wider text-(--f3)">
-				Learned exit policy
+				Stop rules
 			</div>
 
-			{anyBoundary ? (
-				<Grid cols={2} gap={2} responsive={false}>
-					<BoundaryFact
-						{...policyBoundary("Invalidation cut", cut)}
-					/>
-					<BoundaryFact {...policyBoundary("Trailing giveback", trailing)} />
-					<BoundaryFact
-						label="Winning horizon"
-						short={maxBars !== null && maxBars > 0 ? `${maxBars} bars` : "not learned"}
-						title={`Move-expiry ceiling: the 75th-percentile bar index of winning excursions. ${
-							maxBars !== null && maxBars > 0
-								? `This lot: ${barsHeld ?? 0} bars held.`
-								: "Not learned until this symbol has settled winners."
-						}`}
-					/>
-					<BoundaryFact
-						label="Worst seen"
-						short={
-							worst !== null ? `${worst.toFixed(1)}%` : "not seen"
-						}
-						title="Worst realized return on this symbol — the floor the Causal MCTS search treats as the cost of a bad cut."
-					/>
-				</Grid>
-			) : (
-				<span className="text-(--f4) py-0.5">
-					No learned boundaries yet — Causal MCTS tunes the cut, trail, and
-					horizon as this symbol settles excursions.
-				</span>
-			)}
+			<Grid cols={2} gap={2} responsive={false}>
+				<BoundaryFact {...invalidationRule} />
+				<BoundaryFact {...trailRule} />
+				<BoundaryFact {...damageRule} />
+				<BoundaryFact {...entryRule} />
+			</Grid>
 
-			{/* P&L trajectory: the episode the exit policy learns from. */}
 			<Flex.Column gap={1}>
 				<Flex.Row justify="between" className="text-[9px] text-(--f4)">
 					<span>Net P&L path (one mark per reprice)</span>
@@ -128,9 +156,9 @@ export const ExitPolicyPanel = ({
 				</Flex.Row>
 				<PnlTrace
 					trace={trace}
-					entry={0}
+					entry={sNum("entry_pct") ?? sNum("entryPct") ?? 0}
 					peak={peak}
-					cut={cut}
+					cut={-2}
 					current={current}
 				/>
 			</Flex.Column>
@@ -164,7 +192,7 @@ const BoundaryFact = ({
 	short: string;
 	title: string;
 }) => {
-	const learned = short !== "not learned" && short !== "not seen";
+	const known = short !== "—" && short !== "clean";
 	return (
 		<div
 			className="rounded-xs border border-(--line) bg-(--sunken) px-2 py-1"
@@ -176,7 +204,7 @@ const BoundaryFact = ({
 			<div
 				className={cn(
 					"text-[11px] font-bold tabular-nums",
-					learned ? "text-(--f1)" : "text-(--f4)",
+					known ? "text-(--f1)" : "text-(--f4)",
 				)}
 			>
 				{short}
@@ -185,9 +213,6 @@ const BoundaryFact = ({
 	);
 };
 
-/* A compact P&L sparkline over the lot's net path: the trace line, the entry
-   baseline, the peak, and the learned cut. A trace shorter than two marks
-   renders a waiting strip instead of a fake line. */
 const PnlTrace = memo(
 	({
 		trace,
@@ -213,11 +238,12 @@ const PnlTrace = memo(
 					? [trace[0], trace[0]]
 					: [entry, entry];
 
+		const cutLine = cut !== null ? entry + cut : null;
 		const all = [
 			...plotTrace,
 			entry,
 			...(peak !== null ? [peak] : []),
-			...(cut !== null ? [cut] : []),
+			...(cutLine !== null ? [cutLine] : []),
 			0,
 		];
 		const min = Math.min(...all);
@@ -252,14 +278,48 @@ const PnlTrace = memo(
 				<title>
 					Net P&L trajectory{peak !== null ? ` — peak ${peak.toFixed(1)}%` : ""}
 				</title>
-				<line x1={0} x2={width} y1={y(0)} y2={y(0)} stroke="var(--f4)" strokeDasharray="2 2" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
-				{cut !== null ? (
-					<line x1={0} x2={width} y1={y(cut)} y2={y(cut)} stroke="var(--down)" strokeDasharray="3 2" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
+				<line
+					x1={0}
+					x2={width}
+					y1={y(0)}
+					y2={y(0)}
+					stroke="var(--f4)"
+					strokeDasharray="2 2"
+					strokeWidth="0.5"
+					vectorEffect="non-scaling-stroke"
+				/>
+				{cutLine !== null ? (
+					<line
+						x1={0}
+						x2={width}
+						y1={y(cutLine)}
+						y2={y(cutLine)}
+						stroke="var(--down)"
+						strokeDasharray="3 2"
+						strokeWidth="0.6"
+						vectorEffect="non-scaling-stroke"
+					/>
 				) : null}
 				{peak !== null && peak > 0 ? (
-					<line x1={0} x2={width} y1={y(peak)} y2={y(peak)} stroke="var(--up)" strokeDasharray="2 3" strokeWidth="0.5" vectorEffect="non-scaling-stroke" opacity="0.7" />
+					<line
+						x1={0}
+						x2={width}
+						y1={y(peak)}
+						y2={y(peak)}
+						stroke="var(--up)"
+						strokeDasharray="2 3"
+						strokeWidth="0.5"
+						vectorEffect="non-scaling-stroke"
+						opacity="0.7"
+					/>
 				) : null}
-				<path d={line} fill="none" stroke={tone} strokeWidth="1.1" vectorEffect="non-scaling-stroke" />
+				<path
+					d={line}
+					fill="none"
+					stroke={tone}
+					strokeWidth="1.1"
+					vectorEffect="non-scaling-stroke"
+				/>
 				<circle
 					cx={x(plotTrace.length - 1)}
 					cy={y(last)}

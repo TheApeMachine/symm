@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { DeskPosition } from "#/collections/types";
 import { Value } from "#/types/value";
 import { resetOpenChoices } from "./open-choice-trail";
 import { lotInProfit, OpenPositions, positionRows } from "./open-positions";
+
+vi.mock("scichart-react", () => ({
+	SciChartReact: () => <div data-testid="open-choice-scichart" />,
+}));
 
 const lotFrame = (row: DeskPosition) => {
 	const value = new Value({
@@ -61,44 +65,17 @@ describe("OpenPositions", () => {
 		expect(view.getByText("No open positions")).toBeTruthy();
 	});
 
-	it("draws a card from the position JSON the desk sent", () => {
+	it("fills the page with the open-choices chart", () => {
 		ingest(lot({ symbol: "RLC/USD" }));
 		const view = render(<OpenPositions />);
-		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
-		expect(view.getByText("held 1m 15s")).toBeTruthy();
-		expect(view.getByText("5.0%")).toBeTruthy();
-		expect(
-			view.getByText(/ahead after fees|behind after fees|roughly flat/i),
-		).toBeTruthy();
 		expect(view.getByText("Open choices")).toBeTruthy();
-		expect(view.getByText(/Show symbol legend/)).toBeTruthy();
+		expect(view.getByText("Single")).toBeTruthy();
+		expect(view.getByText("Grid")).toBeTruthy();
 		expect(view.getByText(/book \+5\.0%/)).toBeTruthy();
-	});
-
-	it("shows exit room on the gauge when the book covers the lot", () => {
-		ingest(lot({ symbol: "RLC/USD", exit_room: 12.5 }));
-		const view = render(<OpenPositions />);
-		expect(view.getByText("12.5×")).toBeTruthy();
-	});
-
-	it("draws profit and stop marks on the virtual P&L gauge", () => {
-		ingest(
-			lot({
-				symbol: "AKE/USD",
-				virtual: true,
-				pnl: -0.23,
-				pnl_pct: -2.3,
-				open_pnl: -0.115,
-			}),
-		);
-		bookAtom.set("virtual");
-		const view = render(<OpenPositions />);
-		const pnlGauge = [...view.container.querySelectorAll('[role="img"]')].find(
-			(node) => node.querySelector("title")?.textContent === "Gauge",
-		);
-		expect(pnlGauge?.querySelectorAll("line").length).toBe(2);
-		expect(pnlGauge?.innerHTML).toContain("Profit exit");
-		expect(pnlGauge?.innerHTML).toContain("Stop exit");
+		expect(view.getByText("RLC/USD")).toBeTruthy();
+		expect(view.queryByText("held 1m 15s")).toBeNull();
+		expect(view.queryByText(/Show/i)).toBeNull();
+		expect(view.queryByRole("button", { name: /In profit/i })).toBeNull();
 	});
 
 	it("shows a paper lot when the desk omits the virtual flag", () => {
@@ -106,29 +83,7 @@ describe("OpenPositions", () => {
 		delete row.virtual;
 		ingest(row);
 		const view = render(<OpenPositions />);
-		expect(view.getAllByText("ZEUS/USD").length).toBeGreaterThan(0);
-	});
-
-	it("filters to in-profit lots when that switch is selected", () => {
-		ingest(
-			lot({ id: "up", symbol: "RLC/USD", pnl_pct: 5 }),
-			lot({ id: "down", symbol: "ETH/USD", pnl: -0.1, pnl_pct: -2 }),
-		);
-		const view = render(<OpenPositions />);
-		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
-		expect(view.getAllByText("ETH/USD").length).toBeGreaterThan(0);
-
-		fireEvent.click(view.getByRole("button", { name: /In profit/i }));
-		expect(view.getAllByText("RLC/USD").length).toBeGreaterThan(0);
-		expect(view.queryByText("ETH/USD")).toBeNull();
-	});
-
-	it("renders a lot whose grammar feed is keyed by symbol", () => {
-		ingest(lot({ symbol: "ASTER/USD", virtual: true }));
-		bookAtom.set("virtual");
-		const view = render(<OpenPositions />);
-		expect(view.getAllByText("ASTER/USD").length).toBeGreaterThan(0);
-		expect(view.getByText("Live cognition")).toBeTruthy();
+		expect(view.getByText("ZEUS/USD")).toBeTruthy();
 	});
 
 	it("keeps a virtual lot off the paper book", () => {
@@ -137,13 +92,13 @@ describe("OpenPositions", () => {
 			lot({ id: "trial", symbol: "ETH/USD", virtual: true }),
 		);
 		const paper = render(<OpenPositions />);
-		expect(paper.getAllByText("BTC/USD").length).toBeGreaterThan(0);
+		expect(paper.getByText("BTC/USD")).toBeTruthy();
 		expect(paper.queryByText("ETH/USD")).toBeNull();
 		paper.unmount();
 
 		bookAtom.set("virtual");
 		const virtual = render(<OpenPositions />);
-		expect(virtual.getAllByText("ETH/USD").length).toBeGreaterThan(0);
+		expect(virtual.getByText("ETH/USD")).toBeTruthy();
 		expect(virtual.queryByText("BTC/USD")).toBeNull();
 	});
 });

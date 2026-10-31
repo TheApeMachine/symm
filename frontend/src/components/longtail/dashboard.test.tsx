@@ -80,9 +80,8 @@ const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
 const emptyStops: OpenLotTelemetry = {
 	open: null,
 	invalidation: null,
-	evaporation: null,
 	trailing: null,
-	expiry: null,
+	damage: null,
 	armed: null,
 	maxProximity: null,
 	exits: {},

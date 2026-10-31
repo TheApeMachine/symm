@@ -2,7 +2,6 @@ import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import {
 	atoms,
-	kernelSymbolForAggregate,
 	resonanceFrameForSymbol,
 	signals,
 } from "#/collections/app";
@@ -451,8 +450,7 @@ const useArtifact = (): ResonanceData | undefined => {
 	const held = useRef<ResonanceData | undefined>(undefined);
 
 	useEffect(() => {
-		const symbol = kernelSymbolForAggregate(focus, aggregate);
-		foldResonance(symbol, aggregate);
+		foldResonance(focus, aggregate);
 
 		let next = held.current;
 		const fromStore = parseResonanceData(reading);
@@ -462,13 +460,11 @@ const useArtifact = (): ResonanceData | undefined => {
 				: fromStore;
 		}
 
-		for (const scope of [focus, symbol]) {
-			const fromWorkspace = parseResonanceFromWorkspace(scope, aggregate);
-			if (!fromWorkspace || !resonanceHasContent(fromWorkspace)) continue;
+		const fromWorkspace = parseResonanceFromWorkspace(focus, aggregate);
+		if (fromWorkspace && resonanceHasContent(fromWorkspace)) {
 			next = next
 				? mergeResonanceData(next, fromWorkspace, "workspace")
 				: fromWorkspace;
-			break;
 		}
 
 		if (next && !resonanceSnapshotEqual(held.current, next)) {

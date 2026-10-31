@@ -2,7 +2,12 @@
 import { act, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { clockAtom, focusAtom, signals } from "#/collections/app";
+import {
+	clockAtom,
+	ensureSignalStore,
+	focusAtom,
+	signals,
+} from "#/collections/app";
 import { Value } from "#/types/value";
 import { hawkesSample, XrayHawkesPanel } from "./xray-hawkes";
 
@@ -106,26 +111,32 @@ describe("hawkesSample", () => {
 	});
 });
 
-const hawkesAggregate = (
+const hawkesFrame = (
 	layers: Array<{ key: string; payload: unknown }>,
 	init: { timestamp: bigint; tick: bigint },
-): Value =>
-	new Value({
-		origin: "workspace",
-		role: "tick",
-		scope: "aggregate",
-		prefix: "workspace/tick/aggregate",
+): Value => {
+	const scope = focusAtom.get();
+	const prefix = `hawkes/metric/${scope}`;
+	return new Value({
+		origin: "hawkes",
+		role: "metric",
+		scope,
+		prefix,
 		timestamp: init.timestamp,
 		tick: init.tick,
-		index: layers.map((layer) => `workspace/tick/aggregate/${layer.key}`),
+		index: layers.map((layer) => `${prefix}/${layer.key}`),
 		layers: layers.map((layer) =>
 			new TextEncoder().encode(JSON.stringify(layer.payload)),
 		),
 	});
+};
 
-const publishAggregate = (value: Value) => {
+const publishHawkes = (value: Value) => {
 	act(() => {
-		signals.workspace.setState((prev) => ({ ...prev, aggregate: value }));
+		ensureSignalStore("hawkes").setState((prev) => ({
+			...prev,
+			[value.scope]: value,
+		}));
 	});
 };
 
@@ -167,25 +178,13 @@ describe("XrayHawkesPanel market clock", () => {
 			.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get")
 			.mockReturnValue(240);
 		const hawkesLayers = [
-			{
-				key: `hawkes/${focusAtom.get()}/conditional_intensity`,
-				payload: [0.2],
-			},
-			{
-				key: `hawkes/${focusAtom.get()}/arrival_rate:buy`,
-				payload: [0.2],
-			},
-			{
-				key: `hawkes/${focusAtom.get()}/arrival_rate:sell`,
-				payload: [0.01],
-			},
-			{
-				key: `hawkes/${focusAtom.get()}/branching_spectral_radius`,
-				payload: [0.22],
-			},
+			{ key: "conditional_intensity", payload: [0.2] },
+			{ key: "arrival_rate:buy", payload: [0.2] },
+			{ key: "arrival_rate:sell", payload: [0.01] },
+			{ key: "branching_spectral_radius", payload: [0.22] },
 		];
-		publishAggregate(
-			hawkesAggregate(hawkesLayers, {
+		publishHawkes(
+			hawkesFrame(hawkesLayers, {
 				timestamp: 1_000_000_000n,
 				tick: 1n,
 			}),
@@ -208,8 +207,8 @@ describe("XrayHawkesPanel market clock", () => {
 			act(() => repaint?.(2));
 			expect(context.moveTo.mock.calls[0][1]).toBe(baselineY);
 			expect(baselineY).toBeGreaterThan(30);
-			publishAggregate(
-				hawkesAggregate(hawkesLayers, {
+			publishHawkes(
+				hawkesFrame(hawkesLayers, {
 					timestamp: 5_500_000_000n,
 					tick: 2n,
 				}),
@@ -226,7 +225,7 @@ describe("XrayHawkesPanel market clock", () => {
 			).toBe("0.2000 /s");
 		} finally {
 			view.unmount();
-			signals.workspace.setState(() => ({}));
+			signals.hawkes?.setState(() => ({}));
 			canvas.mockRestore();
 			width.mockRestore();
 			height.mockRestore();

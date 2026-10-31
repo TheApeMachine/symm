@@ -1,7 +1,6 @@
 package tokenizer
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -99,8 +98,4 @@ func (token Token) MarshalJSON() ([]byte, error) {
 
 func (token *Token) UnmarshalJSON(data []byte) error {
 	return sonic.Unmarshal(data, &token.Symbols)
-}
-
-func RegionLabel(key uint8) string {
-	return fmt.Sprintf("R%02d", key)
 }

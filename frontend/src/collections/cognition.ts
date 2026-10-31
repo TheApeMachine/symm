@@ -168,7 +168,7 @@ const noteRegions = (
 			: new Array<number | undefined>(REGION_COUNT).fill(undefined);
 
 	tokens.forEach((token, index) => {
-		const sector = Number(token.slice(1));
+		const sector = primaryRegionIndex(token);
 		const value = brightness[index];
 
 		if (
@@ -199,6 +199,21 @@ const noteRegions = (
 };
 
 const REGION = /^R\d{2}$/;
+
+/** First R## in a path segment (R08 or R08.R03). */
+const primaryRegionIndex = (token: string): number | null => {
+	const match = token.match(/^R(\d{2})/);
+	if (!match) {
+		return null;
+	}
+
+	const sector = Number(match[1]);
+	if (!Number.isInteger(sector) || sector < 0 || sector >= REGION_COUNT) {
+		return null;
+	}
+
+	return sector;
+};
 
 export const parseTrainRegionsIndex = (
 	index: string,

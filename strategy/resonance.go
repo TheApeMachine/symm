@@ -15,6 +15,10 @@ type CoderReading struct {
 	Surprise   float64
 	Confidence float64
 	PeakCurve  float64
+	EnterNet   float64
+	HoldNet    float64
+	ExitNet    float64
+	Risk       float64
 }
 
 /*
@@ -88,10 +92,16 @@ func ReadCoder(tick *data.Value, symbol string) CoderReading {
 		peakCurve = holdNet
 	}
 
-	const minFeatureZ = 0.15
-	
-	bullish := enterNet >= minFeatureZ &&
-		holdNet >= minFeatureZ &&
+	// Enter story must clear min_enter_z; hold-only peaks do not qualify.
+	minEnterZ := 0.35
+	const minHoldZ = 0.0
+
+	if system.Cfg != nil && system.Cfg.Learning != nil && system.Cfg.Learning.MinEnterZ > 0 {
+		minEnterZ = system.Cfg.Learning.MinEnterZ
+	}
+
+	bullish := enterNet >= minEnterZ &&
+		holdNet >= minHoldZ &&
 		exitNet <= holdNet &&
 		risk <= enterNet
 
@@ -101,6 +111,10 @@ func ReadCoder(tick *data.Value, symbol string) CoderReading {
 		Surprise:   surprise,
 		Confidence: confidence,
 		PeakCurve:  peakCurve,
+		EnterNet:   enterNet,
+		HoldNet:    holdNet,
+		ExitNet:    exitNet,
+		Risk:       risk,
 	}
 }
 

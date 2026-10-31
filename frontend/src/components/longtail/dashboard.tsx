@@ -339,7 +339,7 @@ const trainingCharts: ChartDef[] = [
 {
 	id: "stops",
 	label: "Stop proximity",
-	caption: "open book vs each of the four stop checks — 1.0 is firing",
+	caption: "open book vs invalidation / trail / damage — 1.0 is firing",
 	series: (samples) => [
 		{
 			label: "stop loss",
@@ -347,19 +347,14 @@ const trainingCharts: ChartDef[] = [
 			stroke: "var(--down)",
 		},
 		{
-			label: "liquidity",
-			values: samples.map((s) => s.stops?.evaporation ?? null),
-			stroke: "var(--warn)",
-		},
-		{
 			label: "trail",
 			values: samples.map((s) => s.stops?.trailing ?? null),
 			stroke: "var(--up)",
 		},
 		{
-			label: "expiry",
-			values: samples.map((s) => s.stops?.expiry ?? null),
-			stroke: "var(--info)",
+			label: "damage",
+			values: samples.map((s) => s.stops?.damage ?? null),
+			stroke: "var(--warn)",
 		},
 	],
 	formatY: rate,
@@ -808,25 +803,6 @@ export const LongtailDashboard = () => {
 								}
 						/>
 						<RailRow
-							label="liquidity"
-							value={
-								stops?.evaporation === null ||
-								stops?.evaporation === undefined
-									? "—"
-									: pct(stops.evaporation)
-							}
-							meter={stops?.evaporation ?? null}
-							tone={
-								(stops?.evaporation ?? 0) >= 1
-									? "bad"
-									: (stops?.evaporation ?? 0) >= 0.7
-										? "warn"
-										: (stops?.evaporation ?? 0) > 0
-											? "info"
-											: "neutral"
-								}
-						/>
-						<RailRow
 							label="trail"
 							value={
 								stops?.trailing === null || stops?.trailing === undefined
@@ -843,20 +819,20 @@ export const LongtailDashboard = () => {
 								}
 						/>
 						<RailRow
-							label="expiry"
+							label="damage"
 							value={
-								stops?.expiry === null || stops?.expiry === undefined
+								stops?.damage === null || stops?.damage === undefined
 									? "—"
-									: pct(stops.expiry)
+									: pct(stops.damage)
 							}
-							meter={stops?.expiry ?? null}
+							meter={stops?.damage ?? null}
 							tone={
-								(stops?.expiry ?? 0) >= 1
+								(stops?.damage ?? 0) >= 0.8
 									? "warn"
-									: (stops?.expiry ?? 0) >= 0.7
-										? "warn"
-										: (stops?.expiry ?? 0) > 0
-											? "info"
+									: (stops?.damage ?? 0) >= 0.4
+										? "info"
+										: (stops?.damage ?? 0) > 0
+											? "good"
 											: "neutral"
 								}
 						/>

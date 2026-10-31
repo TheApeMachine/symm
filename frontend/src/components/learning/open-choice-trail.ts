@@ -1,6 +1,6 @@
 import { closeNowReturnPct } from "#/components/book-readout";
 
-export type ChoiceSample = { t: number; pnl: number };
+export type ChoiceSample = { t: number; pnl: number; stamp: string };
 
 const trails = new Map<string, ChoiceSample[]>();
 
@@ -14,12 +14,16 @@ delivers a new mark, not on a wall-clock timer.
 export const noteOpenChoice = (
 	id: string,
 	pnl: number,
+	stamp: string,
 	now = Date.now(),
 ): boolean => {
-	if (!Number.isFinite(pnl)) return false;
+	if (!Number.isFinite(pnl) || stamp === "") return false;
 
 	const prior = trails.get(id) ?? [];
-	const next = [...prior, { t: now, pnl }];
+	const last = prior[prior.length - 1];
+	if (last && last.stamp === stamp) return false;
+
+	const next = [...prior, { t: now, pnl, stamp }];
 	trails.set(
 		id,
 		next.length > CHOICE_TRAIL_LENGTH
@@ -37,6 +41,59 @@ export const openChoiceTrail = (id: string): ChoiceSample[] =>
 export const openChoiceValues = (id: string): number[] =>
 	openChoiceTrail(id).map((sample) => sample.pnl);
 
+const STROKES = [
+	"#7eb6ff",
+	"#f0b429",
+	"#5eead4",
+	"#c4b5fd",
+	"#e07a7a",
+	"#86efac",
+	"#f9a8d4",
+];
+
+const strokeFor = (id: string) => {
+	let hash = 0;
+	for (let i = 0; i < id.length; i++) {
+		hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+	}
+	return STROKES[hash % STROKES.length];
+};
+
+export type OpenChoiceSeries = {
+	id: string;
+	name: string;
+	values: number[];
+	stroke: string;
+};
+
+/** Close-now series for the open-choices chart (stable id order, no SciChart). */
+export const openChoiceSeries = (
+	lots: Record<string, unknown>[],
+): OpenChoiceSeries[] => {
+	const mapped = lots.map((row) => {
+		const id = String(row.id ?? row.symbol);
+		return {
+			id,
+			name: String(row.symbol ?? id),
+			values: openChoiceValues(id),
+			stroke: strokeFor(id),
+		};
+	});
+
+	mapped.sort((a, b) => a.id.localeCompare(b.id));
+	return mapped;
+};
+
+/** Legend order: hottest |P&L| first. */
+export const openChoiceLegend = (
+	series: OpenChoiceSeries[],
+): OpenChoiceSeries[] =>
+	[...series].sort((a, b) => {
+		const aLast = a.values.length > 0 ? a.values[a.values.length - 1] : 0;
+		const bLast = b.values.length > 0 ? b.values[b.values.length - 1] : 0;
+		return Math.abs(bLast) - Math.abs(aLast);
+	});
+
 export const dropOpenChoices = (live: Set<string>): boolean => {
 	let dropped = false;
 	for (const id of trails.keys()) {
@@ -52,7 +109,16 @@ export const resetOpenChoices = () => {
 	trails.clear();
 };
 
-export type OpenChoiceLot = { id: string; pnl: number | null };
+export type OpenChoiceLot = { id: string; pnl: number | null; stamp: string };
+
+export const openChoiceMarkStamp = (row: Record<string, unknown>): string =>
+	[
+		row.pnl_pct,
+		row.mark,
+		row.peak_pnl_pct,
+		row.exit_vwap,
+		row.bars_held,
+	].join("|");
 
 export const openChoiceLotsFromRows = (
 	rows: Record<string, unknown>[],
@@ -60,15 +126,16 @@ export const openChoiceLotsFromRows = (
 	rows.map((row) => ({
 		id: String(row.id ?? row.symbol),
 		pnl: closeNowReturnPct(row),
+		stamp: openChoiceMarkStamp(row),
 	}));
 
 /** Record close-now samples for the open lot set; returns true if trails changed. */
 export const syncOpenChoiceLots = (rows: OpenChoiceLot[]): boolean => {
 	const live = new Set<string>();
 	let dirty = false;
-	for (const { id, pnl } of rows) {
+	for (const { id, pnl, stamp } of rows) {
 		live.add(id);
-		if (pnl !== null && noteOpenChoice(id, pnl)) dirty = true;
+		if (pnl !== null && noteOpenChoice(id, pnl, stamp)) dirty = true;
 	}
 	if (dropOpenChoices(live)) dirty = true;
 	return dirty;

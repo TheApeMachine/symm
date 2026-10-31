@@ -38,29 +38,29 @@ export type DeskPosition = {
 	outcome_triggers?: string[];
 
 	/*
-	Stop-loss and exit-policy telemetry the desk publishes on every mark.
-	Mirrors broker/stoploss.go StopState and the learned exit policy on
-	broker/position.go. Decimals cross the wire as JSON strings, so they are
-	string|number here and parsed by the decimal() helper on read.
+	Stop-loss telemetry the desk publishes on every mark. Mirrors
+	broker/stoploss.go StopState. Decimals cross the wire as JSON strings, so
+	they are string|number here and parsed by the decimal() helper on read.
 	*/
-	/** Live proximity of each of the four stop checks, refreshed per mark. */
+	/** Live proximity of invalidation / trailing / damage, refreshed per mark. */
 	stop_state?: {
 		invalidation?: number;
 		trailing?: number;
-		evaporation?: number;
-		expiry?: number;
+		damage?: number;
 		peak_pct?: number;
 		current_pct?: number;
-		bars_held?: number;
-		max_bars?: number;
+		entry_pct?: number;
+		giveback_pct?: number;
+		allowed_giveback_pct?: number;
+		remaining_giveback_pct?: number;
 	} | null;
 	/** Highest mark-to-market return (percent) the lot has reached. */
 	peak_pnl_pct?: string | number;
-	/** Learned trailing giveback (percent) off the peak, from Causal MCTS. */
+	/** Legacy learned trailing giveback (percent); unused by the fixed stop. */
 	exit_pullback_pct?: string | number;
-	/** Learned invalidation cut (percent) below entry, from Causal MCTS. */
+	/** Legacy learned invalidation cut (percent); unused by the fixed stop. */
 	nursery_cut_pct?: string | number;
-	/** Empirical winning horizon in reprice bars (move-expiry ceiling). */
+	/** Legacy empirical winning horizon in reprice bars. */
 	max_lifetime_bars?: number;
 	/** Legacy empirical duration ceiling in nanoseconds. */
 	max_lifetime_ns?: number;

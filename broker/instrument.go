@@ -283,7 +283,7 @@ func level3FrameSize(depth int) (int, error) {
 }
 
 /*
-subscribeLevel3 writes the Level3 subscription for one batch with a currently
+SubscribeLevel3 writes the Level3 subscription for one batch with a currently
 valid token, split into frames that each fit the venue's snapshot rate
 budget, one frame per rate window across all sockets.
 */
@@ -332,6 +332,47 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 				err,
 			)
 		}
+	}
+
+	return nil
+}
+
+/*
+UnsubscribeLevel3 drops Level3 for one batch on a live socket. Required before
+re-subscribing after a checksum failure: Kraken does not push a new snapshot
+for a symbol that is already subscribed.
+*/
+func (instrument *Instrument) UnsubscribeLevel3(write func([]byte) error, batch []string) error {
+	if len(batch) == 0 {
+		return nil
+	}
+
+	token, err := instrument.auth.Token(instrument.Context())
+
+	if err != nil {
+		return instrument.Error(errnie.Err(
+			errnie.Forbidden,
+			"[instrument] level3 auth token unavailable",
+			err,
+		))
+	}
+
+	msg, err := sonic.Marshal(kraken.NewLevel3Unsubscription(batch, token))
+
+	if err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"[instrument] level3 unsubscribe marshal failed",
+			err,
+		)
+	}
+
+	if err := write(msg); err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"[instrument] level3 unsubscribe write failed for "+strings.Join(batch, ","),
+			err,
+		)
 	}
 
 	return nil
@@ -431,9 +472,11 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 }
 
 /*
-ResubscribeLevel3 requests a fresh level3 snapshot for one symbol on the
-socket batch that already carries it. This is the recovery path when local
-book maintenance diverged from the venue checksum.
+ResubscribeLevel3 forces a fresh level3 snapshot for one symbol on the socket
+batch that already carries it. Kraken's recovery path after a checksum
+divergence is unsubscribe then subscribe with snapshot; a second subscribe on
+a live channel alone does not replace the book, so the symbol would stay
+invalid while trades keep flowing.
 */
 func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
 	if instrument == nil || symbol == "" {
@@ -462,7 +505,16 @@ func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
 			return false
 		}
 
-		errnie.Info("[instrument] level3 resubscribe after book invalidation for " + symbol)
+		errnie.Info("[instrument] level3 unsubscribe+subscribe after book invalidation for " + symbol)
+
+		if err := instrument.UnsubscribeLevel3(client.Write, []string{symbol}); err != nil {
+			resErr = errnie.Err(
+				errnie.IO,
+				"[instrument] level3 invalidation unsubscribe failed for "+symbol,
+				err,
+			)
+			return false
+		}
 
 		if err := instrument.SubscribeLevel3(client.Write, []string{symbol}); err != nil {
 			resErr = errnie.Err(

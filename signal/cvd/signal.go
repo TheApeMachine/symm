@@ -20,14 +20,21 @@ type window struct {
 	sellNotional float64
 }
 
+// initiativeDeadband matches pumpdump quiet-band: flow without repricing.
+const initiativeDeadband = 5e-4
+
 type symbolState struct {
-	clock           volumeclock.Clock
-	window          window
-	prevMidpoint    float64
-	cumulativeCVD   float64
-	peakMid         float64
-	peakCVD         float64
-	lastDivergence  float64
+	clock              volumeclock.Clock
+	window             window
+	prevMidpoint       float64
+	cumulativeCVD      float64
+	peakMid            float64
+	peakCVD            float64
+	lastDivergence     float64
+	prevSignedFraction float64
+	lastInitiativeLock float64
+	lastFlowSignFlip   float64
+	hasPrevSigned      bool
 }
 
 type Signal struct {
@@ -35,15 +42,19 @@ type Signal struct {
 	books  *broker.Book
 	states *sync.Map
 	keys   []string
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"aggressor_backing",
 			"cvd_divergence",
+			"initiative_lock",
+			"flow_sign_flip",
 		},
 	}
 
@@ -92,6 +103,8 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 	var (
 		signedFraction float64
 		cvdDivergence  float64
+		initiativeLock float64
+		flowSignFlip   float64
 		appendMetrics  bool
 	)
 
@@ -131,6 +144,19 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 				signedFraction = netNotional / grossNotional
 			}
 
+			if state.hasPrevSigned &&
+				signedFraction*state.prevSignedFraction < 0 &&
+				math.Abs(signedFraction) > 0 &&
+				math.Abs(state.prevSignedFraction) > 0 {
+				flowSignFlip = math.Min(
+					1,
+					math.Abs(signedFraction-state.prevSignedFraction)/2,
+				)
+			}
+
+			state.prevSignedFraction = signedFraction
+			state.hasPrevSigned = true
+
 			barMid := tick.Bar.AtMid
 			if barMid <= 0 {
 				barMid = midpoint
@@ -153,6 +179,22 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 				state.peakCVD = state.cumulativeCVD
 			}
 
+			bar := tick.Bar
+			if bar.FromMid > 0 && bar.AtMid > 0 {
+				midMove := math.Abs(math.Log(bar.AtMid / bar.FromMid))
+				quiet := 1 - math.Min(1, midMove/initiativeDeadband)
+				initiativeLock = math.Abs(signedFraction) * quiet
+			}
+
+			state.lastDivergence = cvdDivergence
+			state.lastInitiativeLock = initiativeLock
+			state.lastFlowSignFlip = flowSignFlip
+			appendMetrics = true
+		} else if state.hasPrevSigned {
+			signedFraction = state.prevSignedFraction
+			cvdDivergence = state.lastDivergence
+			initiativeLock = state.lastInitiativeLock
+			flowSignFlip = state.lastFlowSignFlip
 			appendMetrics = true
 		}
 
@@ -168,9 +210,11 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	value.Append([]float64{
+	signal.emit.Metric(value, []float64{
 		signedFraction,
 		cvdDivergence,
+		initiativeLock,
+		flowSignFlip,
 	}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{

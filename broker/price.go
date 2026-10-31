@@ -30,6 +30,9 @@ var (
 	decimalPercent     = decimalOne.Div(decimalHundred)
 )
 
+// defaultTakerFeePercent is used when Kraken trade volume has no fee for a pair (percent: 0.8 = 0.8%).
+const defaultTakerFeePercent = 0.8
+
 /*
 EntryFill is a complete buy against the ask book at admission time.
 */
@@ -51,6 +54,8 @@ type Price struct {
 	*runtime.System
 	Instrument *Instrument
 	Books      *Book
+	Tape       *Tape
+	Mover      *Mover
 	balance    *Balance
 	private    Transport
 	fees       *sync.Map
@@ -74,14 +79,19 @@ func NewPrice(
 		Instrument: instrument,
 		private:    private,
 		Books:      books,
+		Tape:       NewTape(),
+		Mover:      NewMover(),
 		balance:    balance,
 		normalizer: normalizer,
-		fees: &sync.Map{},
+		fees:       &sync.Map{},
 	}
 
 	if !price.loadFees() {
 		return nil
 	}
+
+	price.refreshMovers()
+	price.pollMovers()
 
 	price.Transition(runtime.READY)
 	return price
@@ -163,6 +173,14 @@ func (price *Price) Fee(symbol string) *decimal.Decimal {
 	}
 
 	return price.storedFee(price.fees, symbol)
+}
+
+func (price *Price) feeForTrade(symbol string) *decimal.Decimal {
+	if fee := price.Fee(symbol); fee != nil {
+		return fee
+	}
+
+	return decimal.NewFromFloat64(defaultTakerFeePercent)
 }
 
 func (price *Price) feeName(symbol string) string {
@@ -296,6 +314,46 @@ func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
 }
 
 /*
+TouchBidCash is the quote notional resting on the top three bid levels.
+Used as an absolute liquidity veto so a dead micro-cap book cannot clear entry.
+*/
+func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
+	if price == nil || price.Books == nil || symbol == "" {
+		return nil, false
+	}
+
+	var cash *decimal.Decimal
+
+	price.Books.Book(symbol, func(managed *book.Book) {
+		if managed == nil || managed.BestBid() == nil {
+			return
+		}
+
+		total := decimalZero
+		level := managed.BestBid()
+
+		for count := 0; count < 3 && level != nil; count++ {
+			if level.Price != nil && level.Quantity != nil &&
+				level.Price.Sign() > 0 && level.Quantity.Sign() > 0 {
+				total = total.Add(notional(level.Price, level.Quantity))
+			}
+
+			level = level.Lower
+		}
+
+		if total.Sign() > 0 {
+			cash = total
+		}
+	})
+
+	if cash == nil {
+		return nil, false
+	}
+
+	return cash, true
+}
+
+/*
 spreadFraction is the bid-ask spread as a fraction of mid.
 */
 func (price *Price) spreadFraction(symbol string) (*decimal.Decimal, bool) {
@@ -336,9 +394,9 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	fee := price.Fee(symbol)
+	fee := price.feeForTrade(symbol)
 
-	if fee == nil || fee.Sign() < 0 {
+	if fee.Sign() < 0 {
 		return nil, false
 	}
 
@@ -388,7 +446,7 @@ func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) 
 		return nil, false
 	}
 
-	fee := price.Fee(symbol)
+	fee := price.feeForTrade(symbol)
 	pct := price.PnLPct(symbol, qty, fill.EntryPrice, fee)
 	if pct == nil {
 		return nil, false
@@ -465,11 +523,7 @@ func (price *Price) PnLPctAtSellPrice(
 	}
 
 	if fee == nil {
-		fee = price.Fee(symbol)
-	}
-
-	if fee == nil {
-		return nil
+		fee = price.feeForTrade(symbol)
 	}
 
 	entryGross := notional(entry, quantity)
@@ -529,11 +583,7 @@ func (price *Price) EntryCost(
 		return nil, errnie.Err(errnie.NotFound, "entry cost: books unavailable", nil)
 	}
 
-	fee := price.Fee(symbol)
-
-	if fee == nil {
-		return nil, errnie.Err(errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil)
-	}
+	fee := price.feeForTrade(symbol)
 
 	var fill *EntryFill
 	var err error
@@ -587,6 +637,18 @@ increment. It is nil when that size is below the venue minimum, the book
 cannot fill it, or the fee or the cash is unknown.
 */
 func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
+	return price.allocate(symbol, true)
+}
+
+/*
+AllocateVirtual sizes a learning lot. Venue qty/cost mins are skipped so a
+thin walk can still open an observation sample.
+*/
+func (price *Price) AllocateVirtual(symbol string) (*decimal.Decimal, string) {
+	return price.allocate(symbol, false)
+}
+
+func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Decimal, string) {
 	if price == nil {
 		return nil, "price is nil"
 	}
@@ -610,7 +672,7 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 		cash = price.balance.cash(price.balance.Quote)
 	}
 
-	fee := price.Fee(symbol)
+	fee := price.feeForTrade(symbol)
 
 	if cash == nil {
 		return nil, fmt.Sprintf(
@@ -618,10 +680,6 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 			pair.Quote,
 			price.balance.Quote,
 		)
-	}
-
-	if fee == nil {
-		return nil, "taker fee unknown for " + symbol
 	}
 
 	if pair.QtyMin == nil || pair.CostMin == nil {
@@ -640,6 +698,10 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 
 	feeRate := fee.SetScale(int64(pair.PricePrecision)).Mul(decimalPercent)
 	grossBudget := budget.Div(decimalOne.Add(feeRate))
+
+	if why := price.Books.BlockReason(symbol); why != "" {
+		return nil, why
+	}
 
 	var (
 		quantity *decimal.Decimal
@@ -755,21 +817,26 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 			total = price.afterFee(gross, fee, BUY)
 		}
 
-		if filled.Cmp(pair.QtyMin) < 0 {
-			reason = fmt.Sprintf(
-				"filled qty below venue minimum (filled=%s qty_min=%s)",
-				filled.String(),
-				pair.QtyMin.String(),
-			)
+		if filled.Sign() <= 0 {
+			reason = "ask walk produced non-positive fill"
 			return
 		}
 
-		if notional(gross.Div(filled), filled).Cmp(pair.CostMin) < 0 {
-			reason = fmt.Sprintf(
-				"filled notional below venue minimum (cost_min=%s)",
-				pair.CostMin.String(),
+		underMin := filled.Cmp(pair.QtyMin) < 0 ||
+			notional(gross.Div(filled), filled).Cmp(pair.CostMin) < 0
+
+		if underMin {
+			bumped, bumpedGross, bumpWhy := price.bumpToVenueMin(
+				managed, symbol, pair, fee, budget, touchCap,
 			)
-			return
+
+			if bumped != nil {
+				filled = bumped
+				gross = bumpedGross
+			} else if enforceVenueMins {
+				reason = bumpWhy
+				return
+			}
 		}
 
 		quantity = filled
@@ -780,10 +847,108 @@ func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
 	}
 
 	if reason == "" {
-		reason = "book callback did not size (symbol not in book manager)"
+		if why := price.Books.BlockReason(symbol); why != "" {
+			reason = why
+		} else {
+			reason = "book callback did not size"
+		}
 	}
 
 	return nil, reason
+}
+
+/*
+bumpToVenueMin sizes up to QtyMin (and enough for CostMin) when that lot
+fits the fee-inclusive cash budget and stays under the touch-bid carry cap
+so an exit is not the whole bid.
+*/
+func (price *Price) bumpToVenueMin(
+	managed *book.Book,
+	symbol string,
+	pair kraken.InstrumentPair,
+	fee, budget, touchCap *decimal.Decimal,
+) (filled, gross *decimal.Decimal, why string) {
+	if price == nil || managed == nil || pair.QtyMin == nil || pair.CostMin == nil ||
+		fee == nil || budget == nil || touchCap == nil {
+		return nil, nil, "cannot bump to venue minimum (missing book, limits, or budget)"
+	}
+
+	target := pair.QtyMin
+
+	ask := managed.BestAsk()
+
+	if ask == nil || ask.Price == nil || ask.Price.Sign() <= 0 {
+		return nil, nil, "cannot bump to venue minimum (best ask missing)"
+	}
+
+	// CostMin often has a coarse scale; Div would SetScale the ask down to
+	// zero and panic. Rebase CostMin onto pair price precision first.
+	if pair.CostMin.Sign() > 0 {
+		costScale := int64(pair.PricePrecision)
+
+		if costScale < 8 {
+			costScale = 8
+		}
+
+		costFloor := pair.CostMin.SetScale(costScale).Div(ask.Price)
+
+		if costFloor.Cmp(target) > 0 {
+			target = costFloor
+		}
+	}
+
+	if sized, err := price.normalizer.FormatSize(symbol, target); err == nil {
+		target = sized
+	}
+
+	if target.Cmp(touchCap) > 0 {
+		return nil, nil, fmt.Sprintf(
+			"venue minimum %s exceeds touch-bid carry cap %s",
+			target.String(),
+			touchCap.String(),
+		)
+	}
+
+	filled, gross, walkErr := price.walk(managed, target, BUY)
+
+	if walkErr != nil || filled == nil || gross == nil {
+		why = "ask walk failed sizing venue minimum"
+		if walkErr != nil {
+			why = why + ": " + walkErr.Error()
+		}
+		return nil, nil, why
+	}
+
+	if filled.Cmp(pair.QtyMin) < 0 {
+		return nil, nil, fmt.Sprintf(
+			"asks cannot fill venue minimum (filled=%s qty_min=%s)",
+			filled.String(),
+			pair.QtyMin.String(),
+		)
+	}
+
+	total := price.afterFee(gross, fee, BUY)
+
+	if total == nil {
+		return nil, nil, "venue minimum fee-inclusive cost unknown"
+	}
+
+	if total.Cmp(budget) > 0 {
+		return nil, nil, fmt.Sprintf(
+			"venue minimum costs more than cash budget (need=%s budget=%s)",
+			total.String(),
+			budget.String(),
+		)
+	}
+
+	if notional(gross.Div(filled), filled).Cmp(pair.CostMin) < 0 {
+		return nil, nil, fmt.Sprintf(
+			"venue minimum notional still below cost_min=%s",
+			pair.CostMin.String(),
+		)
+	}
+
+	return filled, gross, ""
 }
 
 /*
@@ -852,11 +1017,7 @@ func (price *Price) settle(
 	}
 
 	if fee == nil {
-		fee = price.Fee(symbol)
-	}
-
-	if fee == nil {
-		return nil, nil
+		fee = price.feeForTrade(symbol)
 	}
 
 	var grossExit *decimal.Decimal
@@ -953,6 +1114,56 @@ func (price *Price) afterFee(
 	}
 
 	return amount.OffsetPercent(rate)
+}
+
+/*
+BackingRatio is bidCash/askCash inside the configured mid band. ok is false
+when the book is not ready or the ask side of the band is empty.
+*/
+func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
+	if price == nil || price.Books == nil || symbol == "" {
+		return 0, false
+	}
+
+	band := system.Cfg.Risk.BackingBandFrac
+
+	price.Books.Book(symbol, func(managed *book.Book) {
+		mid := managed.Midpoint()
+
+		if !bookReady(managed) || mid == nil || mid.Sign() <= 0 {
+			return
+		}
+
+		lo := mid.Mul(decimal.NewFromFloat64(1 - band))
+		hi := mid.Mul(decimal.NewFromFloat64(1 + band))
+		
+		var cash [2]float64
+
+		for idx, start := range []*book.Level{managed.BestBid(), managed.BestAsk()} {
+			for lvl := start; lvl != nil; lvl = [...]*book.Level{lvl.Lower, lvl.Higher}[idx] {
+				if lvl.Price == nil || lvl.Quantity == nil ||
+					lvl.Price.Sign() <= 0 || lvl.Quantity.Sign() <= 0 {
+					continue
+				}
+
+				if idx == 0 && lvl.Price.Cmp(lo) < 0 {
+					break
+				}
+
+				if idx == 1 && lvl.Price.Cmp(hi) > 0 {
+					break
+				}
+
+				cash[idx] += notional(lvl.Price, lvl.Quantity).Float64()
+			}
+		}
+
+		if cash[1] > 0 {
+			ratio, ok = cash[0]/cash[1], true
+		}
+	})
+
+	return ratio, ok
 }
 
 func bookReady(managed *book.Book) bool {

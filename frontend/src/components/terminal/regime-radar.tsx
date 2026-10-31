@@ -1,6 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { atoms, signalFor, signals } from "#/collections/app";
+import {
+	atoms,
+	DEFAULT_KERNELS,
+	ensureSignalStore,
+	latest,
+} from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -52,21 +57,12 @@ export const RadarPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		/*
-		The kernels publish into the workspace tick as one frame: the
-		aggregate is the only store, and signalFor pulls one kernel's
-		layers for the focus symbol off it.
-		*/
 		const apply = () => {
 			if (!root.current) return;
 
 			for (const axis of radarAxes) {
-				// signalFor maps each metric key to its scalar array.
-				const payloads = signalFor(axis.source, focusSymbol);
-				const payload = payloads[axis.key];
-				const found = Array.isArray(payload) ? payload[0] : payload;
-				const value =
-					typeof found === "number" && Number.isFinite(found) ? found : 0;
+				const frame = latest(axis.source, focusSymbol);
+				const value = frame?.metrics()[axis.key] ?? 0;
 
 				const arm = root.current.querySelector<SVGElement>(
 					`[data-axis="${axis.label}"]`,
@@ -81,9 +77,13 @@ export const RadarPanel = () => {
 		};
 
 		apply();
-		const subscription = signals.workspace.subscribe(apply);
+		const unsubs = DEFAULT_KERNELS.map((kernel) =>
+			ensureSignalStore(kernel).subscribe(apply),
+		);
 
-		return () => subscription.unsubscribe();
+		return () => {
+			for (const sub of unsubs) sub.unsubscribe();
+		};
 	}, [focusSymbol]);
 
 	return (

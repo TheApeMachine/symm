@@ -24,17 +24,17 @@ describe("Metric layout", () => {
 			container
 				.querySelector('[data-k="sparkline"]')
 				?.getAttribute("data-series"),
-		).toBe("signed_net_fraction");
+		).toBe("aggressor_backing");
 		expect(
 			container
 				.querySelector("[data-metric-meter]")
 				?.getAttribute("data-metric-meter"),
-		).toBe("signed_net_fraction");
+		).toBe("aggressor_backing");
 		expect(
 			container
 				.querySelector("[data-metric-badge]")
 				?.getAttribute("data-metric-badge"),
-		).toBe("signed_net_fraction");
+		).toBe("aggressor_backing");
 	});
 
 	it("lets the sparkline shrink so the row can flex instead of overflowing", () => {

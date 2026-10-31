@@ -18,6 +18,17 @@ const config = defineConfig({
 	build: {
 		target: "esnext",
 	},
+	/*
+		scichart-react ships ESM with extensionless relative imports
+		(./ChartGroupLoader). Node's SSR loader cannot resolve those; Vite can
+		when the package is bundled instead of externalized.
+	*/
+	ssr: {
+		noExternal: ["scichart-react", "scichart"],
+	},
+	optimizeDeps: {
+		include: ["scichart", "scichart-react"],
+	},
 	plugins: [devtools(), tailwindcss(), tanstackStart(), viteReact()],
 	test: {
 		/*

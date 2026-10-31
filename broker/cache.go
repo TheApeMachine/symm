@@ -150,12 +150,17 @@ func (cache *Cache) Has(symbol string) bool {
 	return ok
 }
 
-func (cache *Cache) Add(symbol string, position *Position) bool {
+func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 	if symbol == "" {
 		return true
 	}
 
-	_, ok := cache.open.LoadOrStore(symbol, position)
+	if open {
+		_, ok := cache.open.LoadOrStore(symbol, position)
+		return ok
+	}
+
+	_, ok := cache.closed.LoadOrStore(symbol, position)
 	return ok
 }
 

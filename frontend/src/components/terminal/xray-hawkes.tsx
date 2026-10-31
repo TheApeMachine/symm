@@ -3,9 +3,8 @@ import { useEffect, useRef } from "react";
 import {
 	atoms,
 	clockAtom,
-	kernelMeasurement,
-	kernelSymbolForAggregate,
-	signals,
+	ensureSignalStore,
+	latest,
 } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
@@ -207,13 +206,8 @@ export const XrayHawkesPanel = () => {
 		};
 
 		const update = () => {
-			const aggregate = signals.workspace.state.aggregate;
-			const querySymbol = kernelSymbolForAggregate(focusSymbol, aggregate);
-			const reading =
-				kernelMeasurement("hawkes", querySymbol, aggregate) ??
-				kernelMeasurement("hawkes", focusSymbol, aggregate);
-
-			const frameTs = reading?.timestamp ?? aggregate?.timestamp;
+			const reading = latest("hawkes", focusSymbol);
+			const frameTs = reading?.timestamp;
 			if (reading && frameTs !== undefined) {
 				if (
 					lastFrameTimestamp === undefined ||
@@ -301,7 +295,7 @@ export const XrayHawkesPanel = () => {
 		};
 
 		update();
-		const subscription = signals.workspace.subscribe(update);
+		const hawkesSub = ensureSignalStore("hawkes").subscribe(update);
 		const unsubscribeClock = clockAtom.subscribe((timestamp) => {
 			if (timestamp === null) return;
 
@@ -317,7 +311,7 @@ export const XrayHawkesPanel = () => {
 		if (hawkesCanvasRef.current) resize.observe(hawkesCanvasRef.current);
 
 		return () => {
-			subscription.unsubscribe();
+			hawkesSub.unsubscribe();
 			unsubscribeClock.unsubscribe();
 			resize.disconnect();
 			cancelAnimationFrame(frame);

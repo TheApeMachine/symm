@@ -31,12 +31,12 @@ describe("regionMapsFromTrainingFrame", () => {
 
 	it("labels pinned wiring separately from live reporting counts", () => {
 		const maps = regionMapsFromTrainingFrame(null);
-		expect(regionPinLabel("R01", maps)).toBe("2 metrics pinned");
+		expect(regionPinLabel("R01", maps)).toBe("3 metrics pinned");
 
 		maps.brightness.R01 = 1.2;
-		expect(regionPinLabel("R01", maps)).toBe("2 metrics pinned");
+		expect(regionPinLabel("R01", maps)).toBe("3 metrics pinned");
 
 		maps.members.R01 = 1;
-		expect(regionPinLabel("R01", maps)).toBe("1/2 reporting");
+		expect(regionPinLabel("R01", maps)).toBe("1/3 reporting");
 	});
 });

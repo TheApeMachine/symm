@@ -1,55 +1,13 @@
-import { useSelector } from "@tanstack/react-store";
-import { useMemo, useRef } from "react";
-import {
-	atoms,
-	DEFAULT_KERNELS,
-	kernelSymbolForAggregate,
-	signals,
-} from "#/collections/app";
-import type { Value } from "#/types/value";
-import { MetricRow, stickyKernelMeasurements } from "./metric";
+import { DEFAULT_KERNELS } from "#/collections/app";
+import { Metric } from "./metric";
 
 /*
-One workspace subscription per dashboard column: each kernel row still binds
-through Component, but React reconciles one parent per tick instead of ten.
+One Metric per kernel: each subscribes to its own origin store at focus.
 */
-export const KernelMetricStrip = () => {
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const aggregate = useSelector(
-		signals.workspace,
-		(state) => state.aggregate,
-	);
-
-	const stickyRef = useRef<{
-		byKernel: Record<string, Value>;
-		bySymbol: Record<string, Record<string, Value>>;
-	}>({ byKernel: {}, bySymbol: {} });
-
-	const querySymbol = useMemo(
-		() => kernelSymbolForAggregate(focusSymbol, aggregate),
-		[focusSymbol, aggregate],
-	);
-
-	const measurements = useMemo(
-		() =>
-			stickyKernelMeasurements(
-				stickyRef.current,
-				DEFAULT_KERNELS,
-				querySymbol,
-				aggregate,
-			),
-		[querySymbol, aggregate],
-	);
-
-	return (
-		<>
-			{DEFAULT_KERNELS.map((kernel) => (
-				<MetricRow
-					key={kernel}
-					name={kernel}
-					measurement={measurements[kernel] ?? null}
-				/>
-			))}
-		</>
-	);
-};
+export const KernelMetricStrip = () => (
+	<>
+		{DEFAULT_KERNELS.map((kernel) => (
+			<Metric key={kernel} name={kernel} />
+		))}
+	</>
+);

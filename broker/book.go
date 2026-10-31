@@ -175,6 +175,49 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	}
 }
 
+/*
+BlockReason names why a symbol cannot be read for sizing. Empty means the
+book is present and not pending, stale, or invalid.
+*/
+func (book *Book) BlockReason(symbol string) string {
+	if book == nil {
+		return "book manager is not wired"
+	}
+
+	if symbol == "" {
+		return "symbol is empty"
+	}
+
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+
+	if pendingPtr := book.pending.Load(); pendingPtr != nil {
+		if _, pending := (*pendingPtr)[symbol]; pending {
+			return "level3 book still pending snapshot"
+		}
+	}
+
+	if _, stale := book.stale.Load(symbol); stale {
+		return "level3 book stale until resubscribe snapshot"
+	}
+
+	if value, invalid := book.invalid.Load(symbol); invalid {
+		entry := value.(*invalidBook)
+
+		return fmt.Sprintf(
+			"level3 book invalid (%s): %s",
+			entry.diagnostic.Kind,
+			entry.diagnostic.Detail,
+		)
+	}
+
+	if book.manager.GetBook(symbol) == nil {
+		return "symbol not in book manager"
+	}
+
+	return ""
+}
+
 func (book *Book) Create(symbol string, depth int) error {
 	if depth <= 0 {
 		return errnie.Error(errnie.Err(
@@ -399,11 +442,19 @@ func (book *Book) apply(
 
 			// An invalid book is known wrong: its deltas are counted (and
 			// surfaced on every tick's book_error layer), not applied, until
-			// a fresh snapshot replaces it.
+			// a fresh snapshot replaces it. Hot symbols keep producing
+			// deltas; every hundredth one retries unsubscribe+subscribe in
+			// case the first recovery write did not land a snapshot.
 			if value, invalid := book.invalid.Load(data.Symbol); invalid && payload.Type != "snapshot" {
-				value.(*invalidBook).dropped.Add(1)
+				dropped := value.(*invalidBook).dropped.Add(1)
+
+				if dropped%100 == 0 {
+					book.requestLevel3Resubscribe(data.Symbol)
+				}
+
 				return errSkipInvalid
 			}
+
 			symbolBook = book.manager.GetBook(data.Symbol)
 
 			depth, err := level3Depth()
@@ -609,8 +660,9 @@ func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
 
 /*
 SetResubscribe wires level3 snapshot recovery. Kraken does not push a snapshot
-after a local checksum failure; the client must resubscribe. The hook runs
-once per invalidation per symbol until a fresh snapshot clears invalid state.
+after a local checksum failure; the client must unsubscribe then subscribe.
+The hook runs on invalidation and again every hundred dropped deltas while
+the book stays invalid, until a fresh snapshot clears that state.
 */
 func (book *Book) SetResubscribe(resubscribe func(string)) {
 	book.resubscribe.Store(&resubscribe)

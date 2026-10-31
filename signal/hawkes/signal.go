@@ -28,8 +28,9 @@ type symbolModel struct {
 	process *excitation.Process
 
 	gates        *gates
-	lastCascade  float64
-	hasCascade   bool
+	lastCascade   float64
+	lastAsymmetry float64
+	hasCascade    bool
 }
 
 // gates is a short retained history of fit statistics from which the regime
@@ -71,13 +72,16 @@ type Signal struct {
 	*runtime.System
 	models *sync.Map
 	keys   []string
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		models: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"supercritical_cascade",
+			"branching_asymmetry",
 		},
 	}
 
@@ -100,6 +104,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	signal.appendBoardCascade(value)
+	signal.appendBoardBranchingAsymmetry(value)
 
 	return value
 }
@@ -184,8 +189,10 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		return value
 	}
 
-	state.gates.observe(outcome.Fit.SpectralRadius, outcome.Fit.Asymmetry(false))
+	asymmetry := outcome.Fit.Asymmetry(false)
+	state.gates.observe(outcome.Fit.SpectralRadius, asymmetry)
 	state.lastCascade = outcome.Fit.SpectralRadius
+	state.lastAsymmetry = asymmetry
 	state.hasCascade = true
 
 	keys := []string{
@@ -193,8 +200,9 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	out := value.Append([]float64{
+	out := signal.emit.Metric(value, []float64{
 		outcome.Fit.SpectralRadius,
+		asymmetry,
 	}, append(keys, signal.keys...)...)
 
 	audit.Record.Write(map[string]any{
@@ -227,8 +235,35 @@ func (signal *Signal) appendBoardCascade(value *data.Value) {
 		return
 	}
 
-	value.Append([]float64{median}, append([]string{
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "board_cascade")...)
+}
+
+func (signal *Signal) appendBoardBranchingAsymmetry(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.models.Range(func(_, untyped any) bool {
+		model := untyped.(*symbolModel)
+		model.mu.Lock()
+		if model.hasCascade {
+			scores = append(scores, model.lastAsymmetry)
+		}
+		model.mu.Unlock()
+		return true
+	})
+
+	median, ok := parent.Median(scores)
+	if !ok {
+		return
+	}
+
+	signal.emit.Metric(value, []float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_branching_asymmetry")...)
 }

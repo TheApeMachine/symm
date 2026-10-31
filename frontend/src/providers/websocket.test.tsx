@@ -195,7 +195,7 @@ describe("ingest", () => {
 		expect(cognitionStore.state.matches["BTC/USD"]?.action).toBe("noop");
 	});
 
-	it("ignores origins that are not in valueAtoms or signals", () => {
+	it("creates an origin store on first sight", () => {
 		ingest([
 			new Value({
 				origin: "kraken",
@@ -207,7 +207,8 @@ describe("ingest", () => {
 			}),
 		]);
 
-		expect(signals.kraken).toBeUndefined();
+		expect(signals.kraken?.state["BTC/USD"]).toBeTruthy();
+		signals.kraken?.setState(() => ({}));
 	});
 
 	it("keeps the richer workspace aggregate when the same tick is fanned out twice", () => {
@@ -286,5 +287,37 @@ describe("ingest", () => {
 		expect(aggregate?.tick).toBe(11n);
 		expect(aggregate?.index.length).toBe(1);
 		expect(aggregate?.index[0]).toContain("spot:trade");
+	});
+
+	it("replaces grid regions when a later empty regions frame arrives", () => {
+		signals.grid?.setState(() => ({}));
+
+		const lit = [
+			{ symbol: "BTC/USD", key: 1, brightness: 0.85, counts: 3 },
+		];
+		ingest([
+			new Value({
+				origin: "grid",
+				role: "metric",
+				scope: "BTC/USD",
+				prefix: "grid/metric/BTC/USD/1/10",
+				tick: 10n,
+				index: ["grid/metric/BTC/USD/1/10/regions"],
+				layers: [new TextEncoder().encode(JSON.stringify(lit))],
+			}),
+		]);
+		ingest([
+			new Value({
+				origin: "grid",
+				role: "metric",
+				scope: "BTC/USD",
+				prefix: "grid/metric/BTC/USD/1/11",
+				tick: 11n,
+				index: ["grid/metric/BTC/USD/1/11/regions"],
+				layers: [new TextEncoder().encode(JSON.stringify([]))],
+			}),
+		]);
+
+		expect(signals.grid?.state["BTC/USD"]?.reading("regions")).toEqual([]);
 	});
 });

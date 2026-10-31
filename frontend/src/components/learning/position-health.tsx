@@ -1,6 +1,5 @@
 import { ArrowRight, HeartPulse, Radio } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
-import { signals } from "#/collections/app";
+import React, { useMemo, useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -8,11 +7,11 @@ import { Meter } from "#/components/ui/meter";
 import { Section } from "#/components/ui/section";
 import type { Lifecycle } from "#/lib/lifecycle";
 import { cn } from "#/lib/utils";
-import type { Value } from "#/types/value";
 import {
 	regionMapsFromTrainingFrame,
 	regionPinLabel,
 } from "./training-regions";
+import { useTrainingFrame } from "./use-training-frame";
 
 export interface RegionMeta {
 	id: string;
@@ -562,28 +561,6 @@ export const RegionTransitionPathway = ({
 			</Grid>
 		</Flex.Column>
 	);
-};
-
-const useTrainingFrame = (symbol: string): Value | null => {
-	const [latestValue, setLatestValue] = useState<Value | null>(
-		() => signals.training?.state?.[symbol] ?? null,
-	);
-
-	useEffect(() => {
-		const updateFrame = (state: Record<string, Value>) => {
-			const frame = state[symbol];
-			if (frame) setLatestValue(frame);
-		};
-
-		if (signals.training?.state) updateFrame(signals.training.state);
-
-		const unsub = signals.training?.subscribe(updateFrame);
-		return () => {
-			unsub?.unsubscribe?.();
-		};
-	}, [symbol]);
-
-	return latestValue;
 };
 
 export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {

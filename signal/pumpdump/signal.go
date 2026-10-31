@@ -69,12 +69,14 @@ type Signal struct {
 	states *sync.Map
 	keys   []string
 	books  *broker.Book
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	signal := &Signal{
 		books:  books,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 		keys: []string{
 			"coiled_compression",
 			"rejection_tick",
@@ -99,6 +101,7 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 	}
 
 	signal.appendBoardCoiled(value)
+	signal.appendBoardStarved(value)
 
 	return value
 }
@@ -123,10 +126,33 @@ func (signal *Signal) appendBoardCoiled(value *data.Value) {
 		return
 	}
 
-	value.Append([]float64{median}, append([]string{
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "board_coiled")...)
+}
+
+func (signal *Signal) appendBoardStarved(value *data.Value) {
+	if signal.Status() != runtime.READY || value == nil {
+		return
+	}
+
+	var scores []float64
+	signal.states.Range(func(_, untyped any) bool {
+		state := untyped.(*symbolState)
+		scores = append(scores, publishedStarved(state, state.lastStarved))
+		return true
+	})
+
+	median, ok := parent.Median(scores)
+	if !ok {
+		return
+	}
+
+	signal.emit.Metric(value, []float64{median}, append([]string{
+		signal.Name(),
+		"aggregate",
+	}, "board_starved")...)
 }
 
 func publishedStarved(state *symbolState, instant float64) float64 {
@@ -262,7 +288,7 @@ func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Valu
 		trade.Symbol,
 	}
 
-	out := value.Append([]float64{
+	out := signal.emit.Metric(value, []float64{
 		coiled,
 		rejection,
 		starved,

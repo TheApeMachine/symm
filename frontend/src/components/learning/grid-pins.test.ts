@@ -29,14 +29,14 @@ describe("region pin balance", () => {
 			expect(counts[region]).toBeGreaterThanOrEqual(1);
 		}
 		for (let region = 0; region <= 8; region++) {
-			expect(counts[region]).toBe(2);
+			expect(counts[region]).toBe(3);
 		}
 	});
 
 	it("wires board confidence and risk oracles on R09–R14", () => {
 		const counts = getCanonicalRegionCounts();
 		for (let region = 9; region <= 14; region++) {
-			expect(counts[region]).toBe(2);
+			expect(counts[region]).toBe(3);
 		}
 	});
 });

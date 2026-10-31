@@ -1,5 +1,3 @@
-import { useSelector } from "@tanstack/react-store";
-import { createStore } from "@tanstack/store";
 import type { Book } from "#/collections/book";
 import { Circular, type CircularBuffer } from "#/collections/circular";
 import { type SequiturFeed, sequiturStore } from "#/collections/sequitur";
@@ -11,24 +9,23 @@ import {
 	positionReadout,
 } from "#/components/book-readout";
 import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
+import { useSelector } from "@tanstack/react-store";
+import { createStore } from "@tanstack/store";
 
 /*
-OpenLotTelemetry aggregates the live stop-loss and exit-policy state across the
-desk's open lots for one sample. A stop ratio is current-over-threshold, so the
-means are book-level pressure readings: how close, on average, the open book is
-to each of the four checks firing. null when no open lot prices, never a
-fabricated zero.
+OpenLotTelemetry aggregates the live stop-loss state across the desk's open
+lots for one sample. A stop ratio is current-over-threshold, so the means are
+book-level pressure readings: how close, on average, the open book is to each
+check firing. null when no open lot prices, never a fabricated zero.
 */
 export type OpenLotTelemetry = {
 	open: number | null;
-	/** Invalidation budget consumed (adverse drop vs learned cut). */
+	/** Invalidation budget consumed (adverse drop vs fixed 2pp cut). */
 	invalidation: number | null;
-	/** Full-lot slippage vs 2× friction, 3-tick persistence. */
-	evaporation: number | null;
-	/** Giveback from peak vs learned trail. */
+	/** Giveback from peak vs damage-ratcheted trail. */
 	trailing: number | null;
-	/** Bars held vs empirical winning horizon. */
-	expiry: number | null;
+	/** Worst drawdown vs the 2pp invalidation budget (tightens the trail). */
+	damage: number | null;
 	/** How many open lots currently have a stop check at/over 70% proximity. */
 	armed: number | null;
 	/** Highest proximity of any check on any open lot — the nearest exit. */
@@ -293,8 +290,10 @@ const stopWord = (
 		const verb = role === "harvest" ? "harvesting" : "firing";
 		return `${label} ${verb}${suffix}`;
 	}
-	if (value >= 0.7) return `${label} arming at ${(100 * value).toFixed(0)}%${suffix}`;
-	if (value > 0) return `${label} armed at ${(100 * value).toFixed(0)}%${suffix}`;
+	if (value >= 0.7)
+		return `${label} arming at ${(100 * value).toFixed(0)}%${suffix}`;
+	if (value > 0)
+		return `${label} armed at ${(100 * value).toFixed(0)}%${suffix}`;
 	return `${label} not armed`;
 };
 
@@ -313,24 +312,18 @@ const mean = (values: number[]): number | null =>
 
 /*
 summarizeStops folds the open desk book's live stop_state into one pressure
-reading. Each open lot reports proximity (current-over-threshold) for the four
-checks; the book mean says how close, on average, the open book is to each
-firing, and maxProximity the single nearest exit. Open lots with no stop
-state (a paper lot not yet repriced) are skipped rather than counted as safe.
+reading. Each open lot reports proximity for invalidation and trailing (damage
+is context, not an exit); the book mean says how close the open book is to
+each firing, and maxProximity the single nearest exit. Open lots with no stop
+state are skipped rather than counted as safe.
 
-Exit reason counts read the closed book's outcome_triggers, so the sample shows
-where the exit policy actually landed things, not just how it is poised.
+Exit reason counts read the closed book's outcome_triggers.
 */
 export const summarizeStops = (
 	rows: Record<string, unknown>[],
 ): OpenLotTelemetry => {
 	const open = rows.filter((row) => !positionReadout(row).closed);
-	const ratios = [
-		"invalidation",
-		"evaporation",
-		"trailing",
-		"expiry",
-	] as const;
+	const ratios = ["invalidation", "trailing", "damage"] as const;
 	const perCheck = ratios.map(() => [] as number[]);
 	let armed = 0;
 	let maxProximity = 0;
@@ -348,6 +341,8 @@ export const summarizeStops = (
 				return;
 			}
 			perCheck[i].push(value);
+			// Damage tightens the trail but does not fire an exit on its own.
+			if (check === "damage") return;
 			if (value >= 0.7) rowArmed = true;
 			if (value > rowMax) rowMax = value;
 		});
@@ -371,9 +366,8 @@ export const summarizeStops = (
 	return {
 		open: open.length > 0 ? open.length : null,
 		invalidation: mean(perCheck[0]),
-		evaporation: mean(perCheck[1]),
-		trailing: mean(perCheck[2]),
-		expiry: mean(perCheck[3]),
+		trailing: mean(perCheck[1]),
+		damage: mean(perCheck[2]),
 		armed: withState > 0 ? armed : null,
 		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
 		exits,
@@ -399,9 +393,7 @@ export const summarizeBook = (
 	const scored = settled.filter((row) =>
 		countsTowardBookPerformance(row, book),
 	);
-	const returns = scored.map(
-		(row) => positionReadout(row).returnPct as number,
-	);
+	const returns = scored.map((row) => positionReadout(row).returnPct as number);
 	const wins = returns.filter((value) => value > 0).length;
 	const holds = settled
 		.map((row) => positionReadout(row).holdNs)
@@ -627,10 +619,7 @@ export const trainingVerdict = (samples: LongtailSample[]): Verdict => {
 	const latest = samples[samples.length - 1].training;
 	const prior = samples[Math.max(0, samples.length - 16)].training;
 
-	if (
-		latest.policyStoredRate === null &&
-		latest.developedPaths === null
-	) {
+	if (latest.policyStoredRate === null && latest.developedPaths === null) {
 		return { label: "Warming up", tone: "neutral" };
 	}
 
@@ -676,7 +665,6 @@ export const buildInsights = (
 		];
 	}
 
-	const prior = samples[Math.max(0, samples.length - 16)];
 	const training = latest.training;
 	const stops = latest.stops;
 	const insights: Insight[] = [];
@@ -706,9 +694,7 @@ export const buildInsights = (
 		});
 	} else {
 		const threshold =
-			training.meanThreshold === null
-				? "—"
-				: training.meanThreshold.toFixed(2);
+			training.meanThreshold === null ? "—" : training.meanThreshold.toFixed(2);
 		insights.push({
 			id: "paths",
 			title: "Paths",
@@ -767,14 +753,12 @@ export const buildInsights = (
 			id: "exits",
 			title: "Exits",
 			body: `${training.exitProfit} cleared the spread, ${training.exitStop} hit the friction stop, ${training.exitBranch} followed a learned exit branch.`,
-			tone: (training.exitProfit ?? 0) > (training.exitStop ?? 0) ? "good" : "warn",
+			tone:
+				(training.exitProfit ?? 0) > (training.exitStop ?? 0) ? "good" : "warn",
 		});
 	}
 
-	if (
-		training.virtualExcursion !== null &&
-		training.virtualExcursion > 0
-	) {
+	if (training.virtualExcursion !== null && training.virtualExcursion > 0) {
 		insights.push({
 			id: "ledger",
 			title: "Desk",
@@ -792,21 +776,21 @@ export const buildInsights = (
 			title: "Stop-loss posture",
 			body:
 				open === null || open === 0
-					? `No open lots — all four checks unpriced.`
-					: `${open} open lot${open === 1 ? "" : "s"}; stop-loss ${stopWord("cut", "defence", stops.invalidation)}, liquidity ${stopWord("pull", "defence", stops.evaporation)}, trail ${stopWord("harvest", "harvest", stops.trailing)}, expiry ${stopWord("horizon", "time", stops.expiry)}. ${
-						nearest === null
-							? "None near firing."
-							: `${nearest >= 1 ? "One is firing — " : ""}${nearest >= 0.7 ? "one is close — " : ""}${armed ?? 0} lot${armed === 1 ? "" : "s"} at ≥70% of a stop, nearest ${(100 * nearest).toFixed(0)}%.`
-					}`,
-				tone:
-					nearest === null
-						? "neutral"
-						: nearest >= 1
-							? "bad"
-							: nearest >= 0.7
-								? "warn"
-								: "good",
-			});
+					? `No open lots — stop checks unpriced.`
+					: `${open} open lot${open === 1 ? "" : "s"}; stop-loss ${stopWord("cut", "defence", stops.invalidation)}, trail ${stopWord("harvest", "harvest", stops.trailing)}, damage ${stopWord("burn", "defence", stops.damage)}. ${
+							nearest === null
+								? "None near firing."
+								: `${nearest >= 1 ? "One is firing — " : ""}${nearest >= 0.7 ? "one is close — " : ""}${armed ?? 0} lot${armed === 1 ? "" : "s"} at ≥70% of a stop, nearest ${(100 * nearest).toFixed(0)}%.`
+						}`,
+			tone:
+				nearest === null
+					? "neutral"
+					: nearest >= 1
+						? "bad"
+						: nearest >= 0.7
+							? "warn"
+							: "good",
+		});
 	}
 
 	return insights;
@@ -906,10 +890,7 @@ const recordLongtailSample = () => {
 const maybeRecordLongtailSample = () => {
 	const { lastSampleAt, samples } = longtailStore.state;
 	const now = Date.now();
-	if (
-		samples.length > 0 &&
-		now - lastSampleAt < SAMPLE_EVERY_MS
-	) {
+	if (samples.length > 0 && now - lastSampleAt < SAMPLE_EVERY_MS) {
 		return;
 	}
 	recordLongtailSample();
@@ -1008,9 +989,8 @@ const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
 		return {
 			open: finiteOrNull(row.open),
 			invalidation: finiteOrNull(row.invalidation),
-			evaporation: finiteOrNull(row.evaporation),
 			trailing: finiteOrNull(row.trailing),
-			expiry: finiteOrNull(row.expiry),
+			damage: finiteOrNull(row.damage),
 			armed: finiteOrNull(row.armed),
 			maxProximity: finiteOrNull(row.maxProximity),
 			exits,
@@ -1020,9 +1000,8 @@ const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
 	return {
 		open: null,
 		invalidation: null,
-		evaporation: null,
 		trailing: null,
-		expiry: null,
+		damage: null,
 		armed: null,
 		maxProximity: null,
 		exits: {},

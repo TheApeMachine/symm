@@ -43,11 +43,13 @@ type Signal struct {
 	boardMu     sync.RWMutex
 	boardCached boardCache
 	keys        []string
+	emit        *parent.Emit
 }
 
 func NewSignal(ctx context.Context) *Signal {
 	signal := &Signal{
 		paths: &sync.Map{},
+		emit:  parent.NewEmit(),
 		keys: []string{
 			"structural_alignment",
 		},
@@ -78,23 +80,23 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		score, ok := signal.boardAlignmentCached()
 
 		if ok {
-			value.Append([]float64{score}, append([]string{
+			signal.emit.Metric(value, []float64{score}, append([]string{
 				signal.Name(),
 				trade.Symbol,
 			}, "structural_alignment")...)
 
-			value.Append([]float64{score}, append([]string{
+			signal.emit.Metric(value, []float64{score}, append([]string{
 				signal.Name(),
 				"aggregate",
 			}, "structural_alignment")...)
 
-			value.Append([]float64{1 - score}, append([]string{
+			signal.emit.Metric(value, []float64{1 - score}, append([]string{
 				signal.Name(),
 				"aggregate",
 			}, "structure_uncoupling")...)
 
 			if squeeze, squeezeOK := signal.boardDispersionSqueezeCached(); squeezeOK {
-				value.Append([]float64{squeeze}, append([]string{
+				signal.emit.Metric(value, []float64{squeeze}, append([]string{
 					signal.Name(),
 					"aggregate",
 				}, "board_dispersion_squeeze")...)

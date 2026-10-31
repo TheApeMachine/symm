@@ -5,6 +5,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/broker"
 )
 
 func TestSymbolsGroupBySymbol(t *testing.T) {
@@ -29,5 +30,19 @@ func TestSymbolsGroupBySymbol(t *testing.T) {
 		Convey("Live pairs receive book-dependent aggregate fan-out", func() {
 			So(bySymbol["LIVE/USD"]["liquidity"], ShouldNotBeNil)
 		})
+	})
+}
+
+func TestSymbolsActiveMoverFilter(t *testing.T) {
+	Convey("WithPrice drops symbols the mover gate rejects", t, func() {
+		val := data.NewValue("workspace", "tick", "aggregate")
+		val.Append([]float64{1.2}, "hawkes", "QUIET", "USD", "supercritical_cascade")
+		val.Append([]float64{1.2}, "hawkes", "LOUD", "USD", "supercritical_cascade")
+
+		price := &broker.Price{Mover: broker.NewMover()}
+		symbols := NewSymbols(val).WithPrice(price)
+
+		So(symbols.Names(), ShouldBeNil)
+		So(symbols.GroupBySymbol(nil), ShouldBeNil)
 	})
 }

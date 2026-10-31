@@ -23,6 +23,7 @@ type symbolState struct {
 	midReturns            []float64
 	lastSpreadExpansion   float64
 	lastLiquidationImpact float64
+	lastMovePerSpread     float64
 }
 
 type Signal struct {
@@ -30,6 +31,7 @@ type Signal struct {
 	books  *broker.Book
 	price  *broker.Price
 	states *sync.Map
+	emit   *parent.Emit
 }
 
 func NewSignal(ctx context.Context, books *broker.Book, price *broker.Price) *Signal {
@@ -37,6 +39,7 @@ func NewSignal(ctx context.Context, books *broker.Book, price *broker.Price) *Si
 		books:  books,
 		price:  price,
 		states: &sync.Map{},
+		emit:   parent.NewEmit(),
 	}
 
 	signal.System = runtime.NewSystem(ctx, "liquidity", signal)
@@ -63,6 +66,10 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 		if spreadExp, ok := signal.spreadExpansion(symbol); ok {
 			spreads = append(spreads, spreadExp.spread)
 			signal.appendSymbol(value, symbol, "spread_expansion", spreadExp.expansion)
+
+			if movePerSpread, ok := signal.movePerSpread(symbol, spreadExp.spread); ok {
+				signal.appendSymbol(value, symbol, "move_per_spread", movePerSpread)
+			}
 		}
 
 		if impact, ok := signal.liquidationImpact(symbol); ok {
@@ -86,18 +93,32 @@ func (signal *Signal) Step(value *data.Value) *data.Value {
 
 	worst := spreads[len(spreads)-1]
 
-	value.Append([]float64{median}, append([]string{
+	for _, symbol := range symbols {
+		if spreadExp, ok := signal.spreadExpansion(symbol); ok && median > 0 {
+			touchFriction := spreadExp.spread / median
+			signal.appendSymbol(value, symbol, "touch_friction", touchFriction)
+		}
+	}
+
+	if tailGap := worst - median; tailGap > 0 {
+		signal.emit.Metric(value, []float64{tailGap}, append([]string{
+			signal.Name(),
+			"aggregate",
+		}, "spread_tail_gap")...)
+	}
+
+	signal.emit.Metric(value, []float64{median}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "market_friction")...)
 
-	value.Append([]float64{worst}, append([]string{
+	signal.emit.Metric(value, []float64{worst}, append([]string{
 		signal.Name(),
 		"aggregate",
 	}, "capacity_stress")...)
 
 	if drag, ok := parent.Median(dragRatios); ok {
-		value.Append([]float64{drag}, append([]string{
+		signal.emit.Metric(value, []float64{drag}, append([]string{
 			signal.Name(),
 			"aggregate",
 		}, "friction_drag_ratio")...)
@@ -258,8 +279,30 @@ func (signal *Signal) liquidationImpact(symbol string) (float64, bool) {
 	return impact, ok
 }
 
+func (signal *Signal) movePerSpread(symbol string, spread float64) (float64, bool) {
+	if spread <= 0 {
+		return 0, false
+	}
+
+	untypedState, ok := signal.states.Load(symbol)
+	if !ok {
+		return 0, false
+	}
+
+	state := untypedState.(*symbolState)
+	if len(state.midReturns) == 0 {
+		return 0, false
+	}
+
+	lastReturn := state.midReturns[len(state.midReturns)-1]
+	movePerSpread := math.Abs(lastReturn) / spread
+	state.lastMovePerSpread = movePerSpread
+
+	return movePerSpread, true
+}
+
 func (signal *Signal) appendSymbol(value *data.Value, symbol, label string, reading float64) {
-	value.Append([]float64{reading}, append([]string{
+	signal.emit.Metric(value, []float64{reading}, append([]string{
 		signal.Name(),
 		symbol,
 	}, label)...)

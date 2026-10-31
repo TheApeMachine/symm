@@ -41,16 +41,19 @@ const kernelOrderIndex = (source: string): number => {
 };
 
 /*
-Headlines name one live metric per signal kernel (SIGNALS.md nine-pin grid +
-oracles). Dormant booter sources (toxicity, cvd, leadlag, morphology) are
-not listed here.
+Headlines name one live metric per signal kernel (SIGNALS.md grid + oracles).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "structural_alignment",
+	cvd: "aggressor_backing",
 	depthflow: "bid_ladder_build",
 	hawkes: "supercritical_cascade",
+	leadlag: "led_peer_share",
 	liquidity: "spread_expansion",
+	morphology: "book_shape_stable",
 	pumpdump: "coiled_compression",
+	sentiment: "cohort_still_aligned",
+	toxicity: "retreat_fraction",
 	training: "confidence",
 };
 
@@ -79,28 +82,63 @@ const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
 		"structural_alignment",
 		"structure_uncoupling",
+		"board_dispersion_squeeze",
+	],
+	cvd: [
+		"aggressor_backing",
+		"cvd_divergence",
+		"initiative_lock",
+		"flow_sign_flip",
 	],
 	depthflow: [
 		"bid_ladder_build",
 		"bid_ladder_release",
 		"ask_ladder_release",
+		"ask_absorption",
+		"touch_bid_decay",
+		"bid_touch_refresh",
+		"ask_ladder_build",
 		"board_bid_release",
+		"board_ask_release",
 	],
-	hawkes: ["supercritical_cascade", "board_cascade"],
+	hawkes: [
+		"supercritical_cascade",
+		"branching_asymmetry",
+		"board_cascade",
+		"board_branching_asymmetry",
+	],
+	leadlag: [
+		"led_peer_share",
+		"cohort_lift",
+		"anchor_breakdown",
+		"lag_dispersion",
+	],
 	liquidity: [
 		"spread_expansion",
 		"liquidation_impact",
+		"move_per_spread",
 		"market_friction",
-		"capacity_stress",
 		"friction_drag_ratio",
+		"touch_friction",
+		"capacity_stress",
+		"spread_tail_gap",
+	],
+	morphology: [
+		"book_shape_stable",
+		"ask_vacuum",
+		"bid_notional_lean",
 	],
 	pumpdump: [
 		"coiled_compression",
 		"rejection_tick",
 		"starved_tape",
 		"blowoff_dip",
+		"clock_acceleration",
 		"board_coiled",
+		"board_starved",
 	],
+	sentiment: ["cohort_still_aligned"],
+	toxicity: ["retreat_fraction", "board_withdrawal_rate"],
 	training: [
 		"steps",
 		"decisions",
@@ -216,6 +254,12 @@ const KERNEL_COPY: Record<
 		sub: "correlation · cross-section",
 		blurb: "Cross-symbol correlation pressure from backend measurements.",
 	},
+	cvd: {
+		name: "CVD flow",
+		sub: "cvd · aggressor backing",
+		blurb:
+			"Volume-clock signed flow and divergence: who is pressing, whether price agrees, and when flow locks before the move.",
+	},
 	pumpdump: {
 		name: "Pumpdump",
 		sub: "pumpdump · ignition",
@@ -232,6 +276,30 @@ const KERNEL_COPY: Record<
 		name: "Depthflow",
 		sub: "depthflow · ladder",
 		blurb: "Depth flow measurement from backend frames.",
+	},
+	leadlag: {
+		name: "Lead–lag",
+		sub: "leadlag · peer leadership",
+		blurb:
+			"Cross-symbol temporal lead scores, cohort direction lift, anchor stress, and dispersion of leadership.",
+	},
+	morphology: {
+		name: "Book morphology",
+		sub: "morphology · shape & lean",
+		blurb:
+			"Normalized depth-curve stability, offer vacuum, and bid/ask notional lean at the touch.",
+	},
+	sentiment: {
+		name: "Sentiment cohort",
+		sub: "sentiment · alignment",
+		blurb:
+			"How many peers still share the focal symbol’s recent direction; board median is the hold oracle.",
+	},
+	toxicity: {
+		name: "Toxicity",
+		sub: "toxicity · touch retreat",
+		blurb:
+			"Bid retreat when the touch steps down and board-wide touch withdrawal rate.",
 	},
 	training: {
 		name: "Cognitive Training",

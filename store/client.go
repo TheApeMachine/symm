@@ -166,7 +166,7 @@ func (client *Client) Run() {
 			continue
 		}
 
-		client.writeFromQueue(client.ctx, record.Key, record.Value)
+		client.upload(client.ctx, record.Key, record.Value)
 	}
 }
 
@@ -402,39 +402,8 @@ func (client *Client) Write(p []byte) (int, error) {
 }
 
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
-	if key == "" {
-		return client.writeFromQueue(client.ctx, "", value)
-	}
-
-	if client.closing.Load() {
-		ctx := client.ctx
-		if ctx == nil || ctx.Err() != nil {
-			ctx = context.Background()
-		}
-
-		return client.writeFromQueue(ctx, key, value)
-	}
-
-	if client.queue == nil {
-		return 0, errnie.Error(errnie.Err(
-			errnie.IO, "[store.client] upload queue is not ready", nil,
-		))
-	}
-
 	client.queue.Enqueue(Record{Key: key, Value: value})
 	return len(value), nil
-}
-
-/*
-WriteAtPrefix uploads p at prefix. An empty prefix is refused.
-*/
-func (client *Client) writeFromQueue(ctx context.Context, prefix string, p []byte) (int, error) {
-	if ctx != nil && ctx.Err() != nil {
-		client.queue.Enqueue(Record{Key: prefix, Value: p})
-		return len(p), nil
-	}
-
-	return client.upload(ctx, prefix, p)
 }
 
 func (client *Client) upload(ctx context.Context, prefix string, p []byte) (int, error) {

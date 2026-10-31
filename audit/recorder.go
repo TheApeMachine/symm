@@ -35,10 +35,6 @@ func NewRecorder(ctx context.Context, path string) *Recorder {
 	}
 }
 
-func (r *Recorder) Close() error {
-	return r.fh.Close()
-}
-
 func (r *Recorder) Write(obj any) (n int, err error) {
 	if r == nil || r.fh == nil {
 		return 0, nil

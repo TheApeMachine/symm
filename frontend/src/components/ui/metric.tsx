@@ -1,10 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo, useMemo, useRef } from "react";
+import { memo } from "react";
 import {
 	atoms,
-	kernelMeasurement,
-	kernelSymbolForAggregate,
-	signals,
+	ensureSignalStore,
+	symbolScopeAliases,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
@@ -20,68 +19,18 @@ import {
 import { cn } from "#/lib/utils";
 import type { Value } from "#/types/value";
 
-type StickyKernelCache = {
-	byKernel: Record<string, Value>;
-	bySymbol: Record<string, Record<string, Value>>;
-};
-
-const stickyKernelReading = (
-	cache: StickyKernelCache,
-	kernel: string,
-	symbol: string,
-	aggregate: Value | undefined,
-): Value | null => {
-	const next = kernelMeasurement(kernel, symbol, aggregate);
-	if (next) {
-		cache.byKernel[kernel] = next;
-		const bySymbol = cache.bySymbol[symbol] ?? {};
-		bySymbol[kernel] = next;
-		cache.bySymbol[symbol] = bySymbol;
-		return next;
-	}
-
-	return (
-		cache.byKernel[kernel] ??
-		cache.bySymbol[symbol]?.[kernel] ??
-		null
-	);
-};
-
-/** Latest folded kernel reading; holds the last sample when ticks omit this kernel. */
+/** Latest frame for this kernel at the dashboard focus symbol. */
 export const useKernelReading = (kernel: string): Value | null => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const aggregate = useSelector(
-		signals.workspace,
-		(state) => state.aggregate,
-	);
-	const stickyRef = useRef<StickyKernelCache>({
-		byKernel: {},
-		bySymbol: {},
+	const store = ensureSignalStore(kernel);
+
+	return useSelector(store, (state) => {
+		for (const alias of symbolScopeAliases(focusSymbol)) {
+			const hit = state[alias];
+			if (hit) return hit;
+		}
+		return null;
 	});
-
-	const querySymbol = useMemo(
-		() => kernelSymbolForAggregate(focusSymbol, aggregate),
-		[focusSymbol, aggregate],
-	);
-
-	return useMemo(
-		() =>
-			stickyKernelReading(stickyRef.current, kernel, querySymbol, aggregate),
-		[kernel, querySymbol, aggregate],
-	);
-};
-
-export const stickyKernelMeasurements = (
-	cache: StickyKernelCache,
-	kernels: readonly string[],
-	symbol: string,
-	aggregate: Value | undefined,
-): Record<string, Value | null> => {
-	const out: Record<string, Value | null> = {};
-	for (const kernel of kernels) {
-		out[kernel] = stickyKernelReading(cache, kernel, symbol, aggregate);
-	}
-	return out;
 };
 
 interface MetricProps {
@@ -92,89 +41,89 @@ interface MetricProps {
 
 export const MetricRow = memo(
 	({ name, measurement, compact = false }: MetricProps) => {
-	const headline = sourceHeadline(name) ?? name;
+		const headline = sourceHeadline(name) ?? name;
 
-	return (
-		<Component
-			value={measurement}
-			className="flex min-h-0 flex-1 flex-col overflow-hidden"
-		>
-			<Button
-				variant="bare"
-				shape="block"
-				className="min-h-0 justify-start border-(--line) border-b"
-				onClick={() => {
-					atoms.focusMetric.set(() => name);
-					terminalStore.actions.inspectSource(name);
-				}}
-				fullHeight
+		return (
+			<Component
+				value={measurement}
+				className="flex min-h-0 flex-1 flex-col overflow-hidden"
 			>
-				<Flex.Row
-					align="center"
-					justify="between"
-					gap={2}
-					padding={1}
-					fullWidth
-					className="shrink-0"
+				<Button
+					variant="bare"
+					shape="block"
+					className="min-h-0 justify-start border-(--line) border-b"
+					onClick={() => {
+						atoms.focusMetric.set(() => name);
+						terminalStore.actions.inspectSource(name);
+					}}
+					fullHeight
 				>
-					<Typography.Span
-						variant="f1"
-						semibold
-						truncate
-						className={cn(compact && "text-[10px]")}
+					<Flex.Row
+						align="center"
+						justify="between"
+						gap={2}
+						padding={1}
+						fullWidth
+						className="shrink-0"
 					>
-						{name.toUpperCase()}
-					</Typography.Span>
-					<Badge
-						data-k="badge"
-						data-metric-badge={headline}
-						label="Standby"
-						variant="disabled"
-						size="xxs"
+						<Typography.Span
+							variant="f1"
+							semibold
+							truncate
+							className={cn(compact && "text-[10px]")}
+						>
+							{name.toUpperCase()}
+						</Typography.Span>
+						<Badge
+							data-k="badge"
+							data-metric-badge={headline}
+							label="Standby"
+							variant="disabled"
+							size="xxs"
+						/>
+					</Flex.Row>
+					<Sparkline
+						data-k="sparkline"
+						data-series={headline}
+						title={`${name} sparkline`}
+						className="mt-0 min-h-0 flex-1"
 					/>
-				</Flex.Row>
-				<Sparkline
-					data-k="sparkline"
-					data-series={headline}
-					title={`${name} sparkline`}
-					className="mt-0 min-h-0 flex-1"
-				/>
-				<Flex.Row
-					align="center"
-					gap={2}
-					padding={1}
-					fullWidth
-					className="shrink-0"
-				>
-					<Meter
-						data-metric-meter={headline}
-						data-k="bar"
-						layout="bar"
-						size="xxs"
-						percent={0}
-						variant="warning"
-						className="flex-1"
-						title={`${name} headline: ${headline}`}
-					/>
-					<Typography.Mono
-						data-metric-raw={headline}
-						data-format="fixed:3"
-						data-k="value"
-						size="xxs"
-						tone="f2"
-						className="w-11 shrink-0 text-right font-mono"
+					<Flex.Row
+						align="center"
+						gap={2}
+						padding={1}
+						fullWidth
+						className="shrink-0"
 					>
-						--
-					</Typography.Mono>
-				</Flex.Row>
-			</Button>
-		</Component>
-	);
-});
+						<Meter
+							data-metric-meter={headline}
+							data-k="bar"
+							layout="bar"
+							size="xxs"
+							percent={0}
+							variant="warning"
+							className="flex-1"
+							title={`${name} headline: ${headline}`}
+						/>
+						<Typography.Mono
+							data-metric-raw={headline}
+							data-format="fixed:3"
+							data-k="value"
+							size="xxs"
+							tone="f2"
+							className="w-11 shrink-0 text-right font-mono"
+						>
+							--
+						</Typography.Mono>
+					</Flex.Row>
+				</Button>
+			</Component>
+		);
+	},
+);
 
 MetricRow.displayName = "MetricRow";
 
-/** Standalone metric with its own workspace subscription (tests, compact layouts). */
 export const Metric = ({
 	name,
 	compact = false,

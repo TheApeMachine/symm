@@ -118,3 +118,24 @@ func TestPlainDecimal(t *testing.T) {
 		})
 	})
 }
+
+func TestLevel3SubscriptionFrames(t *testing.T) {
+	Convey("Given level3 subscribe and unsubscribe builders", t, func() {
+		Convey("Subscribe asks for a snapshot so recovery rebuilds the book", func() {
+			raw, err := NewLevel3Subscription([]string{"BEAM/USD"}, "tok", 10).MarshalJSON()
+			So(err, ShouldBeNil)
+			So(string(raw), ShouldContainSubstring, `"method":"subscribe"`)
+			So(string(raw), ShouldContainSubstring, `"snapshot":true`)
+			So(string(raw), ShouldContainSubstring, `"BEAM/USD"`)
+		})
+
+		Convey("Unsubscribe drops the channel so a later subscribe can snapshot", func() {
+			raw, err := NewLevel3Unsubscription([]string{"BEAM/USD"}, "tok").MarshalJSON()
+			So(err, ShouldBeNil)
+			So(string(raw), ShouldContainSubstring, `"method":"unsubscribe"`)
+			So(string(raw), ShouldContainSubstring, `"BEAM/USD"`)
+			So(string(raw), ShouldNotContainSubstring, `"snapshot"`)
+			So(string(raw), ShouldNotContainSubstring, `"depth"`)
+		})
+	})
+}

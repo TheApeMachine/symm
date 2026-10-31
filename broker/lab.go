@@ -37,10 +37,8 @@ func (lab *Lab) Desk(price *Price, balance *Balance) *Desk {
 		virtuals:       NewCache(lab.ctx),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
-		exit:           NewExitPolicy(),
 	}
 	desk.System = runtime.NewSystem(lab.ctx, "desk", desk)
-	desk.exit.compose(desk)
 	desk.Transition(runtime.READY)
 	return desk
 }
@@ -62,10 +60,12 @@ func (lab *Lab) ReadyPrice(
 	price := &Price{
 		System:     runtime.NewSystem(lab.ctx, "price"),
 		Books:      books,
+		Tape:       NewTape(),
+		Mover:      NewMover(),
 		Instrument: instrument,
 		normalizer: normalizer,
 		balance:    balance,
-		fees: &sync.Map{},
+		fees:       &sync.Map{},
 	}
 	price.Transition(runtime.READY)
 	return price

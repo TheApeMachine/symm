@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/strategy/tokenizer"
+	"github.com/theapemachine/symm/system"
 )
 
 func MakeAction(action Action) *data.Value {
@@ -52,40 +53,47 @@ func WithTree(f func(*Tree)) func() {
 	}
 }
 
+func tokensAt(prefix string, brightness float64) tokenizer.Tokens {
+	tokens := tokenizer.NewTokens()
+
+	for segment := range strings.SplitSeq(prefix, "/") {
+		tokens = tokens.Append(tokenizer.NewToken([]string{segment}, brightness))
+	}
+
+	return tokens
+}
+
 func TestPredict(t *testing.T) {
 	Convey("Setup", t, WithTree(func(tree *Tree) {
-		Convey("When the prefix agrees on the action", func() {
-			for prefix, action := range map[string]Action{
-				"R06.R00":                 ActionEnter,
-				"R06.R00/R07.R01":         ActionEnter,
-				"R06.R00/R07.R01/R08.R02": ActionEnter,
-				"R07.R01":                 ActionHold,
-				"R07.R01/R08.R02":         ActionHold,
-				"R07.R01/R08.R02/R09.R03": ActionHold,
-				"R08.R01":                 ActionExit,
-				"R08.R01/R09.R02":         ActionExit,
-				"R08.R01/R09.R02/R10.R03": ActionExit,
-			} {
-				Convey(fmt.Sprintf("And the brightness for %s is enough", prefix), func() {
-					tokens := tokenizer.NewTokens()
-					for segment := range strings.SplitSeq(prefix, "/") {
-						tokens = tokens.Append(tokenizer.NewToken([]string{segment}, 1.0))
-					}
+		Convey("When the cut is shorter than min path length", func() {
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt("R06.R00", 1.0), FlatRegime(),
+			)
 
-					predicted, strength, disagreed := tree.Predict(tokens)
+			So(disagreed, ShouldBeFalse)
+			So(predicted, ShouldEqual, ActionNone)
+			So(strength, ShouldEqual, 0.0)
+		})
+
+		Convey("When the flat book asks for enter leaves", func() {
+			for _, prefix := range []string{
+				"R06.R00/R07.R01",
+				"R06.R00/R07.R01/R08.R02",
+			} {
+				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
+					predicted, strength, disagreed := tree.Predict(
+						tokensAt(prefix, 1.0), FlatRegime(),
+					)
 
 					So(disagreed, ShouldBeFalse)
-					So(predicted, ShouldEqual, action)
+					So(predicted, ShouldEqual, ActionEnter)
 					So(strength, ShouldBeGreaterThan, 0.0)
 				})
 
-				Convey(fmt.Sprintf("And the brightness for %s is not enough", prefix), func() {
-					tokens := tokenizer.NewTokens()
-					for segment := range strings.SplitSeq(prefix, "/") {
-						tokens = tokens.Append(tokenizer.NewToken([]string{segment}, 0.5))
-					}
-
-					predicted, strength, disagreed := tree.Predict(tokens)
+				Convey(fmt.Sprintf("And brightness for %s is not enough", prefix), func() {
+					predicted, strength, disagreed := tree.Predict(
+						tokensAt(prefix, 0.5), FlatRegime(),
+					)
 
 					So(disagreed, ShouldBeFalse)
 					So(predicted, ShouldEqual, ActionNone)
@@ -94,19 +102,48 @@ func TestPredict(t *testing.T) {
 			}
 		})
 
-		Convey("When the prefix disagrees on the action", func() {
+		Convey("When an open lot asks for hold leaves", func() {
+			for _, prefix := range []string{
+				"R07.R01/R08.R02",
+				"R07.R01/R08.R02/R09.R03",
+			} {
+				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
+					predicted, strength, disagreed := tree.Predict(
+						tokensAt(prefix, 1.0), OpenRegime(),
+					)
+
+					So(disagreed, ShouldBeFalse)
+					So(predicted, ShouldEqual, ActionHold)
+					So(strength, ShouldBeGreaterThan, 0.0)
+				})
+			}
+		})
+
+		Convey("When an open lot asks for exit leaves", func() {
+			for _, prefix := range []string{
+				"R08.R01/R09.R02",
+				"R08.R01/R09.R02/R10.R03",
+			} {
+				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
+					predicted, strength, disagreed := tree.Predict(
+						tokensAt(prefix, 1.0), OpenRegime(),
+					)
+
+					So(disagreed, ShouldBeFalse)
+					So(predicted, ShouldEqual, ActionExit)
+					So(strength, ShouldBeGreaterThan, 0.0)
+				})
+			}
+		})
+
+		Convey("When hold and exit share a prefix under an open lot", func() {
 			for prefix, action := range map[string]Action{
-				"R09.R01":                 ActionNone,
 				"R09.R01/R10.R02":         ActionNone,
 				"R09.R01/R10.R02/R11.R03": ActionExit,
 			} {
-				tokens := tokenizer.NewTokens()
-
-				for segment := range strings.SplitSeq(prefix, "/") {
-					tokens = tokens.Append(tokenizer.NewToken([]string{segment}, 1.0))
-				}
-
-				predicted, strength, disagreed := tree.Predict(tokens)
+				predicted, strength, disagreed := tree.Predict(
+					tokensAt(prefix, 1.0), OpenRegime(),
+				)
 
 				if action == ActionNone {
 					So(disagreed, ShouldBeTrue)
@@ -119,21 +156,64 @@ func TestPredict(t *testing.T) {
 				So(predicted, ShouldEqual, action)
 			}
 		})
+
+		Convey("When the same mixed prefix is asked while flat", func() {
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt("R09.R01/R10.R02", 1.0), FlatRegime(),
+			)
+
+			So(disagreed, ShouldBeFalse)
+			So(predicted, ShouldEqual, ActionNone)
+			So(strength, ShouldEqual, 0.0)
+		})
 	}))
+}
+
+func TestPredictRegime(t *testing.T) {
+	Convey("Regime ignores out-of-band leaves under the same cut", t, func() {
+		tree := &Tree{root: iradix.New[*data.Value]()}
+		path := "R12.R00/R13.R01"
+
+		tree.root, _, _ = tree.root.Insert([]byte(path), MakeAction(ActionEnter))
+		tree.root, _, _ = tree.root.Insert(
+			[]byte(path+"/R14.R02"), MakeAction(ActionExit),
+		)
+
+		Convey("Flat book keeps enter despite a descendant exit", func() {
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt(path, 1.0), FlatRegime(),
+			)
+
+			So(disagreed, ShouldBeFalse)
+			So(predicted, ShouldEqual, ActionEnter)
+			So(strength, ShouldBeGreaterThan, 0.0)
+		})
+
+		Convey("Open lot keeps exit despite an ancestor enter", func() {
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt(path, 1.0), OpenRegime(),
+			)
+
+			So(disagreed, ShouldBeFalse)
+			So(predicted, ShouldEqual, ActionExit)
+			So(strength, ShouldBeGreaterThan, 0.0)
+		})
+	})
 }
 
 func TestPredictPrune(t *testing.T) {
 	Convey("Predict prunes high-resistance paths", t, func() {
 		Convey("When no leaf counts toward the mean", func() {
 			tree := &Tree{root: iradix.New[*data.Value]()}
-			path := "R06.R00"
+			path := "R06.R00/R07.R01"
 
-			tree.root, _, _ = tree.root.Insert([]byte(path), MakeActionResistance(ActionEnter, 0.85))
+			tree.root, _, _ = tree.root.Insert(
+				[]byte(path), MakeActionResistance(ActionEnter, 0.85),
+			)
 
-			tokens := tokenizer.NewTokens()
-			tokens = tokens.Append(tokenizer.NewToken([]string{"R06.R00"}, 1.0))
-
-			predicted, strength, disagreed := tree.Predict(tokens)
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt(path, 1.0), FlatRegime(),
+			)
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionNone)
@@ -144,16 +224,17 @@ func TestPredictPrune(t *testing.T) {
 
 		Convey("When a sibling still counts toward the mean", func() {
 			tree := &Tree{root: iradix.New[*data.Value]()}
-			heavy := "R06.R00"
-			light := "R06.R00/R07.R01"
+			heavy := "R06.R00/R07.R01"
+			light := "R06.R00/R07.R01/R08.R02"
 
-			tree.root, _, _ = tree.root.Insert([]byte(heavy), MakeActionResistance(ActionEnter, 0.85))
+			tree.root, _, _ = tree.root.Insert(
+				[]byte(heavy), MakeActionResistance(ActionEnter, 0.85),
+			)
 			tree.root, _, _ = tree.root.Insert([]byte(light), MakeAction(ActionEnter))
 
-			tokens := tokenizer.NewTokens()
-			tokens = tokens.Append(tokenizer.NewToken([]string{"R06.R00"}, 1.0))
-
-			predicted, strength, disagreed := tree.Predict(tokens)
+			predicted, strength, disagreed := tree.Predict(
+				tokensAt(heavy, 1.0), FlatRegime(),
+			)
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionEnter)
@@ -163,5 +244,22 @@ func TestPredictPrune(t *testing.T) {
 			_, ok = tree.root.Get([]byte(light))
 			So(ok, ShouldBeTrue)
 		})
+	})
+}
+
+func TestInsertMinPathLength(t *testing.T) {
+	Convey("Insert rejects cuts shorter than min path length", t, func() {
+		tree := &Tree{root: iradix.New[*data.Value]()}
+		min := system.Cfg.Learning.MinPathLength
+
+		So(min, ShouldBeGreaterThan, 0)
+
+		tree.Insert("R06.R00", MakeAction(ActionEnter))
+		_, ok := tree.root.Get([]byte("R06.R00"))
+		So(ok, ShouldBeFalse)
+
+		tree.Insert("R06.R00/R07.R01", MakeAction(ActionEnter))
+		_, ok = tree.root.Get([]byte("R06.R00/R07.R01"))
+		So(ok, ShouldBeTrue)
 	})
 }

@@ -9,15 +9,14 @@ import {
 import { cn } from "#/lib/utils";
 
 /*
-StopProximityPanel renders the four stop-loss checks the desk refreshes on every
-mark — invalidation, liquidity evaporation, trailing, and move expiry — as
-meters plus one plain-language verdict. This is the "why is this lot still held,
-or about to exit, right now" readout: the operator sees each check's proximity
-to firing and the reason behind it, so a held lot is never a black box.
+StopProximityPanel renders the simplified stop-loss checks the desk refreshes
+on every mark — hard invalidation (2pp), ratcheted trailing take-profit, and
+damage — as meters plus one plain-language verdict. This is the "why is this
+lot still held, or about to exit, right now" readout.
 
-Data is read directly off the raw desk row (stop_state, peak_pnl_pct,
-max_lifetime_bars, bars_held). Everything is optional: a lot that has no stop
-telemetry yet renders in its waiting state rather than a fabricated zero.
+Data is read directly off the raw desk row (stop_state, peak_pnl_pct).
+Everything is optional: a lot that has no stop telemetry yet renders in its
+waiting state rather than a fabricated zero.
 */
 export type StopRow = Record<string, unknown>;
 
@@ -31,18 +30,51 @@ const readStop = (row: StopRow) => {
 			? (state as Record<string, unknown>)
 			: null;
 
-	const current = num(stop?.current_pct) ?? num(row.pnl_pct) ?? null;
-	const peak = num(stop?.peak_pct) ?? num(row.peak_pnl_pct) ?? null;
+	const current =
+		num(stop?.current_pct) ??
+		num(stop?.currentPct) ??
+		num(row.pnl_pct) ??
+		null;
+	const peak =
+		num(stop?.peak_pct) ?? num(stop?.peakPct) ?? num(row.peak_pnl_pct) ?? null;
+	const trailing = num(stop?.trailing);
+
+	const giveback =
+		num(stop?.giveback_pct) ??
+		num(stop?.givebackPct) ??
+		(current !== null && peak !== null ? Math.max(0, peak - current) : null);
+	let allowedGiveback =
+		num(stop?.allowed_giveback_pct) ?? num(stop?.allowedGivebackPct) ?? null;
+	let remainingGiveback =
+		num(stop?.remaining_giveback_pct) ??
+		num(stop?.remainingGivebackPct) ??
+		null;
+
+	if (
+		allowedGiveback === null &&
+		giveback !== null &&
+		trailing !== null &&
+		trailing > 0
+	) {
+		allowedGiveback = giveback / trailing;
+	}
+	if (
+		remainingGiveback === null &&
+		allowedGiveback !== null &&
+		giveback !== null
+	) {
+		remainingGiveback = Math.max(0, allowedGiveback - giveback);
+	}
 
 	return {
 		invalidation: num(stop?.invalidation) ?? undefined,
-		evaporation: num(stop?.evaporation) ?? undefined,
-		trailing: num(stop?.trailing) ?? undefined,
-		expiry: num(stop?.expiry) ?? undefined,
+		trailing: trailing ?? undefined,
+		damage: num(stop?.damage) ?? undefined,
 		current,
 		peak,
-		barsHeld: num(stop?.bars_held) ?? num(row.bars_held) ?? undefined,
-		maxBars: num(stop?.max_bars) ?? num(row.max_lifetime_bars) ?? undefined,
+		giveback: giveback ?? undefined,
+		allowedGiveback: allowedGiveback ?? undefined,
+		remainingGiveback: remainingGiveback ?? undefined,
 	};
 };
 
@@ -55,7 +87,16 @@ export const StopProximityPanel = ({
 }) => {
 	const stop = readStop(row);
 	const checks = buildStopChecks(stop);
-	const verdict = heldVerdict(stop);
+	const verdict = heldVerdict({
+		current: stop.current,
+		peak: stop.peak,
+		invalidation: stop.invalidation ?? null,
+		trailing: stop.trailing ?? null,
+		damage: stop.damage ?? null,
+		giveback: stop.giveback ?? null,
+		allowedGiveback: stop.allowedGiveback ?? null,
+		remainingGiveback: stop.remainingGiveback ?? null,
+	});
 	return (
 		<Flex.Column
 			gap={1}
@@ -98,7 +139,6 @@ export const StopProximityPanel = ({
 	);
 };
 
-/* The verdict tone is a stop-telemetry Tone; map it to a CSS custom property. */
 const verdictToneColor = (tone: Tone): string =>
 	tone === "good"
 		? "up"

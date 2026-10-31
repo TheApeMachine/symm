@@ -129,6 +129,10 @@ func (solver *Solver) Step(tick *data.Value) *data.Value {
 
 		if reading != nil {
 			attachReading(tick, symbol, reading)
+
+			if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
+				io.Copy(ui.UI, reading)
+			}
 		}
 	}); err != nil {
 		solver.Error(err)
@@ -193,13 +197,7 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 
 	solver.pending.Store(name, append([]float64(nil), input...))
 
-	reading := solver.publish(name, manifold, hadTarget)
-
-	if ui.UI != nil && ui.UI.Active() {
-		io.Copy(ui.UI, reading)
-	}
-
-	return reading
+	return solver.publish(name, manifold, hadTarget)
 }
 
 /*

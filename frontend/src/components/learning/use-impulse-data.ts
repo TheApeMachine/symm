@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-	kernelSymbolForAggregate,
-	signalFor,
+	DEFAULT_KERNELS,
+	ensureSignalStore,
+	latest,
 	signals,
-	symbolScopeAliases,
 	workspaceFrame,
 } from "#/collections/app";
 import type { Value } from "#/types/value";
@@ -33,6 +33,8 @@ export interface ImpulseDataState {
 	gridRegions: number;
 	/** Workspace aggregate tick index; advances even when held readings are unchanged. */
 	marketTick: number;
+	/** Symbol whose grid frame is currently painted on the map. */
+	litSymbols: string[];
 }
 
 const CANONICAL_PINS = getCanonicalPinDefs();
@@ -52,12 +54,12 @@ const snm = (raw: number): number => {
 
 const layerArray = (frame: Value, key: string): unknown[] | undefined => {
 	const direct = frame.reading(key);
-	if (Array.isArray(direct) && direct.length > 0) {
+	if (Array.isArray(direct)) {
 		return direct;
 	}
 
 	for (const { payload } of frame.layersUnder(key)) {
-		if (Array.isArray(payload) && payload.length > 0) {
+		if (Array.isArray(payload)) {
 			return payload;
 		}
 	}
@@ -65,100 +67,105 @@ const layerArray = (frame: Value, key: string): unknown[] | undefined => {
 	return undefined;
 };
 
-const applyLitRegions = (
-	targetSymbol: string,
-	regions: WireRegion[],
-	resetMissing: boolean,
-	heldBrightness: { current: number[] },
-	heldMembers: { current: number[] },
-): boolean => {
-	if (!regions.length) return false;
-
-	let changed = false;
-	if (resetMissing) {
-		for (let i = 0; i < 15; i++) {
-			if (heldBrightness.current[i] !== 0) {
-				heldBrightness.current[i] = 0;
-				changed = true;
-			}
-		}
+const regionBrightness = (region: WireRegion): number => {
+	if (typeof region.brightness === "number" && Number.isFinite(region.brightness)) {
+		return region.brightness;
 	}
 
-	for (const region of regions) {
-		if (region == null || typeof region.key !== "number") continue;
-		if (
-			targetSymbol &&
-			typeof region.symbol === "string" &&
-			region.symbol !== "" &&
-			region.symbol !== targetSymbol
-		) {
-			continue;
-		}
-
-		const key = region.key;
-		if (key < 0 || key > 14) continue;
-
-		const brightness =
-			typeof region.brightness === "number"
-				? region.brightness
-				: snm(Number(region.brightness));
-
-		if (heldBrightness.current[key] !== brightness) {
-			heldBrightness.current[key] = brightness;
-			changed = true;
-		}
-
-		if (typeof region.counts === "number") {
-			const members = Math.round(region.counts);
-			if (heldMembers.current[key] !== members) {
-				heldMembers.current[key] = members;
-				changed = true;
-			}
-		}
-	}
-
-	return changed;
+	return 0;
 };
 
-const pinPeakForRegion = (
-	regionKey: number,
-	heldPins: Record<string, { activation: number; snr: number }>,
-): number => {
-	let peak = 0;
-	for (const pin of CANONICAL_PINS) {
-		if (pin.cluster !== regionKey) continue;
-		peak = Math.max(peak, heldPins[pin.id]?.activation ?? 0);
-	}
-	return peak;
-};
+const frameRegions = (frame: Value | undefined): WireRegion[] => {
+	if (!frame) return [];
 
-const regionStrength = (
-	regionKey: number,
-	heldBrightness: number[],
-	heldPins: Record<string, { activation: number; snr: number }>,
-): number =>
-	Math.max(heldBrightness[regionKey] ?? 0, pinPeakForRegion(regionKey, heldPins));
+	const rows = layerArray(frame, "regions") as WireRegion[] | undefined;
+	if (!rows) return [];
+
+	return rows.map((row) =>
+		typeof row?.symbol === "string" && row.symbol !== ""
+			? row
+			: { ...row, symbol: frame.scope || row?.symbol },
+	);
+};
 
 /*
-useImpulseData tracks the live SOM grid cells and confluence regions from the
-workspace aggregate tick (and training step frames when present) for the symbol.
+symbolGridFrames returns every symbol's latest grid/train regions frame.
+Each entry is that symbol alone — never merged across the board.
 */
+const symbolGridFrames = (): Array<{ symbol: string; rows: WireRegion[] }> => {
+	const out: Array<{ symbol: string; rows: WireRegion[] }> = [];
+	const seen = new Set<string>();
+
+	const ingest = (origin: "grid" | "train") => {
+		const state = signals[origin]?.state;
+		if (!state) return;
+
+		for (const [scope, frame] of Object.entries(state)) {
+			if (!frame || scope === "" || seen.has(scope)) continue;
+			seen.add(scope);
+			out.push({ symbol: scope, rows: frameRegions(frame) });
+		}
+	};
+
+	ingest("grid");
+	ingest("train");
+	out.sort((a, b) => a.symbol.localeCompare(b.symbol));
+	return out;
+};
+
+const paintRegions = (
+	rows: WireRegion[],
+	heldBrightness: { current: number[] },
+	heldMembers: { current: number[] },
+) => {
+	for (let i = 0; i < 15; i++) {
+		heldBrightness.current[i] = 0;
+	}
+
+	for (const region of rows) {
+		if (region == null || typeof region.key !== "number") continue;
+		if (region.key < 0 || region.key > 14) continue;
+
+		heldBrightness.current[region.key] = regionBrightness(region);
+
+		if (typeof region.counts === "number") {
+			heldMembers.current[region.key] = Math.round(region.counts);
+		}
+	}
+};
+
+const pinMetric = (
+	pin: (typeof CANONICAL_PINS)[number],
+	symbol: string,
+): number | undefined => {
+	if (pin.scope === "aggregate") {
+		const raw = latest(pin.source, "aggregate")?.metrics()[pin.metric];
+		return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+	}
+
+	if (symbol === "") return undefined;
+
+	const raw = latest(pin.source, symbol)?.metrics()[pin.metric];
+	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+};
+
 export type UseImpulseDataOptions = {
 	/** When true, held readings and the map freeze until resumed. */
 	paused?: boolean;
 };
 
+/*
+useImpulseData paints each symbol's grid regions onto the map in turn.
+No cross-symbol merge — the map shows what one symbol's grid published,
+then the next, in quick succession.
+*/
 export const useImpulseData = (
-	symbol: string,
+	_symbol = "",
 	options: UseImpulseDataOptions = {},
 ): ImpulseDataState => {
 	const paused = options.paused ?? false;
 	const initialNodes = useMemo(() => createCanonicalGridNodes(), []);
 
-	/*
-	A tick carries whichever kernels and regions fired. The rest are absent,
-	not dark. Held readings stay until a later tick names that pin or region.
-	*/
 	const heldPins = useRef<Record<string, { activation: number; snr: number }>>(
 		{},
 	);
@@ -166,6 +173,8 @@ export const useImpulseData = (
 	const heldMembers = useRef<number[]>(
 		REGION_KEYS.map((_key, idx) => Math.round(CANONICAL_COUNTS[idx] ?? 0)),
 	);
+	const heldLitSymbols = useRef<string[]>([]);
+	const paintToken = useRef(0);
 
 	const [state, setState] = useState<ImpulseDataState>(() => {
 		const initialRegions = REGION_KEYS.map((_key, idx) => ({
@@ -182,29 +191,26 @@ export const useImpulseData = (
 			gridCells: initialNodes.length,
 			gridRegions: 15,
 			marketTick: 0,
+			litSymbols: [],
 		};
 	});
 
 	const lastPublishedTick = useRef(0);
 
 	useEffect(() => {
-		if (!symbol) return;
-
 		heldPins.current = {};
 		heldBrightness.current = new Array(15).fill(0);
 		heldMembers.current = REGION_KEYS.map((_key, idx) =>
 			Math.round(CANONICAL_COUNTS[idx] ?? 0),
 		);
+		heldLitSymbols.current = [];
+		paintToken.current += 1;
 
 		const publish = (marketTick: number) => {
 			const updatedNodes: ImpulseNode[] = CANONICAL_PINS.map((pin) => {
 				const reading = heldPins.current[pin.id];
-				const regionLit = regionStrength(
-					pin.cluster,
-					heldBrightness.current,
-					heldPins.current,
-				);
 				const metricAct = reading?.activation ?? 0;
+				const regionLit = heldBrightness.current[pin.cluster] ?? 0;
 				const activation = Math.max(metricAct, regionLit);
 
 				return {
@@ -217,11 +223,7 @@ export const useImpulseData = (
 			});
 
 			const regionsList = REGION_KEYS.map((_key, idx) => {
-				const strength = regionStrength(
-					idx,
-					heldBrightness.current,
-					heldPins.current,
-				);
+				const strength = heldBrightness.current[idx] ?? 0;
 
 				return {
 					id: idx,
@@ -233,11 +235,7 @@ export const useImpulseData = (
 
 			const activeEventsList = REGION_KEYS.map((regionKey, idx) => {
 				const meta = REGIONS[regionKey];
-				const strength = regionStrength(
-					idx,
-					heldBrightness.current,
-					heldPins.current,
-				);
+				const strength = heldBrightness.current[idx] ?? 0;
 
 				return {
 					id: idx,
@@ -256,7 +254,33 @@ export const useImpulseData = (
 				gridCells: updatedNodes.length,
 				gridRegions: 15,
 				marketTick,
+				litSymbols: heldLitSymbols.current,
 			});
+		};
+
+		const paintSymbol = (
+			symbol: string,
+			rows: WireRegion[],
+			marketTick: number,
+		) => {
+			paintRegions(rows, heldBrightness, heldMembers);
+			heldLitSymbols.current = [symbol];
+
+			for (const pin of CANONICAL_PINS) {
+				const raw = pinMetric(pin, symbol);
+				if (raw === undefined) {
+					heldPins.current[pin.id] = { activation: 0, snr: 1 };
+					continue;
+				}
+
+				const act = snm(raw);
+				heldPins.current[pin.id] = {
+					activation: act,
+					snr: act >= 0.5 ? 2.5 : 1.0,
+				};
+			}
+
+			publish(marketTick);
 		};
 
 		const updateFromTelemetry = () => {
@@ -269,259 +293,71 @@ export const useImpulseData = (
 				aggregate && aggregate.tick !== undefined
 					? Number(aggregate.tick)
 					: lastPublishedTick.current;
-			const querySymbol = kernelSymbolForAggregate(symbol, aggregate);
-			const trainingState = signals.training?.state;
+			const tick = Number.isFinite(marketTick)
+				? marketTick
+				: lastPublishedTick.current;
 
-			// Look for the training frame for the symbol, or any scope.
-			let latest: Value | null = null;
-			if (trainingState) {
-				const scopes = [
-					...symbolScopeAliases(symbol),
-					...symbolScopeAliases(querySymbol),
-				];
-				for (const scope of scopes) {
-					if (trainingState[scope]) {
-						latest = trainingState[scope];
-						break;
-					}
-				}
-				if (!latest && trainingState.learner) {
-					latest = trainingState.learner;
-				}
+			const frames = symbolGridFrames();
+			if (frames.length === 0) {
+				paintRegions([], heldBrightness, heldMembers);
+				heldLitSymbols.current = [];
+				publish(tick);
+				return;
 			}
 
-			// Build fast lookup for training metrics from the layer payloads
-			const trainingMetrics: Record<string, number> = {};
-			/*
-			The grid's own frame: grid/regions/<symbol> carries the regions
-			the grid accepted this tick — key, deformation, member counts,
-			and the brightness after its midpoint cut. The map renders
-			these directly.
-			*/
-			const gridRegions: Array<{
-				key: number;
-				deformation: number;
-				brightness: number;
-				counts: number;
-				symbol?: string;
-			}> = [];
-			let sawRegionLayerForSymbol = false;
-			/*
-			Training.Step appends the lit regions onto the workspace tick
-			as train/regions. A training-origin frame may also carry
-			grid/regions. Either shape is the region list the map draws.
-			*/
-			const regionFrames = [workspaceFrame(), latest];
-			for (const frame of regionFrames) {
-				if (!frame) continue;
-				for (const key of ["train/regions", "grid/regions"]) {
-					for (const { payload } of frame.layersUnder(key)) {
-						if (!Array.isArray(payload)) continue;
-						for (const region of payload) {
-							if (!region || typeof region.key !== "number") continue;
-							if (
-								typeof region.symbol === "string" &&
-								region.symbol !== "" &&
-								region.symbol !== symbol &&
-								region.symbol !== querySymbol
-							) {
-								continue;
-							}
-							gridRegions.push(region);
-							sawRegionLayerForSymbol = true;
-						}
-					}
+			const token = ++paintToken.current;
+			let index = 0;
+
+			const step = () => {
+				if (token !== paintToken.current) return;
+				if (index >= frames.length) return;
+
+				const frame = frames[index];
+				index += 1;
+				paintSymbol(frame.symbol, frame.rows, tick);
+
+				if (index < frames.length) {
+					requestAnimationFrame(step);
 				}
-				if (querySymbol) {
-					for (const { payload } of frame.layersUnder(
-						`stage/${querySymbol}/regions`,
-					)) {
-						if (!Array.isArray(payload)) continue;
-						for (const region of payload) {
-							if (!region || typeof region.key !== "number") continue;
-							gridRegions.push(region);
-							sawRegionLayerForSymbol = true;
-						}
-					}
-				}
-			}
+			};
 
-			if (latest) {
-				for (const { suffix, payload } of latest.layersUnder("train/regions")) {
-					const first = Array.isArray(payload) ? payload[0] : payload;
-					if (typeof first !== "number") {
-						continue;
-					}
-
-					/*
-					train/regions/<symbol>/<R##> carries brightness per
-					accepted region; train/regions/<symbol>/<token path>
-					carries the whole sentence. The region is the R##
-					segment wherever it appears in the suffix.
-					*/
-					const region = suffix.match(/R\d{2}/)?.[0];
-
-					if (region) {
-						trainingMetrics[`region_brightness:${region}`] = first;
-					}
-				}
-			}
-
-			let changed = false;
-
-			if (latest) {
-				const wanted = new Set([
-					...symbolScopeAliases(symbol),
-					...symbolScopeAliases(querySymbol),
-				]);
-				if (wanted.has(latest.scope)) {
-					const activeRows = layerArray(latest, "active") as
-						| Array<{ key?: number; brightness?: number }>
-						| undefined;
-					const litRows = layerArray(latest, "lit") as
-						| WireRegion[]
-						| undefined;
-					const rows =
-						activeRows && activeRows.length > 0
-							? activeRows.map((row) => ({
-									key: row.key,
-									brightness: row.brightness,
-								}))
-							: litRows;
-
-					if (rows && rows.length > 0) {
-						if (
-							applyLitRegions(
-								querySymbol,
-								rows,
-								true,
-								heldBrightness,
-								heldMembers,
-							)
-						) {
-							sawRegionLayerForSymbol = true;
-							changed = true;
-						}
-					}
-				}
-			}
-
-			/*
-			A kernel layer names its metrics. Pins whose metric is on this
-			tick take that reading, including zero. Pins the tick does not
-			name keep the reading they already hold.
-			*/
-			for (const pin of CANONICAL_PINS) {
-				const pinScope =
-					pin.scope === "aggregate" ? "aggregate" : querySymbol;
-				const payloads = signalFor(pin.source, pinScope, aggregate);
-				const payload = payloads[pin.metric];
-				if (!Array.isArray(payload) || payload.length === 0) continue;
-
-				const raw = Number(payload[0]);
-				if (!Number.isFinite(raw)) continue;
-
-				const act = snm(raw);
-				const snr = act >= 0.5 ? 2.5 : 1.0;
-				const prev = heldPins.current[pin.id];
-				if (prev && prev.activation === act && prev.snr === snr) {
-					continue;
-				}
-
-				heldPins.current[pin.id] = { activation: act, snr };
-				changed = true;
-			}
-
-			/*
-			Each tick's train/regions row is the grid's lit set for this
-			symbol (post midpoint cut). Regions absent from that row read
-			as zero so consistently dead slots stay visible in the panel.
-			*/
-			if (sawRegionLayerForSymbol && gridRegions.length > 0) {
-				if (
-					applyLitRegions(
-						querySymbol,
-						gridRegions,
-						true,
-						heldBrightness,
-						heldMembers,
-					)
-				) {
-					changed = true;
-				}
-			} else if (sawRegionLayerForSymbol) {
-				for (let i = 0; i < 15; i++) {
-					const regionKey = `R${String(i).padStart(2, "0")}`;
-					const explicitBrightness =
-						trainingMetrics[`region_brightness:${regionKey}`];
-					const explicitMembers =
-						trainingMetrics[`region_members:${regionKey}`];
-					const gridRegion = gridRegions.find((region) => region.key === i);
-
-					let brightness = 0;
-					let members: number | undefined;
-
-					if (gridRegion && typeof gridRegion.brightness === "number") {
-						brightness = gridRegion.brightness;
-						if (typeof gridRegion.counts === "number") {
-							members = gridRegion.counts;
-						}
-					} else if (explicitBrightness !== undefined) {
-						brightness = explicitBrightness;
-						if (explicitMembers !== undefined) {
-							members = Math.round(explicitMembers);
-						}
-					}
-
-					if (heldBrightness.current[i] !== brightness) {
-						heldBrightness.current[i] = brightness;
-						changed = true;
-					}
-
-					if (members !== undefined && heldMembers.current[i] !== members) {
-						heldMembers.current[i] = members;
-						changed = true;
-					}
-				}
-			}
-
-			const tickMoved =
-				Number.isFinite(marketTick) &&
-				marketTick > 0 &&
-				marketTick !== lastPublishedTick.current;
-
-			if (changed || tickMoved) {
-				publish(Number.isFinite(marketTick) ? marketTick : lastPublishedTick.current);
-			}
+			step();
 		};
 
-		// A symbol change drops the previous symbol's readings first.
 		publish(lastPublishedTick.current);
 		updateFromTelemetry();
 
 		const unsubs: Array<(() => void) | undefined> = [];
 
-		// Training frames are not on the workspace tick.
-		const trainingSub = signals.training?.subscribe(() => {
+		const trainSub = ensureSignalStore("train").subscribe(() => {
 			updateFromTelemetry();
 		});
-		unsubs.push(() => trainingSub?.unsubscribe?.());
+		unsubs.push(() => trainSub.unsubscribe());
 
-		/*
-		The aggregate tick carries every kernel's layers, and the market
-		clock advances with that same frame, so one subscription covers both.
-		*/
 		const workspaceSub = signals.workspace.subscribe(() => {
 			updateFromTelemetry();
 		});
 		unsubs.push(() => workspaceSub.unsubscribe());
 
+		const gridSub = ensureSignalStore("grid").subscribe(() => {
+			updateFromTelemetry();
+		});
+		unsubs.push(() => gridSub.unsubscribe());
+
+		for (const kernel of DEFAULT_KERNELS) {
+			const sub = ensureSignalStore(kernel).subscribe(() => {
+				updateFromTelemetry();
+			});
+			unsubs.push(() => sub.unsubscribe());
+		}
+
 		return () => {
+			paintToken.current += 1;
 			for (const u of unsubs) {
 				u?.();
 			}
 		};
-	}, [symbol, paused]);
+	}, [paused]);
 
 	return state;
 };

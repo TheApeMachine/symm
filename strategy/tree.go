@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -35,6 +36,27 @@ func NewAction(action string) Action {
 
 func (action Action) String() string {
 	return string(action)
+}
+
+/*
+Regime scopes which action leaves may vote under a cut. Flat books only see
+enter; open lots only see hold/exit — so exploration holds cannot disagree
+with entry leaves, and old exits cannot silence a flat-book enter.
+*/
+type Regime struct {
+	open bool
+}
+
+func FlatRegime() Regime { return Regime{} }
+
+func OpenRegime() Regime { return Regime{open: true} }
+
+func (regime Regime) Allows(action Action) bool {
+	if regime.open {
+		return action == ActionHold || action == ActionExit
+	}
+
+	return action == ActionEnter
 }
 
 type Tree struct {
@@ -75,18 +97,24 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 }
 
 /*
-Predict the action to take, based on the current prefix.
-The prediction is based on all the paths in the tree that share the
-current prefix, and whether or not the values that those paths point
-at are all agreeing on the same action.
+Predict the action under the current cut, only among leaves allowed by
+regime. Same-regime leaves must agree; out-of-regime leaves are ignored.
 */
-func (tree *Tree) Predict(tokens tokenizer.Tokens) (Action, float64, bool) {
+func (tree *Tree) Predict(
+	tokens tokenizer.Tokens, regime Regime,
+) (Action, float64, bool) {
+	min := system.Cfg.Learning.MinPathLength
+
+	if min > 0 && tokens.Len() < min {
+		return ActionNone, 0.0, false
+	}
+
 	var (
-		current             = ActionNone
-		disagreed  bool     = false
-		resistance          = 0.0
-		count               = 0
-		prunes     []string = make([]string, 0)
+		current    = ActionNone
+		disagreed  bool
+		resistance = 0.0
+		count      = 0
+		prunes     []string
 	)
 
 	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, value *data.Value) bool {
@@ -94,12 +122,22 @@ func (tree *Tree) Predict(tokens tokenizer.Tokens) (Action, float64, bool) {
 			return false
 		}
 
-		if current != ActionNone && current.String() != value.Scope {
+		if min > 0 && strings.Count(string(key), "/")+1 < min {
+			return false
+		}
+
+		action := NewAction(value.Scope)
+
+		if !regime.Allows(action) {
+			return false
+		}
+
+		if current != ActionNone && current != action {
 			disagreed = true
 			return false
 		}
 
-		current = NewAction(value.Scope)
+		current = action
 		add := value.GetTotal("resistance")
 
 		if add > 0.8 {
@@ -114,6 +152,7 @@ func (tree *Tree) Predict(tokens tokenizer.Tokens) (Action, float64, bool) {
 
 	for _, prune := range prunes {
 		tree.root, _, _ = tree.root.Delete([]byte(prune))
+
 		if tree.store != nil {
 			tree.store.DeletePrefix("model/paths/" + prune)
 		}
@@ -140,6 +179,14 @@ func (tree *Tree) Predict(tokens tokenizer.Tokens) (Action, float64, bool) {
 Update existing paths with the new resistance.
 */
 func (tree *Tree) Update(path string, resistance float64) {
+	if path == "" {
+		return
+	}
+
+	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+		return
+	}
+
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
@@ -149,6 +196,14 @@ func (tree *Tree) Update(path string, resistance float64) {
 		}
 
 		value.Append(resistance, "resistance")
+
+		if tree.store != nil {
+			tree.store.WriteAtPrefix(
+				"model/paths/"+path+"/"+value.Scope+".bin",
+				value.Bytes(),
+			)
+		}
+
 		return false
 	})
 }
@@ -157,11 +212,22 @@ func (tree *Tree) Update(path string, resistance float64) {
 Insert writes a path to the tree and S3.
 */
 func (tree *Tree) Insert(path string, value *data.Value) {
+	if path == "" || value == nil {
+		return
+	}
+
+	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+		return
+	}
+
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
 	tree.root, _, _ = tree.root.Insert([]byte(path), value)
-	tree.store.WriteAtPrefix("model/paths/"+path+"/"+value.Scope+".bin", value.Bytes())
+
+	if tree.store != nil {
+		tree.store.WriteAtPrefix("model/paths/"+path+"/"+value.Scope+".bin", value.Bytes())
+	}
 }
 
 /*
