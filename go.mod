@@ -17,10 +17,10 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/grafana/pyroscope-go v1.4.2
 	github.com/krakenfx/api-go/v2 v2.0.0
+	github.com/panjf2000/ants/v2 v2.12.1
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	github.com/theapemachine/nomagique v0.0.10
-	golang.org/x/sync v0.24.0
 	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.51.0
 )
@@ -90,6 +90,7 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
@@ -101,6 +102,7 @@ require (
 	github.com/gofiber/fiber/v3 v3.6.1
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/shopspring/decimal v1.6.0
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
 	github.com/theapemachine/datura v1.2.11

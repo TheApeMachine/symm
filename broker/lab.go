@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/kraken"

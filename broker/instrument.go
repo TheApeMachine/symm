@@ -12,11 +12,11 @@ import (
 	"github.com/theapemachine/nomagique/data"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
@@ -212,7 +212,7 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 			PairDecimals:  pair.PricePrecision,
 			LotDecimals:   pair.QtyPrecision,
 			LotMultiplier: 1,
-			TickSize:      pair.TickSize,
+			TickSize:      mustToSDK(pair.TickSize),
 		}
 	}
 

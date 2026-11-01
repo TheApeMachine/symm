@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/decimal"
 )
 
 type Level3 struct {
@@ -39,6 +39,9 @@ type Level3Order struct {
 	LimitPrice *decimal.Decimal `json:"limit_price"`
 	OrderQty   *decimal.Decimal `json:"order_qty"`
 	Timestamp  time.Time        `json:"timestamp"`
+	// Wire text for checksum hashing; shopspring String strips trailing zeros.
+	priceText string
+	qtyText   string
 }
 
 /*
@@ -61,13 +64,13 @@ func (order *Level3Order) UnmarshalJSON(buf []byte) error {
 		return err
 	}
 
-	price, err := exactDecimal(wire.LimitPrice)
+	price, priceText, err := exactDecimal(wire.LimitPrice)
 
 	if err != nil {
 		return fmt.Errorf("level3 order %s limit_price: %w", wire.OrderID, err)
 	}
 
-	quantity, err := exactDecimal(wire.OrderQty)
+	quantity, qtyText, err := exactDecimal(wire.OrderQty)
 
 	if err != nil {
 		return fmt.Errorf("level3 order %s order_qty: %w", wire.OrderID, err)
@@ -79,6 +82,8 @@ func (order *Level3Order) UnmarshalJSON(buf []byte) error {
 		LimitPrice: price,
 		OrderQty:   quantity,
 		Timestamp:  wire.Timestamp,
+		priceText:  priceText,
+		qtyText:    qtyText,
 	}
 
 	return nil
@@ -88,20 +93,25 @@ func (order *Level3Order) UnmarshalJSON(buf []byte) error {
 exactDecimal parses one JSON number (or numeric string) without losing a
 digit. An absent or null field is nil: a delete may omit its price.
 */
-func exactDecimal(raw json.RawMessage) (*decimal.Decimal, error) {
+func exactDecimal(raw json.RawMessage) (*decimal.Decimal, string, error) {
 	text := strings.Trim(strings.TrimSpace(string(raw)), `"`)
 
 	if text == "" || text == "null" {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	plain, err := plainDecimal(text)
 
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	return decimal.NewFromString(plain)
+	parsed, err := decimal.NewFromString(plain)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return parsed, plain, nil
 }
 
 /*
@@ -172,20 +182,14 @@ func (order Level3Order) Resting() bool {
 ChecksumLimitPrice returns the fixed-point limit_price received from Kraken.
 */
 func (order Level3Order) ChecksumLimitPrice() string {
-	if order.LimitPrice == nil {
-		return ""
-	}
-	return order.LimitPrice.String()
+	return order.priceText
 }
 
 /*
 ChecksumOrderQty returns the fixed-point order_qty received from Kraken.
 */
 func (order Level3Order) ChecksumOrderQty() string {
-	if order.OrderQty == nil {
-		return ""
-	}
-	return order.OrderQty.String()
+	return order.qtyText
 }
 
 /*

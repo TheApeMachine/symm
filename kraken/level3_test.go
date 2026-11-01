@@ -3,7 +3,6 @@ package kraken
 import (
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -19,8 +18,8 @@ func TestNewLevel3(t *testing.T) {
 			So(level3.Data[0].Asks, ShouldHaveLength, 2)
 			So(level3.Data[0].Asks[0].ChecksumLimitPrice(), ShouldEqual, "0.5640")
 			So(level3.Data[0].Asks[0].ChecksumOrderQty(), ShouldEqual, "3500.7766862600")
-			So(level3.Data[0].Asks[0].LimitPrice.String(), ShouldEqual, "0.5640")
-			So(level3.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "3500.7766862600")
+			So(level3.Data[0].Asks[0].LimitPrice.MustFloat64(), ShouldEqual, 0.5640)
+			So(level3.Data[0].Asks[0].OrderQty.MustFloat64(), ShouldEqual, 3500.7766862600)
 		})
 	})
 
@@ -58,8 +57,8 @@ can also manufacture a crossed book out of a healthy one.
 */
 func TestLevel3OrderResting(t *testing.T) {
 	Convey("Given Level-3 orders", t, func() {
-		price := decimal.NewFromFloat64(100)
-		quantity := decimal.NewFromFloat64(5)
+		price := dFloat(100)
+		quantity := dFloat(5)
 
 		Convey("An add is resting liquidity", func() {
 			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: quantity}.Resting(), ShouldBeTrue)
@@ -83,8 +82,8 @@ func TestLevel3OrderResting(t *testing.T) {
 		})
 
 		Convey("An order with zero or negative price or quantity is not resting", func() {
-			zero := decimal.NewFromFloat64(0)
-			negative := decimal.NewFromFloat64(-1)
+			zero := dFloat(0)
+			negative := dFloat(-1)
 			So(Level3Order{Event: "add", LimitPrice: zero, OrderQty: quantity}.Resting(), ShouldBeFalse)
 			So(Level3Order{Event: "add", LimitPrice: negative, OrderQty: quantity}.Resting(), ShouldBeFalse)
 			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: zero}.Resting(), ShouldBeFalse)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/runtime"

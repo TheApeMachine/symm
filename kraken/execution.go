@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
@@ -196,14 +196,14 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 			ExecType:      execType,
 			Symbol:        pair,
 			Side:          strings.ToLower(side),
-			LastQty:       decimal.NewFromFloat64(volume),
-			LastPrice:     decimal.NewFromFloat64(price),
-			Cost:          decimal.NewFromFloat64(cost),
+			LastQty:       dFloat(volume),
+			LastPrice:     dFloat(price),
+			Cost:          dFloat(cost),
 			OrderStatus:   orderStatus,
-			CumQty:        decimal.NewFromFloat64(volume),
-			CumCost:       decimal.NewFromFloat64(cost),
-			AvgPrice:      decimal.NewFromFloat64(price),
-			FeeUsdEquiv:   decimal.NewFromFloat64(fee),
+			CumQty:        dFloat(volume),
+			CumCost:       dFloat(cost),
+			AvgPrice:      dFloat(price),
+			FeeUsdEquiv:   dFloat(fee),
 			Timestamp:     timestamp,
 		}},
 	}

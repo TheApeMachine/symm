@@ -1,37 +1,31 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { ensureSignalStore, focusAtom, signals } from "#/collections/app";
+import { focusAtom } from "#/collections/app";
+import { ingestEnvelope, stores } from "#/collections/envelope";
 import { KernelMetricStrip } from "#/components/ui/metric-strip";
-import { Value } from "#/types/value";
 
-const publishCvd = (aggressor: number, tick = 1n) => {
-	const prefix = "cvd/metric/BTC/USD";
-	const frame = new Value({
-		origin: "cvd",
-		role: "metric",
-		scope: "BTC/USD",
-		prefix,
-		tick,
-		index: [`${prefix}/aggressor_backing`],
-		layers: [new TextEncoder().encode(JSON.stringify([aggressor]))],
-	});
+const publishCvd = (aggressor: number | null) => {
 	act(() => {
-		ensureSignalStore("cvd").setState((prev) => ({
-			...prev,
-			"BTC/USD": frame,
-		}));
+		ingestEnvelope({
+			cvd: {
+				"BTC/USD":
+					aggressor === null
+						? {}
+						: { aggressor_backing: aggressor },
+			},
+		});
 	});
 };
 
 afterEach(() => {
 	cleanup();
 	focusAtom.set("BTC/USD");
-	signals.cvd?.setState(() => ({}));
+	stores.cvd?.setState(() => ({}));
 });
 
 describe("KernelMetricStrip", () => {
-	it("binds kernel metrics from the cvd origin store", async () => {
+	it("binds kernel metrics from the cvd envelope store", async () => {
 		const view = render(<KernelMetricStrip />);
 
 		expect(
@@ -54,7 +48,7 @@ describe("KernelMetricStrip", () => {
 		});
 	});
 
-	it("keeps the last kernel sample when a later frame omits the headline", async () => {
+	it("clears the live meter when the headline leaves the facet", async () => {
 		const view = render(<KernelMetricStrip />);
 		publishCvd(0.42);
 
@@ -66,26 +60,14 @@ describe("KernelMetricStrip", () => {
 			).toBe("42");
 		});
 
-		publishCvd(0.42, 2n);
-		act(() => {
-			ensureSignalStore("cvd").setState((prev) => ({
-				...prev,
-				"BTC/USD": new Value({
-					origin: "cvd",
-					role: "metric",
-					scope: "BTC/USD",
-					prefix: "cvd/metric/BTC/USD",
-					tick: 3n,
-					index: [],
-					layers: [],
-				}),
-			}));
-		});
+		publishCvd(null);
 
-		// Empty frame clears live metrics; Component sticky history may still
-		// show the prior sample on the sparkline path — meter goes standby.
-		expect(
-			view.container.querySelector('[data-metric-badge="aggressor_backing"]'),
-		).toBeTruthy();
+		await waitFor(() => {
+			expect(
+				view.container.querySelector(
+					'[data-metric-badge="aggressor_backing"]',
+				)?.textContent,
+			).toMatch(/Standby/i);
+		});
 	});
 });

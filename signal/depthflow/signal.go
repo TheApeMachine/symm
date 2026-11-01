@@ -2,379 +2,168 @@ package depthflow
 
 import (
 	"context"
-	"math"
-	"sort"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
-	parent "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
-type symbolState struct {
-	prevBids        map[float64]float64
-	prevAsks        map[float64]float64
-	prevFullBid     bool
-	prevFullAsk     bool
-	prevBidWorst    float64
-	prevAskWorst    float64
-	hasPrev         bool
-	lastBidRelease      float64
-	lastAskBuild        float64
-	lastTouchBidDecay   float64
-	lastBidTouchRefresh float64
-	hasPrevAsk          bool
-	prevBestAsk         float64
-	prevBestAskQty      float64
-	hasPrevBestBid      bool
-	prevBestBid         float64
-	prevBestBidQty      float64
-	buyVolAtAsk         float64
-	lastAbsorption      float64
-}
+const bookflowHistory = 128
 
 type Signal struct {
 	*runtime.System
-	books  *broker.Book
-	states *sync.Map
-	keys   []string
-	emit   *parent.Emit
+	books      *broker.Book
+	instrument *broker.Instrument
+	sample     *flow.Sample
+	process    *equation.Bookflow
 }
 
-func NewSignal(ctx context.Context, books *broker.Book) *Signal {
+func NewSignal(
+	ctx context.Context,
+	books *broker.Book,
+	instrument *broker.Instrument,
+) *Signal {
+	sample, err := flow.NewSample(bookflowHistory)
+
+	errnie.Error(errnie.Err(
+		errnie.Validation,
+		"depthflow: new sample",
+		err,
+	))
+
 	signal := &Signal{
-		books:  books,
-		states: &sync.Map{},
-		emit:   parent.NewEmit(),
-		keys: []string{
-			"bid_ladder_build",
-			"bid_ladder_release",
-			"ask_ladder_release",
-			"ask_absorption",
-			"touch_bid_decay",
-			"bid_touch_refresh",
-			"ask_ladder_build",
-		},
+		System:     runtime.NewSystem(ctx, "depthflow"),
+		books:      books,
+		instrument: instrument,
+		sample:     sample,
+		process:    equation.NewBookflow(),
 	}
 
-	signal.System = runtime.NewSystem(ctx, "depthflow", signal)
+	if err != nil {
+		signal.Error(err)
+	}
+
 	return signal
 }
 
 /*
-Step processes the book of every distinct symbol traded in the tick's frame;
-each symbol writes its own (reserved) layer.
+Step processes every trade entry of the tick's frame; book and trade pressure
+feed Bookflow, and each ready outcome lands on the envelope.
 */
-func (signal *Signal) Step(value *data.Value) *data.Value {
-	var trades []kraken.TradeData
-	value.Lookup(&trades, "spot:trade")
+func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 
-	symbols := parent.DistinctSymbols(trades)
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
 
-	if err := parent.RunSymbols(signal.Context(), symbols, func(symbol string) {
-		signal.step(value, symbol)
-	}); err != nil {
-		signal.Error(err)
-	}
+		system.Q.Submit(func() {
+			defer wg.Done()
 
-	for _, trade := range trades {
-		signal.ingestTrade(trade)
-	}
-
-	signal.appendBoardBidRelease(value)
-	signal.appendBoardAskRelease(value)
-
-	return value
-}
-
-func (signal *Signal) step(value *data.Value, symbol string) *data.Value {
-	if signal.Status() != runtime.READY {
-		return value
-	}
-
-	untypedState, _ := signal.states.LoadOrStore(symbol, &symbolState{
-		prevBids: make(map[float64]float64),
-		prevAsks: make(map[float64]float64),
-	})
-
-	state := untypedState.(*symbolState)
-
-	// The `books.Book` callback is synchronous; the book is present only if
-	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
-	// invalid (venue checksum mismatch / absent level) symbols skip the
-	// callback and the tick carries book_error/<symbol> instead.
-	signal.books.Book(symbol, func(b *spotbook.Book) {
-		bids := ladder(b.Bids, true)
-		asks := ladder(b.Asks, false)
-
-		if len(bids) == 0 || len(asks) == 0 {
-			return
-		}
-
-		fullBid := len(b.Bids.Levels) >= b.MaxDepth
-		fullAsk := len(b.Asks.Levels) >= b.MaxDepth
-
-		obsBid := 0.0
-		currentBids := make(map[float64]float64, len(bids))
-		for _, bid := range bids {
-			notional := bid[0] * bid[1]
-			obsBid += notional
-			currentBids[bid[0]] = notional
-		}
-
-		obsAsk := 0.0
-		currentAsks := make(map[float64]float64, len(asks))
-		for _, ask := range asks {
-			notional := ask[0] * ask[1]
-			obsAsk += notional
-			currentAsks[ask[0]] = notional
-		}
-
-		var netBid, netAsk float64
-		if state.hasPrev {
-			bidWorst := bids[len(bids)-1][0]
-			askWorst := asks[len(asks)-1][0]
-
-			addedBid, removedBid := levelFlow(
-				state.prevBids, currentBids, state.prevFullBid, fullBid,
-				state.prevBidWorst, bidWorst, func(price, edge float64) bool { return price >= edge },
-			)
-			addedAsk, removedAsk := levelFlow(
-				state.prevAsks, currentAsks, state.prevFullAsk, fullAsk,
-				state.prevAskWorst, askWorst, func(price, edge float64) bool { return price <= edge },
-			)
-
-			netBid = addedBid - removedBid
-			netAsk = addedAsk - removedAsk
-		}
-
-		state.prevBids = currentBids
-		state.prevAsks = currentAsks
-		state.prevFullBid = fullBid
-		state.prevFullAsk = fullAsk
-		state.prevBidWorst = bids[len(bids)-1][0]
-		state.prevAskWorst = asks[len(asks)-1][0]
-		state.hasPrev = true
-
-		keys := []string{
-			signal.Name(),
-			symbol,
-		}
-
-		build := netBid
-
-		if build < 0 {
-			build = 0
-		}
-
-		release := -netBid
-
-		if release < 0 {
-			release = 0
-		}
-
-		state.lastBidRelease = release
-
-		askRelease := -netAsk
-		if askRelease < 0 {
-			askRelease = 0
-		}
-
-		askBuild := netAsk
-		if askBuild < 0 {
-			askBuild = 0
-		}
-		state.lastAskBuild = askBuild
-
-		bestBid := bids[0][0]
-		bestBidQty := bids[0][1]
-		touchBidDecay := 0.0
-		bidTouchRefresh := 0.0
-
-		if state.hasPrevBestBid && bestBid == state.prevBestBid && state.prevBestBidQty > 0 {
-			delta := bestBidQty - state.prevBestBidQty
-			if delta < 0 {
-				touchBidDecay = math.Min(1, (-delta)/state.prevBestBidQty)
-			} else if delta > 0 {
-				bidTouchRefresh = math.Min(1, delta/state.prevBestBidQty)
+			if data.Price.IsZero() || data.Qty.IsZero() {
+				return
 			}
-		}
 
-		state.prevBestBid = bestBid
-		state.prevBestBidQty = bestBidQty
-		state.hasPrevBestBid = true
-		state.lastTouchBidDecay = touchBidDecay
-		state.lastBidTouchRefresh = bidTouchRefresh
+			price, _ := data.Price.Float64()
+			qty, _ := data.Qty.Float64()
 
-		bestAsk := asks[0][0]
-		bestAskQty := asks[0][1]
-		if state.hasPrevAsk && bestAsk != state.prevBestAsk && state.prevBestAskQty > 0 {
-			state.lastAbsorption = state.buyVolAtAsk / state.prevBestAskQty
-			state.buyVolAtAsk = 0
-		} else if state.hasPrevAsk && bestAsk == state.prevBestAsk && state.prevBestAskQty > 0 {
-			state.lastAbsorption = state.buyVolAtAsk / state.prevBestAskQty
-		}
-		state.prevBestAsk = bestAsk
-		state.prevBestAskQty = bestAskQty
-		state.hasPrevAsk = true
+			if price <= 0 || qty <= 0 {
+				return
+			}
 
-		signal.emit.Metric(value, []float64{
-			build,
-			release,
-			askRelease,
-			state.lastAbsorption,
-			touchBidDecay,
-			bidTouchRefresh,
-			askBuild,
-		}, append(keys, signal.keys...)...)
+			var (
+				input equation.BookflowInput
+				ready bool
+				err   error
+			)
 
-		audit.Record.Write(map[string]any{
-			"signal":      signal.Name(),
-			"symbol":      symbol,
-			"build":       build,
-			"release":     release,
-			"ask_release": askRelease,
+			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+				pair := signal.instrument.Pair(data.Symbol)
+
+				if pair.TickSize == nil {
+					return
+				}
+
+				tickSize, _ := pair.TickSize.Float64()
+
+				if tickSize <= 0 {
+					return
+				}
+
+				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+
+				for _, level := range book.Bids.Levels {
+					levelPrice := level.Price.Float64()
+					bids = append(bids, flow.BookLevel{
+						Price:    levelPrice,
+						Quantity: level.Quantity.Float64(),
+						Ticks:    int64(levelPrice / tickSize),
+					})
+				}
+
+				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
+
+				for _, level := range book.Asks.Levels {
+					levelPrice := level.Price.Float64()
+					asks = append(asks, flow.BookLevel{
+						Price:    levelPrice,
+						Quantity: level.Quantity.Float64(),
+						Ticks:    int64(levelPrice / tickSize),
+					})
+				}
+
+				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
+					Symbol:   data.Symbol,
+					TickSize: tickSize,
+					Bids:     bids,
+					Asks:     asks,
+				})
+
+				if err != nil || !ready {
+					return
+				}
+
+				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+					Symbol:   data.Symbol,
+					Price:    price,
+					Quantity: qty,
+					Side:     flow.TradeSide(data.Side.String()),
+					At:       data.Timestamp,
+				})
+			})
+
+			if err != nil || !ready {
+				signal.Error(err)
+				return
+			}
+
+			outcome, err := signal.process.Measure(input)
+
+			if err != nil {
+				signal.Error(err)
+				return
+			}
+
+			if !outcome.Ready {
+				return
+			}
+
+			mu.Lock()
+			envelope.DepthFlow[data.Symbol] = &outcome
+			mu.Unlock()
 		})
-	})
-
-	return value
-}
-
-func (signal *Signal) ingestTrade(trade kraken.TradeData) {
-	if signal.Status() != runtime.READY || trade.Side != "buy" || trade.Price.Float64() <= 0 {
-		return
 	}
 
-	untypedState, ok := signal.states.Load(trade.Symbol)
-	if !ok {
-		return
-	}
+	wg.Wait()
 
-	state := untypedState.(*symbolState)
-	if !state.hasPrevAsk {
-		return
-	}
-
-	price := trade.Price.Float64()
-	if price < state.prevBestAsk {
-		return
-	}
-
-	state.buyVolAtAsk += trade.Qty * price
-}
-
-func (signal *Signal) appendBoardBidRelease(value *data.Value) {
-	if signal.Status() != runtime.READY || value == nil {
-		return
-	}
-
-	var scores []float64
-	signal.states.Range(func(_, untyped any) bool {
-		state := untyped.(*symbolState)
-		if state.hasPrev {
-			scores = append(scores, state.lastBidRelease)
-		}
-		return true
-	})
-
-	median, ok := parent.Median(scores)
-	if !ok {
-		return
-	}
-
-	signal.emit.Metric(value, []float64{median}, append([]string{
-		signal.Name(),
-		"aggregate",
-	}, "board_bid_release")...)
-}
-
-func (signal *Signal) appendBoardAskRelease(value *data.Value) {
-	if signal.Status() != runtime.READY || value == nil {
-		return
-	}
-
-	var scores []float64
-	signal.states.Range(func(_, untyped any) bool {
-		state := untyped.(*symbolState)
-		if state.hasPrev {
-			scores = append(scores, state.lastAskBuild)
-		}
-		return true
-	})
-
-	median, ok := parent.Median(scores)
-	if !ok {
-		return
-	}
-
-	signal.emit.Metric(value, []float64{median}, append([]string{
-		signal.Name(),
-		"aggregate",
-	}, "board_ask_release")...)
-}
-
-/*
-ladder returns a side's levels as price/quantity pairs, best first: bids
-descending, asks ascending.
-*/
-func ladder(side *spotbook.Side, descending bool) [][2]float64 {
-	if side == nil {
-		return nil
-	}
-
-	pairs := make([][2]float64, 0, len(side.Levels))
-
-	for _, level := range side.Levels {
-		if level == nil || level.Price == nil || level.Quantity == nil {
-			continue
-		}
-		pairs = append(pairs, [2]float64{level.Price.Float64(), level.Quantity.Float64()})
-	}
-
-	sort.Slice(pairs, func(left, right int) bool {
-		if descending {
-			return pairs[left][0] > pairs[right][0]
-		}
-		return pairs[left][0] < pairs[right][0]
-	})
-
-	return pairs
-}
-
-func levelFlow(
-	prev, current map[float64]float64,
-	prevFull, currentFull bool,
-	prevEdge, currentEdge float64,
-	inside func(price, edge float64) bool,
-) (added, removed float64) {
-	for price, notional := range current {
-		before, seen := prev[price]
-		if !seen {
-			if !prevFull || inside(price, prevEdge) {
-				added += notional
-			}
-			continue
-		}
-		if notional > before {
-			added += notional - before
-		}
-		if notional < before {
-			removed += before - notional
-		}
-	}
-
-	for price, before := range prev {
-		if _, held := current[price]; held {
-			continue
-		}
-		if !currentFull || inside(price, currentEdge) {
-			removed += before
-		}
-	}
-
-	return added, removed
+	ui.UI.Write(envelope.Publish("depthflow"))
+	return envelope
 }

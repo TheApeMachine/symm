@@ -1,8 +1,5 @@
 /// <reference lib="webworker" />
 
-import { partitionWireBatch } from "#/hub/s3-prefix-compact";
-import { parseWireValues } from "#/types/decoder";
-
 let socket: WebSocket | null = null;
 let connectUrl = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -144,40 +141,7 @@ const connect = (url: string) => {
 
 	socket.addEventListener("message", (event) => {
 		try {
-			const raw = event.data;
-			let arrayBuffer: ArrayBuffer | null = null;
-
-			if (raw instanceof ArrayBuffer) {
-				arrayBuffer = raw;
-			} else if (raw instanceof Uint8Array) {
-				arrayBuffer = raw.buffer.slice(
-					raw.byteOffset,
-					raw.byteOffset + raw.byteLength,
-				) as ArrayBuffer;
-			} else if (raw?.buffer instanceof ArrayBuffer) {
-				arrayBuffer = raw.buffer.slice(
-					raw.byteOffset,
-					raw.byteOffset + raw.byteLength,
-				) as ArrayBuffer;
-			}
-
-			if (arrayBuffer) {
-				const wire = parseWireValues(new Uint8Array(arrayBuffer));
-				if (!wire) {
-					return;
-				}
-
-				const { values, s3 } = partitionWireBatch(wire);
-				if (values.length === 0 && s3.length === 0) {
-					return;
-				}
-
-				self.postMessage({
-					type: "VALUES",
-					values,
-					s3: s3.length > 0 ? s3 : undefined,
-				});
-			}
+			self.postMessage({ type: "ENVELOPE", payload: JSON.parse(event.data) });
 		} catch (err) {
 			console.error("error", err);
 			self.postMessage({ type: "ERROR", error: String(err) });

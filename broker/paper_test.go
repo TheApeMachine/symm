@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
@@ -27,7 +27,7 @@ func TestPaperExecutionStillOpen(t *testing.T) {
 			Data: []kraken.ExecutionData{{
 				OrderID:     "ORD-FILL",
 				OrderStatus: "filled",
-				CumQty:      decimal.NewFromFloat64(1),
+				CumQty:      dFloat(1),
 			}},
 		}
 		So(paperExecutionStillOpen(filled), ShouldBeFalse)
@@ -77,11 +77,11 @@ func TestStampPaperAckGivesMarketFillASide(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 
-	if row.LastQty == nil || row.LastQty.Float64() != 0.03 {
+	if row.LastQty == nil || row.LastQty.MustFloat64() != 0.03 {
 		t.Fatalf("qty = %v", row.LastQty)
 	}
 
-	if row.AvgPrice == nil || row.AvgPrice.Float64() != 1290.78 {
+	if row.AvgPrice == nil || row.AvgPrice.MustFloat64() != 1290.78 {
 		t.Fatalf("price = %v", row.AvgPrice)
 	}
 }

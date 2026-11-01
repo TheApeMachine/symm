@@ -55,10 +55,10 @@ func (price *Price) ActiveReason(symbol string) string {
 
 	spreadCap := system.Cfg.Risk.MaxEntrySpreadPct
 
-	if spread.Float64() > spreadCap {
+	if spread.MustFloat64() > spreadCap {
 		return fmt.Sprintf(
 			"spread %.2f%% > %.1f%%",
-			spread.Float64(), spreadCap,
+			spread.MustFloat64(), spreadCap,
 		)
 	}
 

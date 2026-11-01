@@ -2,199 +2,126 @@ package toxicity
 
 import (
 	"context"
-	"math"
 	"sync"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/algorithm/book/flow"
+	"github.com/theapemachine/nomagique/algorithm/book/quality"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
-	parent "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
-
-type symbolState struct {
-	hasPrev             bool
-	prevBid             float64
-	prevBidQty          float64
-	prevAtNano          float64
-	pendingTradeQty     float64
-	pendingMatchedBid   float64
-	lastWithdrawalRate  float64
-}
 
 type Signal struct {
 	*runtime.System
-	books  *broker.Book
-	states *sync.Map
-	keys   []string
-	emit   *parent.Emit
+	books   *broker.Book
+	sample  *quality.Sample
+	process *equation.BookQuality
 }
 
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
-	signal := &Signal{
-		books:  books,
-		states: &sync.Map{},
-		emit:   parent.NewEmit(),
-		keys: []string{
-			"retreat_fraction",
-		},
+	return &Signal{
+		System:  runtime.NewSystem(ctx, "toxicity"),
+		books:   books,
+		sample:  quality.NewSample(),
+		process: equation.NewBookQuality(),
 	}
-
-	signal.System = runtime.NewSystem(ctx, "toxicity", signal)
-	return signal
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
+Step processes every trade entry of the tick's frame; book and trade evidence
+feed BookQuality, and each ready outcome lands on the envelope.
 */
-func (signal *Signal) Step(value *data.Value) *data.Value {
-	var trades []kraken.TradeData
-	value.Lookup(&trades, "spot:trade")
-
-	if err := parent.RunTrades(signal.Context(), trades, func(trade kraken.TradeData) {
-		signal.step(value, trade)
-	}); err != nil {
-		signal.Error(err)
-	}
-
-	signal.appendBoardWithdrawalRate(value)
-
-	return value
-}
-
-func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY {
-		return value
-	}
-
-	price := trade.Price.Float64()
-	qty := trade.Qty
-	side := trade.Side
-
-	sideIndicator := 0.0
-
-	switch side {
-	case "buy":
-		sideIndicator = 1.0
-	case "sell":
-		sideIndicator = -1.0
-	}
-
-	atNano := float64(value.Timestamp)
-
+func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
-		retreatFraction float64
-		withdrawalRate  float64
-		appendMetrics   bool
+		wg sync.WaitGroup
+		mu sync.Mutex
 	)
 
-	// The `books.Book` callback is synchronous; the book is present only if
-	// the callback ran. Pending (no snapshot yet), stale (L3 socket down) and
-	// invalid (venue checksum mismatch / absent level) symbols skip the
-	// callback and the tick carries book_error/<symbol> instead.
-	signal.books.Book(trade.Symbol, func(b *spotbook.Book) {
-		bestBid := b.BestBid()
-		if bestBid == nil || bestBid.Price == nil || bestBid.Quantity == nil {
-			return
-		}
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
 
-		bid := bestBid.Price.Float64()
-		bidQty := bestBid.Quantity.Float64()
+		system.Q.Submit(func() {
+			defer wg.Done()
 
-		untypedState, _ := signal.states.LoadOrStore(trade.Symbol, &symbolState{})
-		state := untypedState.(*symbolState)
+			if data.Price.IsZero() || data.Qty.IsZero() {
+				return
+			}
 
-		if !state.hasPrev {
-			state.observe(bid, bidQty, atNano)
-			return
-		}
+			price, _ := data.Price.Float64()
+			qty, _ := data.Qty.Float64()
 
-		state.pendingTradeQty += qty
+			if price <= 0 || qty <= 0 {
+				return
+			}
 
-		if sideIndicator < 0 && price == state.prevBid {
-			state.pendingMatchedBid += qty
-		}
+			var (
+				input equation.BookQualityInput
+				ready bool
+				err   error
+			)
 
-		if atNano <= state.prevAtNano {
-			return
-		}
+			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+				for _, level := range book.Bids.Levels {
+					bids = append(bids, flow.BookLevel{
+						Price:    level.Price.Float64(),
+						Quantity: level.Quantity.Float64(),
+					})
+				}
 
-		dt := (atNano - state.prevAtNano) / 1e9
-		rated := dt > 0 && !math.IsInf(dt, 0)
+				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
+				for _, level := range book.Asks.Levels {
+					asks = append(asks, flow.BookLevel{
+						Price:    level.Price.Float64(),
+						Quantity: level.Quantity.Float64(),
+					})
+				}
 
-		fill := math.Min(state.pendingMatchedBid, state.prevBidQty)
-		unfilled := state.prevBidQty - fill
+				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
+					Symbol: data.Symbol,
+					Bids:   bids,
+					Asks:   asks,
+				})
 
-		if bid == state.prevBid && rated {
-			withdrawn := math.Max(unfilled-bidQty, 0)
-			withdrawalRate = withdrawn / dt
-		}
+				if err != nil || !ready {
+					return
+				}
 
-		if bid < state.prevBid && state.prevBidQty > 0 {
-			retreatFraction = unfilled / state.prevBidQty
-		}
+				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+					Symbol:   data.Symbol,
+					Price:    price,
+					Quantity: qty,
+					Side:     flow.TradeSide(data.Side.String()),
+					At:       data.Timestamp,
+				})
+			})
 
-		state.lastWithdrawalRate = withdrawalRate
-		state.observe(bid, bidQty, atNano)
-		appendMetrics = true
-	})
+			if err != nil || !ready {
+				signal.Error(err)
+				return
+			}
 
-	if !appendMetrics {
-		return value
+			outcome, err := signal.process.Measure(input)
+			if err != nil {
+				signal.Error(err)
+				return
+			}
+
+			if outcome.Category == 0 {
+				return
+			}
+
+			mu.Lock()
+			envelope.Toxicity[data.Symbol] = &outcome
+			mu.Unlock()
+		})
 	}
 
-	keys := []string{
-		signal.Name(),
-		trade.Symbol,
-	}
+	wg.Wait()
 
-	signal.emit.Metric(value, []float64{
-		retreatFraction,
-	}, append(keys, signal.keys...)...)
-
-	audit.Record.Write(map[string]any{
-		"signal":          signal.Name(),
-		"trade":           trade,
-		"retreatFraction": retreatFraction,
-		"withdrawalRate":  withdrawalRate,
-	})
-
-	return value
-}
-
-func (signal *Signal) appendBoardWithdrawalRate(value *data.Value) {
-	if signal.Status() != runtime.READY || value == nil {
-		return
-	}
-
-	var rates []float64
-	signal.states.Range(func(_, untyped any) bool {
-		rate := untyped.(*symbolState).lastWithdrawalRate
-		if rate > 0 {
-			rates = append(rates, rate)
-		}
-		return true
-	})
-
-	median, ok := parent.Median(rates)
-	if !ok {
-		return
-	}
-
-	signal.emit.Metric(value, []float64{median}, append([]string{
-		signal.Name(),
-		"aggregate",
-	}, "board_withdrawal_rate")...)
-}
-
-func (state *symbolState) observe(bid, bidQty, atNano float64) {
-	state.hasPrev = true
-	state.prevBid = bid
-	state.prevBidQty = bidQty
-	state.prevAtNano = atNano
-	state.pendingTradeQty = 0
-	state.pendingMatchedBid = 0
+	ui.UI.Write(envelope.Publish("toxicity"))
+	return envelope
 }

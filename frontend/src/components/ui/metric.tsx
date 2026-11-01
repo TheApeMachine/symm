@@ -1,51 +1,77 @@
 import { useSelector } from "@tanstack/react-store";
-import { memo } from "react";
+import { memo, useEffect, useRef } from "react";
+import { atoms } from "#/collections/app";
 import {
-	atoms,
-	ensureSignalStore,
-	symbolScopeAliases,
-} from "#/collections/app";
+	ensureStore,
+	type Labels,
+	labelsAt,
+} from "#/collections/envelope";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
 	Badge,
 	Button,
-	Component,
 	Flex,
 	Meter,
 	Sparkline,
 	Typography,
 } from "#/components/ui";
 import { cn } from "#/lib/utils";
-import type { Value } from "#/types/value";
+import { scaleSparklineValues, setSparkline } from "./sparkline";
 
-/** Latest frame for this kernel at the dashboard focus symbol. */
-export const useKernelReading = (kernel: string): Value | null => {
+const SERIES_WINDOW = 120;
+
+/** Latest label map for this kernel at the dashboard focus symbol. */
+export const useKernelReading = (kernel: string): Labels | null => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const store = ensureSignalStore(kernel);
+	const store = ensureStore(kernel);
 
-	return useSelector(store, (state) => {
-		for (const alias of symbolScopeAliases(focusSymbol)) {
-			const hit = state[alias];
-			if (hit) return hit;
-		}
-		return null;
-	});
+	return useSelector(store, (state) => labelsAt(state, focusSymbol));
 };
 
 interface MetricProps {
 	name: string;
-	measurement: Value | null;
+	measurement: Labels | null;
 	compact?: boolean;
 }
 
 export const MetricRow = memo(
 	({ name, measurement, compact = false }: MetricProps) => {
 		const headline = sourceHeadline(name) ?? name;
+		const rootRef = useRef<HTMLDivElement | null>(null);
+		const seriesRef = useRef<number[]>([]);
+
+		const sample =
+			measurement && typeof measurement[headline] === "number"
+				? measurement[headline]
+				: measurement
+					? (Object.values(measurement).find(
+							(value) => typeof value === "number" && Number.isFinite(value),
+						) ?? null)
+					: null;
+
+		useEffect(() => {
+			const svg = rootRef.current?.querySelector<SVGSVGElement>(
+				'[data-k="sparkline"]',
+			);
+			if (!svg) return;
+
+			if (typeof sample !== "number" || !Number.isFinite(sample)) {
+				return;
+			}
+
+			seriesRef.current = seriesRef.current.concat(sample).slice(-SERIES_WINDOW);
+			setSparkline(svg, scaleSparklineValues(seriesRef.current), true);
+		}, [sample]);
+
+		const percent =
+			typeof sample === "number" && Number.isFinite(sample)
+				? Math.max(0, Math.min(100, Math.abs(sample) * 100))
+				: 0;
 
 		return (
-			<Component
-				value={measurement}
+			<div
+				ref={rootRef}
 				className="flex min-h-0 flex-1 flex-col overflow-hidden"
 			>
 				<Button
@@ -77,8 +103,8 @@ export const MetricRow = memo(
 						<Badge
 							data-k="badge"
 							data-metric-badge={headline}
-							label="Standby"
-							variant="disabled"
+							label={sample === null ? "Standby" : "Live"}
+							variant={sample === null ? "disabled" : "default"}
 							size="xxs"
 						/>
 					</Flex.Row>
@@ -100,7 +126,7 @@ export const MetricRow = memo(
 							data-k="bar"
 							layout="bar"
 							size="xxs"
-							percent={0}
+							percent={percent}
 							variant="warning"
 							className="flex-1"
 							title={`${name} headline: ${headline}`}
@@ -113,11 +139,13 @@ export const MetricRow = memo(
 							tone="f2"
 							className="w-11 shrink-0 text-right font-mono"
 						>
-							--
+							{sample === null || sample === undefined
+								? "--"
+								: sample.toFixed(3)}
 						</Typography.Mono>
 					</Flex.Row>
 				</Button>
-			</Component>
+			</div>
 		);
 	},
 );

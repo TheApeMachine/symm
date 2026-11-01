@@ -26,12 +26,12 @@ func openDragCapPct(price *Price, symbol string) float64 {
 	cap := system.Cfg.Risk.MaxEntryOpenDragPct
 
 	if budget, ok := price.OpenDragBudgetPct(symbol); ok && budget != nil {
-		if b := budget.Float64(); b > 0 && b < cap {
+		if b := budget.MustFloat64(); b > 0 && b < cap {
 			cap = b
 		}
 	}
 
-	fee := price.feeForTrade(symbol).Float64()
+	fee := price.feeForTrade(symbol).MustFloat64()
 
 	if fee > 0 {
 		floor := 2 * fee
@@ -55,7 +55,7 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	spreadCap := system.Cfg.Risk.MaxEntrySpreadPct
 
 	if spreadPct, ok := price.SpreadPct(symbol); ok && spreadPct != nil {
-		if spreadPct.Float64() > spreadCap {
+		if spreadPct.MustFloat64() > spreadCap {
 			return EntryPhysicalDecision{
 				Allowed: false,
 				Reason: fmt.Sprintf(
@@ -69,7 +69,7 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	minCash := system.Cfg.Risk.MinTouchBidCash
 	cash, ok := price.TouchBidCash(symbol)
 
-	if !ok || cash == nil || cash.Float64() < minCash {
+	if !ok || cash == nil || cash.MustFloat64() < minCash {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason: fmt.Sprintf(
@@ -114,7 +114,7 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 
 	cap := openDragCapPct(price, symbol)
 
-	if closeNow.Float64() < -cap {
+	if closeNow.MustFloat64() < -cap {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason: fmt.Sprintf(

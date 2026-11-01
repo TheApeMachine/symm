@@ -11,11 +11,11 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/google/uuid"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 )
@@ -62,9 +62,9 @@ type Position struct {
 	ExitRoom          *decimal.Decimal        `json:"exit_room,omitempty"`
 	PnL               *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
-	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`  // First mark-to-exit PnL after open
-	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`  // Previous tick PnL for momentum checks
-	PnLTrace          []float64               `json:"pnl_trace,omitempty"` // Net percent, one entry per reprice
+	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`   // First mark-to-exit PnL after open
+	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`   // Previous tick PnL for momentum checks
+	PnLTrace          []float64               `json:"pnl_trace,omitempty"`  // Net percent, one entry per reprice
 	StopState         StopState               `json:"stop_state,omitempty"` // Live proximity of each stop check
 	PeakPnLPct        *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
 	PeakStep          *decimal.Decimal        `json:"peak_step,omitempty"`         // Largest green up-step, in PnL percent
@@ -159,7 +159,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.repriceLocked()
 
 		if position.stopLoss != nil && position.PnLPct != nil {
-			current := position.PnLPct.Float64()
+			current := position.PnLPct.MustFloat64()
 			if trigger, ok := position.stopLoss.Update(current); ok {
 				position.ExitTrigger = trigger
 				position.OutcomeTriggers = []string{trigger}
@@ -479,7 +479,7 @@ func (position *Position) applyLocked(execution kraken.ExecutionData) {
 			position.Qty = position.Qty.Sub(execution.LastQty)
 
 			if position.Qty.Sign() <= 0 {
-				position.Qty = decimal.NewFromFloat64(0)
+				position.Qty = dFloat(0)
 			}
 		}
 
@@ -499,7 +499,7 @@ func (position *Position) repriceLocked() {
 	// settled marks, and those marks are the episode the exit policy learns
 	// from.
 	if position.PnLPct != nil {
-		position.recordTraceLocked(position.PnLPct.Float64())
+		position.recordTraceLocked(position.PnLPct.MustFloat64())
 	}
 
 	if position.price == nil {
@@ -565,7 +565,7 @@ func (position *Position) repriceLocked() {
 
 		if cost != nil && cost.Sign() > 0 {
 			netExit := position.ExitVWAP.Mul(position.Qty).OffsetPercent(decimalPercent.Mul(fee).Mul(decimalNegativeOne))
-			position.RealizedPct = netExit.Sub(cost).Div(cost).Float64()
+			position.RealizedPct = netExit.Sub(cost).Div(cost).MustFloat64()
 		}
 	}
 }

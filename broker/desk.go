@@ -8,7 +8,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"

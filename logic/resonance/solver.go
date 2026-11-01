@@ -13,8 +13,6 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/signal"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -22,8 +20,8 @@ import (
 
 /*
 Solver runs one predictive-coding manifold per symbol over that symbol's
-signal features (Features), and publishes the settled reading on the tick
-under resonance/<symbol>/… for the strategy stage and the dashboard to read.
+signal features (Features), and publishes the settled reading on the envelope
+under Resonance[symbol] for the strategy stage and the dashboard to read.
 
 The manifold is the CPU predictive coder in nomagique/learning: it settles a
 latent state that explains the current observation (its residual is Surprise),
@@ -64,29 +62,15 @@ const (
 	ReadingRole   = "reading"
 )
 
-// paceUpper is the manifold's fastest configured pace; a slower resting pace
-// only widens the warm-up band of its error average.
-const paceUpper = 0.150
-
 /*
 NewSolver returns a solver stepping at pace; a pace that is not positive is
 an error.
 */
-func NewSolver(ctx context.Context, pace ...float64) *Solver {
-	if len(pace) > 0 {
-		if !(pace[0] > 0) || pace[0] > paceUpper {
-			errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf(
-				"resonance: pace must be in (0, %g], got %g", paceUpper, pace[0],
-			), nil))
-
-			return nil
-		}
-	}
-
+func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
 		manifolds:     &sync.Map{},
-		pace:          paceValue(pace),
+		pace:          system.Cfg.Resonance.LearningRate,
 		standardizers: &sync.Map{},
 		pending:       &sync.Map{},
 	}
@@ -95,50 +79,38 @@ func NewSolver(ctx context.Context, pace ...float64) *Solver {
 	return solver
 }
 
-func paceValue(pace []float64) float64 {
-	if len(pace) > 0 && pace[0] > 0 {
-		return pace[0]
-	}
-
-	if system := system.Cfg.Resonance.LearningRate; system > 0 {
-		return system
-	}
-
-	return 0.03
-}
-
 /*
-Step advances every symbol on the workspace tick through its predictive
-coder and attaches scalar readings on the tick under resonance/<symbol>/….
-Symbols run concurrently (signal.RunSymbols); per-symbol manifold state is
-sharded and tick.Append is synchronized.
+Step advances every symbol on the envelope through its predictive coder and
+attaches scalar readings under envelope.Resonance[symbol].
 */
-func (solver *Solver) Step(tick *data.Value) *data.Value {
-	if tick == nil {
-		errnie.Error(errnie.Err(errnie.Validation, "resonance: Step needs a tick", nil))
-		return tick
+func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
+	if envelope == nil {
+		errnie.Error(errnie.Err(errnie.Validation, "resonance: Step needs an envelope", nil))
+		return nil
 	}
 
 	if err := solver.Error(); err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "resonance: solver failed earlier", err))
-		return tick
+		return envelope
 	}
 
-	if err := signal.RunSymbols(solver.Context(), symbolsOnTick(tick), func(symbol string) {
-		reading := solver.stepSymbol(tick, symbol)
+	metrics := envelope.Metrics()
 
-		if reading != nil {
-			attachReading(tick, symbol, reading)
+	for _, symbol := range symbolsOnEnvelope(envelope, metrics) {
+		reading := solver.stepSymbol(metrics, symbol)
 
-			if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
-				io.Copy(ui.UI, reading)
-			}
+		if reading == nil {
+			continue
 		}
-	}); err != nil {
-		solver.Error(err)
+
+		envelope.Resonance[symbol] = floatMetrics(reading)
+
+		if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
+			io.Copy(ui.UI, reading)
+		}
 	}
 
-	return tick
+	return envelope
 }
 
 /*
@@ -148,8 +120,8 @@ target. A symbol whose feature schema changed since it learned sits the
 round out rather than corrupting a learned manifold with a different input
 shape.
 */
-func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
-	if tick == nil || name == "" {
+func (solver *Solver) stepSymbol(metrics map[string]map[string]map[string]float64, name string) *data.Value {
+	if name == "" {
 		return nil
 	}
 
@@ -157,7 +129,7 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 		return nil
 	}
 
-	input, informative := solver.extractFeatures(name, tick)
+	input, informative := solver.extractFeatures(name, metrics)
 	if len(input) == 0 {
 		return nil
 	}
@@ -201,9 +173,9 @@ func (solver *Solver) stepSymbol(tick *data.Value, name string) *data.Value {
 }
 
 /*
-extractFeatures reads one symbol's feature vector off the tick: every
-signal layer grouped by source, each pinned Feature picked by its label,
-then standardized against that symbol's own history.
+extractFeatures reads one symbol's feature vector off envelope Metrics: each
+pinned Feature picked by source/label (aggregate scope uses the "aggregate"
+symbol key when present), then standardized against that symbol's history.
 
 informative reports whether at least one feature is an actual measurement.
 A zero reading and an absent reading are not the same thing: during warm-up
@@ -211,87 +183,30 @@ the standardizer answers zero without readiness, while a ready observation
 at the learned mean is legitimately zero. Settling on an all-unready vector
 would teach the manifold that nothing moved.
 */
-func (solver *Solver) extractFeatures(name string, tick *data.Value) ([]float64, bool) {
-	type sig struct {
-		labels []string
-		values []float64
-	}
-
-	// Symbols are written as two path segments (e.g. "XBT/USD") and labels
-	// follow them.
-	bySource := map[string]map[string]sig{}
-
-	for _, source := range types.SignalSourceStrings {
-		for _, layer := range tick.LookupPrefix(source) {
-			parts := strings.Split(layer.Key, "/")
-			if len(parts) == 3 && parts[1] == "aggregate" {
-				var values []float64
-				if err := layer.Decode(&values); err != nil {
-					continue
-				}
-				if bySource[source] == nil {
-					bySource[source] = make(map[string]sig)
-				}
-				bySource[source]["aggregate"] = sig{
-					labels: []string{parts[2]},
-					values: values,
-				}
-				continue
-			}
-
-			if len(parts) < 4 {
-				continue
-			}
-
-			symbol := parts[1] + "/" + parts[2]
-			if symbol != name {
-				continue
-			}
-
-			var values []float64
-			if err := layer.Decode(&values); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"[resonance.Step] "+layer.Key+" does not decode",
-					err,
-				))
-				continue
-			}
-
-			if bySource[source] == nil {
-				bySource[source] = make(map[string]sig)
-			}
-
-			bySource[source][symbol] = sig{
-				labels: parts[3:],
-				values: values,
-			}
-		}
-	}
-
+func (solver *Solver) extractFeatures(
+	name string,
+	metrics map[string]map[string]map[string]float64,
+) ([]float64, bool) {
 	readings := make(map[string]float64, len(Features))
 
 	for _, feature := range Features {
-		symbolSigs, ok := bySource[feature.Source]
-		if !ok {
-			continue
-		}
-
 		scopeKey := name
 		if feature.Scope == "aggregate" {
 			scopeKey = "aggregate"
 		}
 
-		s, ok := symbolSigs[scopeKey]
-		if !ok {
+		sources := metrics[scopeKey]
+		if sources == nil {
 			continue
 		}
 
-		for idx, label := range s.labels {
-			if label == feature.Label && idx < len(s.values) {
-				readings[featureReadingKey(feature)] = s.values[idx]
-				break
-			}
+		labels := sources[feature.Source]
+		if labels == nil {
+			continue
+		}
+
+		if value, ok := labels[feature.Label]; ok {
+			readings[featureReadingKey(feature)] = value
 		}
 	}
 
@@ -427,8 +342,7 @@ func coderArch(featureDim int) []int {
 
 /*
 publish builds the reading Value for one settled symbol: one scalar layer per
-metric, addressed so the strategy stage and the dashboard can read
-resonance/<symbol>/<metric> off the tick.
+metric, flattened onto envelope.Resonance[symbol] after settle.
 */
 func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold, hadTarget bool) *data.Value {
 	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
@@ -521,37 +435,28 @@ func (solver *Solver) takePending(name string) ([]float64, bool) {
 }
 
 /*
-symbolsOnTick lists every symbol the tick carries, from trades and from any
-signal source, sorted for a stable pass.
+symbolsOnEnvelope lists every symbol the envelope carries, from trades and
+from Metrics keys (except board "aggregate"), sorted for a stable pass.
 */
-func symbolsOnTick(tick *data.Value) []string {
-	if tick == nil {
-		return nil
-	}
-
+func symbolsOnEnvelope(envelope *runtime.Envelope, metrics map[string]map[string]map[string]float64) []string {
 	seen := map[string]struct{}{}
 
-	var trades []kraken.TradeData
-	tick.Lookup(&trades, "spot:trade")
-
-	for _, trade := range trades {
-		if trade.Symbol == "" {
-			continue
-		}
-
-		seen[trade.Symbol] = struct{}{}
-	}
-
-	for _, source := range types.SignalSourceStrings {
-		for _, layer := range tick.LookupPrefix(source) {
-			parts := strings.Split(layer.Key, "/")
-
-			if len(parts) < 4 {
+	if envelope != nil && envelope.Trade != nil {
+		for _, trade := range envelope.Trade.Data {
+			if trade == nil || trade.Symbol == "" {
 				continue
 			}
 
-			seen[parts[1]+"/"+parts[2]] = struct{}{}
+			seen[trade.Symbol] = struct{}{}
 		}
+	}
+
+	for symbol := range metrics {
+		if symbol == "" || symbol == "aggregate" {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
 	}
 
 	out := make([]string, 0, len(seen))
@@ -562,23 +467,6 @@ func symbolsOnTick(tick *data.Value) []string {
 
 	slices.Sort(out)
 	return out
-}
-
-/*
-attachReading copies a reading's scalar layers onto the workspace tick as
-resonance/<symbol>/<metric>, the addressing the strategy stage and the
-dashboard both read.
-*/
-func attachReading(tick *data.Value, symbol string, reading *data.Value) {
-	if tick == nil || reading == nil || symbol == "" {
-		return
-	}
-
-	scope := strings.ReplaceAll(symbol, "/", "-")
-
-	for label, val := range floatMetrics(reading) {
-		tick.Append([]float64{val}, "resonance", scope, label)
-	}
 }
 
 /*

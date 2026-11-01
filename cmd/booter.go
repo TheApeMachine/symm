@@ -3,20 +3,22 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	sysruntime "runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	shopdecimal "github.com/shopspring/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
@@ -271,67 +273,34 @@ func (booter *Booter) initMarket() error {
 func (booter *Booter) initPipeline() error {
 	ctx := booter.Context()
 
-	booter.signals = []nmruntime.Node{
-		correlation.NewSignal(ctx),
-		cvd.NewSignal(ctx, booter.book),
-		depthflow.NewSignal(ctx, booter.book),
-		hawkes.NewSignal(ctx),
-		leadlag.NewSignal(ctx),
-		liquidity.NewSignal(ctx, booter.book, booter.price),
-		morphology.NewSignal(ctx, booter.book),
-		pumpdump.NewSignal(ctx, booter.book),
-		sentiment.NewSignal(ctx),
-		toxicity.NewSignal(ctx, booter.book),
-	}
-
-	for _, node := range booter.signals {
-		if node.Status() == nmruntime.ERROR || node.Status() == nmruntime.FATAL {
-			return errnie.Err(
-				errnie.Internal,
-				fmt.Sprintf("booter: %s failed construction", node.Name()),
-				node.Error(),
-			)
-		}
-	}
-
-	stage := strategy.NewStage(ctx, booter.desk)
-	stage.Transition(nmruntime.READY)
-
-	solver := resonance.NewSolver(ctx)
-	trainingNodes := []nmruntime.Node{stage, solver}
-
-	strategyNodes := make([]nmruntime.Node, 0, 1)
-
-	// paper and real both run the strategy. real posts live market entries
-	// on the private websocket. Any other model does not place orders.
-	if system.Cfg.Market.Model == "paper" || system.Cfg.Market.Model == "real" {
-		booter.training = strategy.NewTraining(
-			ctx, booter.price, booter.desk, stage,
-		)
-
-		if err := booter.training.Error(); err != nil {
-			return err
-		}
-
-		ui.UI.RegisterCallback(func() {
-			ui.UI.ListPrefix("model/paths/")
-		})
-		booter.training.Transition(nmruntime.READY)
-		strategyNodes = append(strategyNodes, booter.training)
-	}
+	training := strategy.NewTraining(ctx, booter.price, booter.desk)
+	model := strategy.NewModel(ctx, booter.desk, booter.price, training.ResetSequencer)
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
 		[]nmruntime.Ring{
-			{Group: "signal", Nodes: booter.signals},
-			{Group: "training", Nodes: trainingNodes},
-			{Group: "strategy", Nodes: strategyNodes},
+			{Group: "signal", Nodes: []nmruntime.Node{
+				correlation.NewSignal(ctx),
+				cvd.NewSignal(ctx, booter.book),
+				depthflow.NewSignal(ctx, booter.book, booter.instrument),
+				hawkes.NewSignal(ctx),
+				leadlag.NewSignal(ctx),
+				liquidity.NewSignal(ctx, booter.book),
+				morphology.NewSignal(ctx, booter.book),
+				pumpdump.NewSignal(ctx, booter.book),
+				sentiment.NewSignal(ctx),
+				toxicity.NewSignal(ctx, booter.book),
+			}},
+			{Group: "training", Nodes: []nmruntime.Node{
+				training,
+				resonance.NewSolver(ctx),
+			}},
+			{Group: "model", Nodes: []nmruntime.Node{
+				model,
+			}},
 		},
 	)
-	for _, signal := range booter.signals {
-		signal.Transition(nmruntime.READY)
-	}
 
 	booter.workspace.Transition(nmruntime.READY)
 	return nil
@@ -509,7 +478,6 @@ func (booter *Booter) startIngress(
 			}
 
 			channel := data.Attribute[string](buf, "channel")
-			msgType := data.Attribute[string](buf, "type")
 
 			switch channel {
 			case "level3":
@@ -561,29 +529,33 @@ func (booter *Booter) startIngress(
 					booter.desk.Update(trade.Data)
 				}
 
-				// Store the trade array, not the Kraken envelope
-				// ({"channel","type","data"}). Signal readers decode
-				// this layer as []kraken.TradeData.
-				value := data.NewValue("workspace", "tick", "aggregate")
-				value.Append(trade.Data, "spot:trade", msgType)
+				data := make([]*market.TradeData, 0, len(trade.Data))
 
-				// Pulse the tick header before the workspace pass so dashboards
-				// advance the counter while signals, stage, and training run.
-				// Signals and resonance send their own focus-scoped frames.
-				if ui.UI != nil && ui.UI.Active() {
-					io.Copy(ui.UI, data.NewValue("workspace", "tick", "aggregate"))
+				for _, d := range trade.Data {
+					price, err := shopdecimal.NewFromString(d.Price.String())
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"[booter] trade frame: "+string(buf),
+							err,
+						))
+					}
+
+					data = append(data, &market.TradeData{
+						Symbol:    d.Symbol,
+						Side:      market.Side(d.Side),
+						Price:     price,
+						Qty:       shopdecimal.NewFromFloat(d.Qty),
+						Timestamp: d.Timestamp,
+					})
 				}
 
-				// Step blocks until signals, the sequencer, and the model
-				// have written this tick. The full frame is for S3 only;
-				// the dashboard already received per-source messages.
-				out := booter.workspace.Step(value)
-
-				if booter.store != nil {
-					snapshot := out.Bytes()
-					prefix := out.Prefix
-					booter.store.WriteAtPrefix(prefix, snapshot)
-				}
+				booter.workspace.Step(runtime.NewEnvelope(market.NewTrade(
+					trade.Channel,
+					trade.Type,
+					data,
+				)))
 			case "heartbeat", "status":
 			default:
 				// Request acknowledgements (subscribe, unsubscribe, ...). A

@@ -6,10 +6,10 @@ import (
 	"sync"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
@@ -180,7 +180,7 @@ func (price *Price) feeForTrade(symbol string) *decimal.Decimal {
 		return fee
 	}
 
-	return decimal.NewFromFloat64(defaultTakerFeePercent)
+	return dFloat(defaultTakerFeePercent)
 }
 
 func (price *Price) feeName(symbol string) string {
@@ -218,11 +218,11 @@ func (price *Price) Touch(symbol string) (*decimal.Decimal, *decimal.Decimal) {
 		}
 
 		if bestBid := managed.BestBid(); bestBid != nil {
-			bid = bestBid.Price
+			bid = levelPrice(bestBid)
 		}
 
 		if bestAsk := managed.BestAsk(); bestAsk != nil {
-			ask = bestAsk.Price
+			ask = levelPrice(bestAsk)
 		}
 	})
 
@@ -269,41 +269,41 @@ func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
 		}
 
 		bestBid := managed.BestBid()
-		if bestBid.Quantity == nil || bestBid.Quantity.Sign() <= 0 {
+		qty := levelQty(bestBid)
+
+		if qty == nil || qty.Sign() <= 0 {
 			return
 		}
 
-		// Start with the top bid quantity
-		totalDepth := bestBid.Quantity
-
-		// Micro-pennying filter: cluster bids within the immediate touch band
-		// (within the spread or pair tick size of the best bid) so a 0.001 bot order
-		// does not mask the real wall sitting directly behind it.
-		bestPrice := bestBid.Price
+		totalDepth := qty
+		bestPrice := levelPrice(bestBid)
 		var maxDrop *decimal.Decimal
 
 		if managed.BestAsk() != nil && managed.BestAsk().Price != nil {
-			// Tolerance is at most half the bid-ask spread
-			spread := managed.BestAsk().Price.Sub(bestPrice)
+			spread := levelPrice(managed.BestAsk()).Sub(bestPrice)
+
 			if spread.Sign() > 0 {
-				maxDrop = spread.Div(decimal.NewFromInt64(2))
+				maxDrop = spread.Div(dInt(2))
 			}
 		}
 
 		cursor := bestBid.Lower
+
 		for count := 0; count < 3 && cursor != nil && cursor.Price != nil; count++ {
-			if cursor.Quantity == nil || cursor.Quantity.Sign() <= 0 {
+			cursorQty := levelQty(cursor)
+
+			if cursorQty == nil || cursorQty.Sign() <= 0 {
 				cursor = cursor.Lower
 				continue
 			}
 
-			// If this level is within the immediate touch cluster, include its depth
-			drop := bestPrice.Sub(cursor.Price)
+			drop := bestPrice.Sub(levelPrice(cursor))
+
 			if maxDrop != nil && drop.Cmp(maxDrop) > 0 {
 				break
 			}
 
-			totalDepth = totalDepth.Add(cursor.Quantity)
+			totalDepth = totalDepth.Add(cursorQty)
 			cursor = cursor.Lower
 		}
 
@@ -333,9 +333,10 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 		level := managed.BestBid()
 
 		for count := 0; count < 3 && level != nil; count++ {
-			if level.Price != nil && level.Quantity != nil &&
-				level.Price.Sign() > 0 && level.Quantity.Sign() > 0 {
-				total = total.Add(notional(level.Price, level.Quantity))
+			px, qty := levelPrice(level), levelQty(level)
+
+			if px != nil && qty != nil && px.Sign() > 0 && qty.Sign() > 0 {
+				total = total.Add(notional(px, qty))
 			}
 
 			level = level.Lower
@@ -363,7 +364,7 @@ func (price *Price) spreadFraction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	mid := bid.Add(ask).Div(decimal.NewFromInt64(2))
+	mid := bid.Add(ask).Div(dInt(2))
 
 	if mid.Sign() <= 0 {
 		return nil, false
@@ -400,7 +401,7 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	twoLegFee := fee.Mul(decimalPercent).Mul(decimal.NewFromInt64(2))
+	twoLegFee := fee.Mul(decimalPercent).Mul(dInt(2))
 	hurdle := spread.Add(twoLegFee)
 
 	if hurdle.Sign() <= 0 {
@@ -422,7 +423,7 @@ func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	budget := friction.Mul(decimal.NewFromInt64(3)).Mul(decimalHundred)
+	budget := friction.Mul(dInt(3)).Mul(decimalHundred)
 	return budget, true
 }
 
@@ -666,15 +667,15 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 	}
 
 	pair := price.Instrument.Pair(symbol)
-	cash := price.balance.cash(pair.Quote)
+	cashShop := price.balance.cash(pair.Quote)
 
-	if cash == nil {
-		cash = price.balance.cash(price.balance.Quote)
+	if cashShop == nil {
+		cashShop = price.balance.cash(price.balance.Quote)
 	}
 
 	fee := price.feeForTrade(symbol)
 
-	if cash == nil {
+	if cashShop == nil {
 		return nil, fmt.Sprintf(
 			"quote cash unknown (pair quote %q, desk quote %q)",
 			pair.Quote,
@@ -682,11 +683,15 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 		)
 	}
 
+	cash := cashShop
+
 	if pair.QtyMin == nil || pair.CostMin == nil {
 		return nil, "instrument limits missing (QtyMin or CostMin unset)"
 	}
 
-	budget := cash.SetScale(int64(pair.PricePrecision)).Mul(system.Cfg.Risk.MaxFraction)
+	budget := cash.SetScale(int64(pair.PricePrecision)).Mul(
+		dFloat(system.Cfg.Risk.MaxFraction),
+	)
 
 	if budget.Sign() <= 0 {
 		return nil, fmt.Sprintf(
@@ -714,46 +719,49 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 			return
 		}
 
-		touchBid := managed.BestBid().Quantity
+		touchBid := levelQty(managed.BestBid())
 
 		if touchBid == nil || touchBid.Sign() <= 0 {
 			reason = "best bid quantity missing or zero"
 			return
 		}
 
-		touchCap := touchBid.SetScale(int64(pair.QtyPrecision)).Div(system.Cfg.Risk.TouchDivisor)
+		touchCap := touchBid.SetScale(int64(pair.QtyPrecision)).Div(
+			dFloat(system.Cfg.Risk.TouchDivisor),
+		)
 		qAccum := decimalZero
 		remainingGross := grossBudget
 		level := managed.BestAsk()
 
-		if level == nil || level.Price == nil {
+		if level == nil || levelPrice(level) == nil {
 			reason = "best ask missing"
 			return
 		}
 
-		maxAsk := level.Price.Mul(decimal.NewFromInt64(2))
+		maxAsk := levelPrice(level).Mul(dInt(2))
 
 		for level != nil && remainingGross.Sign() > 0 {
-			if level.Price == nil || level.Quantity == nil ||
-				level.Price.Sign() <= 0 || level.Quantity.Sign() <= 0 {
+			px, qty := levelPrice(level), levelQty(level)
+
+			if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
 				level = level.Higher
 				continue
 			}
 
-			if level.Price.Cmp(maxAsk) > 0 {
+			if px.Cmp(maxAsk) > 0 {
 				break
 			}
 
-			levelCost := notional(level.Price, level.Quantity)
+			levelCost := notional(px, qty)
 
 			if levelCost.Cmp(remainingGross) <= 0 {
-				qAccum = qAccum.Add(level.Quantity)
+				qAccum = qAccum.Add(qty)
 				remainingGross = remainingGross.Sub(levelCost)
 				level = level.Higher
 				continue
 			}
 
-			qAccum = qAccum.Add(remainingGross.Div(level.Price))
+			qAccum = qAccum.Add(remainingGross.Div(px))
 			break
 		}
 
@@ -770,7 +778,7 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 			return
 		}
 
-		if sized, normErr := price.normalizer.FormatSize(symbol, qAccum); normErr == nil {
+		if sized, normErr := formatSize(price.normalizer, symbol, qAccum); normErr == nil {
 			qAccum = sized
 		}
 
@@ -876,8 +884,9 @@ func (price *Price) bumpToVenueMin(
 	target := pair.QtyMin
 
 	ask := managed.BestAsk()
+	askPx := levelPrice(ask)
 
-	if ask == nil || ask.Price == nil || ask.Price.Sign() <= 0 {
+	if ask == nil || askPx == nil || askPx.Sign() <= 0 {
 		return nil, nil, "cannot bump to venue minimum (best ask missing)"
 	}
 
@@ -890,14 +899,14 @@ func (price *Price) bumpToVenueMin(
 			costScale = 8
 		}
 
-		costFloor := pair.CostMin.SetScale(costScale).Div(ask.Price)
+		costFloor := pair.CostMin.SetScale(costScale).Div(askPx)
 
 		if costFloor.Cmp(target) > 0 {
 			target = costFloor
 		}
 	}
 
-	if sized, err := price.normalizer.FormatSize(symbol, target); err == nil {
+	if sized, err := formatSize(price.normalizer, symbol, target); err == nil {
 		target = sized
 	}
 
@@ -1077,13 +1086,18 @@ func (price *Price) walk(
 			next = level.Higher
 		}
 
-		fill := level.Quantity
+		fill := levelQty(level)
+
+		if fill == nil {
+			level = next
+			continue
+		}
 
 		if fill.Cmp(remaining) > 0 {
 			fill = remaining
 		}
 
-		gross = gross.Add(notional(level.Price, fill))
+		gross = gross.Add(notional(levelPrice(level), fill))
 		quantity = quantity.Add(fill)
 		remaining = remaining.Sub(fill)
 		level = next
@@ -1128,33 +1142,34 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 	band := system.Cfg.Risk.BackingBandFrac
 
 	price.Books.Book(symbol, func(managed *book.Book) {
-		mid := managed.Midpoint()
+		mid := mustFromSDK(managed.Midpoint())
 
 		if !bookReady(managed) || mid == nil || mid.Sign() <= 0 {
 			return
 		}
 
-		lo := mid.Mul(decimal.NewFromFloat64(1 - band))
-		hi := mid.Mul(decimal.NewFromFloat64(1 + band))
-		
+		lo := mid.Mul(dFloat(1 - band))
+		hi := mid.Mul(dFloat(1 + band))
+
 		var cash [2]float64
 
 		for idx, start := range []*book.Level{managed.BestBid(), managed.BestAsk()} {
 			for lvl := start; lvl != nil; lvl = [...]*book.Level{lvl.Lower, lvl.Higher}[idx] {
-				if lvl.Price == nil || lvl.Quantity == nil ||
-					lvl.Price.Sign() <= 0 || lvl.Quantity.Sign() <= 0 {
+				px, qty := levelPrice(lvl), levelQty(lvl)
+
+				if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
 					continue
 				}
 
-				if idx == 0 && lvl.Price.Cmp(lo) < 0 {
+				if idx == 0 && px.Cmp(lo) < 0 {
 					break
 				}
 
-				if idx == 1 && lvl.Price.Cmp(hi) > 0 {
+				if idx == 1 && px.Cmp(hi) > 0 {
 					break
 				}
 
-				cash[idx] += notional(lvl.Price, lvl.Quantity).Float64()
+				cash[idx] += notional(px, qty).MustFloat64()
 			}
 		}
 

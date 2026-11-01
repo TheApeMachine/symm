@@ -4,10 +4,10 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/decimal"
 )
 
 /*
@@ -110,7 +110,7 @@ func NewPaperBalance(buf []byte) *Balance {
 	return &out
 }
 
-var zero = decimal.NewFromFloat64(0)
+var zero = dFloat(0)
 
 /*
 NewBalanceFromMap reshapes the venue's asset-to-total map into the Balance
@@ -146,15 +146,15 @@ func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
 }
 
 func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
-	currentValue := decimal.NewFromFloat64(model["current_value"].(float64))
-	unrealizedPnL := decimal.NewFromFloat64(model["unrealized_pnl"].(float64))
+	currentValue := dFloat(model["current_value"].(float64))
+	unrealizedPnL := dFloat(model["unrealized_pnl"].(float64))
 	tradeBalance := currentValue.Sub(unrealizedPnL)
 
-	zero := decimal.NewFromInt64(0)
+	zero := dInt(0)
 	var funding *decimal.Decimal
 
 	if amount, found := model["starting_balance"].(float64); found {
-		funding = decimal.NewFromFloat64(amount)
+		funding = dFloat(amount)
 	}
 
 	complete, known := model["valuation_complete"].(bool)

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"

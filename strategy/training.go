@@ -2,102 +2,120 @@ package strategy
 
 import (
 	"context"
-	"slices"
-	"strings"
+	"fmt"
+	"sync"
 
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
-	nmstore "github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
-	"golang.org/x/sync/errgroup"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Training struct {
 	*runtime.System
-	model     *Model
-	price     *broker.Price
-	desk      *broker.Desk
-	client    *store.Client
-	telemetry *Telemetry
+	price      *broker.Price
+	desk       *broker.Desk
+	grid       *store.Grid
+	client     *store.Client
+	sequencers *sync.Map
 }
 
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
-	stage *Stage,
 ) *Training {
 	return &Training{
-		System:    runtime.NewSystem(ctx, "training", price),
-		model:     NewModel(ctx, desk, price, stage),
-		price:     price,
-		desk:      desk,
-		client:    store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		telemetry: NewTelemetry(ctx),
+		System:     runtime.NewSystem(ctx, "training", price),
+		price:      price,
+		desk:       desk,
+		grid:       store.NewGrid(ctx),
+		client:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		sequencers: &sync.Map{},
 	}
 }
 
-func (training *Training) Step(value *data.Value) *data.Value {
-	if value == nil {
+func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
+	if envelope == nil {
 		return nil
 	}
 
-	symbols := NewSymbols(value).WithPrice(training.price).Names()
+	for symbol, sources := range envelope.Metrics() {
+		if symbol == "" || symbol == "aggregate" {
+			continue
+		}
 
-	for _, symbol := range training.desk.Pending() {
-		if !slices.Contains(symbols, symbol) {
-			symbols = append(symbols, symbol)
+		regions, err := training.grid.Observe(symbol, sources)
+
+		if err != nil {
+			training.Error(err)
+			continue
+		}
+
+		envelope.Regions[symbol] = regions
+
+		cut := training.stepCut(symbol, regions)
+		envelope.Paths[symbol] = &cut
+	}
+
+	if frame := envelope.Publish("regions"); len(frame) > 0 {
+		ui.UI.Write(frame)
+	}
+
+	if frame := envelope.Publish("paths"); len(frame) > 0 {
+		ui.UI.Write(frame)
+	}
+
+	return envelope
+}
+
+func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
+	if training == nil || symbol == "" {
+		return tokenizer.NewSequencer()
+	}
+
+	loaded, _ := training.sequencers.LoadOrStore(symbol, tokenizer.NewSequencer())
+	return loaded.(*tokenizer.Sequencer)
+}
+
+func (training *Training) ResetSequencer(symbol string) {
+	if training == nil || symbol == "" {
+		return
+	}
+
+	loaded, ok := training.sequencers.Load(symbol)
+	if !ok {
+		return
+	}
+
+	loaded.(*tokenizer.Sequencer).Reset()
+}
+
+/*
+stepCut feeds the brightest lit region into the symbol's sequencer and
+returns the live path cut.
+*/
+func (training *Training) stepCut(symbol string, regions []*runtime.Region) tokenizer.Tokens {
+	var best *runtime.Region
+
+	for _, region := range regions {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		if best == nil || region.Brightness > best.Brightness {
+			best = region
 		}
 	}
 
-	slices.Sort(symbols)
-
-	if len(symbols) == 0 {
-		training.telemetry.EndTick(training.model, training.desk)
-		return value
+	if best == nil {
+		return tokenizer.Tokens{}
 	}
 
-	group, _ := errgroup.WithContext(training.Context())
-
-	for _, symbol := range symbols {
-		group.Go(func() error {
-			out := data.NewValue(
-				"training", "step", symbol,
-			)
-
-			out.Epoch, out.Tick, out.Timestamp = value.Epoch, value.Tick, value.Timestamp
-
-			var observed []*nmstore.Region
-			value.Lookup(&observed, strings.Join([]string{"grid", symbol, "regions"}, "/"))
-
-			training.model.Evaluate(out, observed, value)
-
-			cut := data.Get[tokenizer.Tokens](
-				value, strings.Join([]string{"sequencer", symbol, "cut"}, "/"),
-			)
-
-			if cut.Len() > 0 {
-				out.Append(cut.String(), "livePath")
-			}
-
-			training.telemetry.CompleteSymbolStep(out, training.model)
-
-			training.telemetry.NoteWalk(symbol, out)
-			return nil
-		})
-	}
-
-	if err := group.Wait(); err != nil {
-		training.Error(err)
-	}
-
-	training.model.CommitEntries()
-
-	training.telemetry.PublishWalks()
-	training.telemetry.EndTick(training.model, training.desk)
-
-	return value
+	return training.Sequencer(symbol).Step(
+		fmt.Sprintf("R%02d", best.Key),
+		best.Brightness,
+	)
 }

@@ -2,197 +2,79 @@ package leadlag
 
 import (
 	"context"
-	"math"
-	"slices"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/nomagique/algorithm"
-	nmcorrelation "github.com/theapemachine/nomagique/correlation"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/audit"
-	"github.com/theapemachine/symm/kraken"
-	parent "github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
-// One reprice is one bar. CrossLagScore shifts the anchor path in whole-bar
-// increments, so the bar interval is the median reprice spacing; deriving it
-// from the path keeps the lag in price events rather than an arbitrary clock.
-const barIntervalSeconds = 1.0
-
-const (
-	maxLeadLagSamples = 64
-	maxLeadLagPeers   = 16
-)
-
-/*
-Signal is the asynchronous price-path lead-lag instrument.
-*/
 type Signal struct {
 	*runtime.System
-	paths         *sync.Map
-	lastLedShare  *sync.Map
-	keys          []string
-	emit          *parent.Emit
+	sample  *algorithm.LagSample
+	process *algorithm.Lag
 }
 
 func NewSignal(ctx context.Context) *Signal {
-	signal := &Signal{
-		paths:        &sync.Map{},
-		lastLedShare: &sync.Map{},
-		emit:         parent.NewEmit(),
-		keys: []string{
-			"led_peer_share",
-			"cohort_lift",
-		},
+	return &Signal{
+		System:  runtime.NewSystem(ctx, "leadlag"),
+		sample:  algorithm.NewLagSample(),
+		process: algorithm.NewLag(),
 	}
-
-	signal.System = runtime.NewSystem(ctx, "leadlag", signal)
-	return signal
 }
 
 /*
 Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
+by the entry's symbol and each ready outcome lands on the envelope.
 */
-func (signal *Signal) Step(value *data.Value) *data.Value {
-	var trades []kraken.TradeData
-	value.Lookup(&trades, "spot:trade")
+func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 
-	for _, trade := range parent.LastTradePerSymbol(trades) {
-		signal.step(value, trade)
-	}
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
 
-	signal.appendAnchorBreakdown(value)
-	signal.appendLagDispersion(value)
+		system.Q.Submit(func() {
+			defer wg.Done()
 
-	return value
-}
+			if data.Price.IsZero() {
+				return
+			}
 
-func (signal *Signal) step(value *data.Value, trade kraken.TradeData) *data.Value {
-	if signal.Status() != runtime.READY {
-		return value
-	}
+			price, _ := data.Price.Float64()
 
-	price := trade.Price.Float64()
-	if price <= 0 {
-		return value
-	}
+			if price <= 0 {
+				return
+			}
 
-	at := time.Unix(0, int64(value.Timestamp))
-	symbol := trade.Symbol
+			input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
+				Symbol: data.Symbol,
+				Price:  price,
+				At:     data.Timestamp,
+			})
 
-	untypedCurrentPath, _ := signal.paths.LoadOrStore(symbol, []nmcorrelation.Sample{})
-	currentPath := untypedCurrentPath.([]nmcorrelation.Sample)
+			if err != nil || !ok {
+				signal.Error(err)
+				return
+			}
 
-	if len(currentPath) > 0 {
-		last := currentPath[len(currentPath)-1].At
-		if at.Before(last) {
-			return value
-		}
-		if at.Equal(last) {
-			currentPath[len(currentPath)-1] = nmcorrelation.Sample{At: at, Value: price}
-			signal.paths.Store(symbol, currentPath)
-		}
-	}
+			outcome, err := signal.process.Measure(input)
 
-	if len(currentPath) == 0 || at.After(currentPath[len(currentPath)-1].At) {
-		if len(currentPath) >= maxLeadLagSamples {
-			currentPath = currentPath[1:]
-		}
-		currentPath = append(currentPath, nmcorrelation.Sample{At: at, Value: price})
-		signal.paths.Store(symbol, currentPath)
-	}
+			if err != nil || !outcome.Eligible {
+				return
+			}
 
-	candidateSymbols := make([]string, 0)
-	signal.paths.Range(func(peerSymbol, peerPath any) bool {
-		if peerSymbol != symbol && len(peerPath.([]nmcorrelation.Sample)) >= 3 && len(currentPath) >= 3 {
-			candidateSymbols = append(candidateSymbols, peerSymbol.(string))
-		}
-		return true
-	})
-
-	slices.SortFunc(candidateSymbols, func(a, b string) int {
-		rankA := leaderRank(a)
-		rankB := leaderRank(b)
-		if rankA != rankB {
-			return rankA - rankB
-		}
-		return strings.Compare(a, b)
-	})
-
-	if len(candidateSymbols) > maxLeadLagPeers {
-		candidateSymbols = candidateSymbols[:maxLeadLagPeers]
-	}
-
-	// The focal path is the measured series; each peer is searched as the
-	// anchor against it. CrossLagScore shifts the anchor in whole-bar steps and
-	// reports the best lag (in bars) and its Hayashi correlation. A negative
-	// lag means the focal path precedes the peer.
-	readings := make([]leadLagReading, 0, len(candidateSymbols))
-	for _, peerSymbol := range candidateSymbols {
-		untypedPeerPath, _ := signal.paths.Load(peerSymbol)
-		peerPath := untypedPeerPath.([]nmcorrelation.Sample)
-
-		lagBars, corr, ok := algorithm.CrossLagScore(peerPath, currentPath, time.Second*barIntervalSeconds)
-
-		if !ok {
-			continue
-		}
-
-		readings = append(readings, leadLagReading{
-			lagSeconds:  float64(lagBars) * barIntervalSeconds,
-			corr:        corr,
-			leads:       lagBars < 0,
-			gain:        math.Abs(corr),
-			gainDefined: true,
+			mu.Lock()
+			envelope.LeadLag[data.Symbol] = &outcome
+			mu.Unlock()
 		})
 	}
 
-	ledShare, ledOK := ledPeerShare(readings)
-	cohortLift, cohortOK := cohortDirectionLift(currentPath, signal.paths, symbol, at)
+	wg.Wait()
 
-	if !ledOK && !cohortOK {
-		return value
-	}
-
-	if !ledOK {
-		ledShare = 0
-	}
-
-	if !cohortOK {
-		cohortLift = 0
-	}
-
-	signal.lastLedShare.Store(symbol, ledShare)
-
-	keys := []string{
-		signal.Name(),
-		trade.Symbol,
-	}
-
-	out := signal.emit.Metric(value, []float64{ledShare, cohortLift}, append(keys, signal.keys...)...)
-
-	audit.Record.Write(map[string]any{
-		"signal":         signal.Name(),
-		"trade":          trade,
-		"led_peer_share": ledShare,
-	})
-
-	return out
-}
-
-func leaderRank(symbol string) int {
-	switch {
-	case strings.HasPrefix(symbol, "BTC") || strings.HasPrefix(symbol, "XBT") || strings.HasPrefix(symbol, "XXBT"):
-		return 0
-	case strings.HasPrefix(symbol, "ETH") || strings.HasPrefix(symbol, "XETH"):
-		return 1
-	case strings.HasPrefix(symbol, "SOL"):
-		return 2
-	default:
-		return 3
-	}
+	ui.UI.Write(envelope.Publish("leadlag"))
+	return envelope
 }

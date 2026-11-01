@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 )
@@ -40,13 +40,13 @@ func NewTradesHistoryFromMap(model datura.Map[any]) spot.TradesHistoryResult {
 		trades[id] = spot.Trade{
 			OrderID:   orderID,
 			Pair:      pair,
-			Time:      decimal.NewFromFloat64(float64(timestamp.UnixNano()) / 1e9),
+			Time:      sdkdecimal.NewFromFloat64(float64(timestamp.UnixNano()) / 1e9),
 			Type:      side,
 			OrderType: "market",
-			Price:     decimal.NewFromFloat64(price),
-			Cost:      decimal.NewFromFloat64(cost),
-			Fee:       decimal.NewFromFloat64(fee),
-			Volume:    decimal.NewFromFloat64(volume),
+			Price:     sdkdecimal.NewFromFloat64(price),
+			Cost:      sdkdecimal.NewFromFloat64(cost),
+			Fee:       sdkdecimal.NewFromFloat64(fee),
+			Volume:    sdkdecimal.NewFromFloat64(volume),
 			Maker:     false,
 		}
 	}

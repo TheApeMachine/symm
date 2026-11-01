@@ -1,3 +1,9 @@
+export type Balance = {
+	cash: number;
+	unrealized: number;
+	equity: number;
+};
+
 /*
 Position shapes crossing the wire.
 
@@ -6,7 +12,7 @@ holds the broker's Position JSON: the desk emits the frame with the symbol as
 scope and the decoded position object as the layer payload, so the fields here
 mirror the JSON exactly.
 */
-export type DeskPosition = {
+export type Position = {
 	id: string;
 	entry_path: string;
 	hold_path?: string;

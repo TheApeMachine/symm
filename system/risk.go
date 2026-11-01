@@ -3,13 +3,12 @@ package system
 import (
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 )
 
 type Risk struct {
-	MaxFraction          *decimal.Decimal
-	TouchDivisor         *decimal.Decimal
+	MaxFraction          float64
+	TouchDivisor         float64
 	MinMoverVolumeUSD    float64
 	MinMoverChangePct    float64
 	MaxEntrySpreadPct    float64
@@ -43,8 +42,8 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.min_backing_ratio", 0.6)
 
 	return &Risk{
-		MaxFraction:          decimal.NewFromFloat64(viper.GetFloat64("risk.max_fraction")),
-		TouchDivisor:         decimal.NewFromInt64(int64(viper.GetInt("risk.touch_divisor"))),
+		MaxFraction:          viper.GetFloat64("risk.max_fraction"),
+		TouchDivisor:         float64(viper.GetInt("risk.touch_divisor")),
 		MinMoverVolumeUSD:    viper.GetFloat64("risk.min_mover_volume_usd"),
 		MinMoverChangePct:    viper.GetFloat64("risk.min_mover_change_pct"),
 		MaxEntrySpreadPct:    viper.GetFloat64("risk.max_entry_spread_pct"),

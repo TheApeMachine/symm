@@ -14,32 +14,32 @@ import (
 	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
 type Book struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	system     *runtime.System
-	pending    atomic.Pointer[map[string]struct{}]
-	seeded     chan struct{}
-	manager    *spot.BookManager
-	normalizer *spot.Normalizer
-	notify      atomic.Pointer[func(string, time.Time)]
-	touch       atomic.Pointer[func([]kraken.Level3Touch)]
-	resubscribe atomic.Pointer[func(string)]
+	ctx           context.Context
+	cancel        context.CancelFunc
+	system        *runtime.System
+	pending       atomic.Pointer[map[string]struct{}]
+	seeded        chan struct{}
+	manager       *spot.BookManager
+	normalizer    *spot.Normalizer
+	notify        atomic.Pointer[func(string, time.Time)]
+	touch         atomic.Pointer[func([]kraken.Level3Touch)]
+	resubscribe   atomic.Pointer[func(string)]
 	resubInflight sync.Map
-	mu         sync.RWMutex
-	stale      sync.Map
-	invalid    sync.Map
-	snapshots  sync.Map
-	failures   atomic.Int64
-	lastTouch  sync.Map
+	mu            sync.RWMutex
+	stale         sync.Map
+	invalid       sync.Map
+	snapshots     sync.Map
+	failures      atomic.Int64
+	lastTouch     sync.Map
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -524,7 +524,7 @@ func (book *Book) apply(
 
 							for _, queued := range level.Queue() {
 								if queued.ID == order.OrderID {
-									order.LimitPrice = level.Price
+									order.LimitPrice = mustFromSDK(level.Price)
 									break
 								}
 							}
@@ -541,7 +541,7 @@ func (book *Book) apply(
 
 					if order.OrderID != "" {
 						for _, level := range symbolSide.Levels {
-							if level == nil || level.Price == nil || level.Price.Cmp(order.LimitPrice) == 0 {
+							if level == nil || level.Price == nil || level.Price.Cmp(mustToSDK(order.LimitPrice)) == 0 {
 								continue
 							}
 
@@ -551,7 +551,7 @@ func (book *Book) apply(
 										Direction: direction,
 										ID:        order.OrderID,
 										Price:     level.Price,
-										Quantity:  decimal.NewFromInt64(0),
+										Quantity:  mustToSDK(dInt(0)),
 										Silent:    true,
 									})
 									break
@@ -563,7 +563,7 @@ func (book *Book) apply(
 					quantity := order.OrderQty
 
 					if order.Event == "delete" || quantity == nil {
-						quantity = decimal.NewFromInt64(0)
+						quantity = dInt(0)
 					}
 
 					// The SDK dereferences an absent level on zero-quantity updates.
@@ -580,8 +580,8 @@ func (book *Book) apply(
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     order.LimitPrice,
-						Quantity:  quantity,
+						Price:     mustToSDK(order.LimitPrice),
+						Quantity:  mustToSDK(quantity),
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
@@ -722,8 +722,8 @@ func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data,
 
 	*touches = append(*touches, kraken.Level3Touch{
 		Symbol: data.Symbol, Timestamp: data.Timestamp,
-		Bid: bid.Price, BidQty: bid.Quantity,
-		Ask: ask.Price, AskQty: ask.Quantity,
+		Bid: mustFromSDK(bid.Price), BidQty: mustFromSDK(bid.Quantity),
+		Ask: mustFromSDK(ask.Price), AskQty: mustFromSDK(ask.Quantity),
 	})
 }
 

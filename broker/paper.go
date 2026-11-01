@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -322,9 +322,9 @@ func (paper *Paper) OpenOrders() (spot.OpenOrdersResult, error) {
 		result.Open[orderID] = spot.Order{
 			ClOrdID:        row.ClientOrderID,
 			Status:         row.Status,
-			Volume:         row.Volume,
-			VolumeExecuted: row.Filled,
-			Price:          row.Price,
+			Volume:         mustToSDK(row.Volume),
+			VolumeExecuted: mustToSDK(row.Filled),
+			Price:          mustToSDK(row.Price),
 			Description: &spot.OrderDescription{
 				Pair:      row.Pair,
 				Type:      row.Side,
@@ -425,7 +425,7 @@ func (paper *Paper) TradeBalance() (*kraken.TradeBalanceResult, error) {
 		))
 	}
 
-	result.AvailableCash = decimal.NewFromInt64(0)
+	result.AvailableCash = dInt(0)
 
 	if row, found := balance.Balances[quote]; found {
 		result.AvailableCash = row.Available
@@ -464,7 +464,7 @@ func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, er
 		))
 	}
 
-	feePercent := decimal.NewFromFloat64(feeRate).Mul(decimal.NewFromInt64(100))
+	feePercent := dFloat(feeRate).Mul(dInt(100))
 	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
 	feesMaker := make(map[string]kraken.TradeVolumeFee, len(symbols))
 

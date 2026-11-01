@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	DEFAULT_KERNELS,
-	ensureSignalStore,
-	latest,
 	signals,
 	workspaceFrame,
 } from "#/collections/app";
-import type { Value } from "#/types/value";
+import {
+	ensureStore,
+	labelsAt,
+	type RegionRow,
+	regionsAt,
+	stores,
+} from "#/collections/envelope";
 import {
 	createCanonicalGridNodes,
 	getCanonicalPinDefs,
@@ -40,34 +44,12 @@ export interface ImpulseDataState {
 const CANONICAL_PINS = getCanonicalPinDefs();
 const CANONICAL_COUNTS = getCanonicalRegionCounts();
 
-type WireRegion = {
-	key?: number;
-	brightness?: number;
-	counts?: number;
-	symbol?: string;
-};
-
 const snm = (raw: number): number => {
 	if (!Number.isFinite(raw) || raw === 0) return 0;
 	return Math.abs(raw) / (1 + Math.abs(raw));
 };
 
-const layerArray = (frame: Value, key: string): unknown[] | undefined => {
-	const direct = frame.reading(key);
-	if (Array.isArray(direct)) {
-		return direct;
-	}
-
-	for (const { payload } of frame.layersUnder(key)) {
-		if (Array.isArray(payload)) {
-			return payload;
-		}
-	}
-
-	return undefined;
-};
-
-const regionBrightness = (region: WireRegion): number => {
+const regionBrightness = (region: RegionRow): number => {
 	if (typeof region.brightness === "number" && Number.isFinite(region.brightness)) {
 		return region.brightness;
 	}
@@ -75,46 +57,24 @@ const regionBrightness = (region: WireRegion): number => {
 	return 0;
 };
 
-const frameRegions = (frame: Value | undefined): WireRegion[] => {
-	if (!frame) return [];
-
-	const rows = layerArray(frame, "regions") as WireRegion[] | undefined;
-	if (!rows) return [];
-
-	return rows.map((row) =>
-		typeof row?.symbol === "string" && row.symbol !== ""
-			? row
-			: { ...row, symbol: frame.scope || row?.symbol },
-	);
-};
-
 /*
-symbolGridFrames returns every symbol's latest grid/train regions frame.
-Each entry is that symbol alone — never merged across the board.
+symbolGridFrames returns every symbol's latest regions from the envelope store.
 */
-const symbolGridFrames = (): Array<{ symbol: string; rows: WireRegion[] }> => {
-	const out: Array<{ symbol: string; rows: WireRegion[] }> = [];
-	const seen = new Set<string>();
+const symbolGridFrames = (): Array<{ symbol: string; rows: RegionRow[] }> => {
+	const out: Array<{ symbol: string; rows: RegionRow[] }> = [];
+	const state = stores.regions?.state ?? {};
 
-	const ingest = (origin: "grid" | "train") => {
-		const state = signals[origin]?.state;
-		if (!state) return;
+	for (const symbol of Object.keys(state)) {
+		if (!symbol) continue;
+		out.push({ symbol, rows: regionsAt(state, symbol) });
+	}
 
-		for (const [scope, frame] of Object.entries(state)) {
-			if (!frame || scope === "" || seen.has(scope)) continue;
-			seen.add(scope);
-			out.push({ symbol: scope, rows: frameRegions(frame) });
-		}
-	};
-
-	ingest("grid");
-	ingest("train");
 	out.sort((a, b) => a.symbol.localeCompare(b.symbol));
 	return out;
 };
 
 const paintRegions = (
-	rows: WireRegion[],
+	rows: RegionRow[],
 	heldBrightness: { current: number[] },
 	heldMembers: { current: number[] },
 ) => {
@@ -138,14 +98,14 @@ const pinMetric = (
 	pin: (typeof CANONICAL_PINS)[number],
 	symbol: string,
 ): number | undefined => {
-	if (pin.scope === "aggregate") {
-		const raw = latest(pin.source, "aggregate")?.metrics()[pin.metric];
-		return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
-	}
+	const scope = pin.scope === "aggregate" ? "aggregate" : symbol;
+	if (!scope) return undefined;
 
-	if (symbol === "") return undefined;
+	const store = stores[pin.source];
+	if (!store) return undefined;
 
-	const raw = latest(pin.source, symbol)?.metrics()[pin.metric];
+	const labels = labelsAt(store.state, scope);
+	const raw = labels?.[pin.metric];
 	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 };
 
@@ -260,7 +220,7 @@ export const useImpulseData = (
 
 		const paintSymbol = (
 			symbol: string,
-			rows: WireRegion[],
+			rows: RegionRow[],
 			marketTick: number,
 		) => {
 			paintRegions(rows, heldBrightness, heldMembers);
@@ -329,23 +289,18 @@ export const useImpulseData = (
 
 		const unsubs: Array<(() => void) | undefined> = [];
 
-		const trainSub = ensureSignalStore("train").subscribe(() => {
+		const regionsSub = ensureStore("regions").subscribe(() => {
 			updateFromTelemetry();
 		});
-		unsubs.push(() => trainSub.unsubscribe());
+		unsubs.push(() => regionsSub.unsubscribe());
 
 		const workspaceSub = signals.workspace.subscribe(() => {
 			updateFromTelemetry();
 		});
 		unsubs.push(() => workspaceSub.unsubscribe());
 
-		const gridSub = ensureSignalStore("grid").subscribe(() => {
-			updateFromTelemetry();
-		});
-		unsubs.push(() => gridSub.unsubscribe());
-
 		for (const kernel of DEFAULT_KERNELS) {
-			const sub = ensureSignalStore(kernel).subscribe(() => {
+			const sub = ensureStore(kernel).subscribe(() => {
 				updateFromTelemetry();
 			});
 			unsubs.push(() => sub.unsubscribe());

@@ -5,11 +5,11 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -177,7 +177,7 @@ func (balance *Balance) poll() (err error) {
 			))
 		}
 
-		balance.wallet.Store(kraken.NewBalanceFromMap(resp.Result))
+		balance.wallet.Store(kraken.NewBalanceFromMap(balanceMapFromSDK(resp.Result)))
 
 		// No asset parameter: Kraken values the trade balance in its documented
 		// default asset, ZUSD.
