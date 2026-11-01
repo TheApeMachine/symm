@@ -3,42 +3,38 @@ import { useMemo } from "react";
 import { bookAtom } from "#/collections/book";
 import {
 	alertVariant,
-	blockedTone,
 	buildInsights,
+	type ExitMix,
 	type LongtailSample,
-	type TrainingSample,
 	matchTone,
 	pct,
+	resistanceTone,
 	returnTone,
 	type Tone,
+	tierStats,
 	toneColor,
 	toneVariant,
-	trainingVerdict,
+	topExitTriggers,
 	useLongtailReport,
+	verdict,
 	winRateTone,
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
-import {
-	formatExitTrigger,
-	triggerTone,
-} from "#/lib/trigger-labels";
 import { Flex } from "#/components/ui/flex";
+import { deskRowsForStats } from "#/lib/lifecycle";
+import { formatExitTrigger, triggerTone } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 import { type ChartSeries, MetricChart } from "./metric-chart";
 
 /*
-Path-learning surface: policy hits, path-book growth, and why virtuals close
-— not desk edge or win rate (those live in the top bar).
-
-One screen: training verdict, KPI tiles, charts, and a right rail.
+Longtail surface: selected-tier trajectory — win/edge, path-book resistance,
+policy hits, exit mix, and stop pressure. All readouts follow the top-bar book.
 */
 
 const rate = (value: number) => `${Math.round(value * 100)}%`;
 const countLabel = (value: number) => `${Math.round(value)}`;
+const resistLabel = (value: number) => value.toFixed(2);
 
-const levelTone = (_value: number | null): Tone => "neutral";
-
-/* A flat sparkline sits mid-height instead of pinning to the floor. */
 const sparkPath = (
 	points: number[],
 	width = 100,
@@ -70,21 +66,23 @@ const sparkPath = (
 type Kpi = {
 	id: string;
 	label: string;
-	value: (sample: LongtailSample) => number | null;
+	value: (
+		sample: LongtailSample,
+		book: ReturnType<typeof bookAtom.get>,
+	) => number | null;
 	format: (value: number) => string;
 	formatDelta: (delta: number) => string;
-	tone: (value: number | null) => Tone;
+	tone: (value: number | null, sample?: LongtailSample) => Tone;
 	higherIsBetter: boolean;
-	/** When false, movement stays grey. Counts are context, not a score. */
 	colorDelta: boolean;
 	epsilon: number;
 };
 
 const kpis: Kpi[] = [
 	{
-		id: "paper-win",
-		label: "paper win rate",
-		value: (s) => s.paper?.winRate ?? null,
+		id: "win",
+		label: "win rate",
+		value: (s, book) => tierStats(s, book).winRate,
 		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -94,9 +92,9 @@ const kpis: Kpi[] = [
 		epsilon: 0.02,
 	},
 	{
-		id: "paper-edge",
-		label: "paper edge",
-		value: (s) => s.paper?.meanReturn ?? null,
+		id: "edge",
+		label: "edge",
+		value: (s, book) => tierStats(s, book).edge,
 		format: pct,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(2)}pp`,
@@ -106,44 +104,43 @@ const kpis: Kpi[] = [
 		epsilon: 0.002,
 	},
 	{
-		id: "real-armed",
-		label: "real armed",
-		value: (s) => s.realArmed,
-		format: (value) => (value >= 0.5 ? "yes" : "halted"),
-		formatDelta: () => "",
-		tone: (value) =>
-			value === null ? "neutral" : value >= 0.5 ? "good" : "warn",
+		id: "closed",
+		label: "settled",
+		value: (s, book) => tierStats(s, book).stats.closed,
+		format: countLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
+		tone: () => "info",
 		higherIsBetter: true,
 		colorDelta: false,
 		epsilon: 0.5,
 	},
 	{
-		id: "real-win",
-		label: "real win rate",
-		value: (s) => s.real?.winRate ?? null,
-		format: rate,
-		formatDelta: (delta) =>
-			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: winRateTone,
+		id: "promoted",
+		label: "paper floor",
+		value: (s) => s.paths.promoted,
+		format: countLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
+		tone: (value) => (value === null ? "neutral" : value > 0 ? "good" : "info"),
 		higherIsBetter: true,
+		colorDelta: true,
+		epsilon: 0.5,
+	},
+	{
+		id: "resistance",
+		label: "mean resist",
+		value: (s) => s.paths.meanResistance,
+		format: resistLabel,
+		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`,
+		tone: (value, sample) =>
+			resistanceTone(value, sample?.eligibleResistance ?? 0.2),
+		higherIsBetter: false,
 		colorDelta: true,
 		epsilon: 0.02,
 	},
 	{
-		id: "developed",
-		label: "paths",
-		value: (s) => s.training?.developedPaths ?? null,
-		format: countLabel,
-		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
-		tone: levelTone,
-		higherIsBetter: true,
-		colorDelta: false,
-		epsilon: 0.5,
-	},
-	{
 		id: "policy",
 		label: "policy hit",
-		value: (s) => s.training?.policyStoredRate ?? null,
+		value: (s) => s.policy.hitRate,
 		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
@@ -154,18 +151,26 @@ const kpis: Kpi[] = [
 	},
 ];
 
-const KpiTile = ({ kpi, samples }: { kpi: Kpi; samples: LongtailSample[] }) => {
-	const series = samples.map(kpi.value);
+const KpiTile = ({
+	kpi,
+	samples,
+	book,
+}: {
+	kpi: Kpi;
+	samples: LongtailSample[];
+	book: ReturnType<typeof bookAtom.get>;
+}) => {
+	const series = samples.map((s) => kpi.value(s, book));
 	const lastSample = samples[samples.length - 1];
-	const latest = lastSample ? kpi.value(lastSample) : null;
+	const latest = lastSample ? kpi.value(lastSample, book) : null;
 	const priorSample = samples[Math.max(0, samples.length - 16)];
-	const prior = priorSample ? kpi.value(priorSample) : null;
+	const prior = priorSample ? kpi.value(priorSample, book) : null;
 	const delta =
 		latest !== null && prior !== null && Number.isFinite(prior)
 			? latest - prior
 			: null;
 
-	const tone = kpi.tone(latest);
+	const tone = kpi.tone(latest, lastSample);
 	const deltaTone: Tone =
 		!kpi.colorDelta || delta === null || Math.abs(delta) < kpi.epsilon
 			? "neutral"
@@ -186,7 +191,7 @@ const KpiTile = ({ kpi, samples }: { kpi: Kpi; samples: LongtailSample[] }) => {
 		>
 			<div className="flex items-baseline justify-between gap-1">
 				<span className="truncate text-[9px] uppercase tracking-[0.08em] text-(--f4)">
-					{kpi.label}
+					{book} {kpi.label}
 				</span>
 				<span
 					className="shrink-0 text-[9px] tabular-nums"
@@ -225,184 +230,196 @@ type ChartDef = {
 	id: string;
 	label: string;
 	caption: string;
-	series: (samples: LongtailSample[]) => ChartSeries[];
+	series: (
+		samples: LongtailSample[],
+		book: ReturnType<typeof bookAtom.get>,
+	) => ChartSeries[];
 	formatY: (value: number) => string;
 	yDomain?: [number, number];
 	baseline?: number;
-	tone: (sample: LongtailSample | undefined) => Tone;
+	tone: (
+		sample: LongtailSample | undefined,
+		book: ReturnType<typeof bookAtom.get>,
+	) => Tone;
 };
 
-const trainingPoint = (
-	sample: LongtailSample | undefined,
-	key: keyof TrainingSample,
-): number | null => {
-	const value = sample?.training?.[key];
-	return typeof value === "number" ? value : null;
-};
-
-const trainingCharts: ChartDef[] = [
+const charts: ChartDef[] = [
 	{
-		id: "policy",
-		label: "Policy match",
-		caption: "stored path hits and enter/exit outcomes on symbol checks",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					label: "stored",
-					values: samples.map((s) => trainingPoint(s, "policyStoredRate")),
-					stroke: toneColor(
-						matchTone(trainingPoint(latest, "policyStoredRate")),
-					),
-				},
-				{
-					label: "enter",
-					values: samples.map((s) => trainingPoint(s, "outcomeEnterRate")),
-					stroke: "var(--up)",
-				},
-				{
-					label: "exit",
-					values: samples.map((s) => trainingPoint(s, "outcomeExitRate")),
-					stroke: "var(--down)",
-				},
-			];
-		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => matchTone(trainingPoint(s, "policyStoredRate")),
-	},
-	{
-		id: "letters",
-		label: "Letter gate",
-		caption: "new path letters vs lit ticks that stayed quiet",
-		series: (samples) => {
-			const latest = samples[samples.length - 1];
-			return [
-				{
-					label: "emit",
-					values: samples.map((s) => trainingPoint(s, "tokenEmitRate")),
-					stroke: "var(--info)",
-				},
-				{
-					label: "blocked",
-					values: samples.map((s) => trainingPoint(s, "blockedRate")),
-					stroke: toneColor(blockedTone(trainingPoint(latest, "blockedRate"))),
-				},
-				{
-					label: "duplicate",
-					values: samples.map((s) => trainingPoint(s, "blockedDuplicateRate")),
-					stroke: "var(--warn)",
-				},
-			];
-		},
-		formatY: rate,
-		yDomain: [0, 1],
-		tone: (s) => blockedTone(trainingPoint(s, "blockedRate")),
+		id: "edge",
+		label: "Edge trajectory",
+		caption: "selected-tier mean return and win rate over the sample window",
+		series: (samples, book) => [
+			{
+				label: "edge",
+				values: samples.map((s) => tierStats(s, book).edge),
+				stroke: "var(--acc)",
+			},
+			{
+				label: "win",
+				values: samples.map((s) => tierStats(s, book).winRate),
+				stroke: "var(--up)",
+			},
+		],
+		formatY: (value) =>
+			Math.abs(value) <= 1.5 ? pct(value) : countLabel(value),
+		baseline: 0,
+		tone: (s, book) => (s ? returnTone(tierStats(s, book).edge) : "neutral"),
 	},
 	{
 		id: "paths",
 		label: "Path book",
-		caption: "developed, paper floor, pruned, and mean book threshold",
+		caption: "developed leaves, paper-floor promotions, and mean resistance",
 		series: (samples) => [
 			{
 				label: "developed",
-				values: samples.map((s) => s.training?.developedPaths ?? null),
+				values: samples.map((s) => s.paths.developed),
 				stroke: "var(--info)",
 			},
 			{
-				label: "paper",
-				values: samples.map((s) => s.training?.promotedPaths ?? null),
+				label: "promoted",
+				values: samples.map((s) => s.paths.promoted),
 				stroke: "var(--up)",
 			},
 			{
-				label: "pruned",
-				values: samples.map((s) => s.training?.prunedPaths ?? null),
-				stroke: "var(--down)",
+				label: "resistance",
+				values: samples.map((s) => s.paths.meanResistance),
+				stroke: "var(--warn)",
 			},
 		],
-		formatY: countLabel,
-		tone: () => "info" as Tone,
+		formatY: (value) => (value <= 1.5 ? resistLabel(value) : countLabel(value)),
+		tone: (s) =>
+			s
+				? resistanceTone(s.paths.meanResistance, s.eligibleResistance)
+				: "neutral",
 	},
 	{
-		id: "exits",
-		label: "Exit reasons",
-		caption: "profit hurdle, friction stop, and learned exit branch",
+		id: "churn",
+		label: "Path churn",
+		caption: "keys added vs removed between samples — thrash when both spike",
 		series: (samples) => [
 			{
-				label: "profit",
-				values: samples.map((s) => s.training?.exitProfit ?? null),
+				label: "added",
+				values: samples.map((s) => s.paths.added),
 				stroke: "var(--up)",
 			},
 			{
-				label: "stop",
-				values: samples.map((s) => s.training?.exitStop ?? null),
+				label: "removed",
+				values: samples.map((s) => s.paths.removed),
 				stroke: "var(--down)",
-			},
-			{
-				label: "branch",
-				values: samples.map((s) => s.training?.exitBranch ?? null),
-				stroke: "var(--info)",
 			},
 		],
 		formatY: countLabel,
 		tone: (s) => {
-			const profit = s?.training?.exitProfit ?? 0;
-			const stop = s?.training?.exitStop ?? 0;
-			if (profit + stop + (s?.training?.exitBranch ?? 0) === 0) return "neutral";
-			return profit > stop ? "good" : "warn";
+			if (!s || s.paths.added === null) return "neutral";
+			const churn = (s.paths.added ?? 0) + (s.paths.removed ?? 0);
+			return churn >= 3 ? "warn" : "info";
 		},
 	},
-{
-	id: "stops",
-	label: "Stop proximity",
-	caption: "open book vs invalidation / trail / damage — 1.0 is firing",
-	series: (samples) => [
-		{
-			label: "stop loss",
-			values: samples.map((s) => s.stops?.invalidation ?? null),
-			stroke: "var(--down)",
-		},
-		{
-			label: "trail",
-			values: samples.map((s) => s.stops?.trailing ?? null),
-			stroke: "var(--up)",
-		},
-		{
-			label: "damage",
-			values: samples.map((s) => s.stops?.damage ?? null),
-			stroke: "var(--warn)",
-		},
-	],
-	formatY: rate,
-	yDomain: [0, 1.25],
-	baseline: 1,
-	tone: (s) => {
-		const stops = s?.stops;
-		if (!stops || stops.maxProximity === null) return "neutral";
-		return stops.maxProximity >= 1
-			? "bad"
-			: stops.maxProximity >= 0.7
-				? "warn"
-				: "good";
+	{
+		id: "policy",
+		label: "Policy match",
+		caption: "share of live symbol cuts that landed on a stored path",
+		series: (samples) => [
+			{
+				label: "hit rate",
+				values: samples.map((s) => s.policy.hitRate),
+				stroke: "var(--acc)",
+			},
+		],
+		formatY: rate,
+		yDomain: [0, 1],
+		tone: (s) => matchTone(s?.policy.hitRate ?? null),
 	},
-},
+	{
+		id: "exits",
+		label: "Exit mix",
+		caption: "profit vs stop vs policy exits on the selected tier",
+		series: (samples, book) => {
+			const mix = (s: LongtailSample): ExitMix => s.exits[book];
+			return [
+				{
+					label: "profit",
+					values: samples.map((s) => mix(s).profit),
+					stroke: "var(--up)",
+				},
+				{
+					label: "stop",
+					values: samples.map((s) => mix(s).stop),
+					stroke: "var(--down)",
+				},
+				{
+					label: "policy",
+					values: samples.map((s) => mix(s).policy),
+					stroke: "var(--info)",
+				},
+			];
+		},
+		formatY: countLabel,
+		tone: (s, book) => {
+			if (!s) return "neutral";
+			const mix = s.exits[book];
+			if (mix.total === 0) return "neutral";
+			return mix.profit > mix.stop
+				? "good"
+				: mix.stop > mix.profit
+					? "warn"
+					: "info";
+		},
+	},
+	{
+		id: "stops",
+		label: "Stop proximity",
+		caption:
+			"open selected-tier book vs invalidation / trail / damage — 1.0 fires",
+		series: (samples, book) => [
+			{
+				label: "stop loss",
+				values: samples.map((s) => s.stops[book].invalidation),
+				stroke: "var(--down)",
+			},
+			{
+				label: "trail",
+				values: samples.map((s) => s.stops[book].trailing),
+				stroke: "var(--up)",
+			},
+			{
+				label: "damage",
+				values: samples.map((s) => s.stops[book].damage),
+				stroke: "var(--warn)",
+			},
+		],
+		formatY: rate,
+		yDomain: [0, 1.25],
+		baseline: 1,
+		tone: (s, book) => {
+			const stops = s?.stops[book];
+			if (!stops || stops.maxProximity === null) return "neutral";
+			return stops.maxProximity >= 1
+				? "bad"
+				: stops.maxProximity >= 0.7
+					? "warn"
+					: "good";
+		},
+	},
 ];
 
-const CHART_ROW_COUNT = Math.ceil(trainingCharts.length / 2);
+const CHART_ROW_COUNT = Math.ceil(charts.length / 2);
 
 const ChartPanel = ({
 	chart,
 	samples,
 	times,
+	book,
 	className,
 }: {
 	chart: ChartDef;
 	samples: LongtailSample[];
 	times: number[];
+	book: ReturnType<typeof bookAtom.get>;
 	className?: string;
 }) => {
 	const latestSample = samples[samples.length - 1];
-	const series = chart.series(samples);
+	const series = chart.series(samples, book);
 	const latestOf = (values: Array<number | null | undefined>) => {
 		const tail = values[values.length - 1];
 		return tail !== null && tail !== undefined && Number.isFinite(tail)
@@ -413,8 +430,10 @@ const ChartPanel = ({
 		const value = latestOf(item.values);
 		return value === null ? "—" : chart.formatY(value);
 	});
-	const headline = heads.every((head) => head === "—") ? "—" : heads.join(" · ");
-	const tone = chart.tone(latestSample);
+	const headline = heads.every((head) => head === "—")
+		? "—"
+		: heads.join(" · ");
+	const tone = chart.tone(latestSample, book);
 
 	return (
 		<div
@@ -506,16 +525,19 @@ export const LongtailDashboard = () => {
 
 	const times = useMemo(() => samples.map((s) => s.at), [samples]);
 	const insights = useMemo(() => buildInsights(samples, book), [samples, book]);
-	const v = useMemo(() => trainingVerdict(samples), [samples]);
+	const v = useMemo(() => verdict(samples, book), [samples, book]);
+	const exitTriggers = topExitTriggers(deskRowsForStats(), book);
 
 	const latest = samples[samples.length - 1];
 	const first = samples[0];
 	const spanMinutes =
 		latest && first ? Math.round((latest.at - first.at) / 60_000) : 0;
 	const windowMinutes = Math.max(1, spanMinutes);
-	const training = latest?.training;
-	const stops = latest?.stops;
-	const bookStats = latest ? latest[book] : undefined;
+	const tier = latest ? tierStats(latest, book) : null;
+	const paths = latest?.paths;
+	const policy = latest?.policy;
+	const exits = latest?.exits[book];
+	const stops = latest?.stops[book];
 
 	return (
 		<Flex.Column className="h-full min-h-0 w-full overflow-hidden bg-(--bg) font-mono text-(--f2)">
@@ -529,7 +551,7 @@ export const LongtailDashboard = () => {
 			>
 				<Flex.Row align="center" gap={2}>
 					<span className="text-[11px] font-bold uppercase tracking-wide text-(--f1)">
-						Path learning
+						Longtail
 					</span>
 					<Badge
 						variant={toneVariant(v.tone)}
@@ -545,11 +567,25 @@ export const LongtailDashboard = () => {
 						size="s"
 						label={book}
 						value={
-							bookStats
-								? `${bookStats.open} open · ${bookStats.closed} settled`
+							tier
+								? `${tier.stats.open} open · ${tier.stats.closed} settled`
 								: "no data"
 						}
 					/>
+					{book === "real" ? (
+						<Chip
+							variant="quiet"
+							size="s"
+							label="armed"
+							value={
+								tier?.armed === null || tier?.armed === undefined
+									? "—"
+									: tier.armed >= 0.5
+										? "yes"
+										: "halted"
+							}
+						/>
+					) : null}
 					<Chip
 						variant="quiet"
 						size="s"
@@ -565,9 +601,9 @@ export const LongtailDashboard = () => {
 				</Flex.Row>
 			</Flex.Row>
 
-			<div className="grid shrink-0 grid-cols-8 border-b border-(--line) bg-(--surface)">
+			<div className="grid shrink-0 grid-cols-6 border-b border-(--line) bg-(--surface)">
 				{kpis.map((kpi) => (
-					<KpiTile key={kpi.id} kpi={kpi} samples={samples} />
+					<KpiTile key={kpi.id} kpi={kpi} samples={samples} book={book} />
 				))}
 			</div>
 
@@ -578,232 +614,183 @@ export const LongtailDashboard = () => {
 						gridTemplateRows: `repeat(${CHART_ROW_COUNT}, minmax(0, 1fr))`,
 					}}
 				>
-					{trainingCharts.map((chart, index) => (
+					{charts.map((chart) => (
 						<ChartPanel
 							key={chart.id}
 							chart={chart}
 							samples={samples}
 							times={times}
-							className={
-								index === trainingCharts.length - 1 &&
-								trainingCharts.length % 2 === 1
-									? "col-span-2"
-									: undefined
-							}
+							book={book}
 						/>
 					))}
 				</div>
 
 				<Flex.Column className="min-h-0 w-72 shrink-0 border-l border-(--line) bg-(--bg)">
+					<RailBlock title={`${book} book`}>
+						<RailRow
+							label="win rate"
+							value={
+								tier?.winRate === null || tier?.winRate === undefined
+									? "—"
+									: pct(tier.winRate)
+							}
+							meter={tier?.winRate ?? null}
+							tone={winRateTone(tier?.winRate ?? null)}
+						/>
+						<RailRow
+							label="edge"
+							value={
+								tier?.edge === null || tier?.edge === undefined
+									? "—"
+									: pct(tier.edge)
+							}
+							tone={returnTone(tier?.edge ?? null)}
+						/>
+						<RailRow
+							label="settled"
+							value={tier ? String(tier.stats.closed) : "—"}
+							tone="info"
+						/>
+						<RailRow
+							label="open"
+							value={tier ? String(tier.stats.open) : "—"}
+							tone="info"
+						/>
+						{book === "real" ? (
+							<RailRow
+								label="armed"
+								value={
+									!tier || tier.armed == null
+										? "—"
+										: tier.armed >= 0.5
+											? "yes"
+											: "halted"
+								}
+								tone={
+									!tier || tier.armed == null
+										? "neutral"
+										: tier.armed >= 0.5
+											? "good"
+											: "warn"
+								}
+							/>
+						) : null}
+					</RailBlock>
+
 					<RailBlock title="Paths">
 						<RailRow
 							label="developed"
 							value={
-								training?.developedPaths === null ||
-								training?.developedPaths === undefined
+								paths?.developed === null || paths?.developed === undefined
 									? "—"
-									: String(training.developedPaths)
+									: String(paths.developed)
 							}
 							tone="info"
 						/>
 						<RailRow
 							label="paper floor"
 							value={
-								training?.promotedPaths === null ||
-								training?.promotedPaths === undefined
+								paths?.promoted === null || paths?.promoted === undefined
 									? "—"
-									: String(training.promotedPaths)
+									: String(paths.promoted)
+							}
+							tone={(paths?.promoted ?? 0) > 0 ? "good" : "neutral"}
+						/>
+						<RailRow
+							label="mean resistance"
+							value={
+								paths?.meanResistance === null ||
+								paths?.meanResistance === undefined
+									? "—"
+									: paths.meanResistance.toFixed(2)
+							}
+							tone={resistanceTone(
+								paths?.meanResistance ?? null,
+								latest?.eligibleResistance ?? 0.2,
+							)}
+						/>
+						<RailRow
+							label="churn"
+							value={
+								paths?.added === null || paths?.added === undefined
+									? "—"
+									: `+${paths.added}/−${paths.removed ?? 0}`
 							}
 							tone={
-								(training?.promotedPaths ?? 0) > 0 ? "good" : "neutral"
+								(paths?.added ?? 0) + (paths?.removed ?? 0) >= 3
+									? "warn"
+									: "info"
 							}
-						/>
-						<RailRow
-							label="pruned"
-							value={
-								training?.prunedPaths === null ||
-								training?.prunedPaths === undefined
-									? "—"
-									: String(training.prunedPaths)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="mean threshold"
-							value={
-								training?.meanThreshold === null ||
-								training?.meanThreshold === undefined
-									? "—"
-									: training.meanThreshold.toFixed(2)
-							}
-							tone="info"
 						/>
 					</RailBlock>
 
 					<RailBlock title="Policy">
 						<RailRow
-							label="policy hit"
+							label="hit rate"
 							value={
-								training?.policyStoredRate === null ||
-								training?.policyStoredRate === undefined
+								policy?.hitRate === null || policy?.hitRate === undefined
 									? "—"
-									: pct(training.policyStoredRate)
+									: pct(policy.hitRate)
 							}
-							meter={training?.policyStoredRate ?? null}
-							tone={matchTone(training?.policyStoredRate ?? null)}
+							meter={policy?.hitRate ?? null}
+							tone={matchTone(policy?.hitRate ?? null)}
 						/>
 						<RailRow
-							label="enter outcome"
-							value={
-								training?.outcomeEnterRate === null ||
-								training?.outcomeEnterRate === undefined
-									? "—"
-									: pct(training.outcomeEnterRate)
-							}
+							label="checks"
+							value={policy ? String(policy.checks) : "—"}
 							tone="info"
 						/>
 						<RailRow
-							label="exit outcome"
-							value={
-								training?.outcomeExitRate === null ||
-								training?.outcomeExitRate === undefined
-									? "—"
-									: pct(training.outcomeExitRate)
-							}
-							tone="info"
-						/>
-					</RailBlock>
-
-					<RailBlock title="Letters">
-						<RailRow
-							label="new letter"
-							value={
-								training?.tokenEmitRate === null ||
-								training?.tokenEmitRate === undefined
-									? "—"
-									: pct(training.tokenEmitRate)
-							}
-							meter={training?.tokenEmitRate ?? null}
-							tone="info"
-						/>
-						<RailRow
-							label="same letter"
-							value={
-								training?.blockedDuplicateRate === null ||
-								training?.blockedDuplicateRate === undefined
-									? "—"
-									: pct(training.blockedDuplicateRate)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="risk veto"
-							value={
-								training?.vetoRate === null || training?.vetoRate === undefined
-									? "—"
-									: pct(training.vetoRate)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="dark role"
-							value={
-								training?.emptyRate === null || training?.emptyRate === undefined
-									? "—"
-									: pct(training.emptyRate)
-							}
-							tone="info"
-						/>
-					</RailBlock>
-
-					<RailBlock title="Desk">
-						<RailRow
-							label="virtual open"
-							value={
-								latest?.virtual.open === undefined
-									? "—"
-									: String(latest.virtual.open)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="paper open"
-							value={
-								latest?.paper.open === undefined
-									? "—"
-									: String(latest.paper.open)
-							}
-							tone="info"
-						/>
-						<RailRow
-							label="enters last tick"
-							value={
-								training?.exploredEnter === null ||
-								training?.exploredEnter === undefined
-									? "—"
-									: String(training.exploredEnter)
-							}
+							label="hits"
+							value={policy ? String(policy.hits) : "—"}
 							tone="info"
 						/>
 					</RailBlock>
 
 					<RailBlock title="Exits">
 						<RailRow
-							label="profit hurdle"
-							value={
-								training?.exitProfit === null ||
-								training?.exitProfit === undefined
-									? "—"
-									: String(training.exitProfit)
-							}
-							tone={(training?.exitProfit ?? 0) > 0 ? "good" : "neutral"}
+							label="profit"
+							value={exits ? String(exits.profit) : "—"}
+							tone={(exits?.profit ?? 0) > 0 ? "good" : "neutral"}
 						/>
 						<RailRow
-							label="friction stop"
-							value={
-								training?.exitStop === null || training?.exitStop === undefined
-									? "—"
-									: String(training.exitStop)
-							}
-							tone={(training?.exitStop ?? 0) > 0 ? "warn" : "neutral"}
+							label="stop"
+							value={exits ? String(exits.stop) : "—"}
+							tone={(exits?.stop ?? 0) > 0 ? "warn" : "neutral"}
 						/>
 						<RailRow
-							label="exit branch"
-							value={
-								training?.exitBranch === null ||
-								training?.exitBranch === undefined
-									? "—"
-									: String(training.exitBranch)
-							}
+							label="policy"
+							value={exits ? String(exits.policy) : "—"}
 							tone="info"
 						/>
 						<RailRow
-							label="branch share"
-							value={
-								!training ||
-								training.exitProfit === null ||
-								training.exitStop === null ||
-								training.exitBranch === null
-									? "—"
-									: (() => {
-											const total =
-												(training.exitProfit ?? 0) +
-												(training.exitStop ?? 0) +
-												(training.exitBranch ?? 0);
-											return total === 0
-												? "—"
-												: pct((training.exitBranch ?? 0) / total);
-										})()
-							}
-							tone="info"
+							label="other"
+							value={exits ? String(exits.other) : "—"}
+							tone="neutral"
 						/>
+						{exitTriggers.length > 0 ? (
+							<div className="mt-2 space-y-1 border-t border-(--line)/60 pt-2">
+								<div className="px-2.5 text-[9px] font-bold uppercase tracking-wider text-(--f4)">
+									top triggers
+								</div>
+								{exitTriggers.map(({ trigger, count }) => (
+									<RailRow
+										key={trigger}
+										label={formatExitTrigger(trigger)}
+										value={String(count)}
+										tone={triggerTone(trigger)}
+									/>
+								))}
+							</div>
+						) : null}
 					</RailBlock>
 
 					<RailBlock title="Stops">
 						<RailRow
 							label="stop loss"
 							value={
-								stops?.invalidation === null || stops?.invalidation === undefined
+								stops?.invalidation === null ||
+								stops?.invalidation === undefined
 									? "—"
 									: pct(stops.invalidation)
 							}
@@ -816,7 +803,7 @@ export const LongtailDashboard = () => {
 										: (stops?.invalidation ?? 0) > 0
 											? "info"
 											: "neutral"
-								}
+							}
 						/>
 						<RailRow
 							label="trail"
@@ -832,7 +819,7 @@ export const LongtailDashboard = () => {
 									: (stops?.trailing ?? 0) > 0
 										? "info"
 										: "neutral"
-								}
+							}
 						/>
 						<RailRow
 							label="damage"
@@ -845,12 +832,10 @@ export const LongtailDashboard = () => {
 							tone={
 								(stops?.damage ?? 0) >= 0.8
 									? "warn"
-									: (stops?.damage ?? 0) >= 0.4
+									: (stops?.damage ?? 0) > 0
 										? "info"
-										: (stops?.damage ?? 0) > 0
-											? "good"
-											: "neutral"
-								}
+										: "neutral"
+							}
 						/>
 						<RailRow
 							label="lots armed"
@@ -864,7 +849,8 @@ export const LongtailDashboard = () => {
 						<RailRow
 							label="nearest exit"
 							value={
-								stops?.maxProximity === null || stops?.maxProximity === undefined
+								stops?.maxProximity === null ||
+								stops?.maxProximity === undefined
 									? "—"
 									: pct(stops.maxProximity)
 							}
@@ -874,26 +860,8 @@ export const LongtailDashboard = () => {
 									: (stops?.maxProximity ?? 0) >= 0.7
 										? "warn"
 										: "neutral"
-								}
+							}
 						/>
-						{(stops?.exitTotal ?? 0) > 0 ? (
-							<div className="mt-2 space-y-1 border-t border-(--line)/60 pt-2">
-								<div className="text-[9px] font-bold uppercase tracking-wider text-(--f4)">
-									closed exit reasons
-								</div>
-								{Object.entries(stops?.exits ?? {})
-									.sort((a, b) => b[1] - a[1])
-									.slice(0, 6)
-									.map(([trigger, count]) => (
-										<RailRow
-											key={trigger}
-											label={formatExitTrigger(trigger)}
-											value={String(count)}
-											tone={triggerTone(trigger)}
-										/>
-									))}
-							</div>
-						) : null}
 					</RailBlock>
 
 					<div className="min-h-0 flex-1 overflow-auto">

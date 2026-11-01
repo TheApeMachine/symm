@@ -4,10 +4,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { bookAtom } from "#/collections/book";
 import {
 	type BookDeskStats,
+	type ExitMix,
+	emptyExitMix,
+	emptyPaths,
+	emptyPolicy,
+	emptyStops,
 	type LongtailSample,
-	type OpenLotTelemetry,
 	longtailStore,
-	type TrainingSample,
+	type OpenLotTelemetry,
+	type PathBookSnapshot,
+	type PolicySnapshot,
 } from "#/collections/longtail";
 import { LongtailDashboard } from "./dashboard";
 
@@ -52,79 +58,69 @@ const bookStats = (overrides: Partial<BookDeskStats> = {}): BookDeskStats => ({
 	...overrides,
 });
 
-const training = (overrides: Partial<TrainingSample> = {}): TrainingSample => ({
-	feeds: 0,
-	tokenEmitRate: null,
-	blockedRate: null,
-	blockedBrightnessRate: null,
-	blockedDuplicateRate: null,
-	vetoRate: null,
-	emptyRate: null,
-	policyStoredRate: null,
-	outcomeRate: null,
-	outcomeEnterRate: null,
-	outcomeExitRate: null,
-	exploredEnter: null,
-	venueOpen: null,
-	virtualExcursion: null,
-	developedPaths: null,
-	promotedPaths: null,
-	prunedPaths: null,
-	meanThreshold: null,
-	exitProfit: null,
-	exitStop: null,
-	exitBranch: null,
-	...overrides,
-});
-
-const emptyStops: OpenLotTelemetry = {
-	open: null,
-	invalidation: null,
-	trailing: null,
-	damage: null,
-	armed: null,
-	maxProximity: null,
-	exits: {},
-	exitTotal: 0,
-};
-
 const sample = (
 	at: number,
 	overrides: Partial<{
 		paper: Partial<BookDeskStats>;
 		virtual: Partial<BookDeskStats>;
 		real: Partial<BookDeskStats>;
+		paperWin: number | null;
+		paperEdge: number | null;
+		realWin: number | null;
+		realEdge: number | null;
 		realArmed: number | null;
-		training: Partial<TrainingSample>;
-		stops: Partial<OpenLotTelemetry>;
+		paths: Partial<PathBookSnapshot>;
+		policy: Partial<PolicySnapshot>;
+		exits: Partial<Record<"virtual" | "paper" | "real", Partial<ExitMix>>>;
+		stops: Partial<
+			Record<"virtual" | "paper" | "real", Partial<OpenLotTelemetry>>
+		>;
 	}> = {},
 ): LongtailSample => ({
 	at,
 	paper: bookStats(overrides.paper),
 	virtual: bookStats(overrides.virtual),
 	real: bookStats(overrides.real),
+	paperWin: overrides.paperWin ?? null,
+	paperEdge: overrides.paperEdge ?? null,
+	realWin: overrides.realWin ?? null,
+	realEdge: overrides.realEdge ?? null,
 	realArmed: overrides.realArmed ?? null,
-	training: training(overrides.training),
-	stops: { ...emptyStops, ...overrides.stops },
+	eligibleResistance: 0.2,
+	paths: { ...emptyPaths(), ...overrides.paths },
+	policy: { ...emptyPolicy(), ...overrides.policy },
+	exits: {
+		virtual: { ...emptyExitMix(), ...overrides.exits?.virtual },
+		paper: { ...emptyExitMix(), ...overrides.exits?.paper },
+		real: { ...emptyExitMix(), ...overrides.exits?.real },
+	},
+	stops: {
+		virtual: { ...emptyStops(), ...overrides.stops?.virtual },
+		paper: { ...emptyStops(), ...overrides.stops?.paper },
+		real: { ...emptyStops(), ...overrides.stops?.real },
+	},
 });
 
 afterEach(() => {
 	cleanup();
 	bookAtom.set("paper");
-	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
+	longtailStore.setState(() => ({
+		samples: [],
+		lastSampleAt: 0,
+		sourcesReady: false,
+	}));
 });
 
 describe("LongtailDashboard", () => {
-	it("reports warming up and waits for history with no samples", () => {
+	it("reports warming up and waits for samples with an empty window", () => {
 		const { getByText, container } = render(<LongtailDashboard />);
 
-		expect(getByText("Path learning")).toBeTruthy();
+		expect(getByText("Longtail")).toBeTruthy();
 		expect(getByText("Warming up")).toBeTruthy();
-		// Every chart waits for a second sample before it can draw a line.
-		expect(container.textContent).toContain("collecting history…");
+		expect(container.textContent).toContain("waiting for samples…");
 	});
 
-	it("renders the KPI strip, charts, and the right rail", () => {
+	it("renders the KPI strip, charts, and the right rail for the selected book", () => {
 		longtailStore.setState(() => ({
 			samples: [
 				sample(1_000, {
@@ -133,19 +129,18 @@ describe("LongtailDashboard", () => {
 						wins: 3,
 						winRate: 0.6,
 						meanReturn: 0.01,
-						avgHoldNs: 120e9,
 					}),
-					training: training({
-						feeds: 2,
-						tokenEmitRate: 0.08,
-						developedPaths: 6,
-						promotedPaths: 1,
-						prunedPaths: 0,
-						meanThreshold: 0.4,
-						exitProfit: 2,
-						exitStop: 1,
-						exitBranch: 1,
-					}),
+					paths: {
+						developed: 6,
+						promoted: 1,
+						meanResistance: 0.4,
+						added: 1,
+						removed: 0,
+					},
+					policy: { checks: 4, hits: 2, hitRate: 0.5 },
+					exits: {
+						virtual: { profit: 2, stop: 1, policy: 1, other: 0, total: 4 },
+					},
 				}),
 				sample(6_000, {
 					virtual: bookStats({
@@ -153,85 +148,129 @@ describe("LongtailDashboard", () => {
 						wins: 4,
 						winRate: 0.65,
 						meanReturn: 0.03,
-						avgHoldNs: 180e9,
 					}),
-					training: training({
-						feeds: 2,
-						tokenEmitRate: 0.1,
-						developedPaths: 8,
-						promotedPaths: 2,
-						prunedPaths: 0,
-						meanThreshold: 0.35,
-						exitProfit: 3,
-						exitStop: 1,
-						exitBranch: 1,
-					}),
+					paths: {
+						developed: 8,
+						promoted: 2,
+						meanResistance: 0.35,
+						added: 2,
+						removed: 0,
+					},
+					policy: { checks: 4, hits: 3, hitRate: 0.75 },
+					exits: {
+						virtual: { profit: 3, stop: 1, policy: 1, other: 0, total: 5 },
+					},
 				}),
 			],
 			lastSampleAt: 6_000,
+			sourcesReady: true,
 		}));
 		bookAtom.set("virtual");
 
 		const { container, getByText } = render(<LongtailDashboard />);
 
 		for (const id of [
-			"policy",
-			"letters",
-			"developed",
+			"win",
+			"edge",
+			"closed",
 			"promoted",
-			"explore",
+			"resistance",
+			"policy",
 		]) {
 			expect(container.querySelector(`[data-kpi="${id}"]`)).not.toBeNull();
 		}
 
-		for (const id of ["policy", "letters", "paths", "exits", "stops"]) {
+		for (const id of ["edge", "paths", "churn", "policy", "exits", "stops"]) {
 			expect(container.querySelector(`[data-chart="${id}"]`)).not.toBeNull();
 		}
-		expect(container.querySelectorAll("[data-chart]")).toHaveLength(5);
+		expect(container.querySelectorAll("[data-chart]")).toHaveLength(6);
 
-		for (const title of ["Paths", "Policy", "Letters", "Desk", "Exits"]) {
-			expect(getByText(title, { selector: "div" })).toBeTruthy();
-		}
+		expect(getByText("virtual book", { selector: "div" })).toBeTruthy();
+		expect(getByText("Paths", { selector: "div" })).toBeTruthy();
+		expect(getByText("Policy", { selector: "div" })).toBeTruthy();
+		expect(getByText("Exits", { selector: "div" })).toBeTruthy();
 		expect(getByText("Plain-language readings")).toBeTruthy();
+		expect(getByText("Improving")).toBeTruthy();
+	});
+
+	it("scopes KPI values to the selected tier", () => {
+		longtailStore.setState(() => ({
+			samples: [
+				sample(1_000, {
+					paper: bookStats({ winRate: 0.4, meanReturn: -0.02, closed: 5 }),
+					paperWin: 0.4,
+					paperEdge: -0.02,
+					real: bookStats({ winRate: 0.7, meanReturn: 0.04, closed: 3 }),
+					realWin: 0.7,
+					realEdge: 0.04,
+					realArmed: 1,
+				}),
+				sample(6_000, {
+					paper: bookStats({ winRate: 0.42, meanReturn: -0.01, closed: 6 }),
+					paperWin: 0.42,
+					paperEdge: -0.01,
+					real: bookStats({ winRate: 0.75, meanReturn: 0.05, closed: 4 }),
+					realWin: 0.75,
+					realEdge: 0.05,
+					realArmed: 1,
+				}),
+			],
+			lastSampleAt: 6_000,
+			sourcesReady: true,
+		}));
+
+		bookAtom.set("paper");
+		const paperView = render(<LongtailDashboard />);
+		const paperWin = paperView.container.querySelector(
+			'[data-kpi="win"] .font-bold',
+		) as HTMLElement;
+		expect(paperWin.textContent).toBe("42%");
+		cleanup();
+
+		bookAtom.set("real");
+		const realView = render(<LongtailDashboard />);
+		const realWin = realView.container.querySelector(
+			'[data-kpi="win"] .font-bold',
+		) as HTMLElement;
+		expect(realWin.textContent).toBe("75%");
+		expect(realView.getByText("Improving")).toBeTruthy();
 	});
 
 	it("paints weak policy hits red and strong hits green", () => {
 		const bad = [
-			sample(1_000, {
-				training: training({ policyStoredRate: 0.01 }),
-			}),
-			sample(6_000, {
-				training: training({ policyStoredRate: 0.01 }),
-			}),
+			sample(1_000, { policy: { checks: 10, hits: 0, hitRate: 0.01 } }),
+			sample(6_000, { policy: { checks: 10, hits: 0, hitRate: 0.01 } }),
 		];
 
-		longtailStore.setState(() => ({ samples: bad, lastSampleAt: 6_000 }));
+		longtailStore.setState(() => ({
+			samples: bad,
+			lastSampleAt: 6_000,
+			sourcesReady: true,
+		}));
 		const badView = render(<LongtailDashboard />);
 
 		const badPolicy = badView.container.querySelector(
 			'[data-kpi="policy"] .font-bold',
 		) as HTMLElement;
 		expect(badPolicy.style.color).toBe("var(--down)");
-		expect(badView.getByText("Learning")).toBeTruthy();
 
 		cleanup();
 
 		const good = [
-			sample(1_000, {
-				training: training({ policyStoredRate: 0.55 }),
-			}),
-			sample(6_000, {
-				training: training({ policyStoredRate: 0.6 }),
-			}),
+			sample(1_000, { policy: { checks: 10, hits: 6, hitRate: 0.55 } }),
+			sample(6_000, { policy: { checks: 10, hits: 6, hitRate: 0.6 } }),
 		];
 
-		longtailStore.setState(() => ({ samples: good, lastSampleAt: 6_000 }));
+		longtailStore.setState(() => ({
+			samples: good,
+			lastSampleAt: 6_000,
+			sourcesReady: true,
+		}));
 		const goodView = render(<LongtailDashboard />);
 
 		const goodPolicy = goodView.container.querySelector(
 			'[data-kpi="policy"] .font-bold',
 		) as HTMLElement;
 		expect(goodPolicy.style.color).toBe("var(--up)");
-		expect(goodView.getByText("Matching paths")).toBeTruthy();
 	});
 });

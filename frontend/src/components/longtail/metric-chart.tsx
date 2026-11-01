@@ -147,7 +147,7 @@ export const MetricChart = ({
 				)}
 			>
 				<Scanlines variant="plate" />
-				collecting history…
+				waiting for samples…
 			</div>
 		);
 	}

@@ -452,16 +452,20 @@ const deskRowFromClosedLife = (
 	}
 
 	const outcome = life.outcome;
+	const book = life.book ?? "paper";
 	return {
 		id: life.id,
 		symbol: life.symbol,
-		virtual: life.book === "virtual",
+		book,
+		virtual: book === "virtual",
 		path_found: life.path_found === true,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at,
 		pnl: outcome.pnl,
 		pnl_pct: outcome.pnl_pct,
 		hold_ns: outcome.hold_ns,
+		outcome_triggers: outcome.triggers,
+		exit_trigger: life.exit_trigger ?? null,
 	};
 };
 
@@ -607,8 +611,8 @@ export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
 let closedHistoryRequested = false;
 
 /*
-requestClosedPositionHistory asks the hub to list every closed paper and
-virtual lot in S3. ListPrefix returns one frame per book prefix.
+requestClosedPositionHistory asks the hub to list every closed lot in S3
+across virtual, paper, and real. ListPrefix returns one frame per book prefix.
 */
 export const requestClosedPositionHistory = () => {
 	if (closedHistoryRequested) return;
@@ -616,6 +620,7 @@ export const requestClosedPositionHistory = () => {
 
 	trySendCommand({ type: "s3", prefix: "paper/closed" });
 	trySendCommand({ type: "s3", prefix: "virtual/closed" });
+	trySendCommand({ type: "s3", prefix: "real/closed" });
 };
 
 /** Tests reset the one-shot S3 history request guard. */

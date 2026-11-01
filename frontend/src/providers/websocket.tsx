@@ -1,7 +1,11 @@
 import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
 import { ingestConfidence } from "#/collections/confidence";
-import { ensureLongtailRecorder } from "#/collections/longtail";
+import {
+	ensureLongtailRecorder,
+	requestLongtailSources,
+	resetLongtailSourcesRequest,
+} from "#/collections/longtail";
 import type { Balance, Position } from "#/collections/types";
 import {
 	applyClosedEnvelope,
@@ -132,7 +136,9 @@ export const WsFeed = () => {
 				if (data.status === "ONLINE") {
 					atoms.online.set("ONLINE");
 					resetClosedHistoryRequest();
+					resetLongtailSourcesRequest();
 					requestClosedPositionHistory();
+					requestLongtailSources();
 				}
 
 				if (data.status === "CONNECTING") {

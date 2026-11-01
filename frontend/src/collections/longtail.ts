@@ -2,7 +2,8 @@ import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/store";
 import type { Book } from "#/collections/book";
 import { Circular, type CircularBuffer } from "#/collections/circular";
-import { confidenceAtom } from "#/collections/confidence";
+import { cognitionStore } from "#/collections/cognition";
+import { confidenceAtom, confidenceFor } from "#/collections/confidence";
 import {
 	closedOnBook,
 	countsTowardBookPerformance,
@@ -10,78 +11,26 @@ import {
 	openOnBook,
 	positionReadout,
 } from "#/components/book-readout";
-import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
+import {
+	EXPLORE_PRUNE_THRESHOLD,
+	isPathBookKey,
+} from "#/components/learning/explore-path";
+import { trySendCommand } from "#/lib/hub-socket";
+import {
+	deskRowsForStats,
+	ingestDeskClosedLots,
+	requestClosedPositionHistory,
+} from "#/lib/lifecycle";
 
 /*
-shadowStopComparison scores matched episodes that finished both the active
-structural stop and the learning shadow. Means are in display percent.
+Longtail samples the path-learning trajectory from live truth the hub already
+publishes: desk lots, confidence, and the model/paths resistance book (plus
+S3 ListPrefix for those same prefixes). Nothing here invents a parallel
+training aggregate — charts stay empty until those sources have real values.
 */
-const shadowStopComparison = (
-	rows: Record<string, unknown>[],
-	book: Book,
-): { n: number; meanOfficial: number; meanShadow: number } | null => {
-	let officialSum = 0;
-	let shadowSum = 0;
-	let n = 0;
-
-	for (const row of rows) {
-		if (!onBook(row, book)) continue;
-		const learning =
-			row.learning && typeof row.learning === "object"
-				? (row.learning as Record<string, unknown>)
-				: {};
-		if (learning.exit_at == null || row.official_exit_at == null) continue;
-
-		const official = row.official_exit_pct;
-		const shadow = learning.exit_pct;
-		if (typeof official !== "number" || !Number.isFinite(official)) continue;
-		if (typeof shadow !== "number" || !Number.isFinite(shadow)) continue;
-
-		officialSum += official;
-		shadowSum += shadow;
-		n++;
-	}
-
-	if (n === 0) return null;
-
-	return {
-		n,
-		meanOfficial: officialSum / n,
-		meanShadow: shadowSum / n,
-	};
-};
-
-/*
-OpenLotTelemetry aggregates the live stop-loss state across the desk's open
-lots for one sample. A stop ratio is current-over-threshold, so the means are
-book-level pressure readings: how close, on average, the open book is to each
-check firing. null when no open lot prices, never a fabricated zero.
-*/
-export type OpenLotTelemetry = {
-	open: number | null;
-	/** Invalidation budget consumed (adverse drop vs fixed 2pp cut). */
-	invalidation: number | null;
-	/** Giveback from peak vs damage-ratcheted trail. */
-	trailing: number | null;
-	/** Worst drawdown vs the 2pp invalidation budget (tightens the trail). */
-	damage: number | null;
-	/** How many open lots currently have a stop check at/over 70% proximity. */
-	armed: number | null;
-	/** Highest proximity of any check on any open lot — the nearest exit. */
-	maxProximity: number | null;
-	/** Exit reason counts among closed lots this sample window. */
-	exits: Record<string, number>;
-	exitTotal: number;
-};
 
 export type Trend = "up" | "down" | "flat";
 
-/*
-Tone is the contextual colour a metric paints with: good is green, warn is
-amber, bad is red, info is blue, neutral is grey. A metric that is not doing
-well must never paint green — each tone function below encodes the metric's
-own thresholds, so the colour always says what the number means.
-*/
 export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
 export const toneColor = (tone: Tone): string =>
@@ -95,7 +44,6 @@ export const toneColor = (tone: Tone): string =>
 					? "var(--info)"
 					: "var(--f3)";
 
-/* The UI library's semantic variants, so meters, badges and alerts paint the same way. */
 export const toneVariant = (
 	tone: Tone,
 ): "success" | "warning" | "error" | "info" | "disabled" =>
@@ -109,10 +57,6 @@ export const toneVariant = (
 					? "info"
 					: "disabled";
 
-/*
-Alerts have no disabled variant: a neutral reading is still a reading, so it
-paints as info rather than disappearing into a dead band.
-*/
 export const alertVariant = (
 	tone: Tone,
 ): "success" | "warning" | "error" | "info" =>
@@ -124,10 +68,6 @@ export const alertVariant = (
 				? "error"
 				: "info";
 
-/*
-Per-metric tone thresholds. A null reading is neutral: absence of data is
-neither good nor bad, and painting it green or red would invent a verdict.
-*/
 export const winRateTone = (value: number | null): Tone =>
 	value === null
 		? "neutral"
@@ -146,17 +86,6 @@ export const returnTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
-/** Blocked rate: high means grid lit but tokenizer/path stayed quiet. */
-export const blockedTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value <= 0.7
-			? "good"
-			: value <= 0.9
-				? "warn"
-				: "bad";
-
-/* How often the live token path ends on a stored policy path. */
 export const matchTone = (value: number | null): Tone =>
 	value === null
 		? "neutral"
@@ -165,6 +94,17 @@ export const matchTone = (value: number | null): Tone =>
 			: value >= 0.2
 				? "warn"
 				: "bad";
+
+export const resistanceTone = (value: number | null, floor: number): Tone =>
+	value === null
+		? "neutral"
+		: value <= floor
+			? "good"
+			: value <= 0.5
+				? "info"
+				: value <= EXPLORE_PRUNE_THRESHOLD
+					? "warn"
+					: "bad";
 
 export type BookDeskStats = {
 	closed: number;
@@ -178,62 +118,43 @@ export type BookDeskStats = {
 };
 
 /*
-One snapshot of the training system, aggregated across every symbol's live
-training step: gate readings and how the stored policy met the live token path.
+PathBookSnapshot is the resistance trie as listed from model/paths. Developed
+leaves are still in the book (≤ prune ceiling). Promoted leaves cleared the
+paper floor. Added/removed are churn vs the previous sample's key set.
 */
-export type BackendTickMetrics = {
-	symbols: number | null;
-	gatePass: number | null;
-	gateTotal: number | null;
-	litTicks: number | null;
-	blocked: number | null;
-	blockedBrightness: number | null;
-	blockedDuplicate: number | null;
-	blockedVeto: number | null;
-	blockedEmpty: number | null;
-	policyChecks: number | null;
-	policyStored: number | null;
-	outcomeEnter: number | null;
-	outcomeExit: number | null;
-	exploredEnter: number | null;
-	venueOpen: number | null;
-	virtualExcursion: number | null;
-	developedPaths: number | null;
-	promotedPaths: number | null;
-	prunedPaths: number | null;
-	meanThreshold: number | null;
-	exitProfit: number | null;
-	exitStop: number | null;
-	exitBranch: number | null;
+export type PathBookSnapshot = {
+	developed: number | null;
+	promoted: number | null;
+	meanResistance: number | null;
+	added: number | null;
+	removed: number | null;
 };
 
-export type TrainingSample = {
-	feeds: number;
-	/** Share of symbol steps whose regime.posture letter changed. */
-	tokenEmitRate: number | null;
-	/** Lit ticks that did not append a new letter. */
-	blockedRate: number | null;
-	blockedBrightnessRate: number | null;
-	/** Same letter as the previous step. The story did not change. */
-	blockedDuplicateRate: number | null;
-	/** Lit ticks where risk brightness beat the posture. */
-	vetoRate: number | null;
-	/** Lit ticks where a role band was dark. */
-	emptyRate: number | null;
-	policyStoredRate: number | null;
-	outcomeRate: number | null;
-	outcomeEnterRate: number | null;
-	outcomeExitRate: number | null;
-	exploredEnter: number | null;
-	venueOpen: number | null;
-	virtualExcursion: number | null;
-	developedPaths: number | null;
-	promotedPaths: number | null;
-	prunedPaths: number | null;
-	meanThreshold: number | null;
-	exitProfit: number | null;
-	exitStop: number | null;
-	exitBranch: number | null;
+export type PolicySnapshot = {
+	checks: number;
+	hits: number;
+	hitRate: number | null;
+};
+
+/*
+ExitMix buckets closed-lot triggers into profit / stop / policy / other. Counts
+are cumulative for the book at sample time — never an unbounded map.
+*/
+export type ExitMix = {
+	profit: number;
+	stop: number;
+	policy: number;
+	other: number;
+	total: number;
+};
+
+export type OpenLotTelemetry = {
+	open: number | null;
+	invalidation: number | null;
+	trailing: number | null;
+	damage: number | null;
+	armed: number | null;
+	maxProximity: number | null;
 };
 
 export type LongtailSample = {
@@ -241,11 +162,25 @@ export type LongtailSample = {
 	paper: BookDeskStats;
 	virtual: BookDeskStats;
 	real: BookDeskStats;
-	/** Backend confidence arming for live entries (1 armed, 0 halted). */
+	/** Authoritative paper/real strip from the confidence frame. */
+	paperWin: number | null;
+	paperEdge: number | null;
+	realWin: number | null;
+	realEdge: number | null;
 	realArmed: number | null;
-	training: TrainingSample;
-	/** Live stop-loss / exit-policy pressure across the open desk book. */
-	stops: OpenLotTelemetry;
+	eligibleResistance: number;
+	paths: PathBookSnapshot;
+	policy: PolicySnapshot;
+	exits: {
+		virtual: ExitMix;
+		paper: ExitMix;
+		real: ExitMix;
+	};
+	stops: {
+		virtual: OpenLotTelemetry;
+		paper: OpenLotTelemetry;
+		real: OpenLotTelemetry;
+	};
 };
 
 export type Insight = {
@@ -260,31 +195,49 @@ export type Verdict = {
 	tone: Tone;
 };
 
-/* Display formatting: fractions as percentages. */
 export const pct = (value: number) => `${(100 * value).toFixed(1)}%`;
 
-/*
-stopWord answers why a live stop reading is where it is, for the plain-language
-rail. A ratio is current-over-threshold: 1.0 is firing, 0.7 is arming. A null
-is "not armed", never a fabricated zero — the absence of data paints neutral.
-*/
-const stopWord = (
-	label: string,
-	role: "defence" | "harvest" | "time",
-	value: number | null,
-	suffix = "",
-): string => {
-	if (value === null) return `No open lots priced — ${label} not armed`;
-	if (value >= 1) {
-		const verb = role === "harvest" ? "harvesting" : "firing";
-		return `${label} ${verb}${suffix}`;
-	}
-	if (value >= 0.7)
-		return `${label} arming at ${(100 * value).toFixed(0)}%${suffix}`;
-	if (value > 0)
-		return `${label} armed at ${(100 * value).toFixed(0)}%${suffix}`;
-	return `${label} not armed`;
-};
+export const emptyBookStats = (): BookDeskStats => ({
+	closed: 0,
+	open: 0,
+	wins: 0,
+	winRate: null,
+	meanReturn: null,
+	medianReturn: null,
+	worstReturn: null,
+	avgHoldNs: null,
+});
+
+export const emptyExitMix = (): ExitMix => ({
+	profit: 0,
+	stop: 0,
+	policy: 0,
+	other: 0,
+	total: 0,
+});
+
+export const emptyStops = (): OpenLotTelemetry => ({
+	open: null,
+	invalidation: null,
+	trailing: null,
+	damage: null,
+	armed: null,
+	maxProximity: null,
+});
+
+export const emptyPaths = (): PathBookSnapshot => ({
+	developed: null,
+	promoted: null,
+	meanResistance: null,
+	added: null,
+	removed: null,
+});
+
+export const emptyPolicy = (): PolicySnapshot => ({
+	checks: 0,
+	hits: 0,
+	hitRate: null,
+});
 
 const median = (values: number[]): number => {
 	const sorted = [...values].sort((a, b) => a - b);
@@ -300,81 +253,39 @@ const mean = (values: number[]): number | null =>
 		: null;
 
 /*
-summarizeStops folds the open desk book's live stop_state into one pressure
-reading. Each open lot reports proximity for invalidation and trailing (damage
-is context, not an exit); the book mean says how close the open book is to
-each firing, and maxProximity the single nearest exit. Open lots with no stop
-state are skipped rather than counted as safe.
-
-Exit reason counts read the closed book's outcome_triggers.
+classifyExit folds a trigger string into the four mix buckets used by charts.
 */
-export const summarizeStops = (
-	rows: Record<string, unknown>[],
-): OpenLotTelemetry => {
-	const open = rows.filter((row) => !positionReadout(row).closed);
-	const ratios = ["invalidation", "trailing", "damage"] as const;
-	const perCheck = ratios.map(() => [] as number[]);
-	let armed = 0;
-	let maxProximity = 0;
-	let withState = 0;
-
-	for (const row of open) {
-		const structural =
-			row.structural && typeof row.structural === "object"
-				? (row.structural as Record<string, unknown>)
-				: null;
-		const state = structural?.state as Record<string, unknown> | null | undefined;
-		if (!state || typeof state !== "object") continue;
-		withState += 1;
-		let rowArmed = false;
-		let rowMax = 0;
-		ratios.forEach((check, i) => {
-			const value = state[check];
-			if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-				return;
-			}
-			perCheck[i].push(value);
-			// Damage tightens the trail but does not fire an exit on its own.
-			if (check === "damage") return;
-			if (value >= 0.7) rowArmed = true;
-			if (value > rowMax) rowMax = value;
-		});
-		if (rowArmed) armed += 1;
-		if (rowMax > maxProximity) maxProximity = rowMax;
+export const classifyExit = (trigger: string): keyof Omit<ExitMix, "total"> => {
+	const label = trigger.toLowerCase();
+	if (
+		label.includes("exit branch") ||
+		label.includes("learned_exit") ||
+		label.includes("policy exit")
+	) {
+		return "policy";
 	}
-
-	const closed = rows.filter((row) => positionReadout(row).closed);
-	const exits: Record<string, number> = {};
-	let exitTotal = 0;
-	for (const row of closed) {
-		const triggers = row.outcome_triggers;
-		if (!Array.isArray(triggers)) continue;
-		for (const trigger of triggers) {
-			if (typeof trigger !== "string" || trigger === "") continue;
-			exits[trigger] = (exits[trigger] ?? 0) + 1;
-			exitTotal += 1;
-		}
+	if (
+		label.includes("cleared friction") ||
+		label.includes("pct profit") ||
+		label.includes("trailing") ||
+		label.includes("harvest") ||
+		(label.includes("profit") && !label.includes("stop"))
+	) {
+		return "profit";
 	}
-
-	return {
-		open: open.length > 0 ? open.length : null,
-		invalidation: mean(perCheck[0]),
-		trailing: mean(perCheck[1]),
-		damage: mean(perCheck[2]),
-		armed: withState > 0 ? armed : null,
-		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
-		exits,
-		exitTotal,
-	};
+	if (
+		label.includes("invalidation") ||
+		label.includes("friction dip") ||
+		label.includes("stop") ||
+		label.includes("exhaustion") ||
+		label.includes("evaporation") ||
+		label.includes("drag")
+	) {
+		return "stop";
+	}
+	return "other";
 };
 
-/*
-summarizeBook reads one book's desk rows into round-trip statistics via
-positionReadout (broker pnl / CloseOut economics). Win rate and edge count
-only lots that reused an existing path. A virtual discovery is opened on
-every symbol, so it stays out of the comparison. Open lots never affect
-edge. Nulls when nothing priced has reused a path — never a fabricated zero.
-*/
 export const summarizeBook = (
 	rows: Record<string, unknown>[],
 	book: Book,
@@ -405,73 +316,203 @@ export const summarizeBook = (
 };
 
 /*
-emptyTraining is the idle training sample. Sequitur feeds were removed with
-the sequitur collection; backend tick metrics still fill what they can.
+summarizeStops folds open-lot structural.state for one book. Exit reason maps
+are not stored here — use summarizeExits so samples stay fixed-size.
 */
-export const emptyTraining = (): TrainingSample => ({
-	feeds: 0,
-	tokenEmitRate: null,
-	blockedRate: null,
-	blockedBrightnessRate: null,
-	blockedDuplicateRate: null,
-	vetoRate: null,
-	emptyRate: null,
-	policyStoredRate: null,
-	outcomeRate: null,
-	outcomeEnterRate: null,
-	outcomeExitRate: null,
-	exploredEnter: null,
-	venueOpen: null,
-	virtualExcursion: null,
-	developedPaths: null,
-	promotedPaths: null,
-	prunedPaths: null,
-	meanThreshold: null,
-	exitProfit: null,
-	exitStop: null,
-	exitBranch: null,
-});
+export const summarizeStops = (
+	rows: Record<string, unknown>[],
+	book: Book,
+): OpenLotTelemetry => {
+	const open = rows.filter(
+		(row) => onBook(row, book) && !positionReadout(row).closed,
+	);
+	const ratios = ["invalidation", "trailing", "damage"] as const;
+	const perCheck = ratios.map(() => [] as number[]);
+	let armed = 0;
+	let maxProximity = 0;
+	let withState = 0;
 
-export const summarizeTraining = (): TrainingSample => {
-	const backend = longtailBackendMetrics;
-	if (!backend) {
-		return emptyTraining();
+	for (const row of open) {
+		const structural =
+			row.structural && typeof row.structural === "object"
+				? (row.structural as Record<string, unknown>)
+				: null;
+		const state = structural?.state as
+			| Record<string, unknown>
+			| null
+			| undefined;
+		if (!state || typeof state !== "object") continue;
+		withState += 1;
+		let rowArmed = false;
+		let rowMax = 0;
+		ratios.forEach((check, i) => {
+			const value = state[check];
+			if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+				return;
+			}
+			perCheck[i].push(value);
+			if (check === "damage") return;
+			if (value >= 0.7) rowArmed = true;
+			if (value > rowMax) rowMax = value;
+		});
+		if (rowArmed) armed += 1;
+		if (rowMax > maxProximity) maxProximity = rowMax;
 	}
 
-	const rate = (
-		numerator: number | null | undefined,
-		denominator: number | null | undefined,
-	): number | null => {
-		if (numerator === null || numerator === undefined) return null;
-		if (denominator === null || denominator === undefined || denominator <= 0) {
-			return null;
-		}
-		return numerator / denominator;
+	return {
+		open: open.length > 0 ? open.length : null,
+		invalidation: mean(perCheck[0]),
+		trailing: mean(perCheck[1]),
+		damage: mean(perCheck[2]),
+		armed: withState > 0 ? armed : null,
+		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
 	};
+};
+
+export const summarizeExits = (
+	rows: Record<string, unknown>[],
+	book: Book,
+): ExitMix => {
+	const mix = emptyExitMix();
+	const closed = closedOnBook(rows, book);
+
+	for (const row of closed) {
+		const triggers: string[] = [];
+		if (Array.isArray(row.outcome_triggers)) {
+			for (const trigger of row.outcome_triggers) {
+				if (typeof trigger === "string" && trigger !== "") {
+					triggers.push(trigger);
+				}
+			}
+		}
+		if (
+			triggers.length === 0 &&
+			typeof row.exit_trigger === "string" &&
+			row.exit_trigger !== ""
+		) {
+			triggers.push(row.exit_trigger);
+		}
+		if (triggers.length === 0) continue;
+
+		for (const trigger of triggers) {
+			const bucket = classifyExit(trigger);
+			mix[bucket] += 1;
+			mix.total += 1;
+		}
+	}
+
+	return mix;
+};
+
+/*
+summarizePathBook reads the cognition resistance map. Keys without a reported
+resistance are counted as developed but skip the mean — never invent 0.5.
+*/
+export const summarizePathBook = (
+	thresholds: Record<string, number>,
+	policyKeys: string[],
+	eligible: number,
+	priorKeys: Set<string> | null,
+): PathBookSnapshot => {
+	const keys = policyKeys.filter(isPathBookKey);
+	if (keys.length === 0 && Object.keys(thresholds).length === 0) {
+		return emptyPaths();
+	}
+
+	const active =
+		keys.length > 0 ? keys : Object.keys(thresholds).filter(isPathBookKey);
+	const resistances: number[] = [];
+	let promoted = 0;
+	let developed = 0;
+
+	for (const key of active) {
+		const resistance = thresholds[key];
+		if (typeof resistance !== "number" || !Number.isFinite(resistance)) {
+			developed += 1;
+			continue;
+		}
+		if (resistance > EXPLORE_PRUNE_THRESHOLD) continue;
+		developed += 1;
+		resistances.push(resistance);
+		if (resistance <= eligible) promoted += 1;
+	}
+
+	const current = new Set(active);
+	let added: number | null = null;
+	let removed: number | null = null;
+	if (priorKeys !== null) {
+		added = 0;
+		removed = 0;
+		for (const key of current) {
+			if (!priorKeys.has(key)) added += 1;
+		}
+		for (const key of priorKeys) {
+			if (!current.has(key)) removed += 1;
+		}
+	}
 
 	return {
-		feeds: 0,
-		tokenEmitRate: rate(backend.gatePass, backend.gateTotal),
-		blockedRate: rate(backend.blocked, backend.litTicks),
-		blockedBrightnessRate: rate(backend.blockedBrightness, backend.litTicks),
-		blockedDuplicateRate: rate(backend.blockedDuplicate, backend.gateTotal),
-		vetoRate: rate(backend.blockedVeto, backend.litTicks),
-		emptyRate: rate(backend.blockedEmpty, backend.litTicks),
-		policyStoredRate: rate(backend.policyStored, backend.policyChecks),
-		outcomeRate: null,
-		outcomeEnterRate: rate(backend.outcomeEnter, backend.gateTotal),
-		outcomeExitRate: rate(backend.outcomeExit, backend.gateTotal),
-		exploredEnter: backend.exploredEnter,
-		venueOpen: backend.venueOpen,
-		virtualExcursion: backend.virtualExcursion,
-		developedPaths: backend.developedPaths,
-		promotedPaths: backend.promotedPaths,
-		prunedPaths: backend.prunedPaths,
-		meanThreshold:
-			(backend.developedPaths ?? 0) > 0 ? backend.meanThreshold : null,
-		exitProfit: backend.exitProfit,
-		exitStop: backend.exitStop,
-		exitBranch: backend.exitBranch,
+		developed: developed > 0 ? developed : null,
+		promoted: developed > 0 ? promoted : null,
+		meanResistance: mean(resistances),
+		added,
+		removed,
+	};
+};
+
+export const summarizePolicy = (
+	matches: Record<string, { stored?: boolean }>,
+): PolicySnapshot => {
+	const rows = Object.values(matches);
+	if (rows.length === 0) return emptyPolicy();
+
+	let hits = 0;
+	for (const match of rows) {
+		if (match.stored === true) hits += 1;
+	}
+
+	return {
+		checks: rows.length,
+		hits,
+		hitRate: hits / rows.length,
+	};
+};
+
+/*
+tierStats picks the selected book's desk stats. Paper/real win and edge prefer
+the confidence frame when it has closed lots — that is what arms real.
+*/
+export const tierStats = (
+	sample: LongtailSample,
+	book: Book,
+): {
+	stats: BookDeskStats;
+	winRate: number | null;
+	edge: number | null;
+	armed: number | null;
+} => {
+	const stats = sample[book];
+	if (book === "paper") {
+		return {
+			stats,
+			winRate: sample.paperWin ?? stats.winRate,
+			edge: sample.paperEdge ?? stats.meanReturn,
+			armed: null,
+		};
+	}
+	if (book === "real") {
+		return {
+			stats,
+			winRate: sample.realWin ?? stats.winRate,
+			edge: sample.realEdge ?? stats.meanReturn,
+			armed: sample.realArmed,
+		};
+	}
+	return {
+		stats,
+		winRate: stats.winRate,
+		edge: stats.meanReturn,
+		armed: null,
 	};
 };
 
@@ -484,19 +525,31 @@ const trendOf = (current: number | null, prior: number | null): Trend => {
 	) {
 		return "flat";
 	}
-
-	if (Math.abs(current - prior) < 0.01) {
-		return "flat";
-	}
-
+	if (Math.abs(current - prior) < 0.01) return "flat";
 	return current > prior ? "up" : "down";
 };
 
 /*
-verdict answers whether settled lots are making money, and whether that
-is changing. It reads the book's mean return and win rate only. A rising
-return that is still negative is Recovering. It never calls a losing book
-Improving.
+signFlips counts how often the selected book's edge crossed zero across the
+recent window — high flip rate with near-zero mean edge is thrash.
+*/
+const signFlips = (samples: LongtailSample[], book: Book): number => {
+	let flips = 0;
+	let prior: number | null = null;
+	for (const sample of samples) {
+		const edge = tierStats(sample, book).edge;
+		if (edge === null) continue;
+		if (prior !== null && Math.sign(prior) !== 0 && Math.sign(edge) !== 0) {
+			if (Math.sign(prior) !== Math.sign(edge)) flips += 1;
+		}
+		prior = edge;
+	}
+	return flips;
+};
+
+/*
+verdict answers improving / worsening / thrashing for the selected tier.
+Path-book churn alone never paints green when the book's edge is still bad.
 */
 export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	if (samples.length < 2) {
@@ -505,16 +558,45 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 
 	const latest = samples[samples.length - 1];
 	const prior = samples[Math.max(0, samples.length - 16)];
-	const edge = returnTone(latest[book].meanReturn);
-	const wins = winRateTone(latest[book].winRate);
+	const now = tierStats(latest, book);
+	const then = tierStats(prior, book);
 
-	if (edge === "neutral" || wins === "neutral") {
+	if (now.edge === null && now.winRate === null) {
+		const paths = latest.paths;
+		if (paths.developed !== null) {
+			const churn =
+				(paths.added ?? 0) + (paths.removed ?? 0) >
+				Math.max(2, (paths.developed ?? 0) * 0.15);
+			if (churn && (paths.promoted ?? 0) === (prior.paths.promoted ?? 0)) {
+				return { label: "Thrashing paths", tone: "warn" };
+			}
+			return { label: "Path book live", tone: "info" };
+		}
 		return { label: "Warming up", tone: "neutral" };
 	}
 
-	const trend = trendOf(latest[book].meanReturn, prior[book].meanReturn);
-	const losing = edge === "bad" || wins === "bad";
-	const winning = edge === "good" && wins !== "bad";
+	const edgeTone = returnTone(now.edge);
+	const winTone = winRateTone(now.winRate);
+	const trend = trendOf(now.edge, then.edge);
+	const recent = samples.slice(-24);
+	const flips = signFlips(recent, book);
+	const pathChurn =
+		(latest.paths.added ?? 0) + (latest.paths.removed ?? 0) >=
+		Math.max(3, (latest.paths.developed ?? 0) * 0.2);
+
+	const losing = edgeTone === "bad" || winTone === "bad";
+	const winning = edgeTone === "good" && winTone !== "bad";
+
+	/*
+	Repeated zero-crossings without a clear improving win are thrash — the
+	book is oscillating, not learning a direction.
+	*/
+	if (flips >= 3 && !(winning && trend === "up")) {
+		return { label: "Thrashing", tone: "bad" };
+	}
+	if (pathChurn && trend === "flat" && edgeTone !== "good") {
+		return { label: "Thrashing", tone: "warn" };
+	}
 
 	if (losing) {
 		if (trend === "down") return { label: "Degrading", tone: "bad" };
@@ -531,47 +613,6 @@ export const verdict = (samples: LongtailSample[], book: Book): Verdict => {
 	return { label: "Mixed", tone: "warn" };
 };
 
-/*
-trainingVerdict reads policy hits and path-book growth — not desk PnL
-(that lives in the top bar).
-*/
-export const trainingVerdict = (samples: LongtailSample[]): Verdict => {
-	if (samples.length < 2) {
-		return { label: "Warming up", tone: "neutral" };
-	}
-
-	const latest = samples[samples.length - 1].training;
-	const prior = samples[Math.max(0, samples.length - 16)].training;
-
-	if (latest.policyStoredRate === null && latest.developedPaths === null) {
-		return { label: "Warming up", tone: "neutral" };
-	}
-
-	const policy = latest.policyStoredRate ?? 0;
-	const blocked = latest.blockedRate ?? 0;
-	const pathTrend = trendOf(latest.developedPaths, prior.developedPaths);
-
-	if (policy >= 0.25) {
-		if (pathTrend === "up") return { label: "Matching paths", tone: "good" };
-		return { label: "Matching paths", tone: "info" };
-	}
-
-	if (blocked >= 0.85 && (latest.tokenEmitRate ?? 0) < 0.05) {
-		return { label: "Quiet gate", tone: "warn" };
-	}
-
-	if ((latest.developedPaths ?? 0) > 0 && pathTrend === "up") {
-		return { label: "Path book growing", tone: "good" };
-	}
-
-	return { label: "Learning", tone: "neutral" };
-};
-
-/*
-buildInsights writes the plain-language readings the right rail shows. Each
-insight carries the tone of the metric it describes, so a bad number is never
-announced in green.
-*/
 export const buildInsights = (
 	samples: LongtailSample[],
 	book: Book,
@@ -583,216 +624,133 @@ export const buildInsights = (
 			{
 				id: "warmup",
 				title: "Collecting baseline",
-				body: `Samples arrive from settled ${book} lots and the path book. Nothing to read yet.`,
+				body: `Waiting on ${book} closed lots, confidence, and the model/paths book from the hub.`,
 				tone: "neutral",
 			},
 		];
 	}
 
-	const training = latest.training;
-	const stops = latest.stops;
+	const prior = samples[Math.max(0, samples.length - 16)];
+	const tier = tierStats(latest, book);
 	const insights: Insight[] = [];
 
-	if (training.policyStoredRate === null && training.outcomeRate === null) {
-		insights.push({
-			id: "policy",
-			title: "Policy match",
-			body: "No policy checks yet. A hit means the live token path ended on a stored explore or policy leaf.",
-			tone: "neutral",
-		});
-	} else {
-		insights.push({
-			id: "policy",
-			title: "Policy match",
-			body: `${pct(training.policyStoredRate ?? 0)} of symbol checks hit a stored path; ${pct(training.outcomeRate ?? 0)} fired an enter/exit outcome (${pct(training.outcomeEnterRate ?? 0)} enter, ${pct(training.outcomeExitRate ?? 0)} exit).`,
-			tone: matchTone(training.policyStoredRate),
-		});
-	}
+	insights.push({
+		id: "tier",
+		title: `${book} trajectory`,
+		body:
+			tier.edge === null && tier.winRate === null
+				? `No settled ${book} lots yet that count toward edge.`
+				: `Win ${tier.winRate === null ? "—" : pct(tier.winRate)}, edge ${tier.edge === null ? "—" : pct(tier.edge)}, ${tier.stats.closed} settled · ${tier.stats.open} open${tier.armed !== null ? ` · real ${tier.armed >= 0.5 ? "armed" : "halted"}` : ""}.`,
+		tone:
+			tier.edge === null
+				? "neutral"
+				: returnTone(tier.edge) === "good" &&
+						winRateTone(tier.winRate) !== "bad"
+					? "good"
+					: returnTone(tier.edge),
+	});
 
-	if (training.developedPaths === null) {
+	const paths = latest.paths;
+	if (paths.developed === null) {
 		insights.push({
 			id: "paths",
-			title: "Paths",
-			body: "The path book has not reported on this sample. Counts appear once a tick publishes developed, paper, and pruned paths.",
+			title: "Path book",
+			body: "model/paths has not listed yet. Request S3 prefix model/paths or wait for a live paths envelope.",
 			tone: "neutral",
 		});
 	} else {
-		const threshold =
-			training.meanThreshold === null ? "—" : training.meanThreshold.toFixed(2);
+		const churn = (paths.added ?? 0) + (paths.removed ?? 0);
+		const mean =
+			paths.meanResistance === null ? "—" : paths.meanResistance.toFixed(2);
+		const meanTrend = trendOf(paths.meanResistance, prior.paths.meanResistance);
 		insights.push({
 			id: "paths",
-			title: "Paths",
-			body: `${training.developedPaths} developed, ${training.promotedPaths ?? 0} at the paper floor, ${training.prunedPaths ?? 0} pruned. Mean threshold ${threshold} (starts at 0.50; profit lowers it, loss raises it).`,
-			tone: (training.promotedPaths ?? 0) > 0 ? "good" : "info",
+			title: "Path book",
+			body: `${paths.developed} developed, ${paths.promoted ?? 0} at ≤${latest.eligibleResistance.toFixed(2)} paper floor, mean resistance ${mean} (${meanTrend}). Churn +${paths.added ?? 0}/−${paths.removed ?? 0}${churn >= 3 ? " — watch thrash" : ""}.`,
+			tone:
+				(paths.promoted ?? 0) > 0 && meanTrend === "down"
+					? "good"
+					: churn >= 3
+						? "warn"
+						: "info",
 		});
 	}
 
-	if (training.tokenEmitRate === null) {
-		insights.push({
-			id: "emit",
-			title: "Path letters",
-			body: "No letter readings yet. A letter is the brightest regime and posture, appended only when it changes.",
-			tone: "neutral",
-		});
-	} else {
-		const parts = [
-			training.blockedDuplicateRate === null
-				? null
-				: `${pct(training.blockedDuplicateRate)} repeated the same letter`,
-			training.vetoRate === null
-				? null
-				: `${pct(training.vetoRate)} of lit ticks vetoed by risk`,
-			training.emptyRate === null
-				? null
-				: `${pct(training.emptyRate)} of lit ticks had a dark role`,
-		].filter(Boolean);
-		insights.push({
-			id: "emit",
-			title: "Path letters",
-			body: `A new letter on ${pct(training.tokenEmitRate)} of symbol steps${parts.length ? `. ${parts.join("; ")}.` : "."}`,
-			tone: "info",
-		});
-	}
+	const policy = latest.policy;
+	insights.push({
+		id: "policy",
+		title: "Policy hit",
+		body:
+			policy.checks === 0
+				? "No live symbol matches yet."
+				: `${pct(policy.hitRate ?? 0)} of ${policy.checks} live symbol cuts landed on a stored path (${policy.hits} hits).`,
+		tone: matchTone(policy.hitRate),
+	});
 
-	const exits =
-		(training.exitProfit ?? 0) +
-		(training.exitStop ?? 0) +
-		(training.exitBranch ?? 0);
-	if (training.exitProfit === null) {
+	const exits = latest.exits[book];
+	if (exits.total === 0) {
 		insights.push({
 			id: "exits",
-			title: "Exits",
-			body: "No exit ledger yet. Discovery closes on book profit or the friction stop. A reused path closes on its learned exit branch.",
-			tone: "neutral",
-		});
-	} else if (exits === 0) {
-		insights.push({
-			id: "exits",
-			title: "Exits",
-			body: "No virtuals have closed through profit, the friction stop, or a learned exit branch.",
+			title: "Exit mix",
+			body: `No closed ${book} exit triggers yet.`,
 			tone: "neutral",
 		});
 	} else {
 		insights.push({
 			id: "exits",
-			title: "Exits",
-			body: `${training.exitProfit} cleared the spread, ${training.exitStop} hit the friction stop, ${training.exitBranch} followed a learned exit branch.`,
+			title: "Exit mix",
+			body: `${exits.profit} profit, ${exits.stop} stop, ${exits.policy} policy, ${exits.other} other (${exits.total} triggers).`,
 			tone:
-				(training.exitProfit ?? 0) > (training.exitStop ?? 0) ? "good" : "warn",
+				exits.profit > exits.stop
+					? "good"
+					: exits.stop > exits.profit
+						? "warn"
+						: "info",
 		});
 	}
 
-	if (training.virtualExcursion !== null && training.virtualExcursion > 0) {
-		insights.push({
-			id: "ledger",
-			title: "Desk",
-			body: `${training.virtualExcursion} virtual excursion(s) open; ${training.venueOpen ?? 0} venue lot(s); ${training.exploredEnter ?? 0} explore enter(s) this tick window.`,
-			tone: "info",
-		});
-	}
-
-	if (stops) {
-		const nearest = stops.maxProximity;
-		const armed = stops.armed;
-		const open = stops.open;
-		insights.push({
-			id: "stops",
-			title: "Stop-loss posture",
-			body:
-				open === null || open === 0
-					? `No open lots — stop checks unpriced.`
-					: `${open} open lot${open === 1 ? "" : "s"}; stop-loss ${stopWord("cut", "defence", stops.invalidation)}, trail ${stopWord("harvest", "harvest", stops.trailing)}, damage ${stopWord("burn", "defence", stops.damage)}. ${
-							nearest === null
-								? "None near firing."
-								: `${nearest >= 1 ? "One is firing — " : ""}${nearest >= 0.7 ? "one is close — " : ""}${armed ?? 0} lot${armed === 1 ? "" : "s"} at ≥70% of a stop, nearest ${(100 * nearest).toFixed(0)}%.`
-						}`,
-			tone:
-				nearest === null
-					? "neutral"
-					: nearest >= 1
-						? "bad"
-						: nearest >= 0.7
-							? "warn"
-							: "good",
-		});
-	}
-
-	const shadow = shadowStopComparison(deskRowsForStats(), book);
-	if (shadow) {
-		const delta = shadow.meanShadow - shadow.meanOfficial;
-		insights.push({
-			id: "shadow-stop",
-			title: "Structural shadow",
-			body: `On ${shadow.n} matched episode${shadow.n === 1 ? "" : "s"}, mean structural exit ${shadow.meanOfficial.toFixed(2)}% vs learning ${shadow.meanShadow.toFixed(2)}% (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} pp).`,
-			tone: delta > 0.05 ? "good" : delta < -0.05 ? "warn" : "info",
-		});
-	}
+	const stops = latest.stops[book];
+	insights.push({
+		id: "stops",
+		title: "Stop posture",
+		body:
+			stops.open === null || stops.open === 0
+				? `No open ${book} lots priced.`
+				: `${stops.open} open; invalidation ${stops.invalidation === null ? "—" : pct(stops.invalidation)}, trail ${stops.trailing === null ? "—" : pct(stops.trailing)}, damage ${stops.damage === null ? "—" : pct(stops.damage)}; nearest ${stops.maxProximity === null ? "—" : pct(stops.maxProximity)}.`,
+		tone:
+			stops.maxProximity === null
+				? "neutral"
+				: stops.maxProximity >= 1
+					? "bad"
+					: stops.maxProximity >= 0.7
+						? "warn"
+						: "good",
+	});
 
 	return insights;
-};
-
-export let longtailBackendMetrics: BackendTickMetrics | null = null;
-
-export const ingestLongtailTick = (payload: unknown) => {
-	if (!payload || typeof payload !== "object") {
-		return false;
-	}
-
-	const body = payload as Record<string, unknown>;
-	const read = (key: string): number | null => {
-		const value = body[key];
-		return typeof value === "number" && Number.isFinite(value) ? value : null;
-	};
-
-	longtailBackendMetrics = {
-		symbols: read("symbols"),
-		gatePass: read("gatePass"),
-		gateTotal: read("gateTotal"),
-		litTicks: read("litTicks"),
-		blocked: read("blocked"),
-		blockedBrightness: read("blockedBrightness"),
-		blockedDuplicate: read("blockedDuplicate"),
-		blockedVeto: read("blockedVeto"),
-		blockedEmpty: read("blockedEmpty"),
-		policyChecks: read("policyChecks"),
-		policyStored: read("policyStored"),
-		outcomeEnter: read("outcomeEnter"),
-		outcomeExit: read("outcomeExit"),
-		exploredEnter: read("exploredEnter"),
-		venueOpen: read("venueOpen"),
-		virtualExcursion: read("virtualExcursion"),
-		developedPaths: read("developedPaths"),
-		promotedPaths: read("promotedPaths"),
-		prunedPaths: read("prunedPaths"),
-		meanThreshold: read("meanThreshold"),
-		exitProfit: read("exitProfit"),
-		exitStop: read("exitStop"),
-		exitBranch: read("exitBranch"),
-	};
-
-	maybeRecordLongtailSample();
-	return true;
 };
 
 export const longtailStore = createStore({
 	samples: [] as LongtailSample[],
 	lastSampleAt: 0,
+	sourcesReady: false,
 });
 
-/*
-One sample every five seconds. Two hundred and forty of them fill the
-charts with twenty minutes, and then the line scrolls.
-*/
 export const CHART_SAMPLES = 240;
 const SAMPLE_EVERY_MS = 5_000;
+const EXIT_TRIGGER_CAP = 8;
 
 let chartWindow = Circular<LongtailSample>(CHART_SAMPLES);
+/** Prior path-key set for churn — replaced each sample, never appended. */
+let priorPathKeys: Set<string> | null = null;
+let sourcesRequested = false;
 
 const publishWindow = (lastSampleAt?: number) => {
 	const samples = chartWindow.values();
-	longtailStore.setState(() => ({
+	longtailStore.setState((state) => ({
 		samples,
 		lastSampleAt: lastSampleAt ?? samples[samples.length - 1]?.at ?? 0,
+		sourcesReady: state.sourcesReady,
 	}));
 };
 
@@ -807,24 +765,82 @@ const pushSample = (sample: LongtailSample) => {
 	publishWindow(sample.at);
 };
 
-const readPositions = () => deskRowsForStats();
+/*
+requestLongtailSources asks the hub for closed lots on every tier (via the
+shared history helper) plus the path resistance book. Bounded ListPrefix
+replies land through the existing paths/closed envelopes.
+*/
+export const requestLongtailSources = () => {
+	if (sourcesRequested) return;
+	sourcesRequested = true;
 
-const recordLongtailSample = () => {
-	const desk = readPositions();
+	requestClosedPositionHistory();
+	trySendCommand({ type: "s3", prefix: "model/paths" });
+
+	longtailStore.setState((state) => ({ ...state, sourcesReady: true }));
+};
+
+export const resetLongtailSourcesRequest = () => {
+	sourcesRequested = false;
+	longtailStore.setState((state) => ({ ...state, sourcesReady: false }));
+};
+
+const captureSample = (at: number): LongtailSample => {
+	const desk = deskRowsForStats();
 	ingestDeskClosedLots(desk);
 
 	const frame = confidenceAtom.get();
-	const realArmed = frame.real_ceiling ? (frame.real.armed ? 1 : 0) : null;
+	const cognition = cognitionStore.state;
+	const eligible =
+		typeof frame.eligible_resistance === "number" &&
+		Number.isFinite(frame.eligible_resistance)
+			? frame.eligible_resistance
+			: 0.2;
 
-	pushSample({
-		at: Date.now(),
+	const paths = summarizePathBook(
+		cognition.thresholds,
+		cognition.policyKeys,
+		eligible,
+		priorPathKeys,
+	);
+
+	const activeKeys =
+		cognition.policyKeys.length > 0
+			? cognition.policyKeys.filter(isPathBookKey)
+			: Object.keys(cognition.thresholds).filter(isPathBookKey);
+	priorPathKeys = new Set(activeKeys);
+
+	const paperConf = confidenceFor(frame, "paper");
+	const realConf = confidenceFor(frame, "real");
+
+	return {
+		at,
 		paper: summarizeBook(desk, "paper"),
 		virtual: summarizeBook(desk, "virtual"),
 		real: summarizeBook(desk, "real"),
-		realArmed,
-		training: summarizeTraining(),
-		stops: summarizeStops(desk),
-	});
+		paperWin: paperConf.closed > 0 ? paperConf.win_rate : null,
+		paperEdge: paperConf.closed > 0 ? paperConf.edge : null,
+		realWin: realConf.closed > 0 ? realConf.win_rate : null,
+		realEdge: realConf.closed > 0 ? realConf.edge : null,
+		realArmed: frame.real_ceiling ? (realConf.armed ? 1 : 0) : null,
+		eligibleResistance: eligible,
+		paths,
+		policy: summarizePolicy(cognition.matches),
+		exits: {
+			virtual: summarizeExits(desk, "virtual"),
+			paper: summarizeExits(desk, "paper"),
+			real: summarizeExits(desk, "real"),
+		},
+		stops: {
+			virtual: summarizeStops(desk, "virtual"),
+			paper: summarizeStops(desk, "paper"),
+			real: summarizeStops(desk, "real"),
+		},
+	};
+};
+
+const recordLongtailSample = () => {
+	pushSample(captureSample(Date.now()));
 };
 
 const maybeRecordLongtailSample = () => {
@@ -849,9 +865,7 @@ const countOrZero = (value: unknown): number => {
 
 const bookFromHistory = (value: unknown): BookDeskStats | null => {
 	if (!value || typeof value !== "object") return null;
-
 	const row = value as Record<string, unknown>;
-
 	return {
 		closed: countOrZero(row.closed),
 		open: countOrZero(row.open),
@@ -864,150 +878,234 @@ const bookFromHistory = (value: unknown): BookDeskStats | null => {
 	};
 };
 
-const trainingFromHistory = (value: unknown): TrainingSample | null => {
-	if (!value || typeof value !== "object") return null;
-
+const pathsFromHistory = (value: unknown): PathBookSnapshot => {
+	if (!value || typeof value !== "object") return emptyPaths();
 	const row = value as Record<string, unknown>;
-
 	return {
-		feeds: countOrZero(row.feeds),
-		tokenEmitRate: finiteOrNull(row.tokenEmitRate ?? row.gatePassRate),
-		blockedRate: finiteOrNull(row.blockedRate),
-		blockedBrightnessRate: finiteOrNull(row.blockedBrightnessRate),
-		blockedDuplicateRate: finiteOrNull(row.blockedDuplicateRate),
-		vetoRate: finiteOrNull(row.vetoRate),
-		emptyRate: finiteOrNull(row.emptyRate),
-		policyStoredRate: finiteOrNull(row.policyStoredRate),
-		outcomeRate: finiteOrNull(row.outcomeRate),
-		outcomeEnterRate: finiteOrNull(row.outcomeEnterRate),
-		outcomeExitRate: finiteOrNull(row.outcomeExitRate),
-		exploredEnter: finiteOrNull(row.exploredEnter),
-		venueOpen: finiteOrNull(row.venueOpen),
-		virtualExcursion: finiteOrNull(row.virtualExcursion),
-		developedPaths: finiteOrNull(row.developedPaths),
-		promotedPaths: finiteOrNull(row.promotedPaths),
-		prunedPaths: finiteOrNull(row.prunedPaths),
-		meanThreshold: finiteOrNull(row.meanThreshold),
-		exitProfit: finiteOrNull(row.exitProfit),
-		exitStop: finiteOrNull(row.exitStop),
-		exitBranch: finiteOrNull(row.exitBranch),
+		developed: finiteOrNull(row.developed),
+		promoted: finiteOrNull(row.promoted),
+		meanResistance: finiteOrNull(row.meanResistance ?? row.meanThreshold),
+		added: finiteOrNull(row.added),
+		removed: finiteOrNull(row.removed),
 	};
 };
 
-const emptyBookStats = (): BookDeskStats => ({
-	closed: 0,
-	open: 0,
-	wins: 0,
-	winRate: null,
-	meanReturn: null,
-	medianReturn: null,
-	worstReturn: null,
-	avgHoldNs: null,
-});
+const policyFromHistory = (value: unknown): PolicySnapshot => {
+	if (!value || typeof value !== "object") return emptyPolicy();
+	const row = value as Record<string, unknown>;
+	const checks = countOrZero(row.checks);
+	const hits = countOrZero(row.hits);
+	return {
+		checks,
+		hits,
+		hitRate: finiteOrNull(row.hitRate) ?? (checks > 0 ? hits / checks : null),
+	};
+};
+
+const exitMixFromHistory = (value: unknown): ExitMix => {
+	if (!value || typeof value !== "object") return emptyExitMix();
+	const row = value as Record<string, unknown>;
+	return {
+		profit: countOrZero(row.profit),
+		stop: countOrZero(row.stop),
+		policy: countOrZero(row.policy),
+		other: countOrZero(row.other),
+		total: countOrZero(row.total),
+	};
+};
+
+const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
+	if (!value || typeof value !== "object") return emptyStops();
+	const row = value as Record<string, unknown>;
+	return {
+		open: finiteOrNull(row.open),
+		invalidation: finiteOrNull(row.invalidation),
+		trailing: finiteOrNull(row.trailing),
+		damage: finiteOrNull(row.damage),
+		armed: finiteOrNull(row.armed),
+		maxProximity: finiteOrNull(row.maxProximity),
+	};
+};
 
 const historySample = (value: unknown): LongtailSample | null => {
 	if (!value || typeof value !== "object") return null;
-
 	const row = value as Record<string, unknown>;
 	const at = finiteOrNull(row.at);
 	const paper = bookFromHistory(row.paper);
 	const virtual = bookFromHistory(row.virtual);
 	const real = bookFromHistory(row.real) ?? emptyBookStats();
-	const training = trainingFromHistory(row.training);
+	if (at === null || paper === null || virtual === null) return null;
 
-	if (at === null || paper === null || virtual === null || training === null) {
-		return null;
-	}
+	const exits =
+		row.exits && typeof row.exits === "object"
+			? (row.exits as Record<string, unknown>)
+			: {};
+	const stops =
+		row.stops && typeof row.stops === "object"
+			? (row.stops as Record<string, unknown>)
+			: {};
 
 	return {
 		at,
 		paper,
 		virtual,
 		real,
+		paperWin: finiteOrNull(row.paperWin),
+		paperEdge: finiteOrNull(row.paperEdge),
+		realWin: finiteOrNull(row.realWin),
+		realEdge: finiteOrNull(row.realEdge),
 		realArmed: finiteOrNull(row.realArmed),
-		training,
-		stops: stopsFromHistory(row.stops),
+		eligibleResistance: finiteOrNull(row.eligibleResistance) ?? 0.2,
+		paths: pathsFromHistory(row.paths ?? row.training),
+		policy: policyFromHistory(row.policy),
+		exits: {
+			virtual: exitMixFromHistory(exits.virtual),
+			paper: exitMixFromHistory(exits.paper),
+			real: exitMixFromHistory(exits.real),
+		},
+		stops: {
+			virtual: stopsFromHistory(stops.virtual),
+			paper: stopsFromHistory(stops.paper),
+			real: stopsFromHistory(stops.real),
+		},
 	};
 };
 
-const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
-	if (value && typeof value === "object") {
-		const row = value as Record<string, unknown>;
-		const exits: Record<string, number> = {};
-		let exitTotal = 0;
-		const rawExits = row.exits;
-		if (rawExits && typeof rawExits === "object") {
-			for (const [key, countValue] of Object.entries(
-				rawExits as Record<string, unknown>,
-			)) {
-				const count = finiteOrNull(countValue);
-				if (count === null || count <= 0) continue;
-				exits[key] = count;
-				exitTotal += count;
-			}
-		}
-		return {
-			open: finiteOrNull(row.open),
-			invalidation: finiteOrNull(row.invalidation),
-			trailing: finiteOrNull(row.trailing),
-			damage: finiteOrNull(row.damage),
-			armed: finiteOrNull(row.armed),
-			maxProximity: finiteOrNull(row.maxProximity),
-			exits,
-			exitTotal,
-		};
-	}
-	return {
-		open: null,
-		invalidation: null,
-		trailing: null,
-		damage: null,
-		armed: null,
-		maxProximity: null,
-		exits: {},
-		exitTotal: 0,
-	};
-};
-
-/*
-beginLongtailHistory opens the buffer for one replay. The samples already
-on the page stay up until the replay ends, then the epoch replaces them.
-*/
 export const beginLongtailHistory = () => {
 	historyBuffer = Circular<LongtailSample>(CHART_SAMPLES);
 };
 
-/* ingestLongtailHistory appends one batch. A batch before begin is ignored. */
 export const ingestLongtailHistory = (payload: unknown): boolean => {
 	if (historyBuffer === null || !Array.isArray(payload)) return false;
 
 	let accepted = 0;
-
 	for (const item of payload) {
 		const sample = historySample(item);
 		if (!sample) continue;
 		historyBuffer.push(sample);
 		accepted += 1;
 	}
-
 	return accepted > 0;
 };
 
-/*
-endLongtailHistory installs the epoch. An empty replay leaves the page's
-own samples alone. A recorder that is already running then takes one live
-reading, so the latest point still carries the training step feed.
-*/
 export const endLongtailHistory = () => {
 	if (historyBuffer === null) return;
 
 	const seeded = historyBuffer.values().sort((a, b) => a.at - b.at);
 	historyBuffer = null;
-
 	if (seeded.length === 0) return;
 
 	installWindow(seeded);
 	maybeRecordLongtailSample();
+};
+
+const windowIsWarmupOnly = (samples: LongtailSample[]): boolean =>
+	samples.length === 0 ||
+	(samples.length <= 2 &&
+		samples.every(
+			(sample) =>
+				sample.paper.closed === 0 &&
+				sample.virtual.closed === 0 &&
+				sample.real.closed === 0 &&
+				sample.paths.developed === null,
+		));
+
+/*
+seedFromClosedLots builds a bounded cumulative trajectory from desk/S3 closed
+lots so the charts show improving/worsening before the live 5s window fills.
+Replaces only an empty or warmup-only window — never a live series.
+*/
+export const seedFromClosedLots = () => {
+	if (!windowIsWarmupOnly(chartWindow.values())) return false;
+
+	const rows = deskRowsForStats().filter((row) => positionReadout(row).closed);
+	if (rows.length < 2) return false;
+
+	const dated = rows
+		.map((row) => {
+			const closedAt = positionReadout(row).closedAt;
+			const at = closedAt ? Date.parse(closedAt) : Number.NaN;
+			return { row, at: Number.isFinite(at) ? at : 0 };
+		})
+		.sort((a, b) => a.at - b.at);
+
+	const step = Math.max(1, Math.ceil(dated.length / CHART_SAMPLES));
+	const samples: LongtailSample[] = [];
+	const cumulative: Record<string, unknown>[] = [];
+
+	for (let i = 0; i < dated.length; i++) {
+		cumulative.push(dated[i].row);
+		if ((i + 1) % step !== 0 && i !== dated.length - 1) continue;
+
+		const at =
+			dated[i].at || Date.now() - (dated.length - 1 - i) * SAMPLE_EVERY_MS;
+		samples.push({
+			at,
+			paper: summarizeBook(cumulative, "paper"),
+			virtual: summarizeBook(cumulative, "virtual"),
+			real: summarizeBook(cumulative, "real"),
+			paperWin: null,
+			paperEdge: null,
+			realWin: null,
+			realEdge: null,
+			realArmed: null,
+			eligibleResistance: confidenceAtom.get().eligible_resistance ?? 0.2,
+			paths: emptyPaths(),
+			policy: emptyPolicy(),
+			exits: {
+				virtual: summarizeExits(cumulative, "virtual"),
+				paper: summarizeExits(cumulative, "paper"),
+				real: summarizeExits(cumulative, "real"),
+			},
+			stops: {
+				virtual: emptyStops(),
+				paper: emptyStops(),
+				real: emptyStops(),
+			},
+		});
+	}
+
+	if (samples.length < 2) return false;
+
+	installWindow(samples);
+	return true;
+};
+
+/*
+topExitTriggers returns up to EXIT_TRIGGER_CAP reasons for the selected book,
+sorted by count. Used by the rail — not stored inside samples.
+*/
+export const topExitTriggers = (
+	rows: Record<string, unknown>[],
+	book: Book,
+): Array<{ trigger: string; count: number }> => {
+	const counts = new Map<string, number>();
+
+	for (const row of closedOnBook(rows, book)) {
+		const triggers: string[] = [];
+		if (Array.isArray(row.outcome_triggers)) {
+			for (const trigger of row.outcome_triggers) {
+				if (typeof trigger === "string" && trigger !== "") {
+					triggers.push(trigger);
+				}
+			}
+		}
+		if (
+			triggers.length === 0 &&
+			typeof row.exit_trigger === "string" &&
+			row.exit_trigger !== ""
+		) {
+			triggers.push(row.exit_trigger);
+		}
+		for (const trigger of triggers) {
+			counts.set(trigger, (counts.get(trigger) ?? 0) + 1);
+		}
+	}
+
+	return [...counts.entries()]
+		.map(([trigger, count]) => ({ trigger, count }))
+		.sort((a, b) => b.count - a.count)
+		.slice(0, EXIT_TRIGGER_CAP);
 };
 
 export const ensureLongtailRecorder = () => {
@@ -1015,23 +1113,29 @@ export const ensureLongtailRecorder = () => {
 		return;
 	}
 
+	requestLongtailSources();
+	seedFromClosedLots();
 	recordLongtailSample();
-	recorderHandle = window.setInterval(
-		maybeRecordLongtailSample,
-		SAMPLE_EVERY_MS,
-	);
+	recorderHandle = window.setInterval(() => {
+		seedFromClosedLots();
+		maybeRecordLongtailSample();
+	}, SAMPLE_EVERY_MS);
 };
 
-/* Tests: stop the interval and empty the window. */
 export const resetLongtailRecorder = () => {
 	if (recorderHandle !== null) {
 		window.clearInterval(recorderHandle);
 		recorderHandle = null;
 	}
 	historyBuffer = null;
-	longtailBackendMetrics = null;
+	priorPathKeys = null;
+	resetLongtailSourcesRequest();
 	chartWindow = Circular<LongtailSample>(CHART_SAMPLES);
-	longtailStore.setState(() => ({ samples: [], lastSampleAt: 0 }));
+	longtailStore.setState(() => ({
+		samples: [],
+		lastSampleAt: 0,
+		sourcesReady: false,
+	}));
 };
 
 export const useLongtailReport = () =>

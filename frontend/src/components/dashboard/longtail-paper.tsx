@@ -1,17 +1,20 @@
 import { Link } from "@tanstack/react-router";
-import { useLongtailReport, verdict } from "#/collections/longtail";
+import { useSelector } from "@tanstack/react-store";
+import { bookAtom } from "#/collections/book";
+import { tierStats, useLongtailReport, verdict } from "#/collections/longtail";
 import { Flex, Section, Typography } from "#/components/ui";
 
 export const LongtailPaperPanel = () => {
 	const { samples } = useLongtailReport();
+	const book = useSelector(bookAtom, (state) => state);
 	const latest = samples.at(-1);
-	const paper = latest?.paper;
-	const call = latest ? verdict(samples, "paper") : null;
+	const tier = latest ? tierStats(latest, book) : null;
+	const call = latest ? verdict(samples, book) : null;
 
 	return (
 		<Section className="border-(--line) border-t">
 			<Section.Header
-				title="Paper longtail"
+				title={`${book} longtail`}
 				meta={
 					<Link
 						to="/longtail"
@@ -24,7 +27,7 @@ export const LongtailPaperPanel = () => {
 			<Section.Body className="gap-3 p-3">
 				{!latest ? (
 					<Typography.Span className="text-(--muted)">
-						Collecting samples from live training ticks…
+						Collecting samples from desk lots, confidence, and model/paths…
 					</Typography.Span>
 				) : (
 					<Flex.Row gap={4} wrap="wrap">
@@ -38,15 +41,15 @@ export const LongtailPaperPanel = () => {
 							<Typography.Span className="text-(--muted) text-xs">
 								Closed lots
 							</Typography.Span>
-							<Typography.Span>{paper?.closed ?? "—"}</Typography.Span>
+							<Typography.Span>{tier?.stats.closed ?? "—"}</Typography.Span>
 						</Flex.Column>
 						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
 								Win rate
 							</Typography.Span>
 							<Typography.Span>
-								{paper?.winRate != null
-									? `${(100 * paper.winRate).toFixed(1)}%`
+								{tier?.winRate != null
+									? `${(100 * tier.winRate).toFixed(1)}%`
 									: "—"}
 							</Typography.Span>
 						</Flex.Column>
@@ -55,16 +58,24 @@ export const LongtailPaperPanel = () => {
 								Mean return
 							</Typography.Span>
 							<Typography.Span>
-								{paper?.meanReturn != null
-									? `${(100 * paper.meanReturn).toFixed(2)}%`
+								{tier?.edge != null
+									? `${(100 * tier.edge).toFixed(2)}%`
 									: "—"}
 							</Typography.Span>
 						</Flex.Column>
 						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
-								Open venue
+								Open
 							</Typography.Span>
-							<Typography.Span>{paper?.open ?? "—"}</Typography.Span>
+							<Typography.Span>{tier?.stats.open ?? "—"}</Typography.Span>
+						</Flex.Column>
+						<Flex.Column gap={1}>
+							<Typography.Span className="text-(--muted) text-xs">
+								Paths @ floor
+							</Typography.Span>
+							<Typography.Span>
+								{latest.paths.promoted ?? "—"}
+							</Typography.Span>
 						</Flex.Column>
 					</Flex.Row>
 				)}

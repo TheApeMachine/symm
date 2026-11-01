@@ -1,4 +1,5 @@
 import { ingestExploreListPrefix } from "#/collections/cognition";
+import { seedFromClosedLots } from "#/collections/longtail";
 import {
 	closedListingFromEnvelope,
 	pathsListingFromEnvelope,
@@ -19,5 +20,6 @@ export const applyClosedEnvelope = (payload: unknown): boolean => {
 	const compact = closedListingFromEnvelope(payload);
 	if (!compact) return false;
 	ingestHistoryClosedBatch(compact.entries);
+	seedFromClosedLots();
 	return true;
 };
