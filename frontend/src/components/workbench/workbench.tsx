@@ -25,14 +25,13 @@ const PerspectiveViewer = lazy(() =>
 opening picks the table the surface starts on.
 
 Every table in the warehouse is offered, and the viewer's own UI switches
-between them, but one of them has to be showing when the page opens. Two of the
-tables are raw tape whose substance is one opaque payload per row and which run
-to tens of millions of rows; the graded outcomes are the analytical heart of
-the archive, so that is where the surface opens when it is there.
+between them, but one of them has to be showing when the page opens. Closed
+lots are the usual analytical start; Level3 events are next when lots are
+absent.
 */
 const opening = (tables: string[]): string =>
-	tables.find((table) => table.endsWith(".outcomes")) ??
-	tables.find((table) => table.endsWith(".runs")) ??
+	tables.find((table) => table.includes("closed_")) ??
+	tables.find((table) => table.includes("level3_events")) ??
 	tables[0] ??
 	"";
 
@@ -45,12 +44,10 @@ const shortName = (name: string): string => {
 Workbench is the analytical surface.
 
 The viewer is not given a table of its own. It is given a Client backed by a
-Perspective Virtual Server over the hub's DuckDB, which means the pivots,
-filters, sorts, and expressions configured in its UI are compiled into SQL and
-evaluated in the warehouse, against the Iceberg tables, and only the window on
-screen is transferred. Grouping a hundred thousand graded outcomes costs a
-couple of kilobytes rather than the forty megabytes the rows themselves weigh,
-and the tables too large to ever load are queryable on the same terms.
+Perspective Virtual Server over DuckDB (hub proxy → workbench service), which
+means the pivots, filters, sorts, and expressions configured in its UI are
+compiled into SQL and evaluated against S3 JSON views (open/closed lots and
+Level3 NDJSON), and only the window on screen is transferred.
 */
 export const Workbench = () => {
 	const [client, setClient] = useState<WarehouseClient | undefined>();
@@ -136,7 +133,7 @@ export const Workbench = () => {
 					no tables in warehouse
 				</Typography.Label>
 				<Typography.Mono size="s" tone="f4">
-					waiting for hindsight record families to materialize
+					waiting for lot or level3 views to appear in the warehouse
 				</Typography.Mono>
 			</Flex.Column>
 		);

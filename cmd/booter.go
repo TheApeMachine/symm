@@ -100,6 +100,7 @@ type Booter struct {
 	model            *strategy.Model
 	workspace        *nmruntime.Workspace
 	store            *store.Client
+	level3Tape       *broker.Level3Tape
 	replies          sync.Map
 }
 
@@ -135,9 +136,12 @@ func NewBooter(ctx context.Context, name string) *Booter {
 		))
 	}
 
+	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+
 	return &Booter{
-		System: nmruntime.NewSystem(ctx, name, nil),
-		store:  store.NewClient(ctx, "symm"),
+		System:     nmruntime.NewSystem(ctx, name, nil),
+		store:      client,
+		level3Tape: broker.NewLevel3Tape(client, ""),
 	}
 }
 
@@ -182,6 +186,7 @@ func (booter *Booter) Run() error {
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
+	booter.level3Tape.Close()
 	store.FlushAll()
 	return nil
 }
@@ -549,6 +554,8 @@ func (booter *Booter) startIngress(
 				if level3 == nil {
 					continue
 				}
+
+				booter.level3Tape.Record(buf)
 
 				if err := booter.book.Update(
 					level3,

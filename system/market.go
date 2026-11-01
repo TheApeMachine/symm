@@ -14,6 +14,7 @@ type Market struct {
 	Instrument    *Instrument
 	Book          *Book
 	Subscribe     *Subscribe
+	Level3        *Level3
 }
 
 type Instrument struct {
@@ -27,6 +28,15 @@ type Book struct {
 type Subscribe struct {
 	Batch int
 	Pace  time.Duration
+}
+
+/*
+Level3 is the venue book tape and subscription surface.
+*/
+type Level3 struct {
+	Record           bool
+	RecordFlushBytes int
+	RecordFlushLines int
 }
 
 func NewMarket() *Market {
@@ -49,6 +59,9 @@ func NewMarket() *Market {
 	// with cmd/cfg/config.yml (market.l3_depth) so the execution reducer can
 	// read the authoritative subscription depth without guessing.
 	viper.SetDefault("market.l3_depth", 10)
+	viper.SetDefault("market.level3.record", true)
+	viper.SetDefault("market.level3.record_flush_bytes", 4<<20)
+	viper.SetDefault("market.level3.record_flush_lines", 2000)
 
 	return &Market{
 		Model:         viper.GetString("market.model"),
@@ -64,6 +77,11 @@ func NewMarket() *Market {
 		Subscribe: &Subscribe{
 			Batch: viper.GetInt("market.subscribe.batch"),
 			Pace:  viper.GetDuration("market.subscribe.pace"),
+		},
+		Level3: &Level3{
+			Record:           viper.GetBool("market.level3.record"),
+			RecordFlushBytes: viper.GetInt("market.level3.record_flush_bytes"),
+			RecordFlushLines: viper.GetInt("market.level3.record_flush_lines"),
 		},
 	}
 }

@@ -248,7 +248,7 @@ orders, policies, and display vocabulary — including in tests.
 |---------------------------|----------------------------------------------------------------------------|
 | `ws://…/ws`               | Frame stream; focus symbol and route commands from the browser             |
 | `POST …/hindsight/commit` | Persist one labelled detection from the Hindsight UI                       |
-| `POST …/workbench/query`  | Proxy to optional Perspective workbench (`workbench.url`, default `:8081`) |
+| `POST …/workbench/query`  | Proxy to DuckDB workbench (`make workbench`, `workbench.url`, default `:8081`) |
 
 The frontend is **React 19 / TanStack Start / Vite** on port **3000**
 (`cd frontend && pnpm dev`). Build-time overrides: `VITE_SYMM_WS_URL`,
@@ -266,7 +266,7 @@ The frontend is **React 19 / TanStack Start / Vite** on port **3000**
 | `/influence`   | Metric influence graph                                 |
 | `/hindsight`   | Tape review and commit                                 |
 | `/diagnostics` | Pipeline topology and latency                          |
-| `/workbench`   | Perspective over stored runs (needs workbench service) |
+| `/workbench`   | Perspective over S3 lots + Level3 tape (`make workbench`) |
 
 The hub starts in **`ui` package `init`** when the backend binary links `ui`.
 

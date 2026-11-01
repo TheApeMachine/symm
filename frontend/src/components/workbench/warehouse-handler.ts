@@ -151,10 +151,9 @@ const inFlightFetches = new Map<string, AbortController>();
 /*
 WarehouseHandler is the shipped DuckDB handler with one method replaced.
 
-It names a hosted table `database.name`, which cannot address a table that
-lives in a schema. An Iceberg catalog is three levels — catalog, namespace,
-table — so the names are rebuilt here from the same listing. Every other method
-interpolates the name it was handed and needs no change.
+It rebuilds hosted names as `database.schema.name` from SHOW ALL TABLES so
+seeded S3 views remain addressable. Every other method interpolates the name it
+was handed and needs no change.
 
 Tables in `memory` are the handler's own workings: it materializes each view as
 a real table there and drops it afterwards. They are not data anyone asked for,
@@ -167,13 +166,10 @@ export class WarehouseHandler extends DuckDBHandler {
 		super(warehouse as never, wasm as never);
 
 		/*
-			A view with no group-by is ordered by `rowid`, DuckDB's identity for
-			a row of its own storage. An Iceberg table has no such column, and
-			no row order the catalog guarantees either, so there is nothing to
-			put in its place: the ordering is declared to be no ordering, which
-			DuckDB then drops from the plan. Scrolling stays consistent
-			regardless, because the handler pages through a materialized copy
-			rather than re-reading the source.
+			A view with no group-by is ordered by `rowid`. S3 JSON views have no
+			such column, so the ordering is declared to be no ordering, which
+			DuckDB then drops from the plan. Scrolling stays consistent because
+			the handler pages through a materialized copy.
 
 			The builder is replaced rather than configured because the class
 			constructs its own and takes no options.
@@ -203,17 +199,14 @@ export class WarehouseHandler extends DuckDBHandler {
 
 	/*
 		The viewer re-reads a schema, a row count, and a column count on every
-		render, resize, and configuration step. Against a database in the tab
-		those are free; against one behind Iceberg a row count is a scan of the
-		table, and a single pivot asked for one nine times over.
+		render, resize, and configuration step. Against S3-backed views a row
+		count is a scan, and a single pivot asked for one nine times over.
 
 		None of the three can change while they are being asked for. A view is
 		`CREATE TABLE`d as a snapshot and dropped whole, so its size and shape
-		are fixed for as long as it exists; a source table is read at the
-		snapshot the session opened on, and answering from a later one would
-		describe data the displayed rows did not come from. So each is resolved
-		once per name and kept until that name is dropped — the promise, not the
-		value, because the repeats arrive together and would otherwise all miss.
+		are fixed for as long as it exists. Each is resolved once per name and
+		kept until that name is dropped — the promise, not the value, because
+		the repeats arrive together and would otherwise all miss.
 	*/
 	async tableSchema(...args: Parameters<DuckDBHandler["tableSchema"]>) {
 		return remember(schemas, args[0], () => super.tableSchema(...args));

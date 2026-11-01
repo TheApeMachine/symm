@@ -1,0 +1,359 @@
+package workbench
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"sync"
+
+	duckdb "github.com/duckdb/duckdb-go/v2"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/system"
+)
+
+/*
+Warehouse is a DuckDB engine with S3 JSON views for the Analytical Workbench.
+*/
+type Warehouse struct {
+	catalog *Catalog
+	mu      sync.Mutex
+	running sync.Mutex
+	db      *sql.DB
+	conn    *sql.Conn
+}
+
+/*
+New constructs the engine without connecting.
+*/
+func New() *Warehouse {
+	return &Warehouse{
+		catalog: NewCatalog(system.Cfg.Storage.S3.Bucket),
+	}
+}
+
+/*
+Wrap adapts an already-open DuckDB for tests without S3 boot.
+*/
+func Wrap(db *sql.DB) *Warehouse {
+	return &Warehouse{db: db, catalog: NewCatalog("symm")}
+}
+
+/*
+Close releases the engine. A Warehouse that never connected owns nothing.
+*/
+func (warehouse *Warehouse) Close() error {
+	warehouse.mu.Lock()
+	defer warehouse.mu.Unlock()
+
+	if warehouse.db == nil {
+		return nil
+	}
+
+	db := warehouse.db
+	conn := warehouse.conn
+	warehouse.db = nil
+	warehouse.conn = nil
+
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO, "workbench: close duckdb session", err,
+			))
+		}
+	}
+
+	if err := db.Close(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "workbench: close duckdb", err,
+		))
+	}
+
+	return nil
+}
+
+func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
+	warehouse.mu.Lock()
+	defer warehouse.mu.Unlock()
+
+	if warehouse.db != nil {
+		return warehouse.db, nil
+	}
+
+	db, err := sql.Open("duckdb", "")
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "workbench: open duckdb", err,
+		))
+	}
+
+	for _, statement := range warehouse.boot() {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			_ = db.Close()
+
+			return nil, errnie.Error(errnie.Err(
+				errnie.BadGateway, "workbench: "+statement, err,
+			))
+		}
+	}
+
+	warehouse.db = db
+
+	return db, nil
+}
+
+func (warehouse *Warehouse) boot() []string {
+	endpoint := system.Cfg.Storage.S3.Endpoint
+	secure := strings.HasPrefix(endpoint, "https://")
+	host := strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
+
+	keyID := system.Cfg.Storage.S3.AccessKeyID
+	secret := system.Cfg.Storage.S3.SecretAccessKey
+
+	if system.Cfg.Storage.S3.Anonymous {
+		keyID = "anonymous"
+		secret = "anonymous"
+	}
+
+	statements := []string{
+		fmt.Sprintf("SET GLOBAL memory_limit=%s", literal(system.Cfg.Workbench.MemoryLimit)),
+		fmt.Sprintf(
+			"SET GLOBAL max_temp_directory_size=%s",
+			literal(system.Cfg.Workbench.MaxTempDirectorySize),
+		),
+		fmt.Sprintf("SET GLOBAL threads=%d", system.Cfg.Workbench.Threads),
+		"SET GLOBAL preserve_insertion_order=false",
+		"SET GLOBAL order_by_non_integer_literal=true",
+		"INSTALL httpfs",
+		"LOAD httpfs",
+		fmt.Sprintf(
+			"CREATE OR REPLACE SECRET warehouse_store ("+
+				"TYPE s3, KEY_ID %s, SECRET %s, REGION %s, "+
+				"ENDPOINT %s, URL_STYLE 'path', USE_SSL %t)",
+			literal(keyID),
+			literal(secret),
+			literal(system.Cfg.Storage.S3.Region),
+			literal(host),
+			secure,
+		),
+	}
+
+	statements = append(statements, warehouse.catalog.statements()...)
+	return statements
+}
+
+func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
+	db, err := warehouse.connect(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	warehouse.mu.Lock()
+	defer warehouse.mu.Unlock()
+
+	if warehouse.conn != nil {
+		return warehouse.conn, nil
+	}
+
+	conn, err := db.Conn(ctx)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "workbench: open duckdb session", err,
+		))
+	}
+
+	warehouse.conn = conn
+
+	return conn, nil
+}
+
+/*
+Execute runs one statement and returns its result as an Apache Arrow IPC stream.
+*/
+func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]byte, error) {
+	statement = sanitizeStatement(statement)
+
+	conn, err := warehouse.session(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	warehouse.running.Lock()
+	defer warehouse.running.Unlock()
+
+	selects, err := warehouse.selects(ctx, conn, statement)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !selects {
+		if _, err := conn.ExecContext(ctx, statement); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				"workbench: execute statement: "+statement,
+				err,
+			))
+		}
+
+		return []byte{}, nil
+	}
+
+	projected, err := warehouse.project(ctx, conn, statement)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return warehouse.stream(ctx, conn, projected)
+}
+
+func (warehouse *Warehouse) selects(
+	ctx context.Context, conn *sql.Conn, statement string,
+) (bool, error) {
+	var kind duckdb.StmtType
+
+	err := conn.Raw(func(driverConn any) error {
+		prepared, err := driverConn.(*duckdb.Conn).PrepareContext(ctx, statement)
+
+		if err != nil {
+			return err
+		}
+
+		defer prepared.Close()
+
+		kind, err = prepared.(*duckdb.Stmt).StatementType()
+
+		return err
+	})
+
+	if err != nil {
+		return false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"workbench: prepare statement: "+statement,
+			err,
+		))
+	}
+
+	return kind == duckdb.STATEMENT_TYPE_SELECT, nil
+}
+
+func (warehouse *Warehouse) stream(
+	ctx context.Context, conn *sql.Conn, statement string,
+) ([]byte, error) {
+	columns, err := warehouse.describe(ctx, conn, statement)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := conn.QueryContext(ctx, statement)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "workbench: evaluate query", err,
+		))
+	}
+
+	defer rows.Close()
+
+	values := make([][]any, 0)
+
+	for rows.Next() {
+		dest := make([]any, len(columns))
+		ptrs := make([]any, len(columns))
+
+		for i := range dest {
+			ptrs[i] = &dest[i]
+		}
+
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO, "workbench: scan query row", err,
+			))
+		}
+
+		values = append(values, dest)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "workbench: read query rows", err,
+		))
+	}
+
+	stream, err := encodeIPC(columns, values)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "workbench: encode arrow ipc", err,
+		))
+	}
+
+	return stream, nil
+}
+
+func (warehouse *Warehouse) project(
+	ctx context.Context, conn *sql.Conn, statement string,
+) (string, error) {
+	columns, err := warehouse.describe(ctx, conn, statement)
+
+	if err != nil {
+		return "", err
+	}
+
+	if len(columns) == 0 {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation, "workbench: query selects no columns", nil,
+		))
+	}
+
+	selections := make([]string, 0, len(columns))
+
+	for _, column := range columns {
+		selections = append(selections, selection(column.Name, column.Type))
+	}
+
+	return "SELECT " + strings.Join(selections, ", ") + " FROM (" + statement + ")", nil
+}
+
+func (warehouse *Warehouse) describe(
+	ctx context.Context, conn *sql.Conn, statement string,
+) ([]Column, error) {
+	rows, err := conn.QueryContext(ctx, "DESCRIBE ("+statement+")")
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "workbench: describe query", err,
+		))
+	}
+
+	defer rows.Close()
+
+	columns := make([]Column, 0)
+
+	for rows.Next() {
+		var name, kind string
+		var null, key, def, extra sql.NullString
+
+		if err := rows.Scan(&name, &kind, &null, &key, &def, &extra); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO, "workbench: scan query description", err,
+			))
+		}
+
+		columns = append(columns, Column{Name: name, Type: kind})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "workbench: read query description", err,
+		))
+	}
+
+	return columns, nil
+}

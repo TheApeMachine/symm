@@ -1,8 +1,8 @@
 import { hubBaseUrl } from "#/lib/hub";
 
 /*
-runWarehouseStatement evaluates one statement in the hub's DuckDB and returns
-its result as the bytes of an Apache Arrow IPC stream.
+runWarehouseStatement evaluates one statement in the workbench DuckDB (via the
+hub proxy) and returns its result as the bytes of an Apache Arrow IPC stream.
 
 Every statement the workbench issues comes through here. They are written by
 Perspective rather than by a person: the viewer compiles its own configuration

@@ -1,8 +1,6 @@
 storage:
   s3:
-    # Object storage for whole-blob artifacts. Hindsight's record families are
-    # Iceberg tables and do not pass through here; what remains is the
-    # associative model's encoded state.
+    # Object storage for whole-blob artifacts: lots, model state, L3 NDJSON tape.
     bucket: symm
     region: us-east-1
     endpoint: http://s3.seaweed.home.arpa
@@ -16,22 +14,6 @@ storage:
     idle_conn_timeout: 90s
     response_header_timeout: 30s
     request_timeout: 10s
-  iceberg:
-    # SeaweedFS serves one Iceberg catalog per table bucket, so warehouse
-    # selects the catalog rather than naming a directory inside a shared one.
-    # A table bucket is an ordinary bucket carrying an s3tables.metadata
-    # attribute, so it cannot be the same bucket as storage.s3.bucket above.
-    uri: http://iceberg.seaweed.home.arpa
-    warehouse: s3://symmwarehouse/
-    # Operational retry budget for rejected concurrent catalog commits.
-    # Iceberg refreshes and rebases the append; unknown commit outcomes fail.
-    commit_retries: 4
-    # Maximum binary payload bytes in one Iceberg snapshot. Larger buffers
-    # become successive snapshots so the REST catalog call and the S3 object
-    # write finish inside Seaweed's idle timeout. This is a catalog transport
-    # bound, not a market horizon. Arrow's 2 GiB Binary offset remains the
-    # representation ceiling inside a snapshot.
-    append_bytes: 16777216
 
 workbench:
   # The Analytical Workbench runs as a standalone service decoupled from the
@@ -40,6 +22,7 @@ workbench:
   url: "http://127.0.0.1:8081/workbench/query"
   memory_limit: 16GB
   max_temp_directory_size: 64GB
+  threads: 4
 
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
@@ -275,6 +258,12 @@ market:
   # ponytail: fixed capacity is an intentional simplification with memory and
   # burst limits; telemetry-driven or adaptive sizing is the upgrade path.
   l3_ring_capacity: 8192
+  level3:
+    # Persist verbatim venue Level3 JSON frames as NDJSON parts under
+    # market/level3/{run}/{epoch}/{part}.ndjson for Analytical Workbench queries.
+    record: true
+    record_flush_bytes: 4194304
+    record_flush_lines: 2000
   # Book signals read the verified book version in effect at each frame's
   # venue time, not the live book. Retention is sized from the data: the book
   # keeps every version back to the largest lag a lookup has asked for, so a
