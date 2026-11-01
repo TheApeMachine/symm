@@ -5,7 +5,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/nomagique/data"
 )
 
 /*
@@ -113,20 +112,4 @@ func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
 func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {
 	type alias AddOrderMessage
 	return sonic.Marshal((*alias)(&msg))
-}
-
-/*
-ToValue serializes the AddOrderRequest into a *data.Value layer.
-*/
-func (req *AddOrderRequest) ToValue(epochs ...int64) *data.Value {
-	if req == nil {
-		return nil
-	}
-
-	val := data.NewValue("kraken", "order", req.Pair)
-	if len(epochs) > 0 && epochs[0] > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(req)
-	return val
 }

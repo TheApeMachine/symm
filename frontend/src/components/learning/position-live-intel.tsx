@@ -88,10 +88,15 @@ export const PositionLiveIntel = ({
 		(): Lifecycle =>
 			({
 				symbol,
-				book: row.virtual === true ? "virtual" : "paper",
+				book:
+					typeof row.book === "string" && row.book !== ""
+						? (row.book as string)
+						: row.virtual === true
+							? "virtual"
+							: "paper",
 				status: "open",
 			}) as Lifecycle,
-		[symbol, row.virtual],
+		[symbol, row.book, row.virtual],
 	);
 
 	const gate = readGate(trainingFrame ?? null);
@@ -101,7 +106,12 @@ export const PositionLiveIntel = ({
 		(trainingFrame?.reading("blockedReason") as string | undefined) ??
 		undefined;
 	const phase = gate.phase ?? "hold";
-	const positionBook = life.book === "virtual" ? "virtual" : "paper";
+	const positionBook =
+		life.book === "virtual"
+			? "virtual"
+			: life.book === "real"
+				? "real"
+				: "paper";
 	const gateBadge = formatGateBadge({
 		gateLive,
 		phase,

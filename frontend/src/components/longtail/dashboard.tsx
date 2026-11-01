@@ -9,11 +9,13 @@ import {
 	type TrainingSample,
 	matchTone,
 	pct,
+	returnTone,
 	type Tone,
 	toneColor,
 	toneVariant,
 	trainingVerdict,
 	useLongtailReport,
+	winRateTone,
 } from "#/collections/longtail";
 import { Alert, Badge, Chip } from "#/components/ui";
 import {
@@ -80,27 +82,51 @@ type Kpi = {
 
 const kpis: Kpi[] = [
 	{
-		id: "policy",
-		label: "policy hit",
-		value: (s) => s.training?.policyStoredRate ?? null,
+		id: "paper-win",
+		label: "paper win rate",
+		value: (s) => s.paper?.winRate ?? null,
 		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: matchTone,
+		tone: winRateTone,
 		higherIsBetter: true,
 		colorDelta: true,
 		epsilon: 0.02,
 	},
 	{
-		id: "letters",
-		label: "new letters",
-		value: (s) => s.training?.tokenEmitRate ?? null,
+		id: "paper-edge",
+		label: "paper edge",
+		value: (s) => s.paper?.meanReturn ?? null,
+		format: pct,
+		formatDelta: (delta) =>
+			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(2)}pp`,
+		tone: returnTone,
+		higherIsBetter: true,
+		colorDelta: true,
+		epsilon: 0.002,
+	},
+	{
+		id: "real-armed",
+		label: "real armed",
+		value: (s) => s.realArmed,
+		format: (value) => (value >= 0.5 ? "yes" : "halted"),
+		formatDelta: () => "",
+		tone: (value) =>
+			value === null ? "neutral" : value >= 0.5 ? "good" : "warn",
+		higherIsBetter: true,
+		colorDelta: false,
+		epsilon: 0.5,
+	},
+	{
+		id: "real-win",
+		label: "real win rate",
+		value: (s) => s.real?.winRate ?? null,
 		format: rate,
 		formatDelta: (delta) =>
 			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
-		tone: levelTone,
+		tone: winRateTone,
 		higherIsBetter: true,
-		colorDelta: false,
+		colorDelta: true,
 		epsilon: 0.02,
 	},
 	{
@@ -115,26 +141,16 @@ const kpis: Kpi[] = [
 		epsilon: 0.5,
 	},
 	{
-		id: "promoted",
-		label: "paper paths",
-		value: (s) => s.training?.promotedPaths ?? null,
-		format: countLabel,
-		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
-		tone: (value) => (value !== null && value > 0 ? "good" : "neutral"),
+		id: "policy",
+		label: "policy hit",
+		value: (s) => s.training?.policyStoredRate ?? null,
+		format: rate,
+		formatDelta: (delta) =>
+			`${delta >= 0 ? "+" : ""}${(100 * delta).toFixed(1)}pp`,
+		tone: matchTone,
 		higherIsBetter: true,
 		colorDelta: true,
-		epsilon: 0.5,
-	},
-	{
-		id: "explore",
-		label: "explore opens",
-		value: (s) => s.training?.exploredEnter ?? null,
-		format: countLabel,
-		formatDelta: (delta) => `${delta >= 0 ? "+" : ""}${Math.round(delta)}`,
-		tone: levelTone,
-		higherIsBetter: false,
-		colorDelta: false,
-		epsilon: 0.5,
+		epsilon: 0.02,
 	},
 ];
 

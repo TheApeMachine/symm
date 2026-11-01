@@ -4,10 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/theapemachine/symm/decimal"
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -52,21 +53,29 @@ func TestInstrumentPairMeasurementRoundTrip(t *testing.T) {
 			QtyMin:             qtyMin,
 		}
 
-		Convey("ToValue serializes all fields into a Value", func() {
-			epoch := int64(123456789)
-			val := original.ToValue(epoch)
+		Convey("sonic.Marshal round-trips the pair", func() {
+			raw, err := sonic.Marshal(original)
+			So(err, ShouldBeNil)
 
-			So(val, ShouldNotBeNil)
-			So(val.Epoch, ShouldEqual, uint64(epoch))
-			So(val.Scope, ShouldEqual, "BTC/USD")
-			So(val.Role, ShouldEqual, "instrument")
+			var decoded kraken.InstrumentPair
+			So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
+			So(decoded.Symbol, ShouldEqual, "BTC/USD")
+			So(decoded.Base, ShouldEqual, "BTC")
+			So(decoded.Quote, ShouldEqual, "USD")
+			So(decoded.Status, ShouldEqual, "online")
+			So(decoded.QtyPrecision, ShouldEqual, 5)
+			So(decoded.Marginable, ShouldBeTrue)
+			So(decoded.HasIndex, ShouldBeTrue)
+			So(decoded.PositionLimitLong, ShouldEqual, 100)
+			So(decoded.CostMin.String(), ShouldEqual, costMin.String())
+			So(decoded.QtyMin.String(), ShouldEqual, qtyMin.String())
+			So(decoded.TickSize.String(), ShouldEqual, tickSize.String())
 		})
 	})
 }
 
 func TestInstrumentSnapshotWithPeers(t *testing.T) {
 	Convey("Given a kraken instrument snapshot with pairs", t, func() {
-		epoch := int64(987654321)
 		costMin, _ := decimal.NewFromString("1.0")
 
 		pair1 := kraken.InstrumentPair{
@@ -90,13 +99,18 @@ func TestInstrumentSnapshotWithPeers(t *testing.T) {
 		}
 		snapshot.Data.Pairs = []kraken.InstrumentPair{pair1, pair2}
 
-		val := snapshot.ToValue(epoch)
+		raw, err := sonic.Marshal(snapshot)
+		So(err, ShouldBeNil)
 
-		Convey("the snapshot value carries serialized pairs", func() {
-			So(val, ShouldNotBeNil)
-			So(val.Epoch, ShouldEqual, uint64(epoch))
-			So(val.Role, ShouldEqual, "snapshot")
-			So(val.Scope, ShouldEqual, "instrument")
+		Convey("the snapshot JSON carries the pairs", func() {
+			var decoded kraken.Instrument
+			So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
+			So(decoded.Channel, ShouldEqual, "instrument")
+			So(decoded.Type, ShouldEqual, "snapshot")
+			So(decoded.Data.Pairs, ShouldHaveLength, 2)
+			So(decoded.Data.Pairs[0].Symbol, ShouldEqual, "BTC/USD")
+			So(decoded.Data.Pairs[1].Symbol, ShouldEqual, "ETH/USD")
+			So(decoded.Data.Pairs[0].CostMin.String(), ShouldEqual, costMin.String())
 		})
 	})
 }

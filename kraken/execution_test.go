@@ -3,9 +3,10 @@ package kraken_test
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/decimal"
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -55,12 +56,19 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 			Data:    []kraken.ExecutionData{execData},
 		}
 
-		Convey("ToValue serializes execution into Value", func() {
-			val := execution.ToValue(123456789)
-			So(val, ShouldNotBeNil)
-			So(val.Scope, ShouldEqual, "BTC/USD")
-			So(val.Role, ShouldEqual, "execution")
-			So(val.Epoch, ShouldEqual, uint64(123456789))
+		Convey("sonic.Marshal round-trips the execution", func() {
+			raw, err := sonic.Marshal(execution)
+			So(err, ShouldBeNil)
+
+			var decoded kraken.Execution
+			So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
+			So(decoded.Channel, ShouldEqual, "executions")
+			So(decoded.Type, ShouldEqual, "update")
+			So(decoded.Data, ShouldHaveLength, 1)
+			So(decoded.Data[0].Symbol, ShouldEqual, "BTC/USD")
+			So(decoded.Data[0].OrderID, ShouldEqual, "ord-999")
+			So(decoded.Data[0].LastPrice.String(), ShouldEqual, price.String())
+			So(decoded.Data[0].LastQty.String(), ShouldEqual, qty.String())
 		})
 	})
 }

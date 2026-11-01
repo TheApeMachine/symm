@@ -583,7 +583,7 @@ export const requestClosedPositionHistory = () => {
 	if (closedHistoryRequested) return;
 	closedHistoryRequested = true;
 
-	trySendCommand({ type: "s3", prefix: "position/closed" });
+	trySendCommand({ type: "s3", prefix: "paper/closed" });
 	trySendCommand({ type: "s3", prefix: "virtual/closed" });
 };
 
@@ -640,7 +640,7 @@ selectBook keeps one book. A life with no book is a paper trade.
 */
 export const selectBook = (
 	report: LifecycleReport,
-	book: "paper" | "virtual",
+	book: "paper" | "virtual" | "real",
 ): LifecycleReport =>
 	summarize(
 		report.lifecycles.filter((life) => (life.book ?? "paper") === book),

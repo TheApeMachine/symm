@@ -3,8 +3,9 @@ package kraken_test
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/decimal"
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -36,12 +37,25 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 			},
 		}
 
-		Convey("ToValue serializes trade balance and wallet into Value", func() {
-			val := tb.ToValue(wallet, "USD", 123456789)
-			So(val, ShouldNotBeNil)
-			So(val.Scope, ShouldEqual, "USD")
-			So(val.Role, ShouldEqual, "trade_balance")
-			So(val.Epoch, ShouldEqual, uint64(123456789))
+		Convey("sonic.Marshal round-trips the trade balance and wallet", func() {
+			balanceRaw, err := sonic.Marshal(tb)
+			So(err, ShouldBeNil)
+
+			var decoded kraken.TradeBalanceResult
+			So(sonic.Unmarshal(balanceRaw, &decoded), ShouldBeNil)
+			So(decoded.Equity.String(), ShouldEqual, equity.String())
+			So(decoded.UnrealizedPnL.String(), ShouldEqual, unrealized.String())
+			So(decoded.AvailableCash.String(), ShouldEqual, cash.String())
+
+			walletRaw, err := sonic.Marshal(wallet)
+			So(err, ShouldBeNil)
+
+			var decodedWallet kraken.Balance
+			So(sonic.Unmarshal(walletRaw, &decodedWallet), ShouldBeNil)
+			So(decodedWallet.Data, ShouldHaveLength, 2)
+			So(decodedWallet.Data[0].Asset, ShouldEqual, "USD")
+			So(decodedWallet.Data[1].Asset, ShouldEqual, "ZAMA")
+			So(decodedWallet.Data[1].Balance.String(), ShouldEqual, zamaAmount.String())
 		})
 	})
 }

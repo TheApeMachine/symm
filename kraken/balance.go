@@ -6,7 +6,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/decimal"
 )
 
@@ -179,16 +178,4 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 		MarginFreeOrders:  currentValue,
 		UnexecutedValue:   zero,
 	}
-}
-
-/*
-ToValue serializes wallet balances into a *data.Value layer.
-*/
-func (balance *Balance) ToValue(epochs ...int64) *data.Value {
-	val := data.NewValue("kraken", "snapshot", "balances")
-	if len(epochs) > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(balance)
-	return val
 }

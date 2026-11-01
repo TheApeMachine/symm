@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/store";
 import type { Book } from "#/collections/book";
 import { Circular, type CircularBuffer } from "#/collections/circular";
+import { confidenceAtom } from "#/collections/confidence";
 import {
 	closedOnBook,
 	countsTowardBookPerformance,
@@ -10,6 +11,41 @@ import {
 	positionReadout,
 } from "#/components/book-readout";
 import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
+
+/*
+shadowStopComparison scores matched episodes that finished both the active
+structural stop and the learning shadow. Means are in display percent.
+*/
+export const shadowStopComparison = (
+	rows: Record<string, unknown>[],
+	book: Book,
+): { n: number; meanOfficial: number; meanShadow: number } | null => {
+	let officialSum = 0;
+	let shadowSum = 0;
+	let n = 0;
+
+	for (const row of rows) {
+		if (!onBook(row, book)) continue;
+		if (row.shadow_exit_at == null || row.official_exit_at == null) continue;
+
+		const official = row.official_exit_pct;
+		const shadow = row.shadow_exit_pct;
+		if (typeof official !== "number" || !Number.isFinite(official)) continue;
+		if (typeof shadow !== "number" || !Number.isFinite(shadow)) continue;
+
+		officialSum += official;
+		shadowSum += shadow;
+		n++;
+	}
+
+	if (n === 0) return null;
+
+	return {
+		n,
+		meanOfficial: officialSum / n,
+		meanShadow: shadowSum / n,
+	};
+};
 
 /*
 OpenLotTelemetry aggregates the live stop-loss state across the desk's open
@@ -250,6 +286,9 @@ export type LongtailSample = {
 	at: number;
 	paper: BookDeskStats;
 	virtual: BookDeskStats;
+	real: BookDeskStats;
+	/** Backend confidence arming for live entries (1 armed, 0 halted). */
+	realArmed: number | null;
 	training: TrainingSample;
 	/** Live stop-loss / exit-policy pressure across the open desk book. */
 	stops: OpenLotTelemetry;
@@ -723,6 +762,17 @@ export const buildInsights = (
 		});
 	}
 
+	const shadow = shadowStopComparison(deskRowsForStats(), book);
+	if (shadow) {
+		const delta = shadow.meanShadow - shadow.meanOfficial;
+		insights.push({
+			id: "shadow-stop",
+			title: "Structural shadow",
+			body: `On ${shadow.n} matched episode${shadow.n === 1 ? "" : "s"}, mean structural exit ${shadow.meanOfficial.toFixed(2)}% vs learning ${shadow.meanShadow.toFixed(2)}% (${delta >= 0 ? "+" : ""}${delta.toFixed(2)} pp).`,
+			tone: delta > 0.05 ? "good" : delta < -0.05 ? "warn" : "info",
+		});
+	}
+
 	return insights;
 };
 
@@ -808,10 +858,15 @@ const recordLongtailSample = () => {
 	const desk = readPositions();
 	ingestDeskClosedLots(desk);
 
+	const frame = confidenceAtom.get();
+	const realArmed = frame.real_ceiling ? (frame.real.armed ? 1 : 0) : null;
+
 	pushSample({
 		at: Date.now(),
 		paper: summarizeBook(desk, "paper"),
 		virtual: summarizeBook(desk, "virtual"),
+		real: summarizeBook(desk, "real"),
+		realArmed,
 		training: summarizeTraining(),
 		stops: summarizeStops(desk),
 	});
@@ -884,6 +939,17 @@ const trainingFromHistory = (value: unknown): TrainingSample | null => {
 	};
 };
 
+const emptyBookStats = (): BookDeskStats => ({
+	closed: 0,
+	open: 0,
+	wins: 0,
+	winRate: null,
+	meanReturn: null,
+	medianReturn: null,
+	worstReturn: null,
+	avgHoldNs: null,
+});
+
 const historySample = (value: unknown): LongtailSample | null => {
 	if (!value || typeof value !== "object") return null;
 
@@ -891,13 +957,22 @@ const historySample = (value: unknown): LongtailSample | null => {
 	const at = finiteOrNull(row.at);
 	const paper = bookFromHistory(row.paper);
 	const virtual = bookFromHistory(row.virtual);
+	const real = bookFromHistory(row.real) ?? emptyBookStats();
 	const training = trainingFromHistory(row.training);
 
 	if (at === null || paper === null || virtual === null || training === null) {
 		return null;
 	}
 
-	return { at, paper, virtual, training, stops: stopsFromHistory(row.stops) };
+	return {
+		at,
+		paper,
+		virtual,
+		real,
+		realArmed: finiteOrNull(row.realArmed),
+		training,
+		stops: stopsFromHistory(row.stops),
+	};
 };
 
 const stopsFromHistory = (value: unknown): OpenLotTelemetry => {

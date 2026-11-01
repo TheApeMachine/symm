@@ -12,8 +12,8 @@ import (
 
 /*
 pathsListing is the JSON body under envelope key "paths" for model/paths.
-Thresholds are already desk books (0.5 + Σ resistance); keys end in
-enter|hold|exit.bin so the trie needs no Value decode on the wire.
+Thresholds are absolute desk books from PathBook JSON; keys end in
+enter|hold|exit.bin so the trie needs no blob decode on the wire.
 */
 type pathsListing struct {
 	Scope      string             `json:"scope"`
@@ -22,8 +22,17 @@ type pathsListing struct {
 }
 
 /*
+pathBook mirrors strategy.PathBook JSON without importing strategy
+(strategy → broker → ui would otherwise cycle).
+*/
+type pathBook struct {
+	Action     string  `json:"action"`
+	Resistance float64 `json:"resistance"`
+}
+
+/*
 closedListing is the JSON body under envelope key "closed" for
-position/closed and virtual/closed history.
+paper|real|virtual/closed history.
 */
 type closedListing struct {
 	Scope   string        `json:"scope"`
@@ -38,14 +47,42 @@ type closedEntry struct {
 }
 
 /*
+read fills one closed lot from a stored JSON object.
+Missing epoch, tick, and timestamp stay zero.
+*/
+func (entry *closedEntry) read(raw []byte) bool {
+	if entry == nil || len(raw) == 0 {
+		return false
+	}
+
+	row, err := data.AttributeOk[map[string]any](raw, "position")
+
+	if err != nil || len(row) == 0 {
+		return false
+	}
+
+	id, _ := row["id"].(string)
+
+	if id == "" {
+		return false
+	}
+
+	entry.Epoch = data.Attribute[uint64](raw, "epoch")
+	entry.Tick = data.Attribute[uint64](raw, "tick")
+	entry.Timestamp = data.Attribute[uint64](raw, "timestamp")
+	entry.Row = row
+
+	return true
+}
+
+/*
 ListPrefix lists object keys under prefix and writes one or more JSON
 envelopes that stay under the websocket max message size.
 
 model/paths → {"paths":{scope,epoch,thresholds}}
-position|virtual/closed → {"closed":{scope,entries}}
+paper|real|virtual/closed → {"closed":{scope,entries}}
 
-Stored S3 objects may still be data.Value blobs; the dashboard never sees
-them — only the compact JSON listing.
+Path leaves are PathBook JSON. Closed lots are JSON with a position object.
 */
 func (hub *Hub) ListPrefix(prefix string) {
 	if hub.store == nil || prefix == "" {
@@ -57,36 +94,43 @@ func (hub *Hub) ListPrefix(prefix string) {
 	switch {
 	case strings.HasPrefix(prefix, "model/paths"):
 		hub.writePathsListing(prefix, budget)
-	case strings.HasPrefix(prefix, "position/closed"),
-		strings.HasPrefix(prefix, "virtual/closed"):
+	case closedHistoryPrefix(prefix):
 		hub.writeClosedListing(prefix, budget)
 	default:
 		errnie.Warn(fmt.Sprintf("[hub] ListPrefix unsupported prefix %q", prefix))
 	}
 }
 
+func closedHistoryPrefix(prefix string) bool {
+	for _, stem := range []string{
+		"paper/closed",
+		"real/closed",
+		"virtual/closed",
+	} {
+		if strings.HasPrefix(prefix, stem) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (hub *Hub) writePathsListing(prefix string, budget int) {
 	thresholds := make(map[string]float64, 256)
-	epoch := ""
 
 	for key := range hub.store.ListKeys(prefix) {
-		out := hub.store.Download(hub.ctx, key)
-		if out == nil {
+		raw := hub.store.Fetch(hub.ctx, key)
+		book := decodePathBook(raw)
+
+		if book == nil {
 			continue
 		}
 
-		policyKey := policyPathKey(key, out.Scope)
-		book := exploreBookThreshold(out)
-
-		if book > 0.8 {
+		if book.Resistance > 0.8 {
 			continue
 		}
 
-		thresholds[policyKey] = book
-
-		if epoch == "" && out.Epoch != 0 {
-			epoch = fmt.Sprintf("%d", out.Epoch)
-		}
+		thresholds[policyPathKey(key, book.Action)] = book.Resistance
 	}
 
 	if len(thresholds) == 0 {
@@ -97,55 +141,67 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 		hub.WriteJSON(map[string]any{
 			"paths": pathsListing{
 				Scope:      "model/paths",
-				Epoch:      epoch,
 				Thresholds: chunk,
 			},
 		})
 	}
 }
 
+func decodePathBook(raw []byte) *pathBook {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var book pathBook
+
+	if err := sonic.Unmarshal(raw, &book); err != nil {
+		return nil
+	}
+
+	if book.Action == "" {
+		return nil
+	}
+
+	return &book
+}
+
 func (hub *Hub) writeClosedListing(prefix string, budget int) {
 	entries := make([]closedEntry, 0, 64)
 
 	for key := range hub.store.ListKeys(prefix) {
-		out := hub.store.Download(hub.ctx, key)
-		if out == nil {
+		var entry closedEntry
+
+		if !entry.read(hub.store.Fetch(hub.ctx, key)) {
 			continue
 		}
 
-		row := data.Get[map[string]any](out, "position")
-		if len(row) == 0 {
-			continue
-		}
-
-		if id, _ := row["id"].(string); id == "" {
-			continue
-		}
-
-		entries = append(entries, closedEntry{
-			Epoch:     out.Epoch,
-			Tick:      out.Tick,
-			Timestamp: out.Timestamp,
-			Row:       row,
-		})
+		entries = append(entries, entry)
 	}
 
 	if len(entries) == 0 {
 		return
 	}
 
-	scope := "position/closed"
-	if strings.HasPrefix(prefix, "virtual/closed") {
-		scope = "virtual/closed"
-	}
-
 	for _, chunk := range chunkClosedEntries(entries, budget) {
 		hub.WriteJSON(map[string]any{
 			"closed": closedListing{
-				Scope:   scope,
+				Scope:   closedListingScope(prefix),
 				Entries: chunk,
 			},
 		})
+	}
+}
+
+func closedListingScope(prefix string) string {
+	switch {
+	case strings.HasPrefix(prefix, "virtual/closed"):
+		return "virtual/closed"
+	case strings.HasPrefix(prefix, "real/closed"):
+		return "real/closed"
+	case strings.HasPrefix(prefix, "paper/closed"):
+		return "paper/closed"
+	default:
+		return "paper/closed"
 	}
 }
 
@@ -162,29 +218,17 @@ func listFrameBudget() int {
 }
 
 /*
-exploreBookThreshold mirrors the frontend desk book: seed 0.5 plus summed
-resistance deltas written by strategy/tree.
-*/
-func exploreBookThreshold(value *data.Value) float64 {
-	if value == nil {
-		return 0.5
-	}
-
-	return 0.5 + value.GetTotal("resistance")
-}
-
-/*
 policyPathKey normalizes an S3 object key to the trie key the dashboard
 expects (…/enter.bin|hold.bin|exit.bin).
 */
-func policyPathKey(storageKey, scope string) string {
+func policyPathKey(storageKey, action string) string {
 	if strings.HasSuffix(storageKey, ".bin") {
 		return storageKey
 	}
 
-	switch scope {
+	switch action {
 	case "enter", "hold", "exit":
-		return storageKey + "/" + scope + ".bin"
+		return storageKey + "/" + action + ".bin"
 	default:
 		return storageKey
 	}

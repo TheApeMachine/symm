@@ -32,7 +32,9 @@ type Position struct {
 	*runtime.System
 	mu                sync.Mutex
 	exitInProgress    uint32
-	stopLoss          *StopLoss
+	structural   *StructuralStop // active settler
+	learning     *LearningStop   // evaluated shadow; never settles
+	onShadowDone func(*Position)
 	transport         Transport
 	price             *Price
 	onSettled         func(*Position)
@@ -79,15 +81,31 @@ type Position struct {
 	frictionPct       *decimal.Decimal
 	stallTicks        int
 	lastMark          *decimal.Decimal
-	HoldNs            int64   `json:"hold_ns,omitempty"`
-	Virtual           bool    `json:"virtual"`
-	PathFound         bool    `json:"path_found,omitempty"`
-	OpenSurprise      float64 `json:"open_surprise,omitempty"`
-	EnterR02          float64 `json:"enter_r02_brightness,omitempty"`
-	EnterNetHold      float64 `json:"enter_net_hold,omitempty"`
-	EnterGridMaturity float64 `json:"enter_grid_maturity,omitempty"`
-	BarsHeld          int64   `json:"bars_held,omitempty"`    // Reprice events since entry (tape timebase)
-	RealizedPct       float64 `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
+	HoldNs            int64      `json:"hold_ns,omitempty"`
+	Book              string     `json:"book,omitempty"`
+	Virtual           bool       `json:"virtual"`
+	PathFound         bool       `json:"path_found,omitempty"`
+	OpenSurprise      float64    `json:"open_surprise,omitempty"`
+	EnterR02          float64    `json:"enter_r02_brightness,omitempty"`
+	EnterNetHold      float64    `json:"enter_net_hold,omitempty"`
+	EnterGridMaturity float64    `json:"enter_grid_maturity,omitempty"`
+	BarsHeld          int64      `json:"bars_held,omitempty"`    // Reprice events since entry (tape timebase)
+	RealizedPct       float64    `json:"realized_pct,omitempty"` // Fee-net realized return captured at exit (not mark)
+	ShadowActive      bool       `json:"shadow_active,omitempty"`
+	ShadowPnLTrace    []float64  `json:"shadow_pnl_trace,omitempty"`
+	ShadowExitTrigger string     `json:"shadow_exit_trigger,omitempty"`
+	OfficialExitAt    *time.Time `json:"official_exit_at,omitempty"`
+	ShadowExitAt      *time.Time `json:"shadow_exit_at,omitempty"`
+	OfficialExitPct   float64    `json:"official_exit_pct,omitempty"`
+	ShadowExitPct     float64    `json:"shadow_exit_pct,omitempty"`
+	StopFloorPct      float64    `json:"stop_floor_pct,omitempty"`
+	ShadowFloorPct    float64    `json:"shadow_floor_pct,omitempty"`
+	StopFloorTrace    []float64  `json:"stop_floor_trace,omitempty"`
+	ShadowFloorTrace  []float64  `json:"shadow_floor_trace,omitempty"`
+	StopProximity     float64    `json:"stop_proximity,omitempty"`
+	StopRoomPct       float64    `json:"stop_room_pct,omitempty"`
+	ShadowProximity   float64    `json:"shadow_proximity,omitempty"`
+	ShadowRoomPct     float64    `json:"shadow_room_pct,omitempty"`
 }
 
 func NewPosition(
@@ -95,24 +113,63 @@ func NewPosition(
 	symbol string,
 	path string,
 	pathFound bool,
-	virtual bool,
+	ledger Ledger,
 	price *Price,
 	transport Transport,
 	onSettled func(*Position),
 ) *Position {
-	return &Position{
-		System:    runtime.NewSystem(ctx, "position"),
-		price:     price,
-		stopLoss:  NewStopLoss(),
-		transport: transport,
-		onSettled: onSettled,
-		ID:        uuid.NewString(),
-		Fills:     make([]*kraken.ExecutionData, 0),
-		Symbol:    symbol,
-		EntryPath: path,
-		PathFound: pathFound,
-		Virtual:   virtual,
+	return NewPositionWithRails(
+		ctx, symbol, path, pathFound, ledger, price, transport, onSettled, nil,
+	)
+}
+
+/*
+NewPositionWithRails wires the desk's AdaptiveRails into the learning shadow.
+*/
+func NewPositionWithRails(
+	ctx context.Context,
+	symbol string,
+	path string,
+	pathFound bool,
+	ledger Ledger,
+	price *Price,
+	transport Transport,
+	onSettled func(*Position),
+	rails *AdaptiveRails,
+) *Position {
+	if ledger == "" {
+		ledger = LedgerPaper
 	}
+
+	position := &Position{
+		System:       runtime.NewSystem(ctx, "position"),
+		price:        price,
+		structural:   NewStructuralStop(),
+		learning:     NewLearningStop(rails),
+		transport:    transport,
+		onSettled:    onSettled,
+		ID:           uuid.NewString(),
+		Fills:        make([]*kraken.ExecutionData, 0),
+		Symbol:       symbol,
+		EntryPath:    path,
+		PathFound:    pathFound,
+		Book:         ledger.String(),
+		Virtual:      ledger.Virtual(),
+		ShadowActive: true,
+	}
+
+	return position
+}
+
+/*
+Ledger returns the trading book this lot belongs to.
+*/
+func (position *Position) Ledger() Ledger {
+	if position == nil {
+		return LedgerPaper
+	}
+
+	return ParseLedger(position.Book, position.Virtual)
 }
 
 /*
@@ -158,14 +215,44 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.Mark = mark
 		position.repriceLocked()
 
-		if position.stopLoss != nil && position.PnLPct != nil {
+		if position.PnLPct != nil {
 			current := position.PnLPct.MustFloat64()
-			if trigger, ok := position.stopLoss.Update(current); ok {
-				position.ExitTrigger = trigger
-				position.OutcomeTriggers = []string{trigger}
-				path = stopExitPath(position)
+			position.armLossBudgetLocked()
+
+			// Active settler: structural only.
+			if position.structural != nil && !position.structural.Done() {
+				if trigger, ok := position.structural.Update(current); ok {
+					position.ExitTrigger = trigger
+					position.OutcomeTriggers = []string{trigger}
+					path = stopExitPath(position)
+				}
+
+				position.StopFloorPct = position.structural.Floor()
+				position.StopRoomPct = current - position.StopFloorPct
+				position.StopProximity = shadowProximity(current, position.StopFloorPct)
+				position.StopState = StopState{
+					CurrentPct: current,
+					PeakPct:    position.structural.Peak(),
+					FloorPct:   position.StopFloorPct,
+					RoomPct:    position.StopRoomPct,
+					Proximity:  position.StopProximity,
+				}
+				position.recordStopFloorTraceLocked(position.StopFloorPct)
 			}
-			position.StopState = position.stopLoss.State(current)
+
+			// Evaluated shadow: learning stop never settles.
+			if position.learning != nil && position.ShadowActive && !position.learning.Done() {
+				position.recordShadowTraceLocked(current)
+
+				if trigger, ok := position.learning.Update(current); ok {
+					position.finishShadowLocked(trigger, current)
+				}
+
+				position.ShadowFloorPct = position.learning.ActiveFloor(current)
+				position.ShadowRoomPct = current - position.ShadowFloorPct
+				position.ShadowProximity = position.learning.Proximity(current)
+				position.recordShadowFloorTraceLocked(position.ShadowFloorPct)
+			}
 		}
 	}
 
@@ -181,6 +268,163 @@ func (position *Position) Update(mark *decimal.Decimal) {
 
 	errnie.Info("[exit] triggered by " + position.ExitTrigger + " for " + position.Symbol)
 	go position.finishExit(path)
+}
+
+/*
+UpdateShadow continues the learning observation after the official lot settled.
+Returns true when the shadow episode ends on this mark.
+*/
+func (position *Position) UpdateShadow(mark *decimal.Decimal) bool {
+	if position == nil || mark == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if !position.ShadowActive || position.learning == nil || position.learning.Done() {
+		return false
+	}
+
+	if position.price == nil || position.EntryPrice == nil || position.Qty == nil {
+		return false
+	}
+
+	fee := position.price.feeForTrade(position.Symbol)
+	pct := position.price.roundTripPct(
+		position.Symbol, position.Qty, position.EntryPrice, fee, fee,
+	)
+
+	if pct == nil {
+		return false
+	}
+
+	current := pct.MustFloat64()
+	position.Mark = mark
+	position.PnLPct = pct
+	position.armLossBudgetLocked()
+	position.recordShadowTraceLocked(current)
+
+	trigger, ok := position.learning.Update(current)
+	position.ShadowFloorPct = position.learning.ActiveFloor(current)
+	position.ShadowRoomPct = current - position.ShadowFloorPct
+	position.ShadowProximity = position.learning.Proximity(current)
+	position.recordShadowFloorTraceLocked(position.ShadowFloorPct)
+	if !ok {
+		return false
+	}
+
+	position.finishShadowLocked(trigger, current)
+	return true
+}
+
+func (position *Position) finishShadowLocked(trigger string, current float64) {
+	now := time.Now().UTC()
+	position.ShadowActive = false
+	position.ShadowExitTrigger = trigger
+	position.ShadowExitAt = &now
+	position.ShadowExitPct = current
+
+	if position.learning != nil {
+		position.learning.Finish(trigger, current)
+
+		if position.OfficialExitAt != nil {
+			position.learning.Settle(position.OfficialExitPct)
+		}
+	}
+}
+
+func (position *Position) recordShadowTraceLocked(value float64) {
+	position.recordPctPathLocked(&position.ShadowPnLTrace, value)
+}
+
+func (position *Position) recordStopFloorTraceLocked(value float64) {
+	position.recordPctPathLocked(&position.StopFloorTrace, value)
+}
+
+func (position *Position) recordShadowFloorTraceLocked(value float64) {
+	position.recordPctPathLocked(&position.ShadowFloorTrace, value)
+}
+
+func (position *Position) recordPctPathLocked(path *[]float64, value float64) {
+	if path == nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return
+	}
+
+	if len(*path) >= positionTraceCap {
+		copy(*path, (*path)[1:])
+		(*path)[len(*path)-1] = value
+		return
+	}
+
+	*path = append(*path, value)
+}
+
+/*
+armLossBudgetLocked freezes structural zone-0 from entry friction once, and
+arms the learning shadow from AdaptiveRails on the same friction print.
+*/
+func (position *Position) armLossBudgetLocked() {
+	if position == nil {
+		return
+	}
+
+	if position.structural != nil && position.structural.budget != nil &&
+		position.structural.budget.Armed() {
+		return
+	}
+
+	friction := 0.0
+	if position.frictionPct != nil && position.frictionPct.Sign() > 0 {
+		friction = position.frictionPct.MustFloat64()
+	} else if position.price != nil {
+		if hurdle, ok := position.price.Friction(position.Symbol); ok && hurdle != nil {
+			friction = hurdle.MustFloat64()
+			position.frictionPct = hurdle
+		}
+	}
+
+	budget := NewLossBudget().Arm(friction)
+
+	if position.structural != nil {
+		position.structural.BindBudget(budget)
+	}
+
+	if position.learning != nil {
+		position.learning.Arm(friction)
+	}
+}
+
+/*
+shadowProximity maps room above the structural floor onto 0..1 using a 2pp
+span so the meter reads like the official invalidation budget.
+*/
+func shadowProximity(current, floor float64) float64 {
+	room := current - floor
+	if room <= 0 {
+		return 1
+	}
+
+	const span = 2.0
+	if room >= span {
+		return 0
+	}
+
+	return 1 - room/span
+}
+
+/*
+ShadowLive reports whether the learning ghost still wants marks.
+*/
+func (position *Position) ShadowLive() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	return position.ShadowActive && position.learning != nil && !position.learning.Done()
 }
 
 /*
@@ -221,6 +465,22 @@ func (position *Position) finishExit(path string) {
 	if errors.Is(err, ErrVenueFlat) {
 		errnie.Warn("[position] " + position.Symbol + " is already flat at the venue; closing the lot")
 	}
+
+	position.mu.Lock()
+	now := time.Now().UTC()
+	position.OfficialExitAt = &now
+	if position.PnLPct != nil {
+		position.OfficialExitPct = position.PnLPct.MustFloat64()
+	} else if position.RealizedPct != 0 {
+		position.OfficialExitPct = position.RealizedPct * 100
+	}
+
+	// Learning already finished during the open → score regret now.
+	if position.learning != nil && position.learning.Done() && !position.ShadowActive {
+		position.learning.Settle(position.OfficialExitPct)
+	}
+
+	position.mu.Unlock()
 
 	if position.onSettled != nil {
 		position.onSettled(position)
@@ -580,17 +840,7 @@ record without end, and the oldest marks are the ones a settled episode no
 longer needs: the recent path is what says how this market gives back.
 */
 func (position *Position) recordTraceLocked(value float64) {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return
-	}
-
-	if len(position.PnLTrace) >= positionTraceCap {
-		copy(position.PnLTrace, position.PnLTrace[1:])
-		position.PnLTrace[len(position.PnLTrace)-1] = value
-		return
-	}
-
-	position.PnLTrace = append(position.PnLTrace, value)
+	position.recordPctPathLocked(&position.PnLTrace, value)
 }
 
 /*

@@ -22,6 +22,18 @@ type Risk struct {
 	TrailMinGivebackPct  float64
 	BackingBandFrac      float64
 	MinBackingRatio      float64
+	// Friction-aware invalidation: width ≥ friction×mult, capped for ruin.
+	LossFrictionMult   float64
+	MaxInvalidationPct float64
+	// Structural stop: milestone floors + failed-retest exhaustion.
+	StructuralLive          bool
+	StructuralPullbackPct   float64
+	StructuralMilestone1Pct float64
+	StructuralMilestone2Pct float64
+	StructuralMilestone3Pct float64
+	StructuralFloor1Pct     float64
+	StructuralFloor2Pct     float64
+	StructuralFloor3Pct     float64
 }
 
 func NewRisk() *Risk {
@@ -40,23 +52,43 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.trail_min_giveback_pct", 0.35)
 	viper.SetDefault("risk.backing_band_frac", 0.01)
 	viper.SetDefault("risk.min_backing_ratio", 0.6)
+	viper.SetDefault("risk.loss_friction_mult", 2.0)
+	viper.SetDefault("risk.max_invalidation_pct", 4.0)
+	viper.SetDefault("risk.structural_live", true)
+	viper.SetDefault("risk.structural_pullback_pct", 0.4)
+	viper.SetDefault("risk.structural_milestone_1_pct", 1.0)
+	viper.SetDefault("risk.structural_milestone_2_pct", 2.0)
+	viper.SetDefault("risk.structural_milestone_3_pct", 3.5)
+	viper.SetDefault("risk.structural_floor_1_pct", 0.35)
+	viper.SetDefault("risk.structural_floor_2_pct", 1.0)
+	viper.SetDefault("risk.structural_floor_3_pct", 2.2)
 
 	return &Risk{
-		MaxFraction:          viper.GetFloat64("risk.max_fraction"),
-		TouchDivisor:         float64(viper.GetInt("risk.touch_divisor")),
-		MinMoverVolumeUSD:    viper.GetFloat64("risk.min_mover_volume_usd"),
-		MinMoverChangePct:    viper.GetFloat64("risk.min_mover_change_pct"),
-		MaxEntrySpreadPct:    viper.GetFloat64("risk.max_entry_spread_pct"),
-		MaxEntryOpenDragPct:  viper.GetFloat64("risk.max_entry_open_drag_pct"),
-		MinTouchBidCash:      viper.GetFloat64("risk.min_touch_bid_cash"),
-		TapeWindow:           viper.GetDuration("risk.tape_window"),
-		MinTapeTrades:        viper.GetInt("risk.min_tape_trades"),
-		MaxAllowedLossPct:    viper.GetFloat64("risk.max_allowed_loss_pct"),
-		TrailPeakArmPct:      viper.GetFloat64("risk.trail_peak_arm_pct"),
-		TrailBaseGivebackPct: viper.GetFloat64("risk.trail_base_giveback_pct"),
-		TrailMinGivebackPct:  viper.GetFloat64("risk.trail_min_giveback_pct"),
-		BackingBandFrac:      viper.GetFloat64("risk.backing_band_frac"),
-		MinBackingRatio:      viper.GetFloat64("risk.min_backing_ratio"),
+		MaxFraction:             viper.GetFloat64("risk.max_fraction"),
+		TouchDivisor:            float64(viper.GetInt("risk.touch_divisor")),
+		MinMoverVolumeUSD:       viper.GetFloat64("risk.min_mover_volume_usd"),
+		MinMoverChangePct:       viper.GetFloat64("risk.min_mover_change_pct"),
+		MaxEntrySpreadPct:       viper.GetFloat64("risk.max_entry_spread_pct"),
+		MaxEntryOpenDragPct:     viper.GetFloat64("risk.max_entry_open_drag_pct"),
+		MinTouchBidCash:         viper.GetFloat64("risk.min_touch_bid_cash"),
+		TapeWindow:              viper.GetDuration("risk.tape_window"),
+		MinTapeTrades:           viper.GetInt("risk.min_tape_trades"),
+		MaxAllowedLossPct:       viper.GetFloat64("risk.max_allowed_loss_pct"),
+		TrailPeakArmPct:         viper.GetFloat64("risk.trail_peak_arm_pct"),
+		TrailBaseGivebackPct:    viper.GetFloat64("risk.trail_base_giveback_pct"),
+		TrailMinGivebackPct:     viper.GetFloat64("risk.trail_min_giveback_pct"),
+		BackingBandFrac:         viper.GetFloat64("risk.backing_band_frac"),
+		MinBackingRatio:         viper.GetFloat64("risk.min_backing_ratio"),
+		LossFrictionMult:        viper.GetFloat64("risk.loss_friction_mult"),
+		MaxInvalidationPct:      viper.GetFloat64("risk.max_invalidation_pct"),
+		StructuralLive:          viper.GetBool("risk.structural_live"),
+		StructuralPullbackPct:   viper.GetFloat64("risk.structural_pullback_pct"),
+		StructuralMilestone1Pct: viper.GetFloat64("risk.structural_milestone_1_pct"),
+		StructuralMilestone2Pct: viper.GetFloat64("risk.structural_milestone_2_pct"),
+		StructuralMilestone3Pct: viper.GetFloat64("risk.structural_milestone_3_pct"),
+		StructuralFloor1Pct:     viper.GetFloat64("risk.structural_floor_1_pct"),
+		StructuralFloor2Pct:     viper.GetFloat64("risk.structural_floor_2_pct"),
+		StructuralFloor3Pct:     viper.GetFloat64("risk.structural_floor_3_pct"),
 	}
 }
 

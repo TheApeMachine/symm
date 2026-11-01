@@ -1,4 +1,4 @@
-import { closeNowReturnPct } from "#/components/book-readout";
+import { closeNowReturnPct, decimal } from "#/components/book-readout";
 
 export type ChoiceSample = { t: number; pnl: number; stamp: string };
 
@@ -6,6 +6,60 @@ const trails = new Map<string, ChoiceSample[]>();
 
 /** Ring buffer length shared by ui/Trail on cards and the open-choices chart. */
 export const CHOICE_TRAIL_LENGTH = 90;
+
+const finiteNums = (raw: unknown): number[] => {
+	if (!Array.isArray(raw)) return [];
+	return raw.filter(
+		(value): value is number => typeof value === "number" && Number.isFinite(value),
+	);
+};
+
+const finiteFloor = (raw: unknown): number | undefined =>
+	typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+
+/*
+adaptiveBeatsOfficial is true when the learning shadow exit (or its live mark)
+is strictly better than the official structural exit. That is the only case
+where the chart keeps the adaptive path as a dashed "what if" line.
+*/
+export const adaptiveBeatsOfficial = (
+	row: Record<string, unknown>,
+): boolean => {
+	const official = finiteFloor(row.official_exit_pct);
+	if (official === undefined) return false;
+
+	if (row.shadow_exit_at != null && row.shadow_exit_at !== "") {
+		const done = finiteFloor(row.shadow_exit_pct);
+		return done !== undefined && done > official;
+	}
+
+	const shadow = finiteNums(row.shadow_pnl_trace);
+	if (shadow.length === 0) return false;
+
+	const live = shadow[shadow.length - 1];
+	return Number.isFinite(live) && live > official;
+};
+
+/*
+officialExitDashIndex is the first sample after the active stop settled, drawn
+dashed only while the adaptive shadow is beating that official exit.
+*/
+export const officialExitDashIndex = (
+	row: Record<string, unknown>,
+): number | undefined => {
+	if (row.official_exit_at == null || row.official_exit_at === "") {
+		return undefined;
+	}
+
+	if (!adaptiveBeatsOfficial(row)) return undefined;
+
+	const shadow = finiteNums(row.shadow_pnl_trace);
+	const official = finiteNums(row.pnl_trace);
+	if (shadow.length === 0 || official.length === 0) return undefined;
+	if (shadow.length <= official.length) return undefined;
+
+	return official.length;
+};
 
 /*
 noteOpenChoice appends one close-now sample. Call it when the positions store
@@ -64,6 +118,152 @@ export type OpenChoiceSeries = {
 	name: string;
 	values: number[];
 	stroke: string;
+	/** First index drawn dashed (adaptive path after official, only if beating). */
+	dashFrom?: number;
+	shadowActive?: boolean;
+	/** Active structural stop floor in PnL % (latest). */
+	stopFloor?: number;
+	/** Learning shadow floor in PnL % (latest). */
+	shadowFloor?: number;
+	/** Active floor path aligned to `values` (lower band). */
+	stopFloorTrace?: number[];
+	/** Learning floor path aligned to `values` (lower band). */
+	shadowFloorTrace?: number[];
+	/** Absolute close-now PnL in money (USD book). */
+	pnlMoney?: number;
+	/** 0..1+ toward the active structural stop. */
+	stopProximity?: number;
+	/** PnL points remaining above the active structural floor. */
+	stopRoomPct?: number;
+	shadowProximity?: number;
+	shadowRoomPct?: number;
+};
+
+/** Clip a server path to the same trailing window as the visible PnL series. */
+export const clipTraceToValues = (
+	trace: number[],
+	valueLen: number,
+	sourceLen: number,
+): number[] => {
+	if (trace.length === 0 || valueLen === 0) return [];
+
+	const start = sourceLen > valueLen ? sourceLen - valueLen : 0;
+	const clipped = start > 0 ? trace.slice(start) : [...trace];
+	if (clipped.length === valueLen) return clipped;
+	if (clipped.length > valueLen) return clipped.slice(clipped.length - valueLen);
+
+	const pad = clipped[0] ?? 0;
+	return [...Array(valueLen - clipped.length).fill(pad), ...clipped];
+};
+
+/** Read stop floors from desk position JSON. */
+export const openChoiceFloors = (
+	row: Record<string, unknown>,
+): { stopFloor?: number; shadowFloor?: number } => {
+	const stopFloor =
+		finiteFloor(row.stop_floor_pct) ??
+		finiteFloor(
+			row.stop_state && typeof row.stop_state === "object"
+				? ((row.stop_state as Record<string, unknown>).floorPct ??
+					(row.stop_state as Record<string, unknown>).floor_pct)
+				: undefined,
+		);
+
+	const shadowFloor = finiteFloor(row.shadow_floor_pct);
+
+	return { stopFloor, shadowFloor };
+};
+
+/** Absolute money PnL from the desk lot (not percent). */
+export const openChoicePnlMoney = (
+	row: Record<string, unknown>,
+): number | undefined => {
+	const pnl = decimal(row.pnl);
+	return pnl === null ? undefined : pnl;
+};
+
+/*
+openChoiceFloorBands builds the lower envelopes for the chart band fill.
+Active structural floor while the settler is live; learning floor covers the
+evaluated path (including post-official continuation when it is beating).
+*/
+export const openChoiceFloorBands = (
+	row: Record<string, unknown>,
+	values: number[],
+): { stopFloorTrace?: number[]; shadowFloorTrace?: number[] } => {
+	const stopRaw = finiteNums(row.stop_floor_trace);
+	const shadowRaw = finiteNums(row.shadow_floor_trace);
+	const shadowPnl = finiteNums(row.shadow_pnl_trace);
+	const officialPnl = finiteNums(row.pnl_trace);
+	const sourceLen =
+		shadowPnl.length > 0 ? shadowPnl.length : Math.max(officialPnl.length, values.length);
+
+	const { stopFloor, shadowFloor } = openChoiceFloors(row);
+
+	const stopFloorTrace =
+		stopRaw.length > 0
+			? clipTraceToValues(stopRaw, values.length, sourceLen)
+			: stopFloor !== undefined && values.length > 0
+				? values.map(() => stopFloor)
+				: undefined;
+
+	const shadowFloorTrace =
+		shadowRaw.length > 0
+			? clipTraceToValues(shadowRaw, values.length, sourceLen)
+			: shadowFloor !== undefined && values.length > 0
+				? values.map(() => shadowFloor)
+				: undefined;
+
+	return { stopFloorTrace, shadowFloorTrace };
+};
+
+/** Clip a numeric path to the trailing chart window. */
+const clipSeriesWindow = (path: number[]): number[] => {
+	if (path.length <= CHOICE_TRAIL_LENGTH) return path;
+	return path.slice(path.length - CHOICE_TRAIL_LENGTH);
+};
+
+/*
+openChoiceSeriesValues prefers the learning shadow path when it beats the
+official exit (dashed after settle). Otherwise it keeps the official path
+solid — no "what if" dash for a losing adaptive episode.
+*/
+export const openChoiceSeriesValues = (
+	row: Record<string, unknown>,
+	id: string,
+): { values: number[]; dashFrom?: number } => {
+	const shadow = finiteNums(row.shadow_pnl_trace);
+	const official = finiteNums(row.pnl_trace);
+	const client = openChoiceValues(id);
+
+	if (shadow.length === 0) {
+		return { values: official.length > 0 ? clipSeriesWindow(official) : client };
+	}
+
+	const settled =
+		row.official_exit_at != null && row.official_exit_at !== "";
+	const beats = adaptiveBeatsOfficial(row);
+
+	if (settled && !beats) {
+		const path = official.length > 0 ? official : shadow.slice(0, official.length || shadow.length);
+		return { values: clipSeriesWindow(path.length > 0 ? path : shadow) };
+	}
+
+	const rawDash = officialExitDashIndex(row);
+	const start =
+		shadow.length > CHOICE_TRAIL_LENGTH
+			? shadow.length - CHOICE_TRAIL_LENGTH
+			: 0;
+	const values = start > 0 ? shadow.slice(start) : shadow;
+	const clipped = rawDash === undefined ? undefined : rawDash - start;
+
+	return {
+		values,
+		dashFrom:
+			clipped !== undefined && clipped > 0 && clipped < values.length
+				? clipped
+				: undefined,
+	};
 };
 
 /** Close-now series for the open-choices chart (stable id order, no SciChart). */
@@ -72,11 +272,29 @@ export const openChoiceSeries = (
 ): OpenChoiceSeries[] => {
 	const mapped = lots.map((row) => {
 		const id = String(row.id ?? row.symbol);
+		const { values, dashFrom } = openChoiceSeriesValues(row, id);
+		const { stopFloor, shadowFloor } = openChoiceFloors(row);
+		const { stopFloorTrace, shadowFloorTrace } = openChoiceFloorBands(
+			row,
+			values,
+		);
+
 		return {
 			id,
 			name: String(row.symbol ?? id),
-			values: openChoiceValues(id),
+			values,
 			stroke: strokeFor(id),
+			dashFrom,
+			shadowActive: row.shadow_active === true,
+			stopFloor,
+			shadowFloor,
+			stopFloorTrace,
+			shadowFloorTrace,
+			pnlMoney: openChoicePnlMoney(row),
+			stopProximity: finiteFloor(row.stop_proximity),
+			stopRoomPct: finiteFloor(row.stop_room_pct),
+			shadowProximity: finiteFloor(row.shadow_proximity),
+			shadowRoomPct: finiteFloor(row.shadow_room_pct),
 		};
 	});
 
@@ -118,6 +336,8 @@ export const openChoiceMarkStamp = (row: Record<string, unknown>): string =>
 		row.peak_pnl_pct,
 		row.exit_vwap,
 		row.bars_held,
+		Array.isArray(row.shadow_pnl_trace) ? row.shadow_pnl_trace.length : 0,
+		row.shadow_active === true ? 1 : 0,
 	].join("|");
 
 export const openChoiceLotsFromRows = (

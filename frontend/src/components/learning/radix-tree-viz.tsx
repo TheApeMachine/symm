@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "#/lib/utils";
 import { Flex } from "../ui/flex";
-import { EXPLORE_BASE_THRESHOLD, explorePathKept } from "./explore-path";
+import { explorePathKept } from "./explore-path";
 import {
 	formatTrieLinkToken,
 	paintRadixTreeStructure,
@@ -74,14 +74,11 @@ export const thresholdOpacity = (threshold: number): number => {
 };
 
 const exploreLeafThreshold = (
-	rawKey: string,
+	_rawKey: string,
 	threshold: number | undefined,
 ): number | undefined => {
 	if (typeof threshold === "number" && Number.isFinite(threshold)) {
 		return threshold;
-	}
-	if (rawKey.startsWith("model/paths")) {
-		return EXPLORE_BASE_THRESHOLD;
 	}
 	return undefined;
 };

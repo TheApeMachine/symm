@@ -7,32 +7,29 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 )
 
-func MakeAction(action Action) *data.Value {
-	return data.NewValue(
-		"model", "path", action.String(),
-	).Append(
-		0.5, "resistance",
-	).Append(
-		0.25, "resistance",
-	)
+func MakeAction(action Action) *PathBook {
+	return &PathBook{
+		Action:     action.String(),
+		Resistance: 0.75,
+	}
 }
 
-func MakeActionResistance(action Action, resistance float64) *data.Value {
-	return data.NewValue(
-		"model", "path", action.String(),
-	).Append(resistance, "resistance")
+func MakeActionResistance(action Action, resistance float64) *PathBook {
+	return &PathBook{
+		Action:     action.String(),
+		Resistance: resistance,
+	}
 }
 
 func WithTree(f func(*Tree)) func() {
 	return func() {
-		tree := &Tree{root: iradix.New[*data.Value]()}
+		tree := &Tree{root: iradix.New[*PathBook]()}
 
-		for path, value := range map[string]*data.Value{
+		for path, book := range map[string]*PathBook{
 			"R06.R00":                 MakeAction(ActionEnter),
 			"R06.R00/R07.R01":         MakeAction(ActionEnter),
 			"R06.R00/R07.R01/R08.R02": MakeAction(ActionEnter),
@@ -46,7 +43,7 @@ func WithTree(f func(*Tree)) func() {
 			"R09.R01/R10.R02":         MakeAction(ActionHold),
 			"R09.R01/R10.R02/R11.R03": MakeAction(ActionExit),
 		} {
-			tree.root, _, _ = tree.root.Insert([]byte(path), value)
+			tree.root, _, _ = tree.root.Insert([]byte(path), book)
 		}
 
 		f(tree)
@@ -171,7 +168,7 @@ func TestPredict(t *testing.T) {
 
 func TestPredictRegime(t *testing.T) {
 	Convey("Regime ignores out-of-band leaves under the same cut", t, func() {
-		tree := &Tree{root: iradix.New[*data.Value]()}
+		tree := &Tree{root: iradix.New[*PathBook]()}
 		path := "R12.R00/R13.R01"
 
 		tree.root, _, _ = tree.root.Insert([]byte(path), MakeAction(ActionEnter))
@@ -204,7 +201,7 @@ func TestPredictRegime(t *testing.T) {
 func TestPredictPrune(t *testing.T) {
 	Convey("Predict prunes high-resistance paths", t, func() {
 		Convey("When no leaf counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*data.Value]()}
+			tree := &Tree{root: iradix.New[*PathBook]()}
 			path := "R06.R00/R07.R01"
 
 			tree.root, _, _ = tree.root.Insert(
@@ -223,7 +220,7 @@ func TestPredictPrune(t *testing.T) {
 		})
 
 		Convey("When a sibling still counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*data.Value]()}
+			tree := &Tree{root: iradix.New[*PathBook]()}
 			heavy := "R06.R00/R07.R01"
 			light := "R06.R00/R07.R01/R08.R02"
 
@@ -249,7 +246,7 @@ func TestPredictPrune(t *testing.T) {
 
 func TestInsertMinPathLength(t *testing.T) {
 	Convey("Insert rejects cuts shorter than min path length", t, func() {
-		tree := &Tree{root: iradix.New[*data.Value]()}
+		tree := &Tree{root: iradix.New[*PathBook]()}
 		min := system.Cfg.Learning.MinPathLength
 
 		So(min, ShouldBeGreaterThan, 0)
@@ -264,3 +261,38 @@ func TestInsertMinPathLength(t *testing.T) {
 	})
 }
 
+func TestEnsureSeedsResistanceWithoutWipe(t *testing.T) {
+	Convey("new leaves start at 0.5 and Ensure does not reset a scored book", t, func() {
+		tree := &Tree{root: iradix.New[*PathBook]()}
+		path := "R06.R00/R07.R01"
+
+		tree.Ensure(path, ActionEnter)
+		book, ok := tree.root.Get([]byte(path))
+		So(ok, ShouldBeTrue)
+		So(book.Resistance, ShouldAlmostEqual, InitialPathResistance, 0.001)
+		So(PaperEligible(book.Resistance), ShouldBeFalse)
+
+		tree.Update(path, -0.05)
+		afterWin, ok := tree.root.Get([]byte(path))
+		So(ok, ShouldBeTrue)
+		So(afterWin.Resistance, ShouldAlmostEqual, 0.45, 0.001)
+		So(PaperEligible(afterWin.Resistance), ShouldBeFalse)
+
+		tree.Ensure(path, ActionEnter)
+		kept, ok := tree.root.Get([]byte(path))
+		So(ok, ShouldBeTrue)
+		So(kept.Resistance, ShouldAlmostEqual, 0.45, 0.001)
+	})
+}
+
+func TestPathFromStorageKey(t *testing.T) {
+	Convey("PathFromStorageKey strips store prefix and action leaf", t, func() {
+		So(
+			PathFromStorageKey("model/paths/R01/R02/enter.bin"),
+			ShouldEqual,
+			"R01/R02",
+		)
+		So(PathFromStorageKey("model/paths/enter.bin"), ShouldEqual, "")
+		So(PathFromStorageKey("other/R01/enter.bin"), ShouldEqual, "")
+	})
+}

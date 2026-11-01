@@ -9,7 +9,8 @@ import {
 	ingestTrainRegions,
 	parseTrainRegionsIndex,
 	regionHistoryStore,
-	thresholdFromStored,
+	thresholdFromExploreBytes,
+	thresholdFromPathBook,
 } from "./cognition";
 
 /*
@@ -61,83 +62,29 @@ describe("path walks", () => {
 });
 
 describe("stored thresholds", () => {
-	it("sums the threshold steps on top of the 0.50 start", () => {
-		const encode = (value: unknown) => btoa(JSON.stringify(value));
-
+	it("reads PathBook JSON absolute resistance", () => {
 		expect(
-			thresholdFromStored({
-				Index: [
-					"model/explore/SYM/action",
-					"model/explore/SYM/threshold",
-					"model/explore/SYM/threshold",
-				],
-				Layers: [encode("enter"), encode(-0.05), encode(-0.05)],
+			thresholdFromPathBook({
+				action: "enter",
+				resistance: 0.45,
 			}),
-		).toBeCloseTo(0.4);
+		).toBeCloseTo(0.45);
 	});
 
-	it("sums resistance steps on top of the 0.50 start (backend key name)", () => {
-		const encode = (value: unknown) => btoa(JSON.stringify(value));
-
-		// The Go backend writes value.Append(-returnFraction, "resistance")
-		// so the index is <prefix>/resistance
+	it("reads PathBook bytes and hub compact floats", () => {
+		const book = new TextEncoder().encode(
+			JSON.stringify({ action: "exit", resistance: 0.37 }),
+		);
+		expect(thresholdFromExploreBytes(book)).toBeCloseTo(0.37);
 		expect(
-			thresholdFromStored({
-				Index: [
-					"model/paths/R01/R02/resistance",
-					"model/paths/R01/R02/resistance",
-				],
-				Layers: [encode(-0.05), encode(-0.03)],
-			}),
-		).toBeCloseTo(0.42);
-	});
-
-	it("treats a 0.05 resistance delta as a delta, not an absolute threshold", () => {
-		const encode = (value: unknown) => btoa(JSON.stringify(value));
-
-		// A 5% loss produces resistance = +0.05. This must be added to 0.50,
-		// not treated as an absolute threshold.
-		expect(
-			thresholdFromStored({
-				Index: ["model/paths/R01/R02/resistance"],
-				Layers: [encode(0.05)],
-			}),
+			thresholdFromExploreBytes(new TextEncoder().encode("0.55")),
 		).toBeCloseTo(0.55);
 	});
 
-	it("reads a legacy absolute book before delta steps", () => {
-		const encode = (value: unknown) => btoa(JSON.stringify(value));
-
-		expect(
-			thresholdFromStored({
-				Index: ["model/explore/SYM/threshold", "model/explore/SYM/threshold"],
-				Layers: [encode(0.49), encode(-0.01)],
-			}),
-		).toBeCloseTo(0.49);
-	});
-
-	it("keeps the last legacy snapshot instead of adding them", () => {
-		const encode = (value: unknown) => btoa(JSON.stringify(value));
-
-		expect(
-			thresholdFromStored({
-				Index: [
-					"model/explore/SYM/threshold",
-					"model/explore/SYM/threshold",
-					"model/explore/SYM/threshold",
-				],
-				Layers: [encode(0.51), encode(0.52), encode(0.52)],
-			}),
-		).toBeCloseTo(0.51);
-	});
-
-	it("leaves an unscored value without a threshold", () => {
-		expect(
-			thresholdFromStored({
-				Index: ["action"],
-				Layers: [btoa(JSON.stringify("enter"))],
-			}),
-		).toBeNull();
+	it("rejects non-PathBook payloads", () => {
+		expect(thresholdFromPathBook({ Index: ["action"], Layers: [] })).toBeNull();
+		expect(thresholdFromPathBook({ action: "enter" })).toBeNull();
+		expect(thresholdFromPathBook(null)).toBeNull();
 	});
 });
 

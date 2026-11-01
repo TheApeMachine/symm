@@ -352,18 +352,36 @@ risk:
   tape_window: 10m
   # Minimum in-window prints before a silent book can clear entry.
   min_tape_trades: 8
-  # Adverse PnL drop from entry that fires invalidation (percentage points).
+  # Base adverse PnL drop from entry that fires invalidation (pp).
+  # Widens with entry friction × loss_friction_mult, hard-capped below.
   max_allowed_loss_pct: 2.0
-  # Peak PnL (%) before the trailing take-profit arms.
-  trail_peak_arm_pct: 0.5
-  # Base giveback room before the peak/damage ratchet.
-  trail_base_giveback_pct: 0.8
+  # Friction (fraction of mid) × this = minimum invalidation width (pp).
+  loss_friction_mult: 2.0
+  # Hard ceiling on invalidation width so a $200 book cannot take ruin cuts.
+  max_invalidation_pct: 4.0
+  # Peak PnL (%) before the trailing take-profit arms (also ≥ one friction).
+  trail_peak_arm_pct: 0.75
+  # Base giveback room before the peak/damage ratchet — loose enough that
+  # structural milestones can lock larger winners before trail cuts.
+  trail_base_giveback_pct: 1.2
   # Noise floor so spread flicker does not exit a trailed lot.
-  trail_min_giveback_pct: 0.35
+  trail_min_giveback_pct: 0.45
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
   min_backing_ratio: 0.6
+  # Active settler: structural milestone floors + failed-retest exhaustion.
+  # (structural_live kept for compatibility; structural always settles now.)
+  structural_live: true
+  structural_pullback_pct: 0.4
+  structural_milestone_1_pct: 1.0
+  structural_milestone_2_pct: 2.0
+  structural_milestone_3_pct: 3.5
+  structural_floor_1_pct: 0.35
+  structural_floor_2_pct: 1.0
+  structural_floor_3_pct: 2.2
+  # Evaluated shadow: LearningStop starts from trail/invalidation statics above
+  # and nudges them from official-vs-shadow P/L regret. Never settles.
 
 learning:
   policy_prefix: "model/current/"
@@ -381,6 +399,15 @@ learning:
   # Sequencer cut depth: reject / ignore leaves shorter than min.
   max_path_length: 8
   min_path_length: 2
+  # Virtual → paper promotion floor on path resistance.
+  paper_eligible_resistance: 0.2
+  # Paper/real settles required before real may arm.
+  confirm_after: 3
+  # Consecutive losses that disarm real entries.
+  demotion_losses: 3
+  # Minimum paper/real win rate and mean return to arm real.
+  min_win_rate: 0.55
+  min_mean_return: 0.0
   excursion_timeout: 45m
   max_excursion_bars: 8
   policy_shadow_bars: 32

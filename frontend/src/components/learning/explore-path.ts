@@ -1,4 +1,4 @@
-/** Desk baseline before any settled lot adjusts the leaf. */
+/** Desk baseline written into a brand-new PathBook.resistance. */
 export const EXPLORE_BASE_THRESHOLD = 0.5;
 
 const PATH_ACTIONS = new Set(["enter", "hold", "exit"]);
@@ -24,7 +24,7 @@ export const pathBookPolicyKey = (
 	return storageKey;
 };
 
-/** Matches strategy Model.updatePathThreshold: threshold > 0.8 is deleted. */
+/** Matches strategy Tree.Predict: resistance > 0.8 is deleted. */
 export const EXPLORE_PRUNE_THRESHOLD = 0.8;
 
 const PATH_BOOKS = ["model/paths"] as const;
@@ -32,6 +32,10 @@ const PATH_BOOKS = ["model/paths"] as const;
 export const isPathBookKey = (key: string) =>
 	PATH_BOOKS.some((prefix) => key.startsWith(prefix));
 
+/*
+exploreThresholdForKey returns the stored absolute book, or undefined when
+the hub never reported one. Never invent the 0.5 seed for missing keys.
+*/
 export const exploreThresholdForKey = (
 	key: string,
 	thresholds?: Record<string, number> | null,
@@ -39,7 +43,7 @@ export const exploreThresholdForKey = (
 	if (!isPathBookKey(key)) return undefined;
 	const raw = thresholds?.[key];
 	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-	return EXPLORE_BASE_THRESHOLD;
+	return undefined;
 };
 
 export const explorePathKept = (
@@ -48,7 +52,8 @@ export const explorePathKept = (
 ): boolean => {
 	if (!isPathBookKey(key)) return true;
 	const threshold = exploreThresholdForKey(key, thresholds);
-	return (threshold ?? EXPLORE_BASE_THRESHOLD) <= EXPLORE_PRUNE_THRESHOLD;
+	if (threshold === undefined) return true;
+	return threshold <= EXPLORE_PRUNE_THRESHOLD;
 };
 
 export const filterExploreKeys = (

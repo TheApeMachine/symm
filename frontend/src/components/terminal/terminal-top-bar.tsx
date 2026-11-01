@@ -4,6 +4,7 @@ import { type Book, bookAtom } from "#/collections/book";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
+import { ModeStrip } from "#/components/mode-strip";
 import { PaperPerformance } from "#/components/paper-performance";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -55,11 +56,6 @@ Rule is the vertical separator between the bar's groups. It is shorter than the
 bar so it reads as a division between neighbours rather than as a second edge of
 the bar itself, which is what a full-height rule looks like against the toolbar
 border.
-
-The height is fixed rather than stretched to fit. Stretching made the rule as
-tall as whatever it happened to sit beside, so the separators around the
-two-line readouts grew taller than the ones between the badges — the same
-component drawing two different lines depending on its neighbours.
 */
 const Rule = () => (
 	<Divider orientation="vertical" className="h-4.5 self-center" />
@@ -100,18 +96,23 @@ export const TerminalTopBar = () => {
 			</Toolbar.Group>
 
 			<Rule />
+			<ModeStrip />
+			<Rule />
 			<Toolbar.Spacer />
 
 			<Tabs size="s" data-book={book}>
-				<Tabs.Tab size="s" active={book === "paper"} onClick={choose("paper")}>
-					Paper
-				</Tabs.Tab>
 				<Tabs.Tab
 					size="s"
 					active={book === "virtual"}
 					onClick={choose("virtual")}
 				>
 					Virtual
+				</Tabs.Tab>
+				<Tabs.Tab size="s" active={book === "paper"} onClick={choose("paper")}>
+					Paper
+				</Tabs.Tab>
+				<Tabs.Tab size="s" active={book === "real"} onClick={choose("real")}>
+					Real
 				</Tabs.Tab>
 			</Tabs>
 

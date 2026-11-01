@@ -413,8 +413,8 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 /*
 OpenDragBudgetPct is the most negative close-now PnLPct still allowed at
 entry: three times the round-trip friction hurdle. It is the entry-side
-counterpart of the stop's loss budget, which starts at that same friction
-hurdle and then widens to the symbol's own worst realized loss.
+counterpart of LossBudget, which freezes invalidation at max(config,
+friction×mult) under a hard ceiling.
 */
 func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 	friction, ok := price.Friction(symbol)
@@ -637,7 +637,7 @@ increment. It is nil when that size is below the venue minimum, the book
 cannot fill it, or the fee or the cash is unknown.
 */
 func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
-	return price.allocate(symbol, true)
+	return price.AllocateFrom(nil, symbol, true)
 }
 
 /*
@@ -645,10 +645,18 @@ AllocateVirtual sizes a learning lot. Venue qty/cost mins are skipped so a
 thin walk can still open an observation sample.
 */
 func (price *Price) AllocateVirtual(symbol string) (*decimal.Decimal, string) {
-	return price.allocate(symbol, false)
+	return price.AllocateFrom(nil, symbol, false)
 }
 
-func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Decimal, string) {
+/*
+AllocateFrom sizes against an explicit wallet (paper or live). A nil balance
+falls back to the price's wired desk balance.
+*/
+func (price *Price) AllocateFrom(
+	wallet *Balance,
+	symbol string,
+	enforceVenueMins bool,
+) (*decimal.Decimal, string) {
 	if price == nil {
 		return nil, "price is nil"
 	}
@@ -661,15 +669,19 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 		return nil, "book manager is not wired"
 	}
 
-	if price.balance == nil {
+	if wallet == nil {
+		wallet = price.balance
+	}
+
+	if wallet == nil {
 		return nil, "balance is not wired"
 	}
 
 	pair := price.Instrument.Pair(symbol)
-	cashShop := price.balance.cash(pair.Quote)
+	cashShop := wallet.cash(pair.Quote)
 
 	if cashShop == nil {
-		cashShop = price.balance.cash(price.balance.Quote)
+		cashShop = wallet.cash(wallet.Quote)
 	}
 
 	fee := price.feeForTrade(symbol)
@@ -678,7 +690,7 @@ func (price *Price) allocate(symbol string, enforceVenueMins bool) (*decimal.Dec
 		return nil, fmt.Sprintf(
 			"quote cash unknown (pair quote %q, desk quote %q)",
 			pair.Quote,
-			price.balance.Quote,
+			wallet.Quote,
 		)
 	}
 

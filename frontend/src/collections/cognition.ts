@@ -1,12 +1,8 @@
 import { createStore } from "@tanstack/store";
 import { triePrefix } from "#/collections/book";
-import {
-	EXPLORE_BASE_THRESHOLD,
-	filterExploreKeys,
-} from "#/components/learning/explore-path";
+import { filterExploreKeys } from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
-import { parseOneValue } from "#/types/decoder";
 
 /*
 The live symbol set, as known to the app (it also seeds the symbol
@@ -444,226 +440,31 @@ const isMatch = (value: unknown): value is CognitionMatch => {
 	);
 };
 
-const layerText = (raw: unknown): string | null => {
-	if (typeof raw === "string") {
-		try {
-			const decoded = atob(raw);
-			if (decoded !== "") return decoded;
-		} catch {
-			// The layer is already text.
-		}
-		return raw;
-	}
-
-	if (
-		Array.isArray(raw) &&
-		raw.every((item) => typeof item === "number" && item >= 0 && item <= 255)
-	) {
-		return new TextDecoder().decode(new Uint8Array(raw));
-	}
-
-	return null;
-};
-
-const layerNumber = (raw: unknown): number | null => {
-	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-
-	const text = layerText(raw);
-	if (text == null) return null;
-
-	try {
-		const parsed = JSON.parse(text);
-		return typeof parsed === "number" && Number.isFinite(parsed)
-			? parsed
-			: null;
-	} catch {
+/*
+thresholdFromPathBook reads strategy PathBook JSON:
+{"action":"enter","resistance":0.45}
+*/
+export const thresholdFromPathBook = (payload: unknown): number | null => {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 		return null;
 	}
-};
 
-/*
-A number inside [0.05, 0.95] is an older snapshot of the whole book.
-Steps written now are ±0.01 and sit outside that band. Adding the
-snapshots together pushed a twice-scored path past the prune line, so
-the tree only kept the paths that had been scored once.
-*/
-const absoluteThreshold = (step: number): boolean =>
-	step >= 0.05 && step <= 0.95;
-
-const sumExploreThresholdSteps = (
-	steps: number[],
-	names?: unknown[],
-	layers?: unknown[],
-): number | null => {
-	if (steps.length === 0) return null;
-
-	let book = 0.5;
-
-	for (let i = 0; i < steps.length; i++) {
-		const step = steps[i];
-		// Only legacy "threshold"-named layers can be absolute snapshots.
-		if (
-			names &&
-			layers &&
-			isLegacyAbsoluteThreshold(names, i) &&
-			absoluteThreshold(step)
-		) {
-			book = step;
-			continue;
-		}
-		book += step;
+	const body = payload as { action?: unknown; resistance?: unknown };
+	if (typeof body.action !== "string" || body.action === "") return null;
+	if (typeof body.resistance !== "number" || !Number.isFinite(body.resistance)) {
+		return null;
 	}
 
-	return book;
-};
-
-const thresholdStepsFromStored = (
-	names: unknown[],
-	layers: unknown[],
-): number[] => {
-	const steps: number[] = [];
-
-	for (let i = 0; i < names.length; i++) {
-		const name = names[i];
-		if (typeof name !== "string") continue;
-		// The backend writes the book under "resistance" (strategy/tree.go).
-		// Older values used "threshold"; accept both.
-		if (!name.includes("threshold") && !name.includes("resistance")) continue;
-
-		const step = layerNumber(layers[i]);
-		if (step === null) continue;
-
-		steps.push(step);
-	}
-
-	return steps;
+	return body.resistance;
 };
 
 /*
-Legacy "threshold" layers may be absolute snapshots in [0.05, 0.95].
-"resistance" layers are always deltas (−returnFraction) and are small.
-*/
-const isLegacyAbsoluteThreshold = (
-	names: unknown[],
-	index: number,
-): boolean => {
-	const name = names[index];
-	return (
-		typeof name === "string" &&
-		name.includes("threshold") &&
-		!name.includes("resistance")
-	);
-};
-
-/*
-thresholdFromStored reads the path book off a stored explore value.
-A value with no threshold layer has not been scored.
-*/
-export const thresholdFromStored = (payload: unknown): number | null => {
-	if (!payload || typeof payload !== "object") return null;
-
-	const body = payload as {
-		Index?: unknown;
-		Layers?: unknown;
-		index?: unknown;
-		layers?: unknown;
-	};
-	const names = Array.isArray(body.Index) ? body.Index : body.index;
-	const layers = Array.isArray(body.Layers) ? body.Layers : body.layers;
-	if (!Array.isArray(names) || !Array.isArray(layers)) return null;
-
-	const fromNew = thresholdFromNewModelValue(
-		names as unknown[],
-		layers as unknown[],
-	);
-	if (fromNew !== null) return fromNew;
-
-	return sumExploreThresholdSteps(
-		thresholdStepsFromStored(names, layers),
-		names,
-		layers,
-	);
-};
-
-/*
-thresholdFromNewModelValue reads the path book the current strategy/tree.go
-persists: a data.Value whose `threshold` layer is an absolute [0,1] book
-(0.5 seeded, profit pulls it toward 0, loss toward 1). That absolute book is
-exactly the value the cognitive tree renders, so it is returned verbatim.
-
-The layer is recognized by an exact `threshold` suffix that is not the old
-resistance-delta key. A book in-band (0.05–0.95) is real; an out-of-band or
-zero snapshot is not, so those fall through to the legacy path (which
-defaults unscored leaves to the 0.50 desk baseline).
-*/
-const thresholdFromNewModelValue = (
-	names: unknown[],
-	layers: unknown[],
-): number | null => {
-	for (let i = 0; i < names.length; i++) {
-		const name = names[i];
-		if (typeof name !== "string") continue;
-		if (!name.endsWith("/threshold")) continue;
-		if (name.includes("resistance")) continue;
-
-		const value = layerNumber(layers[i]);
-		if (value === null) continue;
-		if (absoluteThreshold(value)) return value;
-	}
-
-	return null;
-};
-
-/*
-thresholdFromExploreBytes reads a path book off one S3 list layer: either a
-JSON-marshaled explore value (hub ListPrefix) or a nested wire Value blob.
+thresholdFromExploreBytes reads PathBook JSON or a hub compact float.
 */
 export const thresholdFromExploreBytes = (bytes: Uint8Array): number | null => {
 	const json = tryDecodeJsonBytes(bytes);
-	// Hub ListPrefix for model/paths sends a compact JSON float per key.
 	if (typeof json === "number" && Number.isFinite(json)) return json;
-
-	const fromJSON = thresholdFromStored(json);
-	if (fromJSON !== null) return fromJSON;
-
-	const nested = parseOneValue(bytes);
-	if (!nested) return null;
-
-	const fromNew = thresholdFromNewModelValue(nested.index, nested.layers);
-	if (fromNew !== null) return fromNew;
-
-	const steps: number[] = [];
-	const indices: string[] = [];
-
-	for (let i = 0; i < nested.index.length; i++) {
-		const idx = nested.index[i];
-		if (!idx.includes("threshold") && !idx.includes("resistance")) continue;
-
-		const step = layerNumber(tryDecodeJsonBytes(nested.layers[i]));
-		if (step === null) continue;
-
-		steps.push(step);
-		indices.push(idx);
-	}
-
-	if (steps.length === 0) return null;
-
-	let book = 0.5;
-	for (let i = 0; i < steps.length; i++) {
-		// Only "threshold"-named layers can be absolute snapshots.
-		// "resistance" layers are always small deltas.
-		if (
-			indices[i].includes("threshold") &&
-			!indices[i].includes("resistance") &&
-			absoluteThreshold(steps[i])
-		) {
-			book = steps[i];
-			continue;
-		}
-		book += steps[i];
-	}
-
-	return book;
+	return thresholdFromPathBook(json);
 };
 
 const sameStringList = (left: string[], right: string[]): boolean =>

@@ -38,24 +38,24 @@ func TestDestKeyKeepsPathUnderSourcePrefix(t *testing.T) {
 	}{
 		{
 			name:   "path under the source prefix is kept",
-			source: "position/open/BTC/USD",
-			dest:   "position/closed/BTC/USD",
-			key:    "position/open/BTC/USD/1792668320433768000/0000000000000000230",
-			want:   "position/closed/BTC/USD/1792668320433768000/0000000000000000230",
+			source: "paper/open/BTC/USD",
+			dest:   "paper/closed/BTC/USD",
+			key:    "paper/open/BTC/USD/1792668320433768000/0000000000000000230",
+			want:   "paper/closed/BTC/USD/1792668320433768000/0000000000000000230",
 		},
 		{
 			name:   "a trailing separator on the source prefix",
-			source: "position/open/BTC/USD/",
-			dest:   "position/closed/BTC/USD/",
-			key:    "position/open/BTC/USD/1792668320433768000/0000000000000000230",
-			want:   "position/closed/BTC/USD/1792668320433768000/0000000000000000230",
+			source: "paper/open/BTC/USD/",
+			dest:   "paper/closed/BTC/USD/",
+			key:    "paper/open/BTC/USD/1792668320433768000/0000000000000000230",
+			want:   "paper/closed/BTC/USD/1792668320433768000/0000000000000000230",
 		},
 		{
 			name:   "the object is the prefix itself",
-			source: "position/open/BTC/USD/1792668320433768000/0000000000000000230",
-			dest:   "position/closed/BTC/USD/1792668320433768000/0000000000000000230",
-			key:    "position/open/BTC/USD/1792668320433768000/0000000000000000230",
-			want:   "position/closed/BTC/USD/1792668320433768000/0000000000000000230",
+			source: "paper/open/BTC/USD/1792668320433768000/0000000000000000230",
+			dest:   "paper/closed/BTC/USD/1792668320433768000/0000000000000000230",
+			key:    "paper/open/BTC/USD/1792668320433768000/0000000000000000230",
+			want:   "paper/closed/BTC/USD/1792668320433768000/0000000000000000230",
 		},
 	}
 

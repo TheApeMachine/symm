@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
@@ -63,7 +62,7 @@ type Tree struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.RWMutex
-	root   *iradix.Tree[*data.Value]
+	root   *iradix.Tree[*PathBook]
 	store  *store.Client
 }
 
@@ -77,19 +76,30 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 	tree := &Tree{
 		ctx:    ctx,
 		cancel: cancel,
-		root:   iradix.New[*data.Value](),
+		root:   iradix.New[*PathBook](),
 		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
 	for page := range tree.store.List(seedPrefix) {
 		for _, object := range page.Contents {
-			value := tree.store.Download(ctx, *object.Key)
-
-			if value == nil || value.Err != nil {
+			if object.Key == nil {
 				continue
 			}
 
-			tree.root, _, _ = tree.root.Insert([]byte(*object.Key), value)
+			raw := tree.store.Fetch(ctx, *object.Key)
+			book := DecodePathBook(raw)
+
+			if book == nil {
+				continue
+			}
+
+			path := PathFromStorageKey(*object.Key)
+
+			if path == "" {
+				continue
+			}
+
+			tree.root, _, _ = tree.root.Insert([]byte(path), book)
 		}
 	}
 
@@ -117,8 +127,8 @@ func (tree *Tree) Predict(
 		prunes     []string
 	)
 
-	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, value *data.Value) bool {
-		if value == nil || value.Err != nil {
+	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, book *PathBook) bool {
+		if book == nil {
 			return false
 		}
 
@@ -126,7 +136,7 @@ func (tree *Tree) Predict(
 			return false
 		}
 
-		action := NewAction(value.Scope)
+		action := NewAction(book.Action)
 
 		if !regime.Allows(action) {
 			return false
@@ -138,7 +148,7 @@ func (tree *Tree) Predict(
 		}
 
 		current = action
-		add := value.GetTotal("resistance")
+		add := book.Resistance
 
 		if add > 0.8 {
 			prunes = append(prunes, string(key))
@@ -176,7 +186,7 @@ func (tree *Tree) Predict(
 }
 
 /*
-Update existing paths with the new resistance.
+Update existing paths with the new resistance delta.
 */
 func (tree *Tree) Update(path string, resistance float64) {
 	if path == "" {
@@ -190,18 +200,17 @@ func (tree *Tree) Update(path string, resistance float64) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
-	tree.root.Root().WalkPrefix([]byte(path), func(key []byte, value *data.Value) bool {
-		if value == nil || value.Err != nil {
+	tree.root.Root().WalkPrefix([]byte(path), func(key []byte, book *PathBook) bool {
+		if book == nil {
 			return false
 		}
 
-		value.Append(resistance, "resistance")
+		book.Apply(resistance)
 
 		if tree.store != nil {
-			tree.store.WriteAtPrefix(
-				"model/paths/"+path+"/"+value.Scope+".bin",
-				value.Bytes(),
-			)
+			if raw := book.Bytes(); len(raw) > 0 {
+				tree.store.WriteAtPrefix(book.StorageKey(string(key)), raw)
+			}
 		}
 
 		return false
@@ -211,8 +220,8 @@ func (tree *Tree) Update(path string, resistance float64) {
 /*
 Insert writes a path to the tree and S3.
 */
-func (tree *Tree) Insert(path string, value *data.Value) {
-	if path == "" || value == nil {
+func (tree *Tree) Insert(path string, book *PathBook) {
+	if path == "" || book == nil {
 		return
 	}
 
@@ -223,11 +232,38 @@ func (tree *Tree) Insert(path string, value *data.Value) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
-	tree.root, _, _ = tree.root.Insert([]byte(path), value)
+	tree.root, _, _ = tree.root.Insert([]byte(path), book)
 
 	if tree.store != nil {
-		tree.store.WriteAtPrefix("model/paths/"+path+"/"+value.Scope+".bin", value.Bytes())
+		if raw := book.Bytes(); len(raw) > 0 {
+			tree.store.WriteAtPrefix(book.StorageKey(path), raw)
+		}
 	}
+}
+
+/*
+Ensure inserts a seeded leaf only when the path is missing. Re-settling the
+same virtual episode must Update resistance, never wipe the book back to a
+blank value (which would restart near 0 and clear the paper floor).
+*/
+func (tree *Tree) Ensure(path string, action Action) {
+	if tree == nil || path == "" || action == ActionNone {
+		return
+	}
+
+	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+		return
+	}
+
+	tree.mu.Lock()
+	_, exists := tree.root.Get([]byte(path))
+	tree.mu.Unlock()
+
+	if exists {
+		return
+	}
+
+	tree.Insert(path, NewPathBook(action))
 }
 
 /*

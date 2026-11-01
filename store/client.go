@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
 	"net/http"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/system"
 	"golang.design/x/lockfree/lf"
 )
@@ -293,70 +291,37 @@ func (client *Client) ListKeys(prefix string) iter.Seq[string] {
 }
 
 /*
-Read on the shared client does not replay a prefix; use Values(prefix) or Open(prefix).
+Fetch returns the raw object body for JSON envelopes and path books.
 */
-func (client *Client) Read(p []byte) (n int, err error) {
-	value := data.From(p)
+func (client *Client) Fetch(ctx context.Context, key string) []byte {
+	raw, err := client.object(ctx, key)
 
-	for page := range client.List(value.Prefix) {
-		for _, object := range page.Contents {
-			if object.Key == nil {
-				continue
-			}
-
-			writer := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
-
-			_, err := client.transfer.DownloadObject(client.ctx, &transfermanager.DownloadObjectInput{
-				Bucket:   aws.String(client.bucket),
-				Key:      aws.String(*object.Key),
-				WriterAt: writer,
-			})
-
-			if err != nil {
-				return 0, errnie.Error(errnie.Err(
-					errnie.IO, "[store.client] download error", err,
-				))
-			}
-
-			n, err = value.Write(writer.Bytes())
-
-			if err != nil {
-				return n, errnie.Error(err)
-			}
-		}
+	if err == nil {
+		return raw
 	}
 
-	return len(p), io.EOF
-}
-
-func (client *Client) Download(ctx context.Context, key string) *data.Value {
-	body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
-
-	_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
-		Bucket:   aws.String(client.bucket),
-		Key:      aws.String(key),
-		WriterAt: body,
-	})
-
-	if err != nil {
-		if !missingObject(err) {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[store.client] download error", err,
-			))
-		}
-
-		return nil
+	if !missingObject(err) {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] download error", err,
+		))
 	}
 
-	return data.From(body.Bytes())
+	return nil
 }
 
 /*
-Stream writes each object under prefix to dst, one Write per object.
+Download returns the raw object body.
+*/
+func (client *Client) Download(ctx context.Context, key string) []byte {
+	return client.Fetch(ctx, key)
+}
+
+/*
+Stream yields each object body under prefix.
 A canceled ctx stops the stream before the next object.
 */
-func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.Value] {
-	return func(yield func(*data.Value) bool) {
+func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[[]byte] {
+	return func(yield func([]byte) bool) {
 		for key := range client.ListKeys(prefix) {
 			if err := ctx.Err(); err != nil {
 				errnie.Error(errnie.Err(
@@ -366,13 +331,7 @@ func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.
 				return
 			}
 
-			body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
-
-			_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
-				Bucket:   aws.String(client.bucket),
-				Key:      aws.String(key),
-				WriterAt: body,
-			})
+			raw, err := client.object(ctx, key)
 
 			if err != nil {
 				if missingObject(err) {
@@ -386,7 +345,7 @@ func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.
 				return
 			}
 
-			if !yield(data.From(body.Bytes())) {
+			if !yield(raw) {
 				return
 			}
 		}
@@ -394,14 +353,55 @@ func (client *Client) Stream(ctx context.Context, prefix string) iter.Seq[*data.
 }
 
 /*
-Write is unsupported because serialized Values do not carry an upload key prefix.
-Use WriteAtPrefix or io.Copy with a *data.Value (which routes through WriteAtPrefix).
+Write is unsupported. JSON bodies do not carry an upload key.
+Use WriteAtPrefix.
 */
-func (client *Client) Write(p []byte) (int, error) {
-	return client.WriteAtPrefix(data.From(p).Prefix, p)
+func (client *Client) Write([]byte) (int, error) {
+	return 0, errnie.Error(errnie.Err(
+		errnie.Validation, "[store.client] Write is unsupported; use WriteAtPrefix", nil,
+	))
+}
+
+/*
+object downloads one key. An empty key or a nil client is not an error.
+*/
+func (client *Client) object(ctx context.Context, key string) ([]byte, error) {
+	if client == nil || key == "" {
+		return nil, nil
+	}
+
+	if ctx == nil {
+		ctx = client.ctx
+	}
+
+	body := manager.NewWriteAtBuffer(make([]byte, 0, 4096))
+
+	_, err := client.transfer.DownloadObject(ctx, &transfermanager.DownloadObjectInput{
+		Bucket:   aws.String(client.bucket),
+		Key:      aws.String(key),
+		WriterAt: body,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return body.Bytes(), nil
 }
 
 func (client *Client) WriteAtPrefix(key string, value []byte) (int, error) {
+	if key == "" {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation, "[store.client] upload key is empty", nil,
+		))
+	}
+
+	if client == nil || client.queue == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO, "[store.client] upload queue is not ready", nil,
+		))
+	}
+
 	client.queue.Enqueue(Record{Key: key, Value: value})
 	return len(value), nil
 }
@@ -497,8 +497,8 @@ func (client *Client) DeleteOtherKeys(prefix, keep string) error {
 
 /*
 MovePrefix copies all objects matching sourcePrefix to destPrefix, then deletes the originals.
-An object keeps the path it holds under sourcePrefix, so "position/open/BTC" moved to
-"position/closed/BTC" lands on "position/closed/BTC/<epoch>/<tick>".
+An object keeps the path it holds under sourcePrefix, so "paper/open/BTC" moved to
+"paper/closed/BTC" lands on "paper/closed/BTC/<epoch>/<tick>".
 */
 func (client *Client) MovePrefix(sourcePrefix, destPrefix string) error {
 	for page := range client.List(sourcePrefix) {

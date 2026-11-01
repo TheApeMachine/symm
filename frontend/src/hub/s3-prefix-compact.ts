@@ -1,7 +1,4 @@
-import {
-	EXPLORE_BASE_THRESHOLD,
-	filterExploreKeys,
-} from "#/components/learning/explore-path";
+import { filterExploreKeys } from "#/components/learning/explore-path";
 
 export type ClosedHistoryEntry = {
 	stamp: { epoch: bigint; tick: bigint; timestamp: bigint };
@@ -44,7 +41,8 @@ const asBigInt = (value: unknown): bigint => {
 
 /*
 pathsListingFromEnvelope folds hub WriteJSON {"paths":{…}} into the explore
-compact the cognitive tree already ingests.
+compact the cognitive tree already ingests. Thresholds are absolute PathBook
+resistance values — missing keys stay missing (no invented 0.5).
 */
 export const pathsListingFromEnvelope = (
 	payload: unknown,
@@ -72,7 +70,8 @@ export const pathsListingFromEnvelope = (
 			body.thresholds as Record<string, unknown>,
 		)) {
 			const value = asFiniteNumber(raw);
-			thresholds[key] = value ?? EXPLORE_BASE_THRESHOLD;
+			if (value === null) continue;
+			thresholds[key] = value;
 		}
 	}
 
@@ -85,7 +84,6 @@ export const pathsListingFromEnvelope = (
 	const policyKeys: string[] = [];
 	for (const key of listedKeys) {
 		if (typeof key !== "string" || key === "") continue;
-		if (!(key in thresholds)) thresholds[key] = EXPLORE_BASE_THRESHOLD;
 		policyKeys.push(key);
 	}
 
@@ -116,7 +114,7 @@ export const pathsListingFromEnvelope = (
 
 /*
 closedListingFromEnvelope folds hub WriteJSON {"closed":{…}} into history
-entries without decoding data.Value blobs.
+entries from lot JSON {epoch,tick,timestamp,position→row}.
 */
 export const closedListingFromEnvelope = (
 	payload: unknown,
@@ -128,9 +126,11 @@ export const closedListingFromEnvelope = (
 	const body = payload as { scope?: unknown; entries?: unknown };
 	const scope = typeof body.scope === "string" ? body.scope : "";
 	if (
-		scope !== "position/closed" &&
+		scope !== "paper/closed" &&
+		scope !== "real/closed" &&
 		scope !== "virtual/closed" &&
-		!scope.startsWith("position/closed/") &&
+		!scope.startsWith("paper/closed/") &&
+		!scope.startsWith("real/closed/") &&
 		!scope.startsWith("virtual/closed/")
 	) {
 		return null;

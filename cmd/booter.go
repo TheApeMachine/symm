@@ -45,8 +45,14 @@ type hubDeskExiter struct {
 	path   func(string, *broker.Position) string
 }
 
-func (exiter hubDeskExiter) Exit(symbol string, virtual bool) error {
-	position := exiter.desk.Position(symbol)
+func (exiter hubDeskExiter) Exit(symbol string, book string) error {
+	ledger := broker.ParseLedger(book, book == "virtual")
+	position := exiter.desk.PositionOn(symbol, ledger)
+
+	if position == nil {
+		position = exiter.desk.Position(symbol)
+	}
+
 	path := ""
 	if position != nil {
 		if exiter.path != nil {
@@ -55,13 +61,17 @@ func (exiter hubDeskExiter) Exit(symbol string, virtual bool) error {
 		if path == "" {
 			path = position.EntryPath
 		}
+
+		if ledger == "" {
+			ledger = position.Ledger()
+		}
 	}
 
-	if err := exiter.desk.Exit(symbol, path, virtual); err != nil {
+	if err := exiter.desk.Exit(symbol, path, ledger); err != nil {
 		return err
 	}
 
-	if virtual && exiter.record != nil && position != nil {
+	if ledger.Virtual() && exiter.record != nil && position != nil {
 		exiter.record(position)
 	}
 
@@ -77,14 +87,17 @@ type Booter struct {
 	epoch            int64
 	public           *network.WebsocketClient
 	privateTransport broker.Transport
+	liveTransport    broker.Transport
 	instrument       *broker.Instrument
 	book             *broker.Book
 	price            *broker.Price
 	balance          *broker.Balance
+	liveBalance      *broker.Balance
 	desk             *broker.Desk
 	normalizer       *spot.Normalizer
 	signals          []nmruntime.Node
 	training         *strategy.Training
+	model            *strategy.Model
 	workspace        *nmruntime.Workspace
 	store            *store.Client
 	replies          sync.Map
@@ -184,9 +197,13 @@ func (booter *Booter) initTransports() error {
 		)
 	}
 
+	// Paper transport is always present so the paper book can refine while
+	// real is armed or halted.
+	booter.privateTransport = broker.NewPaper(ctx)
+
 	switch system.Cfg.Market.Model {
 	case "paper":
-		booter.privateTransport = broker.NewPaper(ctx)
+		// Real ceiling closed — live transport stays nil.
 	case "real":
 		privateWS := network.NewWebsocketClient(ctx)
 
@@ -196,7 +213,7 @@ func (booter *Booter) initTransports() error {
 			)
 		}
 
-		booter.privateTransport = privateWS
+		booter.liveTransport = privateWS
 	default:
 		return errnie.Err(
 			errnie.Validation,
@@ -224,11 +241,21 @@ func (booter *Booter) initMarket() error {
 	booter.normalizer = broker.NormalizerFor(booter.instrument)
 	booter.book = broker.NewBook(ctx, booter.normalizer)
 
-	booter.balance = broker.NewBalance(
+	booter.balance = broker.NewLabeledBalance(
 		ctx,
 		booter.privateTransport,
 		decimal.NewFromInt64(int64(system.Cfg.Market.Balance)),
+		"paper",
 	)
+
+	if booter.liveTransport != nil {
+		booter.liveBalance = broker.NewLabeledBalance(
+			ctx,
+			booter.liveTransport,
+			decimal.NewFromInt64(int64(system.Cfg.Market.Balance)),
+			"real",
+		)
+	}
 
 	booter.price = broker.NewPrice(
 		ctx,
@@ -248,12 +275,24 @@ func (booter *Booter) initMarket() error {
 	}
 
 	booter.desk = broker.NewDesk(
-		ctx, booter.privateTransport,
+		ctx,
+		broker.DeskTransports{
+			Paper: booter.privateTransport,
+			Live:  booter.liveTransport,
+		},
 		booter.price,
-		booter.balance,
+		broker.DeskBalances{
+			Paper: booter.balance,
+			Live:  booter.liveBalance,
+		},
 	)
 
-	ui.UI.RegisterCallback(booter.desk.Hello)
+	ui.UI.RegisterCallback(func() {
+		booter.desk.Hello()
+		if booter.model != nil && booter.model.Confidence() != nil {
+			booter.model.Confidence().Publish()
+		}
+	})
 	ui.UI.Exiter(hubDeskExiter{desk: booter.desk})
 	booter.startPrivateIngress()
 
@@ -261,10 +300,18 @@ func (booter *Booter) initMarket() error {
 		return err
 	}
 
-	if ws, ok := booter.privateTransport.(*network.WebsocketClient); ok {
-		ws.OnReconnect(func() error {
-			return broker.SubscribeExecutions(booter.Context(), ws, booter.instrument)
-		})
+	if booter.liveTransport != nil {
+		booter.startLiveIngress()
+
+		if err := broker.SubscribeExecutions(ctx, booter.liveTransport, booter.instrument); err != nil {
+			return err
+		}
+
+		if ws, ok := booter.liveTransport.(*network.WebsocketClient); ok {
+			ws.OnReconnect(func() error {
+				return broker.SubscribeExecutions(booter.Context(), ws, booter.instrument)
+			})
+		}
 	}
 
 	return nil
@@ -275,6 +322,7 @@ func (booter *Booter) initPipeline() error {
 
 	training := strategy.NewTraining(ctx, booter.price, booter.desk)
 	model := strategy.NewModel(ctx, booter.desk, booter.price, training.ResetSequencer)
+	booter.model = model
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
@@ -383,9 +431,21 @@ error. The paper transport blocks until each frame is read, so this runs
 for as long as orders can be placed.
 */
 func (booter *Booter) startPrivateIngress() {
+	booter.pumpPrivate(booter.privateTransport, "paper")
+}
+
+func (booter *Booter) startLiveIngress() {
+	booter.pumpPrivate(booter.liveTransport, "real")
+}
+
+func (booter *Booter) pumpPrivate(transport broker.Transport, label string) {
+	if transport == nil {
+		return
+	}
+
 	go func() {
 		for {
-			buf, err := booter.privateTransport.Read()
+			buf, err := transport.Read()
 
 			if err != nil {
 				if nmruntime.ShuttingDown(booter.Context(), err) || booter.Context().Err() != nil {
@@ -393,10 +453,10 @@ func (booter *Booter) startPrivateIngress() {
 				}
 
 				if disconnect.Expected(err) {
-					errnie.Warn("[booter] private ingress disconnected, retrying read")
+					errnie.Warn("[booter] " + label + " ingress disconnected, retrying read")
 				} else {
 					errnie.Error(errnie.Err(
-						errnie.IO, "[booter] private ingress read failed", err,
+						errnie.IO, "[booter] "+label+" ingress read failed", err,
 					))
 				}
 
@@ -410,7 +470,7 @@ func (booter *Booter) startPrivateIngress() {
 				if err != nil {
 					errnie.Error(errnie.Err(
 						errnie.UnprocessableContent,
-						"[booter] executions frame: "+string(buf),
+						"[booter] "+label+" executions frame: "+string(buf),
 						err,
 					))
 
@@ -422,7 +482,7 @@ func (booter *Booter) startPrivateIngress() {
 				if success, err := data.AttributeOk[bool](buf, "success"); err != nil || !success {
 					errnie.Error(errnie.Err(
 						errnie.IO,
-						"[booter] paper desk rejected an order: "+string(buf),
+						"[booter] "+label+" desk rejected an order: "+string(buf),
 						err,
 					))
 				}

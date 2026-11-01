@@ -2,9 +2,8 @@ package kraken
 
 import (
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/decimal"
 )
 
 type Instrument struct {
@@ -72,36 +71,4 @@ func NewInstrumentSubscription() InstrumentSubscription {
 func (subscription InstrumentSubscription) MarshalJSON() ([]byte, error) {
 	type alias InstrumentSubscription
 	return sonic.Marshal((*alias)(&subscription))
-}
-
-/*
-ToValue serializes the Instrument snapshot into a *data.Value layer.
-*/
-func (instrument *Instrument) ToValue(epochs ...int64) *data.Value {
-	if instrument == nil {
-		return nil
-	}
-
-	val := data.NewValue("kraken", "snapshot", "instrument")
-	if len(epochs) > 0 && epochs[0] > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(instrument)
-	return val
-}
-
-/*
-ToValue serializes the InstrumentPair into a *data.Value layer.
-*/
-func (pair *InstrumentPair) ToValue(epochs ...int64) *data.Value {
-	if pair == nil {
-		return nil
-	}
-
-	val := data.NewValue("kraken", "instrument", pair.Symbol)
-	if len(epochs) > 0 && epochs[0] > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(pair)
-	return val
 }

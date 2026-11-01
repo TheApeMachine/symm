@@ -56,4 +56,22 @@ describe("s3-prefix-compact", () => {
 		expect(compact.entries[0]?.row.id).toBe("hist-compact");
 		expect(compact.entries[0]?.stamp.tick).toBe(5n);
 	});
+
+	it("accepts paper/closed scopes from the desk ledger", () => {
+		const compact = closedListingFromEnvelope({
+			scope: "paper/closed",
+			entries: [
+				{
+					epoch: 2,
+					tick: 3,
+					timestamp: 4,
+					row: { id: "paper-lot", symbol: "ETH/USD" },
+				},
+			],
+		});
+
+		expect(compact?.kind).toBe("closed");
+		expect(compact?.scope).toBe("paper/closed");
+		expect(compact?.entries[0]?.row.id).toBe("paper-lot");
+	});
 });

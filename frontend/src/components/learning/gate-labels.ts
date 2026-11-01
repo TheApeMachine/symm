@@ -32,7 +32,7 @@ and desk enter blocked when !gateDec.Allowed.
 export function resolveEnterExecutionBook(
 	gate: GateForces,
 	blocked: boolean,
-): "blocked" | "virtual" | "paper" {
+): "blocked" | "virtual" | "paper" | "real" {
 	if (blocked) {
 		return "blocked";
 	}
@@ -53,7 +53,7 @@ export function formatGateBadge(input: {
 	phase: string;
 	gate: GateForces;
 	blocked: boolean;
-	positionBook: "paper" | "virtual";
+	positionBook: "paper" | "virtual" | "real";
 }): GateBadge {
 	if (!input.gateLive) {
 		return {
@@ -66,10 +66,21 @@ export function formatGateBadge(input: {
 	const phase = input.phase || "hold";
 
 	if (phase === "hold") {
-		const virtualBook = input.positionBook === "virtual";
+		const label =
+			input.positionBook === "virtual"
+				? "Virtual book · open"
+				: input.positionBook === "real"
+					? "Real book · open"
+					: "Paper book · open";
+		const tone =
+			input.positionBook === "virtual"
+				? "acc"
+				: input.positionBook === "real"
+					? "warn"
+					: "up";
 		return {
-			label: virtualBook ? "Virtual book · open" : "Paper book · open",
-			tone: virtualBook ? "acc" : "up",
+			label,
+			tone,
 			hint: "You already hold this lot. Hold-phase gate bars are environmental context for exit pressure, not a new enter approval.",
 		};
 	}
@@ -101,13 +112,19 @@ export function formatGateBadge(input: {
 		return {
 			label: "Enter · virtual explore",
 			tone: "acc",
-			hint: "Path book or gate relegates to the virtual ledger until impulse clears resistance and the gate allows paper.",
+			hint: "Resistance still above the paper floor — exploring on the virtual ledger.",
+		};
+	case "real":
+		return {
+			label: "Enter · real armed",
+			tone: "warn",
+			hint: "Paper edge is armed — live wallet may open on this validated path.",
 		};
 	default:
 		return {
 			label: "Enter · paper eligible",
 			tone: "up",
-			hint: "Trie impulse clears path resistance and the gate allows a paper-book enter on this tick.",
+			hint: "Path resistance is at or below the paper floor — validated paper enter.",
 		};
 	}
 }

@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
@@ -55,15 +53,6 @@ type Feature struct {
 }
 
 /*
-ReadingOrigin and ReadingRole identify a Step's reading Value; its Scope is
-the symbol, its Epoch, Tick and Timestamp those of the tick.
-*/
-const (
-	ReadingOrigin = "resonance"
-	ReadingRole   = "reading"
-)
-
-/*
 NewSolver returns a solver stepping at pace. price supplies broker oracle
 features (Volume / Day / Spread / Book); nil skips those dims until set.
 */
@@ -105,12 +94,11 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		metrics := floatMetrics(reading)
-		envelope.Resonance[symbol] = metrics
+		envelope.Resonance[symbol] = reading
 
 		if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
 			ui.UI.WriteJSON(map[string]any{
-				"resonance": map[string]any{symbol: metrics},
+				"resonance": map[string]any{symbol: reading},
 			})
 		}
 	}
@@ -125,7 +113,7 @@ target. A symbol whose feature schema changed since it learned sits the
 round out rather than corrupting a learned manifold with a different input
 shape.
 */
-func (solver *Solver) stepSymbol(metrics map[string]map[string]map[string]float64, name string) *data.Value {
+func (solver *Solver) stepSymbol(metrics map[string]map[string]map[string]float64, name string) map[string]float64 {
 	if name == "" {
 		return nil
 	}
@@ -174,7 +162,7 @@ func (solver *Solver) stepSymbol(metrics map[string]map[string]map[string]float6
 
 	solver.pending.Store(name, append([]float64(nil), input...))
 
-	return solver.publish(name, manifold, hadTarget)
+	return solver.publish(manifold, hadTarget)
 }
 
 /*
@@ -354,52 +342,51 @@ func coderArch(featureDim int) []int {
 }
 
 /*
-publish builds the reading Value for one settled symbol: one scalar layer per
-metric, flattened onto envelope.Resonance[symbol] after settle.
+publish builds the scalar reading for one settled symbol.
 */
-func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold, hadTarget bool) *data.Value {
-	reading := data.NewValue(ReadingOrigin, ReadingRole, name)
-
+func (solver *Solver) publish(manifold *learning.ResonanceManifold, hadTarget bool) map[string]float64 {
 	layers, surprise, energy := manifold.WireSnapshot()
 	latent := manifold.LatentState()
 
-	reading.Append([]float64{surprise}, "surprise")
-	reading.Append([]float64{energy}, "energy")
-	reading.Append([]float64{solver.pace}, "alpha")
+	reading := map[string]float64{
+		"surprise": surprise,
+		"energy":   energy,
+		"alpha":    solver.pace,
+	}
 
 	if skill, ok := manifold.TaskSkill(); ok {
-		reading.Append([]float64{skill}, "task_skill")
+		reading["task_skill"] = skill
 	}
 
 	if precision, ok := manifold.TaskPrecision(); ok {
-		reading.Append([]float64{precision}, "task_relative_precision")
+		reading["task_relative_precision"] = precision
 	}
 
 	// The top layer's only residual is the temporal one; publishing it makes
 	// the memory mismatch visible next to the sensory mismatch.
 	if temporal, ok := manifold.TemporalError(); ok {
-		reading.Append([]float64{temporal}, "temporal_error")
+		reading["temporal_error"] = temporal
 	}
 
 	for i, val := range latent {
-		reading.Append([]float64{val}, fmt.Sprintf("latent_%d", i))
+		reading[fmt.Sprintf("latent_%d", i)] = val
 	}
 
 	for layer, wire := range layers {
-		reading.Append([]float64{wire.ErrorNorm}, fmt.Sprintf("layer_%d_error", layer))
+		reading[fmt.Sprintf("layer_%d_error", layer)] = wire.ErrorNorm
 
 		if wire.Temporal {
-			reading.Append([]float64{1}, fmt.Sprintf("layer_%d_temporal", layer))
+			reading[fmt.Sprintf("layer_%d_temporal", layer)] = 1
 		} else {
-			reading.Append([]float64{0}, fmt.Sprintf("layer_%d_temporal", layer))
+			reading[fmt.Sprintf("layer_%d_temporal", layer)] = 0
 		}
 
 		for j, val := range wire.State {
-			reading.Append([]float64{val}, fmt.Sprintf("layer_%d_state_%d", layer, j))
+			reading[fmt.Sprintf("layer_%d_state_%d", layer, j)] = val
 		}
 
 		for j, val := range wire.Prediction {
-			reading.Append([]float64{val}, fmt.Sprintf("layer_%d_prediction_%d", layer, j))
+			reading[fmt.Sprintf("layer_%d_prediction_%d", layer, j)] = val
 		}
 	}
 
@@ -409,7 +396,7 @@ func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold,
 	curve := manifold.TaskPrediction()
 
 	for i, val := range curve {
-		reading.Append([]float64{val}, fmt.Sprintf("forward_curve_%d", i))
+		reading[fmt.Sprintf("forward_curve_%d", i)] = val
 	}
 
 	// The strategy gate reads supported_horizon/calibrated to decide whether
@@ -417,17 +404,17 @@ func (solver *Solver) publish(name string, manifold *learning.ResonanceManifold,
 	// supported reach; one resolved sample supports exactly the one-step
 	// transition it was trained on.
 	supported := 0.0
+
 	if hadTarget && len(curve) > 0 {
 		supported = float64(len(curve))
 	}
 
-	reading.Append([]float64{supported}, "supported_horizon")
+	reading["supported_horizon"] = supported
 
-	if skill, ok := manifold.TaskSkill(); ok {
-		reading.Append([]float64{1}, "calibrated")
-		_ = skill
+	if _, ok := manifold.TaskSkill(); ok {
+		reading["calibrated"] = 1
 	} else {
-		reading.Append([]float64{0}, "calibrated")
+		reading["calibrated"] = 0
 	}
 
 	return reading
@@ -573,40 +560,6 @@ func maxFloat64(a, b float64) float64 {
 	}
 
 	return b
-}
-
-/*
-floatMetrics flattens a reading into label -> first scalar value.
-*/
-func floatMetrics(value *data.Value) map[string]float64 {
-	out := map[string]float64{}
-
-	if value == nil {
-		return out
-	}
-
-	for _, layer := range value.LookupPrefix("") {
-		rest := layer.Key
-
-		if value.Prefix != "" && strings.HasPrefix(rest, value.Prefix+"/") {
-			rest = strings.TrimPrefix(rest, value.Prefix+"/")
-		}
-
-		labels := strings.Split(rest, "/")
-
-		var values []float64
-		if err := layer.Decode(&values); err != nil {
-			continue
-		}
-
-		for i, reading := range values {
-			if i < len(labels) {
-				out[labels[i]] = reading
-			}
-		}
-	}
-
-	return out
 }
 
 /*

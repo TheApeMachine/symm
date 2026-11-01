@@ -59,6 +59,8 @@ export type Position = {
 		giveback_pct?: number;
 		allowed_giveback_pct?: number;
 		remaining_giveback_pct?: number;
+		floor_pct?: number;
+		floorPct?: number;
 	} | null;
 	/** Highest mark-to-market return (percent) the lot has reached. */
 	peak_pnl_pct?: string | number;
@@ -78,4 +80,27 @@ export type Position = {
 	realized_pct?: number;
 	/** Net percent path, one mark per reprice — the episode the policy learns from. */
 	pnl_trace?: number[];
+	/** Full structural-shadow series (shared prefix with pnl_trace + post-official continuation). */
+	shadow_pnl_trace?: number[];
+	/** True while the virtual structural ghost still wants marks. */
+	shadow_active?: boolean;
+	shadow_exit_trigger?: string;
+	official_exit_at?: string | null;
+	shadow_exit_at?: string | null;
+	official_exit_pct?: number;
+	shadow_exit_pct?: number;
+	/** Active official stop rail in PnL % (trail only while green). */
+	stop_floor_pct?: number;
+	/** Live structural shadow floor in PnL %. */
+	shadow_floor_pct?: number;
+	/** Official floor path, one sample per reprice. */
+	stop_floor_trace?: number[];
+	/** Structural floor path, one sample per shadow mark. */
+	shadow_floor_trace?: number[];
+	/** 0..1+ toward the active official stop. */
+	stop_proximity?: number;
+	/** PnL points remaining above the active official floor. */
+	stop_room_pct?: number;
+	shadow_proximity?: number;
+	shadow_room_pct?: number;
 };

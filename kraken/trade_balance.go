@@ -2,7 +2,6 @@ package kraken
 
 import (
 	"github.com/theapemachine/symm/decimal"
-	"github.com/theapemachine/nomagique/data"
 )
 
 /*
@@ -69,23 +68,4 @@ func AssetAlias(asset string) string {
 	default:
 		return ""
 	}
-}
-
-/*
-ToValue serializes the TradeBalanceResult and associated wallet into a *data.Value layer.
-*/
-func (tb *TradeBalanceResult) ToValue(wallet *Balance, quote string, epochs ...int64) *data.Value {
-	if tb == nil {
-		return nil
-	}
-
-	val := data.NewValue("kraken", "trade_balance", quote)
-	if len(epochs) > 0 && epochs[0] > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(tb)
-	if wallet != nil {
-		val.Append(wallet)
-	}
-	return val
 }

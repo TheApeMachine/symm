@@ -24,8 +24,43 @@ const pctText = (value: number) => {
 	return `${sign}${value.toFixed(digits)}%`;
 };
 
+const moneyText = (value: number) => {
+	const abs = Math.abs(value);
+	const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
+	return value >= 0 ? `$+${abs.toFixed(digits)}` : `$-${abs.toFixed(digits)}`;
+};
+
+const roomText = (room: number) => {
+	const digits = Math.abs(room) >= 10 ? 0 : 1;
+	return `${room.toFixed(digits)}pp`;
+};
+
 const lotKey = (lots: Record<string, unknown>[]) =>
-	lots.map((row) => String(row.id ?? row.symbol)).join("|");
+	lots
+		.map((row) =>
+			[
+				row.id ?? row.symbol,
+				row.shadow_active === true ? 1 : 0,
+				Array.isArray(row.shadow_pnl_trace) ? row.shadow_pnl_trace.length : 0,
+				row.official_exit_at ? 1 : 0,
+				row.official_exit_pct,
+				row.shadow_exit_at ? 1 : 0,
+				row.shadow_exit_pct,
+				row.pnl_pct,
+				row.pnl,
+				row.stop_floor_pct,
+				row.shadow_floor_pct,
+				row.stop_proximity,
+				row.stop_room_pct,
+				row.shadow_proximity,
+				row.shadow_room_pct,
+				Array.isArray(row.stop_floor_trace) ? row.stop_floor_trace.length : 0,
+				Array.isArray(row.shadow_floor_trace)
+					? row.shadow_floor_trace.length
+					: 0,
+			].join(":"),
+		)
+		.join("|");
 
 export const OpenChoiceChart = memo(
 	function OpenChoiceChart({
@@ -58,7 +93,8 @@ export const OpenChoiceChart = memo(
 							Open choices
 						</div>
 						<div className="text-[10px] text-(--f4)">
-							Close-now P&amp;L trails. Toggle grid for one chart per lot.
+							Active floor band under the mark. Dashed path only when the
+							learning shadow beats structural. Toggle grid per lot.
 						</div>
 					</div>
 					<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
@@ -128,12 +164,60 @@ export const OpenChoiceChart = memo(
 								>
 									<span
 										className="inline-block h-1.5 w-3 rounded-sm"
-										style={{ background: item.stroke }}
+										style={{
+											background: item.stroke,
+											backgroundImage:
+												item.dashFrom !== undefined
+													? `repeating-linear-gradient(90deg, ${item.stroke} 0 4px, transparent 4px 7px)`
+													: undefined,
+										}}
 									/>
 									{item.name}
 									<span className="tabular-nums text-(--f2)">
-										{pnl === null ? "…" : pctText(pnl)}
+										{item.pnlMoney !== undefined
+											? moneyText(item.pnlMoney)
+											: "…"}
 									</span>
+									<span className="tabular-nums text-(--f4)">
+										{pnl === null ? "" : pctText(pnl)}
+									</span>
+									{item.shadowActive ? (
+										<span className="rounded border border-(--line) px-1 text-[9px] uppercase tracking-wide text-(--f4)">
+											shadow live
+										</span>
+									) : null}
+									{item.stopRoomPct !== undefined ? (
+										<span
+											className={cn(
+												"tabular-nums",
+												(item.stopProximity ?? 0) >= 0.7
+													? "text-(--warn)"
+													: "text-(--f4)",
+											)}
+										>
+											{(item.stopProximity ?? 0) >= 1
+												? "stop"
+												: `${roomText(item.stopRoomPct)} to stop`}
+											{item.stopFloor !== undefined
+												? ` @ ${pctText(item.stopFloor)}`
+												: ""}
+										</span>
+									) : item.stopFloor !== undefined ? (
+										<span className="tabular-nums text-(--f4)">
+											stop {pctText(item.stopFloor)}
+										</span>
+									) : null}
+									{item.shadowRoomPct !== undefined ? (
+										<span className="tabular-nums text-(--f4)">
+											{(item.shadowProximity ?? 0) >= 1
+												? "shadow"
+												: `${roomText(item.shadowRoomPct)} shadow`}
+										</span>
+									) : item.shadowFloor !== undefined ? (
+										<span className="tabular-nums text-(--f4)">
+											shadow {pctText(item.shadowFloor)}
+										</span>
+									) : null}
 								</span>
 							);
 						})}

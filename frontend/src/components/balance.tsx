@@ -1,6 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { atoms } from "#/collections/app";
+import { bookAtom } from "#/collections/book";
 import type { Balance as BalanceReading } from "#/collections/types";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
@@ -29,10 +30,6 @@ const inProfit = (balance: BalanceReading | null) => {
 	return Number.isFinite(unrealized) && unrealized > 0;
 };
 
-/*
-The lambo rides behind the equity reading whenever the book is in unrealized
-profit, and is simply absent otherwise.
-*/
 const Lambo = () => (
 	<img
 		src="/lambo.png"
@@ -80,13 +77,24 @@ const Reading = ({
 	</Flex.Column>
 );
 
+/*
+Wallet readout follows the selected ledger tab: paper wallet on paper/virtual,
+live wallet on real.
+*/
 export const Balance = () => {
-	const balance = useSelector(atoms.balance, (state) => state);
+	const book = useSelector(bookAtom, (state) => state);
+	const legacy = useSelector(atoms.balance, (state) => state);
+	const wallets = useSelector(atoms.balances, (state) => state);
+	const balance =
+		book === "real"
+			? (wallets.real ?? null)
+			: (wallets.paper ?? legacy);
+	const label = book === "real" ? "Live cash" : "Paper cash";
 
 	return (
-		<Flex.Row align="center" gap={6} data-wallet="account">
+		<Flex.Row align="center" gap={6} data-wallet="account" data-book={book}>
 			<Reading
-				label="Cash"
+				label={label}
 				tone="f1"
 				weight="medium"
 				which="cash"

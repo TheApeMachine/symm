@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { policyEpochFromRow, tapeMarksFromDeskRow } from "./desk-tape-marks";
-import { lifecycleFromDeskClosed } from "./desk-closed-lifecycle";
+import {
+	lifecycleFromDeskClosed,
+	lifecycleFromDeskOpen,
+	shadowComparisonPending,
+} from "./desk-closed-lifecycle";
 
 describe("tapeMarksFromDeskRow", () => {
 	it("maps entry and exit ticks to B and C with A from mark_a_tick", () => {
@@ -36,6 +40,7 @@ describe("lifecycleFromDeskClosed", () => {
 			entry_path: "R01/R05",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
+			shadow_exit_at: "2026-10-23T20:05:40Z",
 			pnl: -0.046,
 			pnl_pct: -4.6,
 			outcome_triggers: ["cleared friction"],
@@ -47,6 +52,33 @@ describe("lifecycleFromDeskClosed", () => {
 		expect(life?.policy_epoch).toBe("1792169333015760400");
 		expect(life?.events?.[0]?.detail).toContain("tick 36340");
 		expect(life?.events?.[1]?.detail).toContain("cleared friction");
+	});
+
+	it("waits for the learning shadow before promoting a closed row", () => {
+		const pending = {
+			id: "lot-2",
+			symbol: "ETH/USD",
+			virtual: true,
+			opened_at: "2026-10-23T20:04:08Z",
+			closed_at: "2026-10-23T20:05:28Z",
+			official_exit_at: "2026-10-23T20:05:28Z",
+			official_exit_pct: 0.4,
+			shadow_active: true,
+			pnl_pct: 0.4,
+		};
+
+		expect(shadowComparisonPending(pending)).toBe(true);
+		expect(lifecycleFromDeskClosed(pending)).toBeNull();
+		expect(lifecycleFromDeskOpen(pending)?.status).toBe("holding");
+
+		const done = {
+			...pending,
+			shadow_active: false,
+			shadow_exit_at: "2026-10-23T20:06:00Z",
+			shadow_exit_pct: 0.9,
+		};
+		expect(shadowComparisonPending(done)).toBe(false);
+		expect(lifecycleFromDeskClosed(done)?.status).toBe("closed");
 	});
 });
 

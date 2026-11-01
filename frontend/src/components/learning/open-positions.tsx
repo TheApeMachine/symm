@@ -32,6 +32,13 @@ export const positionsRevision = (state: Record<string, Position>): string => {
 	return parts.join("|");
 };
 
+/** Open lots, plus learning ghosts that still trail after structural settle. */
+export const chartHeldRow = (row: Record<string, unknown>, book: Book) => {
+	if (!onBook(row, book)) return false;
+	if (!positionReadout(row).closed) return true;
+	return row.shadow_active === true;
+};
+
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>
 	rows
 		.filter((row) => !positionReadout(row).closed && onBook(row, book))
@@ -50,7 +57,7 @@ export const OpenPositions = () => {
 	const held = useMemo(
 		() =>
 			positionRows(positionsState)
-				.filter((row) => !positionReadout(row).closed && onBook(row, book))
+				.filter((row) => chartHeldRow(row, book))
 				.sort(comparePositionRows),
 		[book, positionsState],
 	);
@@ -73,12 +80,18 @@ export const OpenPositions = () => {
 			>
 				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
 				<span className="text-sm">
-					{book === "virtual" ? "No virtual trades" : "No open positions"}
+					{book === "virtual"
+						? "No virtual trades"
+						: book === "real"
+							? "No real trades"
+							: "No open positions"}
 				</span>
 				<span className="text-[10px] text-(--f4)">
 					{book === "virtual"
 						? "a chart appears when a finished rule opens a virtual trade"
-						: "the chart fills as soon as the desk holds a symbol"}
+						: book === "real"
+							? "live lots appear once paper edge arms real trading"
+							: "the chart fills as soon as the desk holds a symbol"}
 				</span>
 			</Flex.Column>
 		);

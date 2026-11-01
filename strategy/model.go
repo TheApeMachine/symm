@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
@@ -15,11 +14,12 @@ import (
 
 type Model struct {
 	*runtime.System
-	desk      *broker.Desk
-	price     *broker.Price
-	store     *store.Client
-	tree      *atomic.Pointer[Tree]
-	resetPath func(string)
+	desk       *broker.Desk
+	price      *broker.Price
+	store      *store.Client
+	tree       *atomic.Pointer[Tree]
+	confidence *Confidence
+	resetPath  func(string)
 }
 
 func NewModel(
@@ -31,16 +31,18 @@ func NewModel(
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 	model := &Model{
-		System:    runtime.NewSystem(ctx, "model"),
-		desk:      desk,
-		price:     price,
-		store:     client,
-		tree:      &atomic.Pointer[Tree]{},
-		resetPath: resetPath,
+		System:     runtime.NewSystem(ctx, "model"),
+		desk:       desk,
+		price:      price,
+		store:      client,
+		tree:       &atomic.Pointer[Tree]{},
+		confidence: NewConfidence(ctx),
+		resetPath:  resetPath,
 	}
 
 	tree := NewTree(ctx, "model/paths/")
 	model.tree.Store(tree)
+	model.confidence.Publish()
 
 	return model
 }
@@ -138,15 +140,18 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
 		}
 
-		position := model.desk.Position(symbol)
+		lots := model.desk.Positions(symbol)
+		open := make([]*broker.Position, 0, len(lots))
 
-		if position != nil && position.IsClosed() {
-			position = nil
+		for _, lot := range lots {
+			if lot != nil && !lot.IsClosed() {
+				open = append(open, lot)
+			}
 		}
 
 		regime := FlatRegime()
 
-		if position != nil {
+		if len(open) > 0 {
 			regime = OpenRegime()
 		}
 
@@ -176,8 +181,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		wantEnter := position == nil &&
-			(action == ActionEnter || action == ActionNone && bullish && cut.Len() > 0)
+		// Concurrent books: enter even when another book already holds the symbol.
+		wantEnter := action == ActionEnter ||
+			(action == ActionNone && bullish && cut.Len() > 0)
 
 		if wantEnter && !Board(envelope.Regions[symbol]).Tradable() {
 			envelope.Decide(&runtime.Decision{
@@ -195,7 +201,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		if action != ActionNone {
 			model.applyAction(
 				envelope, symbol, path, action, resistance,
-				bullish, bypass, position, confidence,
+				bullish, bypass, open, confidence,
 			)
 
 			continue
@@ -207,9 +213,12 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			minPath = learn.MinPathLength
 		}
 
-		if position != nil && path != "" && action != ActionExit {
+		if len(open) > 0 && path != "" && action != ActionExit {
 			if minPath <= 0 || cut.Len() >= minPath {
-				model.Hold(position, path)
+				for _, lot := range open {
+					model.Hold(lot, path)
+				}
+
 				envelope.Decide(&runtime.Decision{
 					Symbol:     symbol,
 					Action:     "hold",
@@ -222,7 +231,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 		}
 
-		if cut.Len() > 0 && position == nil && !bullish {
+		if cut.Len() > 0 && len(open) == 0 && !bullish {
 			envelope.Decide(&runtime.Decision{
 				Symbol:     symbol,
 				Action:     "skip",
@@ -248,7 +257,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		if wantEnter {
+		if wantEnter && action == ActionNone {
 			model.exploreEnter(envelope, symbol, path, confidence)
 		}
 	}
@@ -262,13 +271,11 @@ func (model *Model) applyAction(
 	action Action,
 	resistance float64,
 	bullish, bypass bool,
-	position *broker.Position,
+	open []*broker.Position,
 	confidence float64,
 ) {
 	switch action {
 	case ActionEnter:
-		virtual := bypass || resistance > 0.2
-
 		if !bullish {
 			envelope.Decide(&runtime.Decision{
 				Symbol:     symbol,
@@ -282,51 +289,14 @@ func (model *Model) applyAction(
 			return
 		}
 
-		if !virtual {
-			envelope.Decide(&runtime.Decision{
-				Symbol:     symbol,
-				Action:     "skip",
-				Reason:     "enter leaf resistance too low for virtual sample",
-				Gate:       "resistance",
-				Path:       path,
-				Confidence: confidence,
-			})
-
-			return
-		}
-
-		if err := model.Enter(symbol, path, true, false); err != nil {
-			gate, reason := "desk", err.Error()
-
-			if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
-				gate, reason = denial.Gate, denial.Reason
-			}
-
-			envelope.Decide(&runtime.Decision{
-				Symbol:     symbol,
-				Action:     "blocked",
-				Reason:     reason,
-				Gate:       gate,
-				Path:       path,
-				Virtual:    true,
-				Confidence: confidence,
-			})
-
-			return
-		}
-
-		envelope.Decide(&runtime.Decision{
-			Symbol:     symbol,
-			Action:     "enter",
-			Reason:     "tree enter · virtual sample",
-			Path:       path,
-			Virtual:    true,
-			Confidence: confidence,
-		})
+		model.enterTiers(envelope, symbol, path, resistance, bypass, confidence)
 
 	case ActionExit:
-		if !bullish && position != nil {
-			model.Exit(position, path)
+		if !bullish && len(open) > 0 {
+			for _, lot := range open {
+				model.Exit(lot, path)
+			}
+
 			envelope.Decide(&runtime.Decision{
 				Symbol:     symbol,
 				Action:     "exit",
@@ -348,8 +318,11 @@ func (model *Model) applyAction(
 		model.resetPath(symbol)
 
 	case ActionHold:
-		if position != nil {
-			model.Hold(position, path)
+		if len(open) > 0 {
+			for _, lot := range open {
+				model.Hold(lot, path)
+			}
+
 			envelope.Decide(&runtime.Decision{
 				Symbol:     symbol,
 				Action:     "hold",
@@ -370,6 +343,163 @@ func (model *Model) applyAction(
 
 		model.resetPath(symbol)
 	}
+}
+
+/*
+enterTiers routes a validated enter leaf onto virtual, paper, and optionally
+real books according to resistance and confidence.
+*/
+func (model *Model) enterTiers(
+	envelope *runtime.Envelope,
+	symbol, path string,
+	resistance float64,
+	bypass bool,
+	confidence float64,
+) {
+	eligible := PaperEligible(resistance)
+
+	// High resistance (or lab bypass) keeps exploring on the virtual book.
+	if bypass || !eligible {
+		model.tryEnter(
+			envelope, symbol, path, broker.LedgerVirtual, false,
+			"tree enter · virtual sample", confidence,
+		)
+
+		return
+	}
+
+	// Validated path: paper always; real when confidence is armed.
+	opened := make([]string, 0, 2)
+
+	if model.openLedger(envelope, symbol, path, broker.LedgerPaper, true, confidence) {
+		opened = append(opened, "paper")
+	}
+
+	if model.confidence != nil && model.confidence.Armed() {
+		if model.openLedger(envelope, symbol, path, broker.LedgerReal, true, confidence) {
+			opened = append(opened, "real")
+		}
+	} else if RealCeilingAllowed() {
+		envelope.Decide(&runtime.Decision{
+			Symbol:     symbol,
+			Action:     "skip",
+			Reason:     "real halted · paper edge not armed",
+			Gate:       "confidence",
+			Path:       path,
+			Book:       string(TierReal),
+			Confidence: confidence,
+		})
+	}
+
+	if len(opened) == 0 {
+		return
+	}
+
+	book := opened[len(opened)-1]
+	envelope.Decide(&runtime.Decision{
+		Symbol:     symbol,
+		Action:     "enter",
+		Reason:     "tree enter · " + joinBooks(opened),
+		Path:       path,
+		Book:       book,
+		Virtual:    false,
+		Confidence: confidence,
+	})
+}
+
+func joinBooks(books []string) string {
+	switch len(books) {
+	case 0:
+		return ""
+	case 1:
+		return books[0]
+	default:
+		out := books[0]
+		for _, book := range books[1:] {
+			out += "+" + book
+		}
+		return out
+	}
+}
+
+func (model *Model) openLedger(
+	envelope *runtime.Envelope,
+	symbol, path string,
+	ledger broker.Ledger,
+	pathFound bool,
+	confidence float64,
+) bool {
+	if err := model.Enter(symbol, path, ledger, pathFound); err != nil {
+		gate, why := "desk", err.Error()
+
+		if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
+			gate, why = denial.Gate, denial.Reason
+		}
+
+		if gate == "slot" {
+			return false
+		}
+
+		envelope.Decide(&runtime.Decision{
+			Symbol:     symbol,
+			Action:     "blocked",
+			Reason:     why,
+			Gate:       gate,
+			Path:       path,
+			Book:       ledger.String(),
+			Virtual:    ledger.Virtual(),
+			Confidence: confidence,
+		})
+
+		return false
+	}
+
+	return true
+}
+
+func (model *Model) tryEnter(
+	envelope *runtime.Envelope,
+	symbol, path string,
+	ledger broker.Ledger,
+	pathFound bool,
+	reason string,
+	confidence float64,
+) {
+	if err := model.Enter(symbol, path, ledger, pathFound); err != nil {
+		gate, why := "desk", err.Error()
+
+		if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
+			gate, why = denial.Gate, denial.Reason
+		}
+
+		// Slot already filled on this book is quiet — another lot is refining.
+		if gate == "slot" {
+			return
+		}
+
+		envelope.Decide(&runtime.Decision{
+			Symbol:     symbol,
+			Action:     "blocked",
+			Reason:     why,
+			Gate:       gate,
+			Path:       path,
+			Book:       ledger.String(),
+			Virtual:    ledger.Virtual(),
+			Confidence: confidence,
+		})
+
+		return
+	}
+
+	envelope.Decide(&runtime.Decision{
+		Symbol:     symbol,
+		Action:     "enter",
+		Reason:     reason,
+		Path:       path,
+		Book:       ledger.String(),
+		Virtual:    ledger.Virtual(),
+		Confidence: confidence,
+	})
 }
 
 func (model *Model) gateReason(
@@ -447,34 +577,10 @@ func (model *Model) exploreEnter(
 	symbol, path string,
 	confidence float64,
 ) {
-	if err := model.Enter(symbol, path, true, false); err != nil {
-		gate, reason := "desk", err.Error()
-
-		if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
-			gate, reason = denial.Gate, denial.Reason
-		}
-
-		envelope.Decide(&runtime.Decision{
-			Symbol:     symbol,
-			Action:     "blocked",
-			Reason:     reason,
-			Gate:       gate,
-			Path:       path,
-			Virtual:    true,
-			Confidence: confidence,
-		})
-
-		return
-	}
-
-	envelope.Decide(&runtime.Decision{
-		Symbol:     symbol,
-		Action:     "enter",
-		Reason:     "cold-tree explore · virtual sample",
-		Path:       path,
-		Virtual:    true,
-		Confidence: confidence,
-	})
+	model.tryEnter(
+		envelope, symbol, path, broker.LedgerVirtual, false,
+		"cold-tree explore · virtual sample", confidence,
+	)
 }
 
 func (model *Model) flushPending(envelope *runtime.Envelope) {
@@ -482,13 +588,14 @@ func (model *Model) flushPending(envelope *runtime.Envelope) {
 		return
 	}
 
-	for _, symbol := range model.desk.Pending() {
-		pending, ok := model.desk.TakePending(symbol)
+	for _, key := range model.desk.Pending() {
+		pending, ok := model.desk.TakePending(key)
 
 		if !ok || pending == nil {
 			continue
 		}
 
+		_, symbol := broker.ParsePendingKey(key)
 		path := ""
 
 		if cut := envelope.Paths[symbol]; cut != nil {
@@ -513,10 +620,10 @@ func (model *Model) flushPending(envelope *runtime.Envelope) {
 func (model *Model) Enter(
 	symbol string,
 	path string,
-	virtual bool,
+	ledger broker.Ledger,
 	pathFound bool,
 ) error {
-	return model.desk.Enter(symbol, path, virtual, pathFound)
+	return model.desk.Enter(symbol, path, ledger, pathFound)
 }
 
 func (model *Model) Hold(position *broker.Position, path string) {
@@ -556,15 +663,11 @@ func (model *Model) Exit(
 	}
 
 	// Virtual episode = enter + exit. Hold paths are live tracking, not leaves.
-	if position.Virtual {
-		tree.Insert(
-			position.EntryPath,
-			data.NewValue("model", "action", "enter"),
-		)
-		tree.Insert(
-			position.ExitPath,
-			data.NewValue("model", "action", "exit"),
-		)
+	// Ensure seeds new leaves at 0.5 once; never Insert-overwrite on re-settle
+	// or resistance resets to ~0 and paper eligibility opens immediately.
+	if position.Ledger().Virtual() {
+		tree.Ensure(position.EntryPath, ActionEnter)
+		tree.Ensure(position.ExitPath, ActionExit)
 	}
 
 	resistance := 0.05
@@ -575,4 +678,19 @@ func (model *Model) Exit(
 
 	tree.Update(position.EntryPath, resistance)
 	tree.Update(position.ExitPath, resistance)
+
+	if model.confidence != nil {
+		model.confidence.Record(position)
+	}
+}
+
+/*
+Confidence returns the live edge arming state for the dashboard.
+*/
+func (model *Model) Confidence() *Confidence {
+	if model == nil {
+		return nil
+	}
+
+	return model.confidence
 }

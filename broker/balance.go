@@ -23,6 +23,7 @@ type Balance struct {
 	transport Transport
 	paper     *Paper
 	Quote     string
+	label     string
 	wallet    atomic.Pointer[kraken.Balance]
 	trade     atomic.Pointer[kraken.TradeBalanceResult]
 	reading   atomic.Pointer[map[string]any]
@@ -34,10 +35,24 @@ func NewBalance(
 	transport Transport,
 	bankroll *decimal.Decimal,
 ) *Balance {
+	return NewLabeledBalance(ctx, transport, bankroll, "paper")
+}
+
+func NewLabeledBalance(
+	ctx context.Context,
+	transport Transport,
+	bankroll *decimal.Decimal,
+	label string,
+) *Balance {
+	if label == "" {
+		label = "paper"
+	}
+
 	balance := &Balance{
 		System:    runtime.NewSystem(ctx, "balance"),
 		transport: transport,
 		Quote:     system.Cfg.Market.QuoteCurrency,
+		label:     label,
 		limiter: rate.NewLimiter(rate.Limit(
 			system.Cfg.WebSocket.DecayRate/float64(system.Cfg.WebSocket.CallsPerUpdate),
 		), 1),
@@ -87,7 +102,8 @@ func (balance *Balance) Reading() map[string]any {
 }
 
 /*
-Publish pushes the cached reading to the dashboard as {"balance": {...}}.
+Publish pushes the cached reading to the dashboard as {"balance": {...}}
+and under balances.<label> for the multi-book top bar.
 */
 func (balance *Balance) Publish() {
 	if balance == nil || ui.UI == nil {
@@ -100,8 +116,16 @@ func (balance *Balance) Publish() {
 		return
 	}
 
+	label := balance.label
+	if label == "" {
+		label = "paper"
+	}
+
 	ui.UI.WriteJSON(map[string]any{
 		"balance": reading,
+		"balances": map[string]any{
+			label: reading,
+		},
 	})
 }
 

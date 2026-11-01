@@ -6,9 +6,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/symm/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -31,9 +31,11 @@ func (lab *Lab) Desk(price *Price, balance *Balance) *Desk {
 	}
 
 	desk := &Desk{
-		balance:        balance,
+		paperBalance:   balance,
+		liveBalance:    balance,
 		price:          price,
-		positions:      NewCache(lab.ctx),
+		papers:         NewCache(lab.ctx),
+		reals:          NewCache(lab.ctx),
 		virtuals:       NewCache(lab.ctx),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
@@ -85,7 +87,10 @@ func (desk *Desk) AttachTransport(transport Transport) {
 		return
 	}
 
-	desk.transport = transport
+	desk.paperTransport = transport
+	if desk.liveTransport == nil {
+		desk.liveTransport = transport
+	}
 }
 
 func (instrument *Instrument) RememberPair(pair kraken.InstrumentPair) {

@@ -290,10 +290,19 @@ export const closeNowReturnPct = (
 };
 
 /*
-A paper lot leaves virtual off the wire. Only an explicit true is a virtual lot.
+Match a desk row to the selected ledger. Prefer the explicit book field;
+fall back to the legacy virtual bool for older snapshots.
 */
-export const onBook = (row: Record<string, unknown>, book: Book) =>
-	(row.virtual === true) === (book === "virtual");
+export const onBook = (row: Record<string, unknown>, book: Book) => {
+	const labeled =
+		typeof row.book === "string" && row.book !== ""
+			? row.book
+			: row.virtual === true
+				? "virtual"
+				: "paper";
+
+	return labeled === book;
+};
 
 export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
 	rows.filter((row) => onBook(row, book) && !positionReadout(row).closed);

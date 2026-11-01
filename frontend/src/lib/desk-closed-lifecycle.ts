@@ -18,6 +18,27 @@ import type {
 Desk lifecycle rows mirror the broker position JSON. A row without a
 complete close or stable identity is not a closed round trip.
 */
+
+/*
+shadowComparisonPending is true while the learning shadow has not finished
+after the active structural exit. Closed lifecycle waits for both.
+*/
+export const shadowComparisonPending = (
+	row: Record<string, unknown>,
+): boolean => {
+	if (row.shadow_exit_at != null && row.shadow_exit_at !== "") {
+		return false;
+	}
+
+	if (row.shadow_active === true) return true;
+
+	if (row.official_exit_at != null && row.official_exit_at !== "") {
+		return true;
+	}
+
+	return false;
+};
+
 /*
 stopStateFromRow parses the stop-check proximity object the desk publishes on
 a raw row. A non-object stop_state is null so the UI reads "no stop telemetry
@@ -126,7 +147,12 @@ export const lifecycleFromDeskOpen = (
 	if (!row.id) return null;
 
 	const readout = positionReadout(row);
-	if (readout.closed || readout.openedAt === null) return null;
+	if (readout.openedAt === null) return null;
+
+	// Officially settled but learning shadow still running — stay on Open /
+	// holding until both stops resolve for comparison.
+	const awaitingShadow = readout.closed && shadowComparisonPending(row);
+	if (readout.closed && !awaitingShadow) return null;
 
 	const mark = readout.mark;
 	const live =
@@ -146,13 +172,26 @@ export const lifecycleFromDeskOpen = (
 					unrealized_return: readout.returnPct ?? 0,
 				};
 
+	const openDetail = awaitingShadow
+		? row.virtual
+			? "virtual trial settled · learning shadow still marking"
+			: "desk lot settled · learning shadow still marking"
+		: row.virtual
+			? "virtual trial opened"
+			: "desk lot opened";
+
 	return {
 		id: row.id as string,
 		symbol: row.symbol as string,
 		status: "holding",
 		opened_at: readout.openedAt,
 		closed_at: null,
-		book: row.virtual ? "virtual" : "paper",
+		book:
+			typeof row.book === "string" && row.book !== ""
+				? (row.book as string)
+				: row.virtual
+					? "virtual"
+					: "paper",
 		desk: true,
 		path_found: row.path_found === true,
 		path: row.path as string | undefined,
@@ -163,7 +202,7 @@ export const lifecycleFromDeskOpen = (
 			{
 				at: readout.openedAt,
 				kind: "opened",
-				detail: row.virtual ? "virtual trial opened" : "desk lot opened",
+				detail: openDetail,
 			},
 		],
 	};
@@ -180,6 +219,11 @@ export const lifecycleFromDeskClosed = (
 		readout.openedAt === null ||
 		readout.closedAt === null
 	) {
+		return null;
+	}
+
+	// Both stops must resolve before the closed row is comparable.
+	if (shadowComparisonPending(row)) {
 		return null;
 	}
 
@@ -212,12 +256,26 @@ export const lifecycleFromDeskClosed = (
 		: `desk open · tick ${tape?.b ?? "—"}`;
 	const exitTick = tape?.c;
 	const exitTickText = exitTick === undefined ? "" : ` · tick ${exitTick}`;
+	const officialPct =
+		typeof row.official_exit_pct === "number" &&
+		Number.isFinite(row.official_exit_pct)
+			? row.official_exit_pct
+			: null;
+	const shadowPct =
+		typeof row.shadow_exit_pct === "number" &&
+		Number.isFinite(row.shadow_exit_pct)
+			? row.shadow_exit_pct
+			: null;
+	const compareText =
+		officialPct !== null && shadowPct !== null
+			? ` · structural ${officialPct.toFixed(2)}% vs learning ${shadowPct.toFixed(2)}%`
+			: "";
 	const closeDetail =
 		triggers.length > 0
-			? `${triggers.join(", ")}${exitTickText}`
+			? `${triggers.join(", ")}${exitTickText}${compareText}`
 			: pnlPct === null
-				? `closed${exitTickText}`
-				: `return ${pnlPct.toFixed(2)}%${exitTickText}`;
+				? `closed${exitTickText}${compareText}`
+				: `return ${pnlPct.toFixed(2)}%${exitTickText}${compareText}`;
 
 	return {
 		id: row.id as string,
@@ -225,7 +283,12 @@ export const lifecycleFromDeskClosed = (
 		status: "closed",
 		opened_at: readout.openedAt,
 		closed_at: readout.closedAt,
-		book: row.virtual ? "virtual" : "paper",
+		book:
+			typeof row.book === "string" && row.book !== ""
+				? (row.book as string)
+				: row.virtual
+					? "virtual"
+					: "paper",
 		desk: true,
 		path_found: row.path_found === true,
 		policy_epoch: policyEpochFromRow(row),

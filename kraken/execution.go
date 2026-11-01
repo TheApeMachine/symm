@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/symm/decimal"
 )
 
 type Execution struct {
@@ -207,25 +206,4 @@ func NewExecutionFromMap(model datura.Map[any]) *Execution {
 			Timestamp:     timestamp,
 		}},
 	}
-}
-
-/*
-ToValue serializes the Execution frame into a *data.Value layer.
-*/
-func (execution *Execution) ToValue(epochs ...int64) *data.Value {
-	if execution == nil {
-		return nil
-	}
-
-	symbol := ""
-	if len(execution.Data) > 0 {
-		symbol = execution.Data[0].Symbol
-	}
-
-	val := data.NewValue("kraken", "execution", symbol)
-	if len(epochs) > 0 && epochs[0] > 0 {
-		val.Epoch = uint64(epochs[0])
-	}
-	val.Append(execution)
-	return val
 }

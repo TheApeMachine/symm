@@ -93,6 +93,8 @@ const sample = (
 	overrides: Partial<{
 		paper: Partial<BookDeskStats>;
 		virtual: Partial<BookDeskStats>;
+		real: Partial<BookDeskStats>;
+		realArmed: number | null;
 		training: Partial<TrainingSample>;
 		stops: Partial<OpenLotTelemetry>;
 	}> = {},
@@ -100,6 +102,8 @@ const sample = (
 	at,
 	paper: bookStats(overrides.paper),
 	virtual: bookStats(overrides.virtual),
+	real: bookStats(overrides.real),
+	realArmed: overrides.realArmed ?? null,
 	training: training(overrides.training),
 	stops: { ...emptyStops, ...overrides.stops },
 });

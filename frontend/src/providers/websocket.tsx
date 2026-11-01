@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
+import { ingestConfidence } from "#/collections/confidence";
 import { ensureLongtailRecorder } from "#/collections/longtail";
 import type { Balance, Position } from "#/collections/types";
 import {
@@ -29,6 +30,20 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 
 		if (key === "balance") {
 			atoms.balance.set(value as Balance);
+			continue;
+		}
+
+		if (key === "balances" && value && typeof value === "object") {
+			const next = value as { paper?: Balance; real?: Balance };
+			atoms.balances.set({
+				...atoms.balances.get(),
+				...next,
+			});
+			continue;
+		}
+
+		if (key === "confidence") {
+			ingestConfidence(value);
 			continue;
 		}
 

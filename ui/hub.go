@@ -69,7 +69,7 @@ type Hub struct {
 Exiter closes a dashboard-commanded lot on the desk.
 */
 type Exiter interface {
-	Exit(symbol string, virtual bool) error
+	Exit(symbol string, book string) error
 }
 
 /*
@@ -371,12 +371,12 @@ func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
 	}
 
 	hub.startStream(kind, func(ctx context.Context) {
-		for value := range hub.store.Stream(ctx, prefix) {
-			if value == nil {
+		for raw := range hub.store.Stream(ctx, prefix) {
+			if len(raw) == 0 {
 				continue
 			}
 
-			hub.Write(value.Bytes())
+			hub.Write(raw)
 		}
 
 		if ctx.Err() != nil {
@@ -413,6 +413,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		Class     string `json:"class"`
 		At        string `json:"at"`
 		Virtual   bool   `json:"virtual"`
+		Book      string `json:"book"`
 		CaptureID int64  `json:"captureId"`
 		Prefix    string `json:"prefix"`
 		Query     string `json:"query"`
@@ -476,7 +477,16 @@ func (hub *Hub) handleCommand(payload []byte) error {
 			))
 		}
 
-		if err := hub.exiter.Exit(request.Symbol, request.Virtual); err != nil {
+		book := request.Book
+		if book == "" {
+			if request.Virtual {
+				book = "virtual"
+			} else {
+				book = "paper"
+			}
+		}
+
+		if err := hub.exiter.Exit(request.Symbol, book); err != nil {
 			return errnie.Error(err)
 		}
 	case "hindsight":
@@ -504,7 +514,8 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		// always "model/paths/<tokens>/<action>.bin" but the dashboard may send
 		// either form.
 		if strings.HasPrefix(request.Prefix, "model/paths") ||
-			strings.HasPrefix(request.Prefix, "position/closed") ||
+			strings.HasPrefix(request.Prefix, "paper/closed") ||
+			strings.HasPrefix(request.Prefix, "real/closed") ||
 			strings.HasPrefix(request.Prefix, "virtual/closed") {
 			hub.ListPrefix(request.Prefix)
 			break
