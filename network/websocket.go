@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
@@ -34,6 +35,8 @@ type WebsocketClient struct {
 	hookBackoff time.Duration
 	lastWarn    time.Time
 	dial        func(url string) (*gorilla.Conn, *http.Response, error)
+	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
+	writeMu sync.Mutex
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -192,15 +195,19 @@ func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
 
 /*
 Write sends a text frame. Same soft-disconnect policy as Read.
+Concurrent writers (level3 resubscribe storms) are serialized on writeMu.
 */
 func (client *WebsocketClient) Write(message []byte) error {
 	if err := client.ensureReady(); err != nil {
 		return err
 	}
 
+	client.writeMu.Lock()
 	conn := client.conn
 
 	if conn == nil {
+		client.writeMu.Unlock()
+
 		return client.softDown(errnie.Error(errnie.Err(
 			errnie.IO,
 			"[network.websocket] connection missing",
@@ -209,6 +216,7 @@ func (client *WebsocketClient) Write(message []byte) error {
 	}
 
 	err := conn.WriteMessage(gorilla.TextMessage, message)
+	client.writeMu.Unlock()
 
 	if err != nil {
 		return client.softDown(err)
@@ -319,6 +327,9 @@ func (client *WebsocketClient) softDown(cause error) error {
 }
 
 func (client *WebsocketClient) closeConnLocked() {
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
 	if client.conn == nil {
 		return
 	}

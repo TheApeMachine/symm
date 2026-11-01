@@ -24,9 +24,11 @@ export interface RegionMeta {
 		| "exit_detector"
 		| "exit_support"
 		| "exit_opposition"
-		| "regime"
-		| "history"
-		| "risk";
+		| "hold_detector"
+		| "hold_support"
+		| "hold_opposition"
+		| "oracle_veto"
+		| "oracle_approve";
 	tone: "up" | "down" | "acc" | "info" | "neutral" | "warn";
 	description: string;
 }
@@ -90,7 +92,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		id: "R06",
 		title: "Hold detector",
 		subtitle: "Supercritical cascade",
-		role: "regime",
+		role: "hold_detector",
 		tone: "neutral",
 		description:
 			"Hawkes branching at or above criticality — self-exciting trade feedback on the tape.",
@@ -99,7 +101,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		id: "R07",
 		title: "Hold support",
 		subtitle: "Bid ladder build",
-		role: "regime",
+		role: "hold_support",
 		tone: "acc",
 		description:
 			"Net bid size stacking in on the visible ladder — book building under the mark.",
@@ -108,84 +110,126 @@ export const REGIONS: Record<string, RegionMeta> = {
 		id: "R08",
 		title: "Hold opposition",
 		subtitle: "Blowoff dip",
-		role: "regime",
+		role: "hold_opposition",
 		tone: "warn",
 		description:
 			"Strong down bar after a remembered strong up bar — blow-off pullback while still holding.",
 	},
 	R09: {
 		id: "R09",
-		title: "Enter confidence",
-		subtitle: "Board coiled",
-		role: "regime",
-		tone: "up",
-		description:
-			"Median coiled compression across the board — quiet names before ignition.",
+		title: "Volume quote veto",
+		subtitle: "24h turnover floor",
+		role: "oracle_veto",
+		tone: "warn",
+		description: "Quote volume below the mover floor — name is not tradable.",
 	},
 	R10: {
 		id: "R10",
-		title: "Hold confidence",
-		subtitle: "Board cascade",
-		role: "history",
-		tone: "neutral",
-		description:
-			"Median Hawkes feedback across the board — tape still self-exciting.",
+		title: "Volume quote approve",
+		subtitle: "24h turnover clear",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Enough quote turnover and a known instrument.",
 	},
 	R11: {
 		id: "R11",
-		title: "Exit confidence",
-		subtitle: "Board bid release",
-		role: "history",
-		tone: "down",
-		description:
-			"Median bid-ladder release across the board — support fading before the crowd.",
+		title: "Day move veto",
+		subtitle: "Flat open-to-last",
+		role: "oracle_veto",
+		tone: "warn",
+		description: "Open-to-last change below the mover floor — liquid but idle.",
 	},
 	R12: {
 		id: "R12",
-		title: "Friction Hurdle",
-		subtitle: "Fee & Spread Drag",
-		role: "risk",
-		tone: "warn",
-		description:
-			"High relative spread, roundtrip fee drag, cost hurdle exceeding expected drift.",
+		title: "Day move approve",
+		subtitle: "Open-to-last clear",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Day move clears the floor — name is alive enough to touch.",
 	},
 	R13: {
 		id: "R13",
-		title: "Macro Contagion",
-		subtitle: "Systemic Dispersion",
-		role: "risk",
+		title: "Spread veto",
+		subtitle: "Width / scarcity",
+		role: "oracle_veto",
 		tone: "warn",
-		description:
-			"Systemic peer dislocation, lead-lag breakdown, adverse market beta.",
+		description: "Touch spread above cap or liquidity scarcity extreme.",
 	},
 	R14: {
 		id: "R14",
-		title: "Capacity / Liquidity",
-		subtitle: "Exit Thinness",
-		role: "risk",
+		title: "Spread approve",
+		subtitle: "Tight / median depth",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Executable width and compressed spread vs the board.",
+	},
+	R15: {
+		id: "R15",
+		title: "Book integrity veto",
+		subtitle: "Cash / backing / tape",
+		role: "oracle_veto",
 		tone: "warn",
-		description:
-			"Thin book depth relative to position size, high market impact risk.",
+		description: "Touch cash, backing, tape liveness, or open drag fails.",
+	},
+	R16: {
+		id: "R16",
+		title: "Book integrity approve",
+		subtitle: "Backing / depth",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Backing firm with toxicity support and depth score.",
+	},
+	R17: {
+		id: "R17",
+		title: "Board confidence veto",
+		subtitle: "Board stress",
+		role: "oracle_veto",
+		tone: "warn",
+		description: "Board median stress, slump, or exhaustion.",
+	},
+	R18: {
+		id: "R18",
+		title: "Board confidence approve",
+		subtitle: "Board story lit",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Board median herd, compression, cascade, surge alignment.",
+	},
+	R19: {
+		id: "R19",
+		title: "Contagion veto",
+		subtitle: "Lead break / stress",
+		role: "oracle_veto",
+		tone: "warn",
+		description: "Lead-lag decouple/stall or cohort stress/noise.",
+	},
+	R20: {
+		id: "R20",
+		title: "Contagion approve",
+		subtitle: "Sync / herd",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Lead structure intact — sync, herd, alpha.",
+	},
+	R21: {
+		id: "R21",
+		title: "Capacity veto",
+		subtitle: "Thin / vacuum",
+		role: "oracle_veto",
+		tone: "warn",
+		description: "Scarcity, vacuum, thin book, or exit impact too high.",
+	},
+	R22: {
+		id: "R22",
+		title: "Capacity approve",
+		subtitle: "Depth clear",
+		role: "oracle_approve",
+		tone: "up",
+		description: "Depth and median liquidity can carry the desk lot.",
 	},
 };
 
-export const REGION_KEYS = [
-	"R00",
-	"R01",
-	"R02",
-	"R03",
-	"R04",
-	"R05",
-	"R06",
-	"R07",
-	"R08",
-	"R09",
-	"R10",
-	"R11",
-	"R12",
-	"R13",
-	"R14",
-];
+export const REGION_KEYS = Object.keys(REGIONS);
 
 const trialReturnText = (life?: Lifecycle | null): string | null => {
 	if (life?.book !== "virtual") return null;
@@ -732,7 +776,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<span className="text-[9.5px] text-(--f3) mt-0.5">{verdictText}</span>
 			</Flex.Column>
 
-			{/* 15-Region Live Confluence Strip */}
+			{/* 23-Region Live Confluence Strip */}
 			<Flex.Column gap={1}>
 				<Flex.Row align="center" justify="between" className="text-[10px]">
 					<span className="font-bold uppercase tracking-wider text-(--f4)">
@@ -746,7 +790,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<div
 					style={{
 						display: "grid",
-						gridTemplateColumns: "repeat(15, minmax(0, 1fr))",
+						gridTemplateColumns: "repeat(23, minmax(0, 1fr))",
 						gap: "0.25rem",
 					}}
 				>
@@ -902,7 +946,7 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 		return maxVal;
 	}, [regionMaps.brightness]);
 
-	// Stable R00-R14 order: never sort dynamically to prevent jumping rows during live streaming
+	// Stable R00-R22 order: never sort dynamically to prevent jumping rows during live streaming
 	const regionScores = useMemo(() => {
 		return REGION_KEYS.map((key) => {
 			const meta = REGIONS[key];

@@ -11,36 +11,44 @@ func TestSequencerStep(t *testing.T) {
 		seq := NewSequencer()
 
 		Convey("State survives Restore", func() {
-			_ = seq.Step("R06.R00", 0.4)
+			_ = seq.Step("R02", 0.4)
 			saved := seq.State()
 			restored := NewSequencer()
 			restored.Restore(saved)
 
-			next := restored.Step("R07.R01", 0.5)
+			next := restored.Step("R00", 0.5)
 			So(next.Last().String(), ShouldNotBeBlank)
 			So(len(restored.State().Root), ShouldBeGreaterThan, 0)
 		})
 
-		Convey("duplicate symbol refreshes cut brightness without growing grammar", func() {
-			first := seq.Step("R06.R00", 0.3)
-			second := seq.Step("R06.R00", 0.5)
+		Convey("duplicate regime refreshes cut brightness without growing grammar", func() {
+			first := seq.Step("R00", 0.3)
+			second := seq.Step("R00", 0.5)
 
-			So(first.String(), ShouldEqual, "R06.R00")
+			So(first.String(), ShouldEqual, "R00")
 			So(second.Len(), ShouldBeGreaterThan, 0)
 			So(second.Last().Brightness, ShouldEqual, 0.5)
 		})
 
-		Convey("repeat symbol does not append to grammar", func() {
-			_ = seq.Step("R06.R00", 0.3)
+		Convey("repeat regime does not append to grammar", func() {
+			_ = seq.Step("R00", 0.3)
 			before := len(seq.Grammar().RootSequence())
-			_ = seq.Step("R06.R00", 0.3)
+			_ = seq.Step("R00", 0.3)
 			So(len(seq.Grammar().RootSequence()), ShouldEqual, before)
+		})
+
+		Convey("Step builds a multi-tick precursor sequence", func() {
+			_ = seq.Step("R02", 0.5)
+			_ = seq.Step("R00", 0.7)
+			cut := seq.Step("R06", 0.8)
+			So(cut.String(), ShouldEqual, "R02/R00/R06")
+			So(cut.Len(), ShouldEqual, 3)
 		})
 
 		Convey("oscillating symbols compress via sequitur", func() {
 			for range 6 {
-				_ = seq.Step("R07.R03", 0.5)
-				_ = seq.Step("R08.R04", 0.5)
+				_ = seq.Step("R07", 0.5)
+				_ = seq.Step("R08", 0.5)
 			}
 
 			So(len(seq.Grammar().Tail(8)), ShouldBeLessThanOrEqualTo, 4)

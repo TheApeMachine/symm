@@ -1,5 +1,3 @@
-import { parseOneValue } from "#/types/decoder";
-
 /** Desk baseline before any settled lot adjusts the leaf. */
 export const EXPLORE_BASE_THRESHOLD = 0.5;
 
@@ -7,19 +5,18 @@ const PATH_ACTIONS = new Set(["enter", "hold", "exit"]);
 
 /*
 pathBookPolicyKey maps an S3 object key to the trie key RadixTreeViz expects.
-Backend stores model/paths/<path> with Value scope enter|hold|exit.
+Hub ListPrefix already normalizes to …/enter|hold|exit.bin; this keeps a
+light fallback for bare path keys.
 */
 export const pathBookPolicyKey = (
 	storageKey: string,
-	bytes: Uint8Array,
+	action?: string,
 ): string => {
 	const tail = storageKey.split("/").pop() ?? "";
 	if (tail.endsWith(".bin")) {
 		return storageKey;
 	}
 
-	const value = parseOneValue(bytes);
-	const action = value?.scope;
 	if (action && PATH_ACTIONS.has(action)) {
 		return `${storageKey}/${action}.bin`;
 	}

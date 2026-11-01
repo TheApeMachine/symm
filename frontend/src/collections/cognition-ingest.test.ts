@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { bookAtom } from "#/collections/book";
-import { Value } from "#/types/value";
+import { applyPathsEnvelope } from "#/hub/apply-s3-compact";
 import {
 	cognitionStore,
+	ingestExploreListPrefix,
 	ingestPathWalks,
 	ingestPolicyKeys,
-	ingestS3Prefix,
 	ingestTrainRegions,
 	parseTrainRegionsIndex,
 	regionHistoryStore,
 	thresholdFromStored,
 } from "./cognition";
-
-const enc = new TextEncoder();
 
 /*
 The backend emits one layer per region at
@@ -143,58 +141,25 @@ describe("stored thresholds", () => {
 	});
 });
 
-const encodeStoredPathValue = (scope: string) => {
-	const textEncoder = new TextEncoder();
-	const origin = textEncoder.encode("model");
-	const role = textEncoder.encode("action");
-	const scopeBytes = textEncoder.encode(scope);
-	const prefix = textEncoder.encode("model/action/enter/0/0");
-	const size =
-		48 + 1 + origin.length + 1 + role.length + 1 + scopeBytes.length + 2 + 2 + prefix.length;
-	const buf = new Uint8Array(size);
-	const dv = new DataView(buf.buffer);
-	dv.setBigUint64(16, 0n, true);
-	dv.setBigUint64(24, 0n, true);
-	dv.setBigUint64(32, 0n, true);
-	dv.setBigUint64(40, 0n, true);
-	let offset = 48;
-	buf[offset++] = origin.length;
-	buf.set(origin, offset);
-	offset += origin.length;
-	buf[offset++] = role.length;
-	buf.set(role, offset);
-	offset += role.length;
-	buf[offset++] = scopeBytes.length;
-	buf.set(scopeBytes, offset);
-	offset += scopeBytes.length;
-	dv.setUint16(offset, 0, true);
-	offset += 2;
-	dv.setUint16(offset, prefix.length, true);
-	offset += 2;
-	buf.set(prefix, offset);
-	return buf;
-};
-
 describe("policy tree keys", () => {
-	it("normalizes model/paths keys from stored action scope", () => {
+	it("ingests hub paths envelopes into the trie book", () => {
 		bookAtom.set("paper");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		const framePrefix = "s3/prefix/model/paths/1/2";
-		const rawKey = "model/paths/R01/R02";
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
+
+		expect(
+			applyPathsEnvelope({
 				scope: "model/paths",
-				prefix: framePrefix,
-				epoch: 4n,
-				index: [`${framePrefix}/${rawKey}`],
-				layers: [encodeStoredPathValue("enter")],
+				epoch: "4",
+				thresholds: {
+					"model/paths/R01/R02/enter.bin": 0.5,
+				},
 			}),
-		);
+		).toBe(true);
+
 		expect(cognitionStore.state.policyKeys).toEqual([
 			"model/paths/R01/R02/enter.bin",
 		]);
+		expect(cognitionStore.state.epoch).toBe("4");
 	});
 
 	it("stores cognition/keys strings unchanged", () => {
@@ -210,79 +175,73 @@ describe("policy tree keys", () => {
 		]);
 	});
 
-	it("reads S3 keys from index suffixes after the frame prefix", () => {
+	it("merges chunked paths envelopes", () => {
 		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		const framePrefix =
-			"s3/prefix/model/explore/0000000000000000001/0000000000000000002";
-		const layer = enc.encode(JSON.stringify("enter"));
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
-				scope: "model/paths",
-				prefix: framePrefix,
-				epoch: 2n,
-				index: [
-					`${framePrefix}/model/paths/R01/R02/enter.bin`,
-					`${framePrefix}/model/paths/R01/R02/exit.bin`,
-					`${framePrefix}/model/paths/custom/path/enter.bin`,
-				],
-				layers: [layer, layer, layer],
-			}),
-		);
+
+		ingestExploreListPrefix({
+			scope: "model/paths",
+			epoch: "2",
+			policyKeys: [
+				"model/paths/R01/R02/enter.bin",
+				"model/paths/R01/R02/exit.bin",
+			],
+			thresholds: {
+				"model/paths/R01/R02/enter.bin": 0.5,
+				"model/paths/R01/R02/exit.bin": 0.5,
+			},
+		});
+		ingestExploreListPrefix({
+			scope: "model/paths",
+			epoch: "2",
+			policyKeys: ["model/paths/custom/path/enter.bin"],
+			thresholds: {
+				"model/paths/custom/path/enter.bin": 0.5,
+			},
+		});
+
 		expect(cognitionStore.state.policyKeys).toEqual([
 			"model/paths/R01/R02/enter.bin",
 			"model/paths/R01/R02/exit.bin",
 			"model/paths/custom/path/enter.bin",
 		]);
 		expect(cognitionStore.state.epoch).toBe("2");
-		expect(cognitionStore.state.thresholds).toEqual({
-			"model/paths/R01/R02/enter.bin": 0.5,
-			"model/paths/R01/R02/exit.bin": 0.5,
-			"model/paths/custom/path/enter.bin": 0.5,
-		});
 	});
 
-	it("reads a threshold off the stored value body", () => {
+	it("prunes paths above the desk cutoff", () => {
 		bookAtom.set("virtual");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		const framePrefix = "s3/prefix/model/explore/1/2";
-		const key = "model/paths/R01/R02/exit.bin";
-		const stored = {
-			Index: [`${key}/threshold`],
-			Layers: [btoa(JSON.stringify(-0.05))],
-		};
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
-				scope: "model/paths",
-				prefix: framePrefix,
-				epoch: 3n,
-				index: [`${framePrefix}/${key}`],
-				layers: [enc.encode(JSON.stringify(stored))],
-			}),
+
+		applyPathsEnvelope({
+			scope: "model/paths",
+			epoch: "3",
+			thresholds: {
+				"model/paths/R01/R02/exit.bin": 0.45,
+				"model/paths/R03/R04/exit.bin": 0.9,
+			},
+		});
+
+		expect(cognitionStore.state.policyKeys).toEqual([
+			"model/paths/R01/R02/exit.bin",
+		]);
+		expect(cognitionStore.state.thresholds["model/paths/R01/R02/exit.bin"]).toBe(
+			0.45,
 		);
-		expect(cognitionStore.state.thresholds[key]).toBeCloseTo(0.45);
 	});
 
-	it("ignores s3 frames for other prefixes", () => {
+	it("ignores paths envelopes for other scopes", () => {
 		cognitionStore.setState((s) => ({
 			...s,
 			policyKeys: ["keep"],
 			epoch: "0",
 		}));
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
+
+		expect(
+			applyPathsEnvelope({
 				scope: "other/prefix",
-				prefix: "s3/prefix/other/prefix/1/2",
-				index: ["s3/prefix/other/prefix/1/2/foo/bar.bin"],
-				layers: [enc.encode("{}")],
+				thresholds: { "other/prefix/foo.bin": 0.5 },
 			}),
-		);
+		).toBe(false);
 		expect(cognitionStore.state.policyKeys).toEqual(["keep"]);
 	});
 
@@ -299,19 +258,16 @@ describe("policy tree keys", () => {
 	it("keeps the listed trie when a stale catalog arrives", () => {
 		bookAtom.set("paper");
 		cognitionStore.setState((s) => ({ ...s, policyKeys: [], epoch: "0" }));
-		const framePrefix = "s3/prefix/model/paths/1/2";
-		const layer = enc.encode(JSON.stringify("enter"));
-		ingestS3Prefix(
-			new Value({
-				origin: "s3",
-				role: "prefix",
-				scope: "model/paths",
-				prefix: framePrefix,
-				epoch: 4n,
-				index: [`${framePrefix}/model/paths/R08.R01/R07.R00/enter.bin`],
-				layers: [layer],
-			}),
-		);
+
+		ingestExploreListPrefix({
+			scope: "model/paths",
+			epoch: "4",
+			policyKeys: ["model/paths/R08.R01/R07.R00/enter.bin"],
+			thresholds: {
+				"model/paths/R08.R01/R07.R00/enter.bin": 0.5,
+			},
+		});
+
 		expect(ingestPolicyKeys(["model/explore/R01/R02/enter.bin"], "6")).toBe(
 			false,
 		);

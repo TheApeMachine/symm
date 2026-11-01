@@ -15,7 +15,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
@@ -261,9 +260,9 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 }
 
 /*
-Write fans one serialized Value out to every connected dashboard client
+Write fans one serialized frame out to every connected dashboard client
 without blocking: no client, or a full client queue, drops the frame.
-p must be a fresh buffer (io.Copy(hub, value) hands over value.Bytes()).
+p must be a fresh buffer.
 */
 func (hub *Hub) Write(p []byte) (n int, err error) {
 	if hub.active() {
@@ -271,6 +270,27 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 	}
 
 	return len(p), nil
+}
+
+/*
+WriteJSON marshals one envelope object and fans it to the dashboard.
+*/
+func (hub *Hub) WriteJSON(frame map[string]any) {
+	if hub == nil || frame == nil || !hub.active() {
+		return
+	}
+
+	buf, err := sonic.Marshal(frame)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[hub] marshal dashboard frame", err,
+		))
+
+		return
+	}
+
+	hub.Write(buf)
 }
 
 /*
@@ -380,30 +400,6 @@ func (hub *Hub) HandleCommit(fn CommitFunc) {
 }
 
 /*
-ListPrefix lists object keys under prefix in the hub store and writes one s3
-frame. Each layer is the downloaded object; the index suffix after the frame
-prefix is the S3 key (see data.Value.Append).
-*/
-func (hub *Hub) ListPrefix(prefix string) {
-	if hub.store == nil || prefix == "" {
-		return
-	}
-
-	value := data.NewValue("s3", "prefix", prefix)
-
-	for key := range hub.store.ListKeys(prefix) {
-		out := hub.store.Download(hub.ctx, key)
-		if out == nil {
-			continue
-		}
-
-		value.AppendBytes(out.Bytes(), key)
-	}
-
-	hub.Write(value.Bytes())
-}
-
-/*
 handleCommand dispatches one inbound JSON command from the dashboard socket.
 A command that does not decode, or names no known type, is logged with its
 raw text and returned as an error.
@@ -435,6 +431,34 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
+	case "risk":
+		var patch map[string]any
+		if err := sonic.Unmarshal(payload, &patch); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[hub] malformed risk command "+string(payload),
+				err,
+			))
+		}
+
+		delete(patch, "type")
+		if system.Cfg != nil && system.Cfg.Risk != nil {
+			system.Cfg.Risk.Apply(patch)
+		}
+	case "resonance":
+		var patch map[string]any
+		if err := sonic.Unmarshal(payload, &patch); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[hub] malformed resonance command "+string(payload),
+				err,
+			))
+		}
+
+		delete(patch, "type")
+		if system.Cfg != nil && system.Cfg.Learning != nil {
+			system.Cfg.Learning.ApplyResonance(patch)
+		}
 	case "position.exit":
 		if hub.exiter == nil {
 			return errnie.Error(errnie.Err(

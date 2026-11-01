@@ -1,6 +1,7 @@
+import { useSelector } from "@tanstack/react-store";
+import { createStore } from "@tanstack/store";
 import type { Book } from "#/collections/book";
 import { Circular, type CircularBuffer } from "#/collections/circular";
-import { type SequiturFeed, sequiturStore } from "#/collections/sequitur";
 import {
 	closedOnBook,
 	countsTowardBookPerformance,
@@ -9,8 +10,6 @@ import {
 	positionReadout,
 } from "#/components/book-readout";
 import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
-import { useSelector } from "@tanstack/react-store";
-import { createStore } from "@tanstack/store";
 
 /*
 OpenLotTelemetry aggregates the live stop-loss state across the desk's open
@@ -412,142 +411,73 @@ export const summarizeBook = (
 };
 
 /*
-summarizeTraining aggregates live training-step feeds into one TrainingSample.
-Rates are null when their denominator is zero: a feed that has not reported
-a gate is not a gate that passes 0%.
+emptyTraining is the idle training sample. Sequitur feeds were removed with
+the sequitur collection; backend tick metrics still fill what they can.
 */
-export const summarizeTraining = (feeds: SequiturFeed[]): TrainingSample => {
-	let feedsWithFrame = 0;
-	let gateTotal = 0;
-	let gatePass = 0;
-	let blocked = 0;
-	let blockedBrightness = 0;
-	let blockedDuplicate = 0;
-	let blockedVeto = 0;
-	let blockedEmpty = 0;
-	let litTicks = 0;
-	let outcomeEnter = 0;
-	let outcomeExit = 0;
-	let policyTotal = 0;
-	let stored = 0;
-	let outcomes = 0;
+export const emptyTraining = (): TrainingSample => ({
+	feeds: 0,
+	tokenEmitRate: null,
+	blockedRate: null,
+	blockedBrightnessRate: null,
+	blockedDuplicateRate: null,
+	vetoRate: null,
+	emptyRate: null,
+	policyStoredRate: null,
+	outcomeRate: null,
+	outcomeEnterRate: null,
+	outcomeExitRate: null,
+	exploredEnter: null,
+	venueOpen: null,
+	virtualExcursion: null,
+	developedPaths: null,
+	promotedPaths: null,
+	prunedPaths: null,
+	meanThreshold: null,
+	exitProfit: null,
+	exitStop: null,
+	exitBranch: null,
+});
 
-	for (const feed of feeds) {
-		const frame = feed.latest;
-		if (!frame) continue;
-		feedsWithFrame += 1;
-
-		if (frame.active.length > 0) {
-			litTicks += 1;
-		}
-		if (frame.gate) {
-			gateTotal += 1;
-			if (frame.gate.passed) gatePass += 1;
-		}
-		if (frame.blocked) {
-			blocked += 1;
-			if (frame.blockedReason === "brightness") blockedBrightness += 1;
-			if (frame.blockedReason === "duplicate") blockedDuplicate += 1;
-			if (frame.blockedReason === "veto") blockedVeto += 1;
-			if (frame.blockedReason === "empty") blockedEmpty += 1;
-		}
-
-		policyTotal += 1;
-		if (frame.policy.stored) stored += 1;
-		if (frame.policy.outcome !== "") {
-			outcomes += 1;
-			if (frame.policy.outcome.includes("enter")) outcomeEnter += 1;
-			if (frame.policy.outcome.includes("exit")) outcomeExit += 1;
-		}
+export const summarizeTraining = (): TrainingSample => {
+	const backend = longtailBackendMetrics;
+	if (!backend) {
+		return emptyTraining();
 	}
 
-	const rate = (numerator: number, denominator: number): number | null =>
-		denominator > 0 ? numerator / denominator : null;
-
-	const backend = longtailBackendMetrics;
-	const backendRate = (
+	const rate = (
 		numerator: number | null | undefined,
 		denominator: number | null | undefined,
-		fallbackNumerator: number,
-		fallbackDenominator: number,
 	): number | null => {
-		if (backend) {
-			if (numerator === null || numerator === undefined) return null;
-			return rate(numerator, denominator ?? 0);
+		if (numerator === null || numerator === undefined) return null;
+		if (denominator === null || denominator === undefined || denominator <= 0) {
+			return null;
 		}
-		return rate(fallbackNumerator, fallbackDenominator);
+		return numerator / denominator;
 	};
 
 	return {
-		feeds: feedsWithFrame,
-		tokenEmitRate: backendRate(
-			backend?.gatePass,
-			backend?.gateTotal,
-			gatePass,
-			gateTotal,
-		),
-		blockedRate: backendRate(
-			backend?.blocked,
-			backend?.litTicks,
-			blocked,
-			litTicks,
-		),
-		blockedBrightnessRate: backendRate(
-			backend?.blockedBrightness,
-			backend?.litTicks,
-			blockedBrightness,
-			litTicks,
-		),
-		blockedDuplicateRate: backendRate(
-			backend?.blockedDuplicate,
-			backend?.gateTotal,
-			blockedDuplicate,
-			gateTotal,
-		),
-		vetoRate: backendRate(
-			backend?.blockedVeto,
-			backend?.litTicks,
-			blockedVeto,
-			litTicks,
-		),
-		emptyRate: backendRate(
-			backend?.blockedEmpty,
-			backend?.litTicks,
-			blockedEmpty,
-			litTicks,
-		),
-		policyStoredRate: backendRate(
-			backend?.policyStored,
-			backend?.policyChecks,
-			stored,
-			policyTotal,
-		),
-		outcomeRate: rate(outcomes, policyTotal),
-		outcomeEnterRate: backendRate(
-			backend?.outcomeEnter,
-			backend?.gateTotal,
-			outcomeEnter,
-			policyTotal,
-		),
-		outcomeExitRate: backendRate(
-			backend?.outcomeExit,
-			backend?.gateTotal,
-			outcomeExit,
-			policyTotal,
-		),
-		exploredEnter: backend ? backend.exploredEnter : null,
-		venueOpen: backend ? backend.venueOpen : null,
-		virtualExcursion: backend ? backend.virtualExcursion : null,
-		developedPaths: backend ? backend.developedPaths : null,
-		promotedPaths: backend ? backend.promotedPaths : null,
-		prunedPaths: backend ? backend.prunedPaths : null,
+		feeds: 0,
+		tokenEmitRate: rate(backend.gatePass, backend.gateTotal),
+		blockedRate: rate(backend.blocked, backend.litTicks),
+		blockedBrightnessRate: rate(backend.blockedBrightness, backend.litTicks),
+		blockedDuplicateRate: rate(backend.blockedDuplicate, backend.gateTotal),
+		vetoRate: rate(backend.blockedVeto, backend.litTicks),
+		emptyRate: rate(backend.blockedEmpty, backend.litTicks),
+		policyStoredRate: rate(backend.policyStored, backend.policyChecks),
+		outcomeRate: null,
+		outcomeEnterRate: rate(backend.outcomeEnter, backend.gateTotal),
+		outcomeExitRate: rate(backend.outcomeExit, backend.gateTotal),
+		exploredEnter: backend.exploredEnter,
+		venueOpen: backend.venueOpen,
+		virtualExcursion: backend.virtualExcursion,
+		developedPaths: backend.developedPaths,
+		promotedPaths: backend.promotedPaths,
+		prunedPaths: backend.prunedPaths,
 		meanThreshold:
-			backend && (backend.developedPaths ?? 0) > 0
-				? backend.meanThreshold
-				: null,
-		exitProfit: backend ? backend.exitProfit : null,
-		exitStop: backend ? backend.exitStop : null,
-		exitBranch: backend ? backend.exitBranch : null,
+			(backend.developedPaths ?? 0) > 0 ? backend.meanThreshold : null,
+		exitProfit: backend.exitProfit,
+		exitStop: backend.exitStop,
+		exitBranch: backend.exitBranch,
 	};
 };
 
@@ -882,7 +812,7 @@ const recordLongtailSample = () => {
 		at: Date.now(),
 		paper: summarizeBook(desk, "paper"),
 		virtual: summarizeBook(desk, "virtual"),
-		training: summarizeTraining(Object.values(sequiturStore.state)),
+		training: summarizeTraining(),
 		stops: summarizeStops(desk),
 	});
 };

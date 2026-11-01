@@ -61,7 +61,6 @@ func (lab *Lab) ReadyPrice(
 		System:     runtime.NewSystem(lab.ctx, "price"),
 		Books:      books,
 		Tape:       NewTape(),
-		Mover:      NewMover(),
 		Instrument: instrument,
 		normalizer: normalizer,
 		balance:    balance,

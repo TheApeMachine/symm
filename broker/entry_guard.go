@@ -7,6 +7,22 @@ import (
 )
 
 /*
+EntryDenial is a desk gate rejection with a UI-ready reason.
+*/
+type EntryDenial struct {
+	Gate   string
+	Reason string
+}
+
+func (denial *EntryDenial) Error() string {
+	if denial == nil {
+		return ""
+	}
+
+	return denial.Reason
+}
+
+/*
 EntryPhysicalDecision is the book-integrity outcome at the desk lot size:
 spread, absolute bid cash, backing ratio, tape liveness, then close-now vs
 open-drag cap. Gate and desk must both use CheckEntryPhysical so entry
@@ -125,4 +141,36 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	}
 
 	return EntryPhysicalDecision{Allowed: true}
+}
+
+// BookIntact is Book Integrity without the spread check (spread has its own oracle).
+func (price *Price) BookIntact(symbol string) bool {
+	if price == nil {
+		return false
+	}
+
+	risk := system.Cfg.Risk
+	cash, ok := price.TouchBidCash(symbol)
+
+	if !ok || cash == nil || cash.MustFloat64() < risk.MinTouchBidCash {
+		return false
+	}
+
+	ratio, ok := price.BackingRatio(symbol)
+
+	if !ok || ratio < risk.MinBackingRatio {
+		return false
+	}
+
+	if price.Tape == nil || !price.Tape.Alive(symbol) {
+		return false
+	}
+
+	pnl, ok := price.EntryCloseNowPnLPct(symbol)
+
+	if !ok || pnl == nil {
+		return false
+	}
+
+	return pnl.MustFloat64() >= -risk.MaxEntryOpenDragPct
 }

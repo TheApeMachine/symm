@@ -1,4 +1,17 @@
-import { symbolScopeAliases } from "#/collections/app";
+const symbolScopeAliases = (symbol: string): string[] => {
+	if (!symbol) return [];
+	const aliases = new Set<string>([symbol]);
+	if (symbol.includes("/")) {
+		aliases.add(symbol.replace(/\//g, "-"));
+	} else {
+		const dash = symbol.indexOf("-");
+		if (dash > 0) {
+			aliases.add(`${symbol.slice(0, dash)}/${symbol.slice(dash + 1)}`);
+		}
+	}
+	return [...aliases];
+};
+
 import {
 	parseResonanceData,
 	type ResonanceData,
@@ -177,10 +190,11 @@ history for one symbol/source without store access.
 */
 export const hawkesMetricsFromFrames = (frames: Value[]): HawkesMetrics => {
 	const epochs = valueEpochs(frames);
-	const epoch = epochs.sort(
-		(left, right) =>
+	const epoch = epochs
+		.sort((left, right) =>
 			Number((left[0]?.timestamp ?? 0n) - (right[0]?.timestamp ?? 0n)),
-	).at(-1);
+		)
+		.at(-1);
 
 	if (epoch === undefined) {
 		return {

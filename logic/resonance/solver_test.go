@@ -9,18 +9,22 @@ import (
 )
 
 func TestExtractFeaturesStoryAndBoard(t *testing.T) {
-	Convey("extractFeatures builds the R00–R14 vector", t, func() {
-		solver := NewSolver(t.Context())
+	Convey("extractFeatures builds the Map()-keyed feature vector", t, func() {
+		solver := NewSolver(t.Context(), nil)
 		So(solver, ShouldNotBeNil)
 
 		metrics := map[string]map[string]map[string]float64{
 			"PEAQ/USD": {
-				"pumpdump": {"coiled_compression": 1.1},
-			},
-			"aggregate": {
-				"correlation": {"structural_alignment": 0.8},
-				"pumpdump":    {"board_coiled": 0.9},
-				"liquidity":   {"market_friction": 0.05},
+				"pumpdump":    {"compression": 1.1, "exhaustion": 0.4},
+				"correlation": {"herd_score": 0.8, "peak_score": 0.7},
+				"cvd":         {"starvation": 0.2},
+				"depthflow":   {"thin_score": 0.3, "loaded_score": 0.6},
+				"morphology":  {"ask_vacuum": 0.15},
+				"hawkes":      {"spectral_radius": 1.1},
+				"liquidity":   {"scarcity_score": 0.2, "depth_score": 0.9},
+				"toxicity":    {"vacuum_score": 0.25},
+				"sentiment":   {"slump_score": 0.1},
+				"leadlag":     {"sync_score": 0.6, "decoupled_score": 0.05},
 			},
 		}
 
@@ -34,7 +38,7 @@ func TestExtractFeaturesStoryAndBoard(t *testing.T) {
 
 func TestStepNeedsEnvelope(t *testing.T) {
 	Convey("Step rejects a nil envelope", t, func() {
-		solver := NewSolver(t.Context())
+		solver := NewSolver(t.Context(), nil)
 		So(solver.Step(nil), ShouldBeNil)
 
 		envelope := runtime.NewEnvelope(&market.Trade{

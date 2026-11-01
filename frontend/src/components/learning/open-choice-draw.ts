@@ -17,7 +17,6 @@ import {
 } from "scichart";
 import { GridLayoutModifier } from "./open-choice-grid-layout";
 import {
-	indexMean,
 	type OpenChoiceSeries,
 	openChoiceSeries,
 	openChoiceTrail,
@@ -67,10 +66,11 @@ const theme = () => {
 };
 
 /** Stable membership key — order must not follow live P&L rank. */
-const membershipKey = (drawn: OpenChoiceSeries[], hasBook: boolean) => {
-	const ids = drawn.map((s) => s.id).sort();
-	return `${ids.join("|")}|book:${hasBook ? 1 : 0}`;
-};
+const membershipKey = (drawn: OpenChoiceSeries[]) =>
+	drawn
+		.map((s) => s.id)
+		.sort()
+		.join("|");
 
 export type OpenChoiceChartApi = {
 	sciChartSurface: SciChartSurface;
@@ -153,12 +153,7 @@ export const drawOpenChoiceChart = async (
 
 	let lastKey = "";
 
-	const rebuild = (
-		drawn: OpenChoiceSeries[],
-		maxLen: number,
-		meanPoints: { x: number; y: number }[],
-		hasBook: boolean,
-	) => {
+	const rebuild = (drawn: OpenChoiceSeries[], maxLen: number) => {
 		const wasGrid = glm.isGrid;
 		if (wasGrid) glm.isGrid = false;
 
@@ -181,21 +176,6 @@ export const drawOpenChoiceChart = async (
 			);
 		}
 
-		if (hasBook) {
-			sciChartSurface.renderableSeries.add(
-				new FastLineRenderableSeries(wasmContext, {
-					dataSeries: xySeries(
-						wasmContext,
-						meanPoints.map((p) => p.x),
-						meanPoints.map((p) => p.y),
-						"book",
-					),
-					stroke: "#f4efe5",
-					strokeThickness: 3,
-				}),
-			);
-		}
-
 		if (wasGrid) glm.isGrid = true;
 	};
 
@@ -203,12 +183,7 @@ export const drawOpenChoiceChart = async (
 		const drawn = openChoiceSeries(lots).filter((s) => s.values.length > 0);
 		const trails = drawn.map((s) => openChoiceTrail(s.id));
 		const maxLen = trails.reduce((n, samples) => Math.max(n, samples.length), 0);
-		const mean = indexMean(trails);
-		const meanPoints = mean.flatMap((pnl, i) =>
-			Number.isFinite(pnl) ? [{ x: i, y: pnl }] : [],
-		);
-		const hasBook = meanPoints.length > 1;
-		const nextKey = membershipKey(drawn, hasBook);
+		const nextKey = membershipKey(drawn);
 
 		if (nextKey === lastKey && sciChartSurface.renderableSeries.size() > 0) {
 			const byName = seriesByName();
@@ -217,20 +192,10 @@ export const drawOpenChoiceChart = async (
 				if (!data) continue;
 				fillSeries(data, sharedX(item.values, maxLen), item.values);
 			}
-			if (hasBook) {
-				const book = byName.get("book");
-				if (book) {
-					fillSeries(
-						book,
-						meanPoints.map((p) => p.x),
-						meanPoints.map((p) => p.y),
-					);
-				}
-			}
 			return;
 		}
 
-		rebuild(drawn, maxLen, meanPoints, hasBook);
+		rebuild(drawn, maxLen);
 		lastKey = nextKey;
 	};
 

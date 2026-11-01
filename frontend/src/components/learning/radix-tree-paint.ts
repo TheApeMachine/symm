@@ -466,9 +466,11 @@ const paintNodeContents = (
 			.attr("fill", terminalFill(action))
 			.attr("stroke", terminalStroke(action))
 			.attr("stroke-width", hasSymbol ? 2.5 : 1.2)
-			.attr("stroke-dasharray", hasSymbol ? null : "3 2")
-			.attr("opacity", hasSymbol ? 1 : 0.75)
-			.style("filter", termSat);
+			.attr("stroke-dasharray", hasSymbol ? "none" : "3 2")
+			.attr("opacity", hasSymbol ? 1 : 0.75);
+		if (termSat) {
+			group.select("rect").style("filter", termSat);
+		}
 		group
 			.append("text")
 			.attr("x", 0)

@@ -1,11 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {
-	atoms,
-	DEFAULT_KERNELS,
-	ensureSignalStore,
-	latest,
-} from "#/collections/app";
+import { atoms, DEFAULT_KERNELS, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -52,6 +47,16 @@ const radarAxes = [
 	},
 ];
 
+const metricAt = (source: string, symbol: string, key: string): number => {
+	const store = signals[source];
+	if (!store) return 0;
+	const hit =
+		store.state[symbol] ?? store.state[symbol.replace(/\//g, "-")];
+	if (!hit || typeof hit !== "object") return 0;
+	const raw = (hit as Record<string, unknown>)[key];
+	return typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
+};
+
 export const RadarPanel = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
@@ -61,8 +66,7 @@ export const RadarPanel = () => {
 			if (!root.current) return;
 
 			for (const axis of radarAxes) {
-				const frame = latest(axis.source, focusSymbol);
-				const value = frame?.metrics()[axis.key] ?? 0;
+				const value = metricAt(axis.source, focusSymbol, axis.key);
 
 				const arm = root.current.querySelector<SVGElement>(
 					`[data-axis="${axis.label}"]`,
@@ -77,9 +81,11 @@ export const RadarPanel = () => {
 		};
 
 		apply();
-		const unsubs = DEFAULT_KERNELS.map((kernel) =>
-			ensureSignalStore(kernel).subscribe(apply),
-		);
+		const unsubs = DEFAULT_KERNELS.map((kernel) => {
+			const store = signals[kernel];
+			if (!store) return { unsubscribe: () => {} };
+			return store.subscribe(apply);
+		});
 
 		return () => {
 			for (const sub of unsubs) sub.unsubscribe();

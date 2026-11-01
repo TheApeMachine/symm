@@ -1,7 +1,6 @@
 import { Badge } from "#/components/ui/badge";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
-import { useKernelReading } from "#/components/ui/metric";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
 
@@ -21,11 +20,9 @@ const STATS = [
 ] as const;
 
 export const CrossSectionPanel = () => {
-	const reading = useKernelReading("liquidity");
-
 	return (
 		<Panel size="lg">
-			<Component value={reading}>
+			<Component value={null}>
 				<Flex.Row align="center" justify="between">
 					<Typography.Label size="s" tone="f1" weight="semibold">
 						Cross-section

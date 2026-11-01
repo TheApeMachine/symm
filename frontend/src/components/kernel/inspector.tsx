@@ -1,12 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import {
-	atoms,
-	latest,
-	resonanceFrameForSymbol,
-	signals,
-} from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -26,19 +21,49 @@ import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { scaleSparklineValues } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
-import type { Value } from "#/types/value";
+import { Value } from "#/types/value";
 
 const isResonance = (source: string) => source === "resonance";
+
+const asMetrics = (frame: unknown): Record<string, number> => {
+	if (!frame) return {};
+	if (frame instanceof Value) return frame.metrics();
+	if (typeof frame !== "object") return {};
+
+	const out: Record<string, number> = {};
+	for (const [key, raw] of Object.entries(frame as Record<string, unknown>)) {
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			out[key] = raw;
+			continue;
+		}
+
+		if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+			for (const [inner, nested] of Object.entries(
+				raw as Record<string, unknown>,
+			)) {
+				if (typeof nested === "number" && Number.isFinite(nested)) {
+					out[inner] = nested;
+				}
+			}
+		}
+	}
+	return out;
+};
+
+const signalAt = (source: string, symbol: string): unknown => {
+	const store = signals[source];
+	if (!store) return undefined;
+	return store.state[symbol] ?? store.state[symbol.replace(/\//g, "-")];
+};
 
 /*
 readings collects the accumulated values for one kernel directly from its store.
 */
-const readingsFromValues = (frame: Value | null, source?: string) => {
+const readingsFromValues = (frame: unknown, source?: string) => {
 	const points: number[] = [];
 	if (!frame) return points;
 
-	// The kernel publishes one scalar layer per metric key.
-	const metrics = frame.metrics();
+	const metrics = asMetrics(frame);
 	const headline = source ? sourceHeadline(source) : null;
 	const keys = Object.keys(metrics);
 
@@ -66,13 +91,13 @@ const formatMetricValue = (val: number | null): string => {
 };
 
 const metricValues = (
-	row: Value | null | undefined,
+	row: unknown,
 	names: string[],
 ): Record<string, { raw: number; snm: number } | null> => {
 	const out: Record<string, { raw: number; snm: number } | null> = {};
 	for (const name of names) out[name] = null;
 	if (!row) return out;
-	const metrics = row.metrics();
+	const metrics = asMetrics(row);
 	for (const name of names) {
 		const value = metrics[name];
 		if (typeof value !== "number" || !Number.isFinite(value)) continue;
@@ -93,10 +118,10 @@ export const KernelInspector = () => {
 
 	const frame = useSelector(signals.resonance, (state) => {
 		if (!resonance) return undefined;
-		return resonanceFrameForSymbol(state, focusSymbol);
+		return state[focusSymbol] ?? state[focusSymbol.replace(/\//g, "-")];
 	});
 	const signalReading =
-		!resonance && source ? (latest(source, focusSymbol) ?? null) : null;
+		!resonance && source ? (signalAt(source, focusSymbol) ?? null) : null;
 	const kernelFrame = resonance ? (frame ?? null) : signalReading;
 
 	const [signalHistory, setSignalHistory] = useState<number[]>([]);

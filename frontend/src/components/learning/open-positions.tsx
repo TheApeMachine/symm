@@ -2,10 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { useLayoutEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
-import {
-	comparePositionRows,
-	framePositionRows,
-} from "#/collections/positions";
+import type { Position } from "#/collections/types";
 import { onBook, positionReadout } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import {
@@ -13,69 +10,24 @@ import {
 	syncOpenChoiceLots,
 } from "#/components/learning/open-choice-trail";
 import { Flex } from "#/components/ui";
+import { comparePositionRows } from "#/lib/frame-position";
 
 /*
-Open positions are the desk's per-lot frames. The connect snapshot and each
-later mark tick land on the positions store; a tick names only the lots
-that moved, and the book keeps every lot that tick did not mention.
-*/
-
-/*
-positionRows decodes every lot frame the store holds into its row objects.
-The "positions" layer is a JSON array; each element is one lot row.
-A layer that decodes to a single object (not an array) is also accepted.
-
-A connect snapshot and a later per-lot update both carry the same id. The
-newer tick wins, and a lot that only appears in one of them stays.
+Open positions are the desk's per-lot records on signals.positions.
 */
 export const positionRows = (
-	state: Record<
-		string,
-		{ lookup: (keys: string[]) => unknown[]; tick?: bigint }
-	>,
+	state: Record<string, Position>,
 ): Record<string, unknown>[] => {
-	const byID = new Map<
-		string,
-		{ row: Record<string, unknown>; tick: bigint }
-	>();
-	const anon: Record<string, unknown>[] = [];
-
-	const take = (row: Record<string, unknown>, tick: bigint) => {
-		const id = typeof row.id === "string" ? row.id : "";
-
-		if (id === "") {
-			anon.push(row);
-			return;
-		}
-
-		const prior = byID.get(id);
-
-		if (!prior || tick >= prior.tick) {
-			byID.set(id, { row, tick });
-		}
-	};
-
-	for (const frame of Object.values(state)) {
-		const tick = frame.tick ?? 0n;
-
-		for (const row of framePositionRows(frame)) {
-			take(row, tick);
-		}
-	}
-
-	const rows = [...Array.from(byID.values(), (held) => held.row), ...anon];
+	const rows = Object.values(state).map(
+		(row) => row as unknown as Record<string, unknown>,
+	);
 	rows.sort(comparePositionRows);
 	return rows;
 };
 
-/** Cheap fingerprint of position-store ticks across scopes. */
-export const positionsRevision = (
-	state: Record<string, { tick?: bigint }>,
-): string => {
-	const parts: string[] = [];
-	for (const [scope, frame] of Object.entries(state)) {
-		parts.push(`${scope}:${frame.tick ?? 0n}`);
-	}
+/** Cheap fingerprint of position-store ids. */
+export const positionsRevision = (state: Record<string, Position>): string => {
+	const parts = Object.keys(state);
 	parts.sort();
 	return parts.join("|");
 };

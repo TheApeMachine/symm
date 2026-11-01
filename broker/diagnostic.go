@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/symm/kraken"
@@ -74,6 +75,7 @@ DiagnosticDir, and returns the error to raise, naming the dump.
 func (book *Book) invalidate(
 	kind, detail string, payload *kraken.Level3,
 	entry kraken.Level3Data, serverChecksum string,
+	checksum *spotbook.ChecksumResult,
 ) error {
 	diagnostic := &BookDiagnostic{
 		Kind:           kind,
@@ -88,7 +90,13 @@ func (book *Book) invalidate(
 		Entry:          entry,
 	}
 
-	diagnostic.LocalChecksum = fmt.Sprint(crc32.ChecksumIEEE([]byte(diagnostic.ChecksumInput)))
+	if checksum != nil {
+		diagnostic.ChecksumInput = checksum.Asks + checksum.Bids
+		diagnostic.LocalChecksum = checksum.LocalChecksum
+	} else {
+		diagnostic.LocalChecksum = fmt.Sprint(crc32.ChecksumIEEE([]byte(diagnostic.ChecksumInput)))
+	}
+
 	diagnostic.Path = filepath.Join(DiagnosticDir, fmt.Sprintf(
 		"%d-%s-%d.json", diagnostic.Epoch, strings.ReplaceAll(entry.Symbol, "/", "_"), diagnostic.Seq,
 	))

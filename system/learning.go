@@ -35,8 +35,11 @@ type Learning struct {
 	ExcursionTimeout       time.Duration
 	MaxExcursionBars       int
 	PolicyShadowBars       int
-	MinSupportedHorizon    int
-	MinEnterZ              float64
+	MinSupportedHorizon      int
+	MinTaskRelativePrecision float64
+	MinSurprise              float64
+	ResonanceBypass          bool
+	MinEnterZ                float64
 	CliffHorizonDrop       int
 	CliffEnergyMult        float64
 	PositionTracePath      string
@@ -86,6 +89,9 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.max_excursion_bars", 8)
 	viper.SetDefault("learning.policy_shadow_bars", 32)
 	viper.SetDefault("learning.min_supported_horizon", 2)
+	viper.SetDefault("learning.min_task_relative_precision", 0.5)
+	viper.SetDefault("learning.min_surprise", 0.5)
+	viper.SetDefault("learning.resonance_bypass", false)
 	viper.SetDefault("learning.min_enter_z", 0.35)
 	viper.SetDefault("learning.cliff_horizon_drop", 2)
 	viper.SetDefault("learning.cliff_energy_mult", 1.4)
@@ -134,8 +140,11 @@ func NewLearning() *Learning {
 		ExcursionTimeout:        viper.GetDuration("learning.excursion_timeout"),
 		MaxExcursionBars:        viper.GetInt("learning.max_excursion_bars"),
 		PolicyShadowBars:        viper.GetInt("learning.policy_shadow_bars"),
-		MinSupportedHorizon:     viper.GetInt("learning.min_supported_horizon"),
-		MinEnterZ:               viper.GetFloat64("learning.min_enter_z"),
+		MinSupportedHorizon:      viper.GetInt("learning.min_supported_horizon"),
+		MinTaskRelativePrecision: viper.GetFloat64("learning.min_task_relative_precision"),
+		MinSurprise:              viper.GetFloat64("learning.min_surprise"),
+		ResonanceBypass:          viper.GetBool("learning.resonance_bypass"),
+		MinEnterZ:                viper.GetFloat64("learning.min_enter_z"),
 		CliffHorizonDrop:        viper.GetInt("learning.cliff_horizon_drop"),
 		CliffEnergyMult:         viper.GetFloat64("learning.cliff_energy_mult"),
 		PositionTracePath:       viper.GetString("learning.position_trace_path"),
@@ -159,4 +168,63 @@ func NewLearning() *Learning {
 		GateMaturityCeil:        viper.GetFloat64("learning.gate_maturity_ceil"),
 		MaxPathObjects:          viper.GetInt("learning.max_path_objects"),
 	}
+}
+
+/*
+ApplyResonance patches live resonance-gate floors from a dashboard lab command.
+*/
+func (learning *Learning) ApplyResonance(patch map[string]any) {
+	if learning == nil || len(patch) == 0 {
+		return
+	}
+
+	setFloat := func(dst *float64, key string) {
+		raw, ok := patch[key]
+		if !ok || dst == nil {
+			return
+		}
+
+		switch value := raw.(type) {
+		case float64:
+			if value == value {
+				*dst = value
+			}
+		case int:
+			*dst = float64(value)
+		case int64:
+			*dst = float64(value)
+		}
+	}
+
+	setInt := func(dst *int, key string) {
+		raw, ok := patch[key]
+		if !ok || dst == nil {
+			return
+		}
+
+		switch value := raw.(type) {
+		case float64:
+			if value == value {
+				*dst = int(value)
+			}
+		case int:
+			*dst = value
+		case int64:
+			*dst = int(value)
+		}
+	}
+
+	if raw, ok := patch["bypass"]; ok {
+		switch value := raw.(type) {
+		case bool:
+			learning.ResonanceBypass = value
+		case float64:
+			learning.ResonanceBypass = value != 0
+		}
+	}
+
+	setFloat(&learning.MinTaskRelativePrecision, "min_task_relative_precision")
+	setFloat(&learning.MinSurprise, "min_surprise")
+	setFloat(&learning.MinEnterZ, "min_enter_z")
+	setInt(&learning.MinSupportedHorizon, "min_supported_horizon")
 }

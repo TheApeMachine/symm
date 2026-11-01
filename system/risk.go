@@ -59,3 +59,57 @@ func NewRisk() *Risk {
 		MinBackingRatio:      viper.GetFloat64("risk.min_backing_ratio"),
 	}
 }
+
+/*
+Apply patches live risk floors from a dashboard gate-lab command.
+Unknown keys are ignored; only finite values land.
+*/
+func (risk *Risk) Apply(patch map[string]any) {
+	if risk == nil || len(patch) == 0 {
+		return
+	}
+
+	setFloat := func(dst *float64, key string) {
+		raw, ok := patch[key]
+		if !ok || dst == nil {
+			return
+		}
+
+		switch value := raw.(type) {
+		case float64:
+			if value == value {
+				*dst = value
+			}
+		case int:
+			*dst = float64(value)
+		case int64:
+			*dst = float64(value)
+		}
+	}
+
+	setInt := func(dst *int, key string) {
+		raw, ok := patch[key]
+		if !ok || dst == nil {
+			return
+		}
+
+		switch value := raw.(type) {
+		case float64:
+			if value == value {
+				*dst = int(value)
+			}
+		case int:
+			*dst = value
+		case int64:
+			*dst = int(value)
+		}
+	}
+
+	setFloat(&risk.MinMoverVolumeUSD, "min_mover_volume_usd")
+	setFloat(&risk.MinMoverChangePct, "min_mover_change_pct")
+	setFloat(&risk.MaxEntrySpreadPct, "max_entry_spread_pct")
+	setFloat(&risk.MinTouchBidCash, "min_touch_bid_cash")
+	setFloat(&risk.MinBackingRatio, "min_backing_ratio")
+	setFloat(&risk.MaxEntryOpenDragPct, "max_entry_open_drag_pct")
+	setInt(&risk.MinTapeTrades, "min_tape_trades")
+}

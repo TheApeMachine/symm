@@ -6,7 +6,7 @@ This is how live ticks become trades, paths, and learning updates.
 
 1. **Signals** write kernel layers (`pumpdump`, `correlation`, `depthflow`, `hawkes`, `liquidity`, …).
 2. **`mergeAggregateLayers`** fans board oracle layers (R09–R14 aggregates) onto every symbol on the tick.
-3. **`Stage`** runs the grid (`Observe`) → 15 region brightness values per symbol.
+3. **`Stage`** runs the grid (`Observe`) → 23 region brightness values per symbol.
 4. **`Sequencer`** (Sequitur + shared MDL) turns regions into path letters:
    - **Enter** (flat): regime R06–R11 × posture **R00–R02** → `enter` grammar.
    - **Hold** (open lot): same regimes × posture **R06–R08** → `hold` grammar.

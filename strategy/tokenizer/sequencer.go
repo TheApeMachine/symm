@@ -1,6 +1,8 @@
 package tokenizer
 
 import (
+	"strings"
+
 	"github.com/theapemachine/symm/system"
 )
 
@@ -33,24 +35,50 @@ Step appends one path symbol into Sequitur, feeds the new tail symbol to MDL,
 and returns the current cut as Tokens.
 */
 func (sequencer *Sequencer) Step(symbol string, brightness float64) Tokens {
+	return sequencer.StepPath([]string{symbol}, brightness)
+}
+
+/*
+StepPath appends symbols into the grammar in order. Training feeds one regime
+per call via Step; a repeated symbol only refreshes brightness.
+*/
+func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) Tokens {
+	parts := make([]string, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		parts = append(parts, symbol)
+	}
+
+	if len(parts) == 0 {
+		return NewTokens()
+	}
+
 	if sequencer.sentenceBreak {
 		sequencer.grammar.Sentence()
 		sequencer.sentenceBreak = false
 	}
 
-	if symbol == sequencer.lastEmitted {
+	key := strings.Join(parts, ".")
+
+	if key == sequencer.lastEmitted {
 		return sequencer.cut(brightness)
 	}
 
-	sequencer.grammar.Analyze([]string{symbol})
+	for _, symbol := range parts {
+		sequencer.grammar.Analyze([]string{symbol})
 
-	if tail := sequencer.grammar.Tail(1); len(tail) > 0 {
-		if boundary, _ := sequencer.mdl.Analyze(tail[0]); boundary {
-			sequencer.sentenceBreak = true
+		if tail := sequencer.grammar.Tail(1); len(tail) > 0 {
+			if boundary, _ := sequencer.mdl.Analyze(tail[0]); boundary {
+				sequencer.sentenceBreak = true
+			}
 		}
 	}
 
-	sequencer.lastEmitted = symbol
+	sequencer.lastEmitted = key
 
 	return sequencer.cut(brightness)
 }

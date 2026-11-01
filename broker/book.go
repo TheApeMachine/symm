@@ -539,9 +539,11 @@ func (book *Book) apply(
 						continue
 					}
 
+					price := scaledBookDecimal(order.LimitPrice, pair.PairDecimals)
+
 					if order.OrderID != "" {
 						for _, level := range symbolSide.Levels {
-							if level == nil || level.Price == nil || level.Price.Cmp(mustToSDK(order.LimitPrice)) == 0 {
+							if level == nil || level.Price == nil || price == nil || level.Price.Cmp(price) == 0 {
 								continue
 							}
 
@@ -551,7 +553,7 @@ func (book *Book) apply(
 										Direction: direction,
 										ID:        order.OrderID,
 										Price:     level.Price,
-										Quantity:  mustToSDK(dInt(0)),
+										Quantity:  scaledBookDecimal(dInt(0), pair.LotDecimals),
 										Silent:    true,
 									})
 									break
@@ -566,22 +568,29 @@ func (book *Book) apply(
 						quantity = dInt(0)
 					}
 
+					qty := scaledBookDecimal(quantity, pair.LotDecimals)
+
 					// The SDK dereferences an absent level on zero-quantity updates.
 					// Absence is a lost-book precondition, not an empty order to insert.
-					if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
+					levelKey := ""
+					if price != nil {
+						levelKey = price.String()
+					}
+
+					if quantity.Sign() <= 0 && symbolSide.Levels[levelKey] == nil {
 						return book.invalidate(
 							"absent_level",
 							fmt.Sprintf("%s order %s references absent level %s",
 								order.Event, order.OrderID, order.LimitPrice.String()),
-							payload, original, strconv.FormatUint(uint64(data.Checksum), 10),
+							payload, original, strconv.FormatUint(uint64(data.Checksum), 10), nil,
 						)
 					}
 
 					symbolBook.Update(&spotbook.UpdateOptions{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     mustToSDK(order.LimitPrice),
-						Quantity:  mustToSDK(quantity),
+						Price:     price,
+						Quantity:  qty,
 						Timestamp: order.Timestamp,
 						Silent:    true,
 					})
@@ -624,7 +633,7 @@ func (book *Book) apply(
 				return book.invalidate(
 					"checksum_mismatch",
 					"local book diverged from the venue checksum after applying the entry",
-					payload, original, checksum.ServerChecksum,
+					payload, original, checksum.ServerChecksum, checksum,
 				)
 			}
 

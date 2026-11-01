@@ -1,20 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+	atoms,
 	DEFAULT_KERNELS,
 	signals,
-	workspaceFrame,
 } from "#/collections/app";
-import {
-	ensureStore,
-	labelsAt,
-	type RegionRow,
-	regionsAt,
-	stores,
-} from "#/collections/envelope";
+import type { Region } from "#/collections/envelope";
 import {
 	createCanonicalGridNodes,
 	getCanonicalPinDefs,
 	getCanonicalRegionCounts,
+	REGION_COUNT,
 } from "./grid-pins";
 import { REGION_KEYS, REGIONS } from "./position-health";
 import type { ImpulseNode } from "./types";
@@ -49,7 +44,7 @@ const snm = (raw: number): number => {
 	return Math.abs(raw) / (1 + Math.abs(raw));
 };
 
-const regionBrightness = (region: RegionRow): number => {
+const regionBrightness = (region: Region): number => {
 	if (typeof region.brightness === "number" && Number.isFinite(region.brightness)) {
 		return region.brightness;
 	}
@@ -58,15 +53,15 @@ const regionBrightness = (region: RegionRow): number => {
 };
 
 /*
-symbolGridFrames returns every symbol's latest regions from the envelope store.
+symbolGridFrames returns every symbol's latest regions from the regions signal.
 */
-const symbolGridFrames = (): Array<{ symbol: string; rows: RegionRow[] }> => {
-	const out: Array<{ symbol: string; rows: RegionRow[] }> = [];
-	const state = stores.regions?.state ?? {};
+const symbolGridFrames = (): Array<{ symbol: string; rows: Region[] }> => {
+	const out: Array<{ symbol: string; rows: Region[] }> = [];
+	const state = signals.regions.state ?? {};
 
-	for (const symbol of Object.keys(state)) {
-		if (!symbol) continue;
-		out.push({ symbol, rows: regionsAt(state, symbol) });
+	for (const [symbol, rows] of Object.entries(state)) {
+		if (!symbol || !Array.isArray(rows)) continue;
+		out.push({ symbol, rows });
 	}
 
 	out.sort((a, b) => a.symbol.localeCompare(b.symbol));
@@ -74,17 +69,17 @@ const symbolGridFrames = (): Array<{ symbol: string; rows: RegionRow[] }> => {
 };
 
 const paintRegions = (
-	rows: RegionRow[],
+	rows: Region[],
 	heldBrightness: { current: number[] },
 	heldMembers: { current: number[] },
 ) => {
-	for (let i = 0; i < 15; i++) {
+	for (let i = 0; i < REGION_COUNT; i++) {
 		heldBrightness.current[i] = 0;
 	}
 
 	for (const region of rows) {
 		if (region == null || typeof region.key !== "number") continue;
-		if (region.key < 0 || region.key > 14) continue;
+		if (region.key < 0 || region.key >= REGION_COUNT) continue;
 
 		heldBrightness.current[region.key] = regionBrightness(region);
 
@@ -98,14 +93,16 @@ const pinMetric = (
 	pin: (typeof CANONICAL_PINS)[number],
 	symbol: string,
 ): number | undefined => {
-	const scope = pin.scope === "aggregate" ? "aggregate" : symbol;
-	if (!scope) return undefined;
+	if (!symbol) return undefined;
 
-	const store = stores[pin.source];
+	const store = signals[pin.source];
 	if (!store) return undefined;
 
-	const labels = labelsAt(store.state, scope);
-	const raw = labels?.[pin.metric];
+	const reading =
+		store.state[symbol] ?? store.state[symbol.replace(/\//g, "-")];
+	if (!reading || typeof reading !== "object") return undefined;
+
+	const raw = (reading as Record<string, unknown>)[pin.metric];
 	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 };
 
@@ -129,7 +126,7 @@ export const useImpulseData = (
 	const heldPins = useRef<Record<string, { activation: number; snr: number }>>(
 		{},
 	);
-	const heldBrightness = useRef<number[]>(new Array(15).fill(0));
+	const heldBrightness = useRef<number[]>(new Array(REGION_COUNT).fill(0));
 	const heldMembers = useRef<number[]>(
 		REGION_KEYS.map((_key, idx) => Math.round(CANONICAL_COUNTS[idx] ?? 0)),
 	);
@@ -149,7 +146,7 @@ export const useImpulseData = (
 			regions: initialRegions,
 			activeEvents: [],
 			gridCells: initialNodes.length,
-			gridRegions: 15,
+			gridRegions: REGION_COUNT,
 			marketTick: 0,
 			litSymbols: [],
 		};
@@ -159,7 +156,7 @@ export const useImpulseData = (
 
 	useEffect(() => {
 		heldPins.current = {};
-		heldBrightness.current = new Array(15).fill(0);
+		heldBrightness.current = new Array(REGION_COUNT).fill(0);
 		heldMembers.current = REGION_KEYS.map((_key, idx) =>
 			Math.round(CANONICAL_COUNTS[idx] ?? 0),
 		);
@@ -212,7 +209,7 @@ export const useImpulseData = (
 				regions: regionsList,
 				activeEvents: activeEventsList,
 				gridCells: updatedNodes.length,
-				gridRegions: 15,
+				gridRegions: REGION_COUNT,
 				marketTick,
 				litSymbols: heldLitSymbols.current,
 			});
@@ -220,7 +217,7 @@ export const useImpulseData = (
 
 		const paintSymbol = (
 			symbol: string,
-			rows: RegionRow[],
+			rows: Region[],
 			marketTick: number,
 		) => {
 			paintRegions(rows, heldBrightness, heldMembers);
@@ -248,14 +245,7 @@ export const useImpulseData = (
 				return;
 			}
 
-			const aggregate = workspaceFrame();
-			const marketTick =
-				aggregate && aggregate.tick !== undefined
-					? Number(aggregate.tick)
-					: lastPublishedTick.current;
-			const tick = Number.isFinite(marketTick)
-				? marketTick
-				: lastPublishedTick.current;
+			const tick = atoms.tickCount.get() || lastPublishedTick.current;
 
 			const frames = symbolGridFrames();
 			if (frames.length === 0) {
@@ -289,18 +279,20 @@ export const useImpulseData = (
 
 		const unsubs: Array<(() => void) | undefined> = [];
 
-		const regionsSub = ensureStore("regions").subscribe(() => {
+		const regionsSub = signals.regions.subscribe(() => {
 			updateFromTelemetry();
 		});
 		unsubs.push(() => regionsSub.unsubscribe());
 
-		const workspaceSub = signals.workspace.subscribe(() => {
+		const tickSub = atoms.tickCount.subscribe(() => {
 			updateFromTelemetry();
 		});
-		unsubs.push(() => workspaceSub.unsubscribe());
+		unsubs.push(() => tickSub.unsubscribe());
 
 		for (const kernel of DEFAULT_KERNELS) {
-			const sub = ensureStore(kernel).subscribe(() => {
+			const store = signals[kernel];
+			if (!store) continue;
+			const sub = store.subscribe(() => {
 				updateFromTelemetry();
 			});
 			unsubs.push(() => sub.unsubscribe());

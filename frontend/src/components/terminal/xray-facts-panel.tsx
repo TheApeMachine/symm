@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
-import {
-	atoms,
-	resonanceFrameForSymbol,
-	signals,
-} from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { Component } from "#/components/ui/component";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
@@ -16,15 +12,11 @@ import {
 
 export const XrayFactsPanel = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const storeReading = useSelector(signals.resonance, (state) =>
-		resonanceFrameForSymbol(state, focusSymbol),
-	);
 
 	const reading = useMemo((): Value | undefined => {
-		if (storeReading) return storeReading;
 		const retained = getRetainedResonance(focusSymbol);
 		return valueFromRetainedRow(focusSymbol, retained);
-	}, [focusSymbol, storeReading]);
+	}, [focusSymbol]);
 
 	return (
 		<Component value={reading ?? null} className="flex h-full flex-col">

@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { bookAtom } from "#/collections/book";
+import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
+import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
 import {
 	Badge,
 	BadgeButton,
@@ -38,8 +40,6 @@ import {
 	signedMoney,
 	useLifecycles,
 } from "#/lib/lifecycle";
-import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
-import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import { formatExitTrigger } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -50,21 +50,29 @@ const REGION_INFO: Record<
 	string,
 	{ name: string; tone: "up" | "down" | "acc" | "info" | "neutral" | "warn" }
 > = {
-	R00: { name: "Coiled compression", tone: "up" },
-	R01: { name: "Structural alignment", tone: "up" },
-	R02: { name: "Starved tape", tone: "info" },
-	R03: { name: "Rejection tick", tone: "down" },
-	R04: { name: "Bid ladder release", tone: "down" },
-	R05: { name: "Ask ladder release", tone: "down" },
-	R06: { name: "Supercritical cascade", tone: "neutral" },
-	R07: { name: "Bid ladder build", tone: "acc" },
-	R08: { name: "Blowoff dip", tone: "warn" },
-	R09: { name: "Board coiled", tone: "up" },
-	R10: { name: "Board cascade", tone: "neutral" },
-	R11: { name: "Board bid release", tone: "down" },
-	R12: { name: "Friction Hurdle", tone: "warn" },
-	R13: { name: "Macro Contagion", tone: "warn" },
-	R14: { name: "Capacity / Liquidity", tone: "warn" },
+	R00: { name: "Enter detector", tone: "up" },
+	R01: { name: "Enter support", tone: "up" },
+	R02: { name: "Enter opposition", tone: "info" },
+	R03: { name: "Exit detector", tone: "down" },
+	R04: { name: "Exit support", tone: "down" },
+	R05: { name: "Exit opposition", tone: "down" },
+	R06: { name: "Hold detector", tone: "neutral" },
+	R07: { name: "Hold support", tone: "acc" },
+	R08: { name: "Hold opposition", tone: "warn" },
+	R09: { name: "Volume quote veto", tone: "warn" },
+	R10: { name: "Volume quote approve", tone: "up" },
+	R11: { name: "Day move veto", tone: "warn" },
+	R12: { name: "Day move approve", tone: "up" },
+	R13: { name: "Spread veto", tone: "warn" },
+	R14: { name: "Spread approve", tone: "up" },
+	R15: { name: "Book integrity veto", tone: "warn" },
+	R16: { name: "Book integrity approve", tone: "up" },
+	R17: { name: "Board confidence veto", tone: "warn" },
+	R18: { name: "Board confidence approve", tone: "up" },
+	R19: { name: "Contagion veto", tone: "warn" },
+	R20: { name: "Contagion approve", tone: "up" },
+	R21: { name: "Capacity veto", tone: "warn" },
+	R22: { name: "Capacity approve", tone: "up" },
 };
 
 const TONE_STYLES = {
@@ -847,7 +855,10 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 			: undefined) ??
 		undefined;
 	const current =
-		outcome?.pnl_pct ?? (life.mark?.unrealized_return !== null && life.mark !== null ? life.mark.unrealized_return * 100 : undefined);
+		outcome?.pnl_pct ??
+		(life.mark != null && life.mark.unrealized_return != null
+			? life.mark.unrealized_return * 100
+			: undefined);
 	return {
 		id: life.id,
 		symbol: life.symbol,
@@ -864,18 +875,20 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		exit_trigger: life.exit_trigger ?? undefined,
 		outcome_triggers: outcome?.triggers ?? undefined,
 		pnl_trace: life.pnl_trace ?? undefined,
-		stop_state:
-			stop ?? {
-				current_pct: typeof current === "number" ? current : undefined,
-				peak_pct: typeof peak === "number" ? peak : undefined,
-			},
+		stop_state: stop ?? {
+			current_pct: typeof current === "number" ? current : undefined,
+			peak_pct: typeof peak === "number" ? peak : undefined,
+		},
 	};
 };
 
 const StopAndPolicyPanels = ({ life }: { life: Lifecycle }) => {
 	const row = lifecycleRow(life);
 	return (
-		<Flex.Column gap={1.5} className="border-(--line) border-b bg-(--surface) px-3 py-2">
+		<Flex.Column
+			gap={2}
+			className="border-(--line) border-b bg-(--surface) px-3 py-2"
+		>
 			<StopProximityPanel row={row} />
 			<ExitPolicyPanel row={row} />
 		</Flex.Column>

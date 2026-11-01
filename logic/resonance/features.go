@@ -1,39 +1,68 @@
 package resonance
 
 /*
-Features is the predictive coder's input vector in grid region order R00–R14
-(nomagique/store/grid_pins.go, symm/SIGNALS.md). forward_curve_i predicts the
-next standardized value of Features[i].
+Features is the predictive coder's input vector — one dim per grid region
+(SIGNALS.md / RegionCount=23). Indices match region keys:
+
+  R00–R02 Enter  detector / support / opposition
+  R03–R05 Exit   detector / support / opposition
+  R06–R08 Hold   detector / support / opposition
+  R09–R10 Volume Quote     veto / approve  (broker)
+  R11–R12 Day Move         veto / approve  (broker)
+  R13–R14 Spread           veto / approve  (broker)
+  R15–R16 Book Integrity   veto / approve  (broker)
+  R17–R18 Board Confidence veto / approve  (envelope)
+  R19–R20 Contagion        veto / approve  (envelope)
+  R21–R22 Capacity         veto / approve  (envelope)
+
+Broker labels are resolved via Solver.price; envelope labels must match
+equation/excitation Map() keys on envelope.Metrics().
 */
 var Features = []Feature{
 	// Enter R00–R02
-	{"pumpdump", "coiled_compression", ""},
-	{"correlation", "structural_alignment", "aggregate"},
-	{"pumpdump", "starved_tape", ""},
+	{"pumpdump", "compression", ""},
+	{"correlation", "herd_score", ""},
+	{"cvd", "starvation", ""},
 	// Exit R03–R05
-	{"pumpdump", "rejection_tick", ""},
-	{"depthflow", "bid_ladder_release", ""},
-	{"depthflow", "ask_ladder_release", ""},
+	{"pumpdump", "exhaustion", ""},
+	{"depthflow", "thin_score", ""},
+	{"morphology", "ask_vacuum", ""},
 	// Hold R06–R08
-	{"hawkes", "supercritical_cascade", ""},
-	{"depthflow", "bid_ladder_build", ""},
-	{"pumpdump", "blowoff_dip", ""},
-	// Board confidence R09–R11
-	{"pumpdump", "board_coiled", "aggregate"},
-	{"hawkes", "board_cascade", "aggregate"},
-	{"depthflow", "board_bid_release", "aggregate"},
-	// Board risk R12–R14
-	{"liquidity", "market_friction", "aggregate"},
-	{"correlation", "structure_uncoupling", "aggregate"},
-	{"liquidity", "capacity_stress", "aggregate"},
+	{"hawkes", "spectral_radius", ""},
+	{"depthflow", "loaded_score", ""},
+	{"liquidity", "scarcity_score", ""},
+	// Volume Quote R09–R10
+	{"broker", "volume_veto", ""},
+	{"broker", "volume_approve", ""},
+	// Day Move R11–R12
+	{"broker", "day_veto", ""},
+	{"broker", "day_approve", ""},
+	// Spread R13–R14
+	{"broker", "spread_veto", ""},
+	{"broker", "spread_approve", ""},
+	// Book Integrity R15–R16
+	{"broker", "book_veto", ""},
+	{"broker", "book_approve", ""},
+	// Board Confidence R17–R18
+	{"sentiment", "slump_score", ""},
+	{"correlation", "peak_score", ""},
+	// Contagion R19–R20
+	{"leadlag", "decoupled_score", ""},
+	{"leadlag", "sync_score", ""},
+	// Capacity R21–R22
+	{"toxicity", "vacuum_score", ""},
+	{"liquidity", "depth_score", ""},
 }
 
-const storyFeatureCount = 9
+const (
+	storyFeatureCount = 9
+	oracleFirst       = 9
+	oraclePairs       = 7
+)
 
 /*
-ForwardStoryNets collapses the task head's next-step prediction into the same
-net-force shape the grid and gate use: (detector + support) − opposition per
-story band, plus board confidence and risk. Values are standardized (z-scores).
+ForwardStoryNets collapses the 23-dim task head into Enter/Exit/Hold nets
+plus envelope/broker oracle approve lifts and veto risk.
 */
 func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet, risk float64, ok bool) {
 	if len(curve) < storyFeatureCount {
@@ -44,22 +73,27 @@ func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet, risk float64
 	exitNet = curve[3] + curve[4] - curve[5]
 	holdNet = curve[6] + curve[7] - curve[8]
 
-	if len(curve) >= len(Features) {
-		enterNet += curve[9]
-		holdNet += curve[10]
-		exitNet += curve[11]
-		risk = maxFloat(curve[12], curve[13], curve[14])
+	if len(curve) < len(Features) {
+		return enterNet, holdNet, exitNet, 0, true
+	}
+
+	risk = 0
+
+	for pair := range oraclePairs {
+		veto := curve[oracleFirst+2*pair]
+		approve := curve[oracleFirst+2*pair+1]
+
+		enterNet += approve
+
+		// Board Confidence approve also supports hold.
+		if pair == 4 {
+			holdNet += approve
+		}
+
+		if veto > risk {
+			risk = veto
+		}
 	}
 
 	return enterNet, holdNet, exitNet, risk, true
-}
-
-func maxFloat(values ...float64) float64 {
-	m := values[0]
-	for _, v := range values[1:] {
-		if v > m {
-			m = v
-		}
-	}
-	return m
 }

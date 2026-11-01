@@ -294,10 +294,13 @@ func (booter *Booter) initPipeline() error {
 			}},
 			{Group: "training", Nodes: []nmruntime.Node{
 				training,
-				resonance.NewSolver(ctx),
+				resonance.NewSolver(ctx, booter.price),
 			}},
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
+			}},
+			{Group: "tick", Nodes: []nmruntime.Node{
+				strategy.NewTick(ctx),
 			}},
 		},
 	)

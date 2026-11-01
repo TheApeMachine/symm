@@ -1,14 +1,23 @@
 import { ingestExploreListPrefix } from "#/collections/cognition";
-import type { S3PrefixCompact } from "#/hub/s3-prefix-compact";
+import {
+	closedListingFromEnvelope,
+	pathsListingFromEnvelope,
+} from "#/hub/s3-prefix-compact";
 import { ingestHistoryClosedBatch } from "#/lib/lifecycle";
 
-export const applyS3PrefixCompacts = (compacts: S3PrefixCompact[]) => {
-	for (const compact of compacts) {
-		if (compact.kind === "closed") {
-			ingestHistoryClosedBatch(compact.entries);
-			continue;
-		}
+/*
+applyPathsEnvelope / applyClosedEnvelope ingest hub JSON ListPrefix listings.
+*/
+export const applyPathsEnvelope = (payload: unknown): boolean => {
+	const compact = pathsListingFromEnvelope(payload);
+	if (!compact) return false;
+	ingestExploreListPrefix(compact);
+	return true;
+};
 
-		ingestExploreListPrefix(compact);
-	}
+export const applyClosedEnvelope = (payload: unknown): boolean => {
+	const compact = closedListingFromEnvelope(payload);
+	if (!compact) return false;
+	ingestHistoryClosedBatch(compact.entries);
+	return true;
 };

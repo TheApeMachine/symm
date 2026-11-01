@@ -13,6 +13,25 @@ export type Envelope = {
 	resonance: Resonance;
 	regions: Record<string, Region[]>;
 	paths: Paths;
+	decisions: Record<string, Decision>;
+};
+
+export type Decision = {
+	symbol: string;
+	action: string;
+	reason: string;
+	gate?: string;
+	path?: string;
+	virtual?: boolean;
+	confidence?: number;
+};
+
+export type LightTick = {
+	epoch: number;
+	n: number;
+	symbols: string[];
+	paths: Record<string, string>;
+	decisions: Record<string, Decision>;
 };
 
 export type Trade = {

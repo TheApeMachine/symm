@@ -1,12 +1,7 @@
 import { lazy, memo, Suspense, useMemo, useRef, useState } from "react";
 import { positionReadout } from "#/components/book-readout";
 import { cn } from "#/lib/utils";
-import {
-	indexMean,
-	openChoiceLegend,
-	openChoiceSeries,
-	openChoiceTrail,
-} from "./open-choice-trail";
+import { openChoiceLegend, openChoiceSeries } from "./open-choice-trail";
 
 type ChartApi = {
 	setIsGridLayoutMode: (value: boolean) => void;
@@ -49,23 +44,6 @@ export const OpenChoiceChart = memo(
 		}, [lots, trailGen]);
 		const legend = useMemo(() => openChoiceLegend(series), [series]);
 		const watching = series.some((item) => item.values.length > 0);
-		const meanSeries = useMemo(() => {
-			const trails = series
-				.filter((item) => item.values.length > 0)
-				.map((item) => openChoiceTrail(item.id));
-			return indexMean(trails);
-		}, [series]);
-		const latestMean =
-			[...meanSeries].reverse().find((value) => Number.isFinite(value)) ??
-			null;
-		const bookTone =
-			latestMean === null
-				? "flat"
-				: latestMean >= 2
-					? "ahead"
-					: latestMean <= -2
-						? "behind"
-						: "flat";
 
 		const setLayout = (grid: boolean) => {
 			apiRef.current?.setIsGridLayoutMode(grid);
@@ -83,54 +61,35 @@ export const OpenChoiceChart = memo(
 							Close-now P&amp;L trails. Toggle grid for one chart per lot.
 						</div>
 					</div>
-					<div className="flex items-center gap-3">
-						<div
-							className="min-w-22 text-right text-[12px] font-bold tabular-nums"
-							style={{
-								color:
-									latestMean === null
-										? "var(--f4)"
-										: bookTone === "ahead"
-											? "var(--up)"
-											: bookTone === "behind"
-												? "var(--down)"
-												: "var(--warn)",
-							}}
+					<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
+						<legend className="sr-only">Chart layout</legend>
+						<button
+							type="button"
+							aria-pressed={!isGrid}
+							onClick={() => setLayout(false)}
+							className={cn(
+								"rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
+								!isGrid
+									? "bg-(--raised) font-bold text-(--f1) shadow-xs"
+									: "text-(--f3) hover:text-(--f1)",
+							)}
 						>
-							{latestMean === null
-								? "book …"
-								: `book ${pctText(latestMean)}`}
-						</div>
-						<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
-							<legend className="sr-only">Chart layout</legend>
-							<button
-								type="button"
-								aria-pressed={!isGrid}
-								onClick={() => setLayout(false)}
-								className={cn(
-									"rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
-									!isGrid
-										? "bg-(--raised) font-bold text-(--f1) shadow-xs"
-										: "text-(--f3) hover:text-(--f1)",
-								)}
-							>
-								Single
-							</button>
-							<button
-								type="button"
-								aria-pressed={isGrid}
-								onClick={() => setLayout(true)}
-								className={cn(
-									"rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
-									isGrid
-										? "bg-(--raised) font-bold text-(--f1) shadow-xs"
-										: "text-(--f3) hover:text-(--f1)",
-								)}
-							>
-								Grid
-							</button>
-						</fieldset>
-					</div>
+							Single
+						</button>
+						<button
+							type="button"
+							aria-pressed={isGrid}
+							onClick={() => setLayout(true)}
+							className={cn(
+								"rounded px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
+								isGrid
+									? "bg-(--raised) font-bold text-(--f1) shadow-xs"
+									: "text-(--f3) hover:text-(--f1)",
+							)}
+						>
+							Grid
+						</button>
+					</fieldset>
 				</div>
 				<div className="relative min-h-0 w-full flex-1">
 					{watching ? (

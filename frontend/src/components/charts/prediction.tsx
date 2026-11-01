@@ -1,10 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import {
-	atoms,
-	resonanceFrameForSymbol,
-	signals,
-} from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
+import type { Resonance } from "#/collections/envelope";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { Value } from "#/types/value";
@@ -32,6 +29,7 @@ const fmt = (value: number | undefined | null, digits: number): string =>
 export type LayerData = {
 	state?: number[];
 	prediction?: number[];
+	errorNorm?: number;
 };
 
 export type ResonanceData = {
@@ -209,6 +207,34 @@ const parseResonanceFromRow = (
 		return resonanceHasContent(finalized) ? finalized : undefined;
 	}
 
+	// Flat floatMetrics map from the solver (snake_case keys + forward_curve_N).
+	const flatKeys = Object.keys(row).filter(
+		(key) =>
+			key.includes("_") ||
+			key === "surprise" ||
+			key === "energy" ||
+			key === "alpha" ||
+			key === "calibrated",
+	);
+	const looksFlat = flatKeys.some(
+		(key) =>
+			key.startsWith("forward_curve_") ||
+			key.startsWith("latent_") ||
+			key.startsWith("layer_") ||
+			key === "task_relative_precision" ||
+			key === "task_skill" ||
+			key === "supported_horizon",
+	);
+
+	if (looksFlat) {
+		const data = emptyResonanceData();
+		for (const [key, value] of Object.entries(row)) {
+			applyResonanceSuffix(data, key, value);
+		}
+		const finalized = finalizeResonanceData(data);
+		return resonanceHasContent(finalized) ? finalized : undefined;
+	}
+
 	const hasRetained =
 		"layers" in row ||
 		"forwardCurve" in row ||
@@ -272,8 +298,14 @@ const applyResonanceSuffix = (
 	const first = Array.isArray(payload) ? payload[0] : payload;
 
 	if (typeof first === "number" && Number.isFinite(first)) {
-		if (suffix === "task_relative_precision") data.taskRelativePrecision = first;
-		if (suffix === "task_skill") data.taskSkill = first;
+		if (suffix === "task_relative_precision") {
+			data.taskRelativePrecision = first;
+			data.confidence = first;
+		}
+		if (suffix === "task_skill") {
+			data.taskSkill = first;
+			data.taskSkillReady = true;
+		}
 		if (suffix === "surprise") data.surprise = first;
 		if (suffix === "energy") data.energy = first;
 		if (suffix === "supported_horizon") data.supportedHorizon = Math.trunc(first);
@@ -374,23 +406,6 @@ carries every kernel's layers as one batch per tick, and the chart keeps its
 own bounded history of the focus symbol off it.
 */
 export const RESONANCE_SERIES_LIMIT = 240;
-const resonanceSeries = new Map<string, number[]>();
-
-const foldResonance = (symbol: string, tick: Value | undefined) => {
-	if (!tick) return;
-
-	for (const [key, payload] of resonanceLayers(tick, symbol)) {
-		const first = Array.isArray(payload) ? payload[0] : payload;
-		if (typeof first !== "number" || !Number.isFinite(first)) continue;
-
-		const series = resonanceSeries.get(key) ?? [];
-		series.push(first);
-		if (series.length > RESONANCE_SERIES_LIMIT) {
-			series.splice(0, series.length - RESONANCE_SERIES_LIMIT);
-		}
-		resonanceSeries.set(key, series);
-	}
-};
 
 /*
 resonanceLayers yields the tick's resonance layers for one symbol as
@@ -438,11 +453,16 @@ export function* resonanceLayers(
 	}
 }
 
+const resonanceAt = (
+	state: Record<string, Resonance>,
+	symbol: string,
+): Resonance | undefined =>
+	state[symbol] ?? state[symbol.replace(/\//g, "-")];
+
 const useArtifact = (): ResonanceData | undefined => {
 	const focus = useSelector(atoms.focus);
-	const aggregate = useSelector(signals.workspace, (state) => state.aggregate);
 	const reading = useSelector(signals.resonance, (state) =>
-		resonanceFrameForSymbol(state, focus),
+		resonanceAt(state, focus),
 	);
 	const [artifact, setArtifact] = useState<ResonanceData | undefined>(
 		undefined,
@@ -450,28 +470,21 @@ const useArtifact = (): ResonanceData | undefined => {
 	const held = useRef<ResonanceData | undefined>(undefined);
 
 	useEffect(() => {
-		foldResonance(focus, aggregate);
-
 		let next = held.current;
-		const fromStore = parseResonanceData(reading);
+		const fromStore = parseResonanceData(
+			reading as unknown as Record<string, unknown>,
+		);
 		if (fromStore && resonanceHasContent(fromStore)) {
 			next = next
 				? mergeResonanceData(next, fromStore, "full")
 				: fromStore;
 		}
 
-		const fromWorkspace = parseResonanceFromWorkspace(focus, aggregate);
-		if (fromWorkspace && resonanceHasContent(fromWorkspace)) {
-			next = next
-				? mergeResonanceData(next, fromWorkspace, "workspace")
-				: fromWorkspace;
-		}
-
 		if (next && !resonanceSnapshotEqual(held.current, next)) {
 			held.current = next;
 			setArtifact(next);
 		}
-	}, [focus, reading, aggregate]);
+	}, [reading]);
 
 	return artifact ?? held.current;
 };

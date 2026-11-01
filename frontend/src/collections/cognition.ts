@@ -3,12 +3,10 @@ import { triePrefix } from "#/collections/book";
 import {
 	EXPLORE_BASE_THRESHOLD,
 	filterExploreKeys,
-	pathBookPolicyKey,
 } from "#/components/learning/explore-path";
 import { trySendCommand } from "#/lib/hub-socket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { parseOneValue } from "#/types/decoder";
-import type { Value } from "#/types/value";
 
 /*
 The live symbol set, as known to the app (it also seeds the symbol
@@ -136,7 +134,8 @@ export const cognitionStore = createStore<CognitionState>({
 	tree: null,
 });
 
-const REGION_COUNT = 15;
+/** Mirrors nomagique RegionCount / grid-pins REGION_COUNT. */
+const REGION_COUNT = 23;
 
 type RegionRing = { tick: number; row: Array<number | undefined> };
 
@@ -171,12 +170,11 @@ const noteRegions = (
 		const sector = primaryRegionIndex(token);
 		const value = brightness[index];
 
-		if (
-			Number.isInteger(sector) &&
-			sector >= 0 &&
-			sector < REGION_COUNT &&
-			value !== undefined
-		) {
+		if (sector === null || value === undefined) {
+			return;
+		}
+
+		if (sector >= 0 && sector < REGION_COUNT) {
 			row[sector] = value;
 		}
 	});
@@ -622,6 +620,9 @@ JSON-marshaled explore value (hub ListPrefix) or a nested wire Value blob.
 */
 export const thresholdFromExploreBytes = (bytes: Uint8Array): number | null => {
 	const json = tryDecodeJsonBytes(bytes);
+	// Hub ListPrefix for model/paths sends a compact JSON float per key.
+	if (typeof json === "number" && Number.isFinite(json)) return json;
+
 	const fromJSON = thresholdFromStored(json);
 	if (fromJSON !== null) return fromJSON;
 
@@ -701,17 +702,16 @@ export const ingestExploreListPrefix = (input: {
 
 	cognitionStore.setState((state) => {
 		const nextEpoch = input.epoch ?? state.epoch;
-		const nextThresholds = { ...state.thresholds };
-		for (const key of Object.keys(nextThresholds)) {
-			if (key.startsWith(`${input.scope}/`)) {
-				delete nextThresholds[key];
-			}
-		}
-		Object.assign(nextThresholds, keptThresholds);
+		// Chunked ListPrefix frames merge: the tree clears keys before a
+		// fresh s3 request, then each frame unions into the book.
+		const nextThresholds = { ...state.thresholds, ...keptThresholds };
+		const merged = new Set(state.policyKeys);
+		for (const key of keptKeys) merged.add(key);
+		const nextKeys = filterExploreKeys([...merged].sort(), nextThresholds);
 
 		if (
 			nextEpoch === state.epoch &&
-			sameStringList(state.policyKeys, keptKeys) &&
+			sameStringList(state.policyKeys, nextKeys) &&
 			sameThresholds(state.thresholds, nextThresholds)
 		) {
 			return state;
@@ -720,70 +720,10 @@ export const ingestExploreListPrefix = (input: {
 		return {
 			...state,
 			epoch: nextEpoch,
-			policyKeys: keptKeys,
+			policyKeys: nextKeys,
 			thresholds: nextThresholds,
 		};
 	});
-};
-
-/*
-ingestS3Prefix applies a hub ListPrefix frame. Scope is the listed prefix;
-each layer is the stored object (a data.Value on S3). Keys and fields come
-from Value.readings() — no extra backend publish path.
-*/
-export const ingestS3Prefix = (value: Value) => {
-	if (value.origin !== "s3" || value.role !== "prefix") {
-		return false;
-	}
-
-	if (value.scope !== "model/paths") {
-		return true;
-	}
-
-	if (value.scope !== triePrefix()) {
-		return true;
-	}
-
-	const policyKeys: string[] = [];
-	const thresholds: Record<string, number> = {};
-
-	for (let i = 0; i < value.index.length; i++) {
-		const rawKey = s3KeyFromIndex(value.prefix, value.index[i]);
-		if (rawKey === null || !rawKey.startsWith(`${value.scope}/`)) continue;
-
-		const key = pathBookPolicyKey(rawKey, value.layers[i]);
-		if (!policyKeys.includes(key)) {
-			policyKeys.push(key);
-		}
-
-		const threshold = thresholdFromExploreBytes(value.layers[i]);
-		if (threshold !== null) {
-			thresholds[key] = threshold;
-			continue;
-		}
-
-		thresholds[key] = EXPLORE_BASE_THRESHOLD;
-	}
-
-	policyKeys.sort();
-
-	const keptKeys = filterExploreKeys(policyKeys, thresholds);
-	const keptThresholds: Record<string, number> = {};
-	for (const key of keptKeys) {
-		const threshold = thresholds[key];
-		if (threshold !== undefined) keptThresholds[key] = threshold;
-	}
-
-	const epoch =
-		value.epoch != null && value.epoch !== 0n ? String(value.epoch) : null;
-
-	ingestExploreListPrefix({
-		scope: value.scope,
-		epoch,
-		policyKeys: keptKeys,
-		thresholds: keptThresholds,
-	});
-	return true;
 };
 
 export const ingestPolicyKeys = (keys: unknown, epoch?: string) => {
@@ -878,7 +818,12 @@ export const ingestPathWalks = (tick: number, payload: unknown): boolean => {
 	});
 
 	if (exited) {
-		trySendCommand({ type: "s3", prefix: triePrefix() });
+		const prefix = triePrefix();
+		cognitionStore.setState((state) => ({
+			...state,
+			policyKeys: state.policyKeys.filter((key) => !key.startsWith(prefix)),
+		}));
+		trySendCommand({ type: "s3", prefix });
 	}
 
 	return true;

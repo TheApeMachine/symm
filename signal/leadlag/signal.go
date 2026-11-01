@@ -5,8 +5,9 @@ import (
 	"sync"
 
 	"github.com/theapemachine/nomagique/algorithm"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/signal/frame"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -29,25 +30,18 @@ Step processes every trade entry of the tick's frame; per-symbol state is keyed
 by the entry's symbol and each ready outcome lands on the envelope.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
+	var mu sync.Mutex
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		system.Q.Submit(func() {
-			defer wg.Done()
-
+	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
+		for _, data := range trades {
 			if data.Price.IsZero() {
-				return
+				continue
 			}
 
 			price, _ := data.Price.Float64()
 
 			if price <= 0 {
-				return
+				continue
 			}
 
 			input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
@@ -56,24 +50,31 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				At:     data.Timestamp,
 			})
 
-			if err != nil || !ok {
+			if err != nil {
 				signal.Error(err)
-				return
+				continue
+			}
+
+			if !ok {
+				continue
 			}
 
 			outcome, err := signal.process.Measure(input)
 
-			if err != nil || !outcome.Eligible {
-				return
+			if err != nil {
+				signal.Error(err)
+				continue
+			}
+
+			if !outcome.Eligible {
+				continue
 			}
 
 			mu.Lock()
 			envelope.LeadLag[data.Symbol] = &outcome
 			mu.Unlock()
-		})
-	}
-
-	wg.Wait()
+		}
+	})
 
 	ui.UI.Write(envelope.Publish("leadlag"))
 	return envelope

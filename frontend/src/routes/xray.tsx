@@ -1,13 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import {
-	atoms,
-	DEFAULT_FOCUS_SYMBOL,
-	signals,
-	symbolScopeAliases,
-} from "#/collections/app";
-import { parseResonanceFromWorkspace } from "#/components/charts/prediction";
+import { atoms, DEFAULT_FOCUS_SYMBOL, signals } from "#/collections/app";
+import type { Resonance } from "#/collections/envelope";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
@@ -22,28 +17,16 @@ import {
 	retainResonanceRow,
 } from "#/components/terminal/xray-view";
 import { Button, Flex, Grid, Typography } from "#/components/ui";
-import type { Value } from "#/types/value";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(atoms.focus);
 
 	useEffect(() => {
-		const updatePaint = (resonanceState: Record<string, Value>) => {
+		const updatePaint = (resonanceState: Record<string, Resonance>) => {
 			for (const [scope, last] of Object.entries(resonanceState)) {
 				if (!last) continue;
 
 				retainResonanceRow(scope, last as unknown as Record<string, unknown>);
-			}
-
-			const aggregate = signals.workspace.state.aggregate;
-			for (const alias of symbolScopeAliases(focusSymbol)) {
-				const folded = parseResonanceFromWorkspace(alias, aggregate);
-				if (!folded) continue;
-				retainResonanceRow(focusSymbol, {
-					symbol: focusSymbol,
-					...folded,
-				});
-				break;
 			}
 
 			const universe = getAllRetainedResonance();
@@ -53,13 +36,9 @@ const XrayPaintBridge = () => {
 
 		updatePaint(signals.resonance.state);
 		const resonanceSub = signals.resonance.subscribe(updatePaint);
-		const workspaceSub = signals.workspace.subscribe(() => {
-			updatePaint(signals.resonance.state);
-		});
 
 		return () => {
 			resonanceSub.unsubscribe();
-			workspaceSub.unsubscribe();
 		};
 	}, [focusSymbol]);
 

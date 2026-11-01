@@ -56,6 +56,21 @@ func mustToSDK(value *decimal.Decimal) *sdkdecimal.Decimal {
 }
 
 /*
+scaledBookDecimal converts a desk decimal for SDK book writes at a fixed
+scale. Kraken's L3 checksum hashes price/qty with pair decimals (trailing
+zeros included); shopspring String() drops them, so the SDK decimal must
+carry that scale before L3Checksum runs.
+*/
+func scaledBookDecimal(value *decimal.Decimal, scale int) *sdkdecimal.Decimal {
+	parsed := mustToSDK(value)
+	if parsed == nil {
+		return nil
+	}
+
+	return parsed.SetScale(int64(scale))
+}
+
+/*
 balanceMapFromSDK converts a REST balance map at the SDK boundary.
 */
 func balanceMapFromSDK(values map[string]*sdkdecimal.Decimal) map[string]*decimal.Decimal {

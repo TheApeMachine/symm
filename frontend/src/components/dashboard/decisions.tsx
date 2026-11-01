@@ -1,7 +1,14 @@
+import { useSelector } from "@tanstack/react-store";
+import { useMemo } from "react";
+import { signals } from "#/collections/app";
+import type { Decision, Region } from "#/collections/envelope";
 import {
-	type CognitionMatch,
-	cognitionStore,
-} from "#/collections/cognition";
+	gateLabStore,
+	ORACLE_GATES,
+	type OracleGate,
+	type OracleOverride,
+} from "#/collections/gate-lab";
+import { GateLab, GateLabToggle } from "#/components/dashboard/gate-lab";
 import {
 	setDecisionsPendingFocus,
 	setDecisionsScopeSymbol,
@@ -10,8 +17,9 @@ import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { formatBlockedReason } from "#/lib/trigger-labels";
-import { useSelector } from "@tanstack/react-store";
-import { useMemo } from "react";
+import { cn } from "#/lib/utils";
+
+type GateSide = "veto" | "approve" | "dark";
 
 type DecisionRow = {
 	id: string;
@@ -19,93 +27,156 @@ type DecisionRow = {
 	action: string;
 	confidence: number;
 	reason: string;
+	gate?: string;
+	path?: string;
 };
 
-const decisionConfidence = (
-	depth: number,
-	tokenCount: number,
-	similarity: number | undefined,
-): number => {
-	if (depth <= 0) return 0;
-	const denom = Math.max(tokenCount, depth, 1);
-	const sim = similarity !== undefined && similarity > 0 ? similarity : 1;
-	return Math.min(1, (depth / denom) * sim);
+const decisionReason = (decision: Decision): string => {
+	const reason = formatBlockedReason(decision.reason || "");
+	const gate = decision.gate ? `${decision.gate}: ` : "";
+	const path = decision.path ? ` · ${decision.path}` : "";
+	const virtual = decision.virtual ? " · virtual" : "";
+
+	return `${gate}${reason}${path}${virtual}`;
 };
 
-const decisionReason = (match: {
-	match: string;
-	livePath?: string;
-	triggerPath?: string;
-	policyPath?: string;
-	stored: boolean;
-	exactMatch?: boolean;
-	similarity?: number;
-	blockedReason?: string;
-	rejected?: string[];
-}): string => {
-	if (match.blockedReason) {
-		return formatBlockedReason(match.blockedReason);
-	}
+const decisionsFromLive = (live: Record<string, Decision>): DecisionRow[] => {
+	const rows: DecisionRow[] = [];
 
-	if (match.match) {
-		const fuzzy =
-			match.stored &&
-			match.exactMatch === false &&
-			match.similarity !== undefined &&
-			match.similarity < 1;
-		const prefix = fuzzy
-			? `fuzzy ${(match.similarity ?? 0).toFixed(2)} · `
-			: "";
-		if (match.triggerPath) {
-			return `${prefix}policy ${match.match} · trigger ${match.triggerPath}`;
-		}
-		if (match.livePath && match.livePath !== match.match) {
-			return `${prefix}policy ${match.match} · live ${match.livePath}`;
-		}
-		return `${prefix}${match.match}`;
-	}
+	for (const decision of Object.values(live)) {
+		if (!decision?.symbol || !decision.action) continue;
 
-	if (match.rejected?.length) {
-		return `rejected: ${match.rejected.join(", ")}`;
-	}
-
-	return "strategy telemetry";
-};
-
-const decisionsFromMatches = (
-	matches: Record<string, CognitionMatch>,
-): DecisionRow[] => {
-	const merged = new Map<string, DecisionRow>();
-
-	for (const match of Object.values(matches)) {
-		if (!match.symbol) continue;
-
-		const action =
-			match.action || (match.stored ? "stored" : match.match ? "match" : "");
-		if (!action && !match.blockedReason) continue;
-
-		const tokenCount = match.tokens?.length ?? 0;
-		merged.set(match.symbol, {
-			id: `${match.symbol}-${match.tick}`,
-			symbol: match.symbol,
-			action: action || "blocked",
-			confidence: decisionConfidence(
-				match.depth,
-				tokenCount,
-				match.similarity,
-			),
-			reason: decisionReason(match),
+		rows.push({
+			id: `${decision.symbol}-${decision.action}-${decision.reason}`,
+			symbol: decision.symbol,
+			action: decision.action,
+			confidence: decision.confidence ?? 0,
+			reason: decisionReason(decision),
+			gate: decision.gate,
+			path: decision.path,
 		});
 	}
 
-	return [...merged.values()].sort((left, right) =>
-		left.symbol.localeCompare(right.symbol),
+	return rows.sort((left, right) => {
+		const rank = (action: string) =>
+			action === "blocked"
+				? 0
+				: action === "enter" || action === "exit"
+					? 1
+					: 2;
+		const byAction = rank(left.action) - rank(right.action);
+		if (byAction !== 0) return byAction;
+		return left.symbol.localeCompare(right.symbol);
+	});
+};
+
+const brightnessAt = (rows: Region[] | undefined, key: number): number => {
+	if (!rows) return 0;
+
+	for (const row of rows) {
+		if (row?.key === key) {
+			return typeof row.brightness === "number" &&
+				Number.isFinite(row.brightness)
+				? row.brightness
+				: 0;
+		}
+	}
+
+	return 0;
+};
+
+const pathKeys = (path: string | undefined): Set<number> => {
+	const out = new Set<number>();
+	if (!path) return out;
+
+	for (const part of path.split("/")) {
+		const match = /^R(\d{2})$/.exec(part.trim());
+		if (!match) continue;
+		out.add(Number(match[1]));
+	}
+
+	return out;
+};
+
+const gateSide = (
+	gate: OracleGate,
+	rows: Region[] | undefined,
+	lit: Set<number>,
+	override: OracleOverride | undefined,
+): GateSide => {
+	if (override === "veto" || override === "approve") {
+		return override;
+	}
+
+	const veto = brightnessAt(rows, gate.veto);
+	const approve = brightnessAt(rows, gate.approve);
+
+	if (veto > 0 || approve > 0) {
+		return veto >= approve ? "veto" : "approve";
+	}
+
+	if (lit.has(gate.veto)) return "veto";
+	if (lit.has(gate.approve)) return "approve";
+	return "dark";
+};
+
+const GateLamps = ({
+	symbol,
+	path,
+	regions,
+	overrides,
+}: {
+	symbol: string;
+	path?: string;
+	regions: Record<string, Region[]>;
+	overrides: Record<string, OracleOverride>;
+}) => {
+	const rows =
+		regions[symbol] ?? regions[symbol.replace(/\//g, "-")] ?? undefined;
+	const lit = pathKeys(path);
+
+	return (
+		<Flex.Row
+			align="center"
+			gap={1}
+			className="col-span-2 mt-1 min-w-0"
+			aria-label={`${symbol} oracle gates`}
+		>
+			{ORACLE_GATES.map((gate) => {
+				const side = gateSide(gate, rows, lit, overrides[gate.id]);
+				const forced = overrides[gate.id] && overrides[gate.id] !== "auto";
+				const state =
+					side === "dark" ? "dark" : `${side}${forced ? " · forced" : ""}`;
+
+				return (
+					<span
+						key={gate.id}
+						title={`${gate.label} (${state}). ${gate.hint}`}
+						data-oracle-gate={gate.id}
+						data-oracle-side={side}
+						data-oracle-forced={forced ? "true" : "false"}
+						className={cn(
+							"inline-block size-1.5 shrink-0 rounded-[1px]",
+							side === "approve" && "bg-(--up)",
+							side === "veto" && "bg-(--down)",
+							side === "dark" && "bg-(--line2)",
+							forced && "ring-1 ring-(--acc)/70",
+						)}
+					/>
+				);
+			})}
+			<Typography.Span className="ml-1 truncate text-[8px] tracking-[0.04em] text-(--f4) uppercase">
+				{ORACLE_GATES.map((gate) => gate.id).join(" ")}
+			</Typography.Span>
+		</Flex.Row>
 	);
 };
 
 export const Decisions = () => {
-	const matches = useSelector(cognitionStore, (state) => state.matches);
-	const decisions = useMemo(() => decisionsFromMatches(matches), [matches]);
+	const live = useSelector(signals.decisions, (state) => state);
+	const regions = useSelector(signals.regions, (state) => state);
+	const overrides = useSelector(gateLabStore, (state) => state.overrides);
+	const decisions = useMemo(() => decisionsFromLive(live), [live]);
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);
@@ -123,7 +194,14 @@ export const Decisions = () => {
 				<Typography.Span semibold uppercase tracking="0.13em">
 					DECISIONS
 				</Typography.Span>
+				<Flex.Row align="center" gap={2}>
+					<Typography.Span className="text-[9px] text-(--f4)">
+						{decisions.length ? `${decisions.length} live` : "idle"}
+					</Typography.Span>
+					<GateLabToggle />
+				</Flex.Row>
 			</Flex.Row>
+			<GateLab />
 			<List className="min-h-0 flex-1 gap-1 overflow-auto p-2">
 				{decisions.length === 0 ? (
 					<List.Item className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 px-2.5 py-1.5 font-mono text-[11px] text-(--f4)">
@@ -132,27 +210,42 @@ export const Decisions = () => {
 				) : (
 					decisions.map((dec) => (
 						<List.Item
-							key={dec.symbol || dec.id}
+							key={dec.id}
 							className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)] hover:bg-(--raised)"
 							data-decision-card="true"
 							data-decision-id={dec.id}
+							data-decision-action={dec.action}
 							onClick={() => inspectDecision(dec.symbol)}
-							title="Inspect MCTS / Pearl decision tree"
+							title={dec.reason}
 						>
 							<Typography.Span className="truncate font-semibold text-[11px] text-(--f1)">
 								{dec.symbol}
 							</Typography.Span>
 							<Flex.Row className="items-center gap-2">
-								<Typography.Span className="text-[8.5px] text-(--f4)">
-									conf=
-									<span className="tabular-nums text-(--f2)">
-										{dec.confidence.toFixed(4)}
-									</span>
-								</Typography.Span>
-								<Typography.Span className="rounded-xs border border-(--line) px-1.5 py-px text-[8.5px] uppercase">
+								{dec.confidence > 0 ? (
+									<Typography.Span className="text-[8.5px] text-(--f4)">
+										conf=
+										<span className="tabular-nums text-(--f2)">
+											{dec.confidence.toFixed(4)}
+										</span>
+									</Typography.Span>
+								) : null}
+								<Typography.Span
+									className={
+										dec.action === "blocked"
+											? "rounded-xs border border-(--warn)/40 px-1.5 py-px text-[8.5px] uppercase text-(--warn)"
+											: "rounded-xs border border-(--line) px-1.5 py-px text-[8.5px] uppercase"
+									}
+								>
 									{dec.action}
 								</Typography.Span>
 							</Flex.Row>
+							<GateLamps
+								symbol={dec.symbol}
+								path={dec.path}
+								regions={regions}
+								overrides={overrides}
+							/>
 							<Typography.Span className="col-span-2 mt-0.5 line-clamp-2 min-w-0 wrap-break-word text-[9px] leading-tight text-(--f4)">
 								{dec.reason}
 							</Typography.Span>

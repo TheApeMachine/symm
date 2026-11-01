@@ -1,6 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
-import { framePositionRows } from "#/collections/positions";
 import { positionReadout } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import {
@@ -9,8 +8,6 @@ import {
 } from "#/lib/desk-closed-lifecycle";
 import { trySendCommand } from "#/lib/hub-socket";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
-import { parseOneValue } from "#/types/decoder";
-import type { Value } from "#/types/value";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -560,7 +557,7 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 
 /*
 ingestHistoryClosedBatch folds many stored closed lots with one publish.
-The websocket worker compacts S3 ListPrefix frames before they reach the UI.
+Hub ListPrefix sends JSON {"closed":{entries}} envelopes.
 */
 export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
 	let changed = false;
@@ -574,81 +571,6 @@ export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
 	if (changed) {
 		publish();
 	}
-};
-
-/*
-ingestHistoryClosedFrame folds one stored desk lot (position/closed or
-virtual/closed on S3) into the lifecycle archive.
-*/
-export const ingestHistoryClosedFrame = (frame: Value) => {
-	if (frame.role !== "closed") return;
-	if (frame.origin !== "position" && frame.origin !== "virtual") return;
-
-	const row = framePositionRows(frame)[0];
-	if (!row || typeof row.id !== "string" || row.id === "") return;
-
-	const stamp: HistoryStamp = {
-		epoch: frame.epoch ?? 0n,
-		tick: frame.tick ?? 0n,
-		timestamp: frame.timestamp ?? 0n,
-	};
-
-	if (ingestHistoryClosedEntry({ stamp, row })) {
-		publish();
-	}
-};
-
-/*
-ingestS3PositionHistory applies a hub ListPrefix frame for position/closed or
-virtual/closed. Each layer is a stored data.Value blob.
-*/
-export const ingestS3PositionHistory = (value: Value): boolean => {
-	if (value.origin !== "s3" || value.role !== "prefix") {
-		return false;
-	}
-
-	if (
-		value.scope !== "position/closed" &&
-		value.scope !== "virtual/closed" &&
-		!value.scope.startsWith("position/closed/") &&
-		!value.scope.startsWith("virtual/closed/")
-	) {
-		return false;
-	}
-
-	const entries: ClosedHistoryEntry[] = [];
-
-	for (let i = 0; i < value.layers.length; i++) {
-		const nested = parseOneValue(value.layers[i]);
-		if (!nested) {
-			continue;
-		}
-
-		if (nested.role !== "closed") {
-			continue;
-		}
-
-		if (nested.origin !== "position" && nested.origin !== "virtual") {
-			continue;
-		}
-
-		const row = framePositionRows(nested)[0];
-		if (!row || typeof row.id !== "string" || row.id === "") {
-			continue;
-		}
-
-		entries.push({
-			stamp: {
-				epoch: nested.epoch ?? 0n,
-				tick: nested.tick ?? 0n,
-				timestamp: nested.timestamp ?? 0n,
-			},
-			row,
-		});
-	}
-
-	ingestHistoryClosedBatch(entries);
-	return true;
 };
 
 let closedHistoryRequested = false;

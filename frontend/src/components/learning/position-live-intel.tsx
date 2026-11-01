@@ -51,7 +51,7 @@ const forceBar = (
 			: Math.min(1, Math.max(0, Math.abs(v)));
 	const overHurdle = compare && h > 0 && v >= h;
 	return (
-		<Flex.Column gap={0.5} className="text-[10px]">
+		<Flex.Column gap={1} className="text-[10px]">
 			<Flex.Row justify="between" className="text-(--f3)">
 				<span>{label}</span>
 				<span className="font-mono text-(--f2)">
@@ -133,7 +133,7 @@ export const PositionLiveIntel = ({
 				title="Live cognition"
 				meta="latest tick"
 				size="s"
-				rule="none"
+				rule={false}
 			/>
 			<Section.Body scroll={false}>
 				<Flex.Column gap={2}>
@@ -157,7 +157,7 @@ export const PositionLiveIntel = ({
 					</Flex.Row>
 
 					<Flex.Column
-						gap={1.5}
+						gap={2}
 						className="rounded-xs border border-(--line) bg-(--sunken) p-2"
 					>
 						<Flex.Row

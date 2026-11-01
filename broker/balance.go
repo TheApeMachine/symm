@@ -2,12 +2,10 @@ package broker
 
 import (
 	"context"
-	"io"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
@@ -27,7 +25,7 @@ type Balance struct {
 	Quote     string
 	wallet    atomic.Pointer[kraken.Balance]
 	trade     atomic.Pointer[kraken.TradeBalanceResult]
-	value     atomic.Pointer[data.Value]
+	reading   atomic.Pointer[map[string]any]
 	limiter   *rate.Limiter
 }
 
@@ -72,10 +70,39 @@ func (balance *Balance) Trade() *kraken.TradeBalanceResult {
 }
 
 /*
-Frame is the latest dashboard update produced by poll; readers load it atomically.
+Reading is the latest cash/equity/unrealized map for the dashboard.
 */
-func (balance *Balance) Frame() *data.Value {
-	return balance.value.Load()
+func (balance *Balance) Reading() map[string]any {
+	if balance == nil {
+		return nil
+	}
+
+	ptr := balance.reading.Load()
+
+	if ptr == nil {
+		return nil
+	}
+
+	return *ptr
+}
+
+/*
+Publish pushes the cached reading to the dashboard as {"balance": {...}}.
+*/
+func (balance *Balance) Publish() {
+	if balance == nil || ui.UI == nil {
+		return
+	}
+
+	reading := balance.Reading()
+
+	if reading == nil {
+		return
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"balance": reading,
+	})
 }
 
 func (balance *Balance) cash(asset string) *decimal.Decimal {
@@ -205,22 +232,13 @@ func (balance *Balance) poll() (err error) {
 	kept := *tradeBalance
 	balance.trade.Store(&kept)
 
-	frame := data.NewValue("balance", "update", "all").Append(
-		map[string]any{
-			"cash":       balance.cash(balance.Quote),
-			"equity":     tradeBalance.Equity,
-			"unrealized": tradeBalance.UnrealizedPnL,
-		},
-		"balance",
-	)
-	balance.value.Store(frame)
-
-	// Push the refreshed frame to the active dashboard hub; the hello
-	// callback only carries the one captured at connect. With no
-	// dashboard connected there is nothing to publish to.
-	if ui.UI != nil {
-		io.Copy(ui.UI, frame)
+	reading := map[string]any{
+		"cash":       balance.cash(balance.Quote),
+		"equity":     tradeBalance.Equity,
+		"unrealized": tradeBalance.UnrealizedPnL,
 	}
+	balance.reading.Store(&reading)
+	balance.Publish()
 
 	return nil
 }

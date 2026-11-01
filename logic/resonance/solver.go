@@ -3,7 +3,6 @@ package resonance
 import (
 	"context"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -32,6 +32,7 @@ type Solver struct {
 	*runtime.System
 	manifolds *sync.Map
 	pace      float64
+	price     *broker.Price
 
 	// standardizers hold each symbol's per-feature moments, so a feature is
 	// scored against its own history rather than the raw feed.
@@ -63,14 +64,15 @@ const (
 )
 
 /*
-NewSolver returns a solver stepping at pace; a pace that is not positive is
-an error.
+NewSolver returns a solver stepping at pace. price supplies broker oracle
+features (Volume / Day / Spread / Book); nil skips those dims until set.
 */
-func NewSolver(ctx context.Context) *Solver {
+func NewSolver(ctx context.Context, price *broker.Price) *Solver {
 	solver := &Solver{
 		System:        runtime.NewSystem(ctx, "resonance"),
 		manifolds:     &sync.Map{},
 		pace:          system.Cfg.Resonance.LearningRate,
+		price:         price,
 		standardizers: &sync.Map{},
 		pending:       &sync.Map{},
 	}
@@ -103,10 +105,13 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		envelope.Resonance[symbol] = floatMetrics(reading)
+		metrics := floatMetrics(reading)
+		envelope.Resonance[symbol] = metrics
 
 		if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
-			io.Copy(ui.UI, reading)
+			ui.UI.WriteJSON(map[string]any{
+				"resonance": map[string]any{symbol: metrics},
+			})
 		}
 	}
 
@@ -190,6 +195,14 @@ func (solver *Solver) extractFeatures(
 	readings := make(map[string]float64, len(Features))
 
 	for _, feature := range Features {
+		if feature.Source == "broker" {
+			if value, ok := solver.brokerReading(name, feature.Label); ok {
+				readings[featureReadingKey(feature)] = value
+			}
+
+			continue
+		}
+
 		scopeKey := name
 		if feature.Scope == "aggregate" {
 			scopeKey = "aggregate"
@@ -467,6 +480,99 @@ func symbolsOnEnvelope(envelope *runtime.Envelope, metrics map[string]map[string
 
 	slices.Sort(out)
 	return out
+}
+
+/*
+brokerReading resolves one broker oracle feature for symbol. Veto dims are
+positive when the desk gate fails; approve dims carry the raw strength.
+*/
+func (solver *Solver) brokerReading(symbol, label string) (float64, bool) {
+	if solver == nil || solver.price == nil || symbol == "" || system.Cfg == nil || system.Cfg.Risk == nil {
+		return 0, false
+	}
+
+	price := solver.price
+	risk := system.Cfg.Risk
+
+	switch label {
+	case "volume_approve", "volume_veto":
+		volume := price.VolumeUSD(symbol)
+		floor := risk.MinMoverVolumeUSD
+
+		if label == "volume_approve" {
+			return volume, true
+		}
+
+		if floor <= 0 {
+			return 0, true
+		}
+
+		return maxFloat64(0, floor-volume) / floor, true
+
+	case "day_approve", "day_veto":
+		change := price.ChangePct(symbol)
+		floor := risk.MinMoverChangePct
+
+		if label == "day_approve" {
+			return change, true
+		}
+
+		if floor <= 0 {
+			return 0, true
+		}
+
+		return maxFloat64(0, floor-change) / floor, true
+
+	case "spread_approve", "spread_veto":
+		spread, ok := price.SpreadPct(symbol)
+		if !ok || spread == nil {
+			return 0, false
+		}
+
+		pct := spread.MustFloat64()
+		cap := risk.MaxEntrySpreadPct
+
+		if label == "spread_veto" {
+			return pct, true
+		}
+
+		if cap <= 0 {
+			return 0, true
+		}
+
+		return maxFloat64(0, cap-pct) / cap, true
+
+	case "book_approve", "book_veto":
+		intact := price.BookIntact(symbol)
+
+		if label == "book_approve" {
+			if ratio, ok := price.BackingRatio(symbol); ok {
+				return ratio, true
+			}
+
+			if intact {
+				return 1, true
+			}
+
+			return 0, true
+		}
+
+		if intact {
+			return 0, true
+		}
+
+		return 1, true
+	}
+
+	return 0, false
+}
+
+func maxFloat64(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+
+	return b
 }
 
 /*

@@ -1,11 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import {
-	atoms,
-	clockAtom,
-	ensureSignalStore,
-	latest,
-} from "#/collections/app";
+import { atoms, clockAtom, signals } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { Value } from "#/types/value";
 import {
@@ -101,7 +96,6 @@ export const XrayHawkesPanel = () => {
 
 	useEffect(() => {
 		let sample: HawkesTraceSample | undefined;
-		let lastFrameTimestamp: bigint | undefined;
 		let marketAt = 0n;
 		let frame = 0;
 		let lastMetrics: Record<string, number> = {};
@@ -206,28 +200,23 @@ export const XrayHawkesPanel = () => {
 		};
 
 		const update = () => {
-			const reading = latest("hawkes", focusSymbol);
-			const frameTs = reading?.timestamp;
-			if (reading && frameTs !== undefined) {
-				if (
-					lastFrameTimestamp === undefined ||
-					frameTs > lastFrameTimestamp
-				) {
-					lastFrameTimestamp = frameTs;
-					try {
-						const next = hawkesSample(reading);
-						if (next) sample = next;
-					} catch {
-						// Malformed fitted rows are skipped; live metrics stay drawable.
-					}
-				}
-			}
-
-			const live = reading?.metrics() ?? {};
+			const hit =
+				signals.hawkes.state[focusSymbol] ??
+				signals.hawkes.state[focusSymbol.replace(/\//g, "-")];
+			const live =
+				hit && typeof hit === "object"
+					? Object.fromEntries(
+							Object.entries(hit as Record<string, unknown>).filter(
+								(entry): entry is [string, number] =>
+									typeof entry[1] === "number" && Number.isFinite(entry[1]),
+							),
+						)
+					: {};
 			if (Object.keys(live).length > 0) {
 				lastMetrics = live;
 			}
 			const metrics = Object.keys(live).length > 0 ? live : lastMetrics;
+			const frameTs = undefined;
 			const buyRate = metrics["arrival_rate:buy"];
 			const sellRate = metrics["arrival_rate:sell"];
 			const radius = metrics.branching_spectral_radius;
@@ -295,7 +284,7 @@ export const XrayHawkesPanel = () => {
 		};
 
 		update();
-		const hawkesSub = ensureSignalStore("hawkes").subscribe(update);
+		const hawkesSub = signals.hawkes.subscribe(update);
 		const unsubscribeClock = clockAtom.subscribe((timestamp) => {
 			if (timestamp === null) return;
 

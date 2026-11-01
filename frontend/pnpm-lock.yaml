@@ -101,6 +101,9 @@ importers:
       scichart:
         specifier: ^6.0.15
         version: 6.0.15
+      scichart-financial-tools:
+        specifier: ^6.0.14
+        version: 6.0.14(scichart@6.0.15)
       scichart-react:
         specifier: ^2.1.0
         version: 2.1.0(react@19.2.6)(scichart@6.0.15)
@@ -2479,6 +2482,11 @@ packages:
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
+
+  scichart-financial-tools@6.0.14:
+    resolution: {integrity: sha512-Ykm6B69AJmPYJZ4VHYZFxEDJ+QacuQvTF2J7V/lIMl1kAR6zpcFBvIVRHpQXzGppdTR6+5wvabc8PoWKlyDcbQ==}
+    peerDependencies:
+      scichart: ^6.0.14
 
   scichart-react@2.1.0:
     resolution: {integrity: sha512-mCn8T0zrUztBLoMrVlIdua9kobL80YclD6BMXT4KomVXxYdkS7TD7A66qiOu05zt0bq1teJ2HPYcDa/qGsdAPQ==}
@@ -5239,6 +5247,10 @@ snapshots:
       xmlchars: 2.2.0
 
   scheduler@0.27.0: {}
+
+  scichart-financial-tools@6.0.14(scichart@6.0.15):
+    dependencies:
+      scichart: 6.0.15
 
   scichart-react@2.1.0(react@19.2.6)(scichart@6.0.15):
     dependencies:

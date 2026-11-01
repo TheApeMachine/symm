@@ -7,9 +7,10 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/signal/frame"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -34,26 +35,19 @@ Step processes every trade entry of the tick's frame; per-symbol flow state is
 keyed by the entry's symbol and each ready outcome lands on the envelope.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
+	var mu sync.Mutex
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		system.Q.Submit(func() {
-			defer wg.Done()
-
+	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
+		for _, data := range trades {
 			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
+				continue
 			}
 
 			price, _ := data.Price.Float64()
 			qty, _ := data.Qty.Float64()
 
 			if price <= 0 || qty <= 0 {
-				return
+				continue
 			}
 
 			var mid float64
@@ -68,7 +62,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			})
 
 			if mid <= 0 {
-				return
+				continue
 			}
 
 			input, ok, err := signal.sample.Measure(algorithm.TradeFlowInput{
@@ -79,24 +73,26 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				Side:          data.Side.String(),
 			})
 
-			if err != nil || !ok {
+			if err != nil {
 				signal.Error(err)
-				return
+				continue
+			}
+
+			if !ok {
+				continue
 			}
 
 			outcome, err := signal.process.Measure(input)
 			if err != nil {
 				signal.Error(err)
-				return
+				continue
 			}
 
 			mu.Lock()
 			envelope.CVD[data.Symbol] = &outcome
 			mu.Unlock()
-		})
-	}
-
-	wg.Wait()
+		}
+	})
 
 	ui.UI.Write(envelope.Publish("cvd"))
 	return envelope

@@ -8,9 +8,10 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/signal/frame"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -31,12 +32,6 @@ func NewSignal(
 ) *Signal {
 	sample, err := flow.NewSample(bookflowHistory)
 
-	errnie.Error(errnie.Err(
-		errnie.Validation,
-		"depthflow: new sample",
-		err,
-	))
-
 	signal := &Signal{
 		System:     runtime.NewSystem(ctx, "depthflow"),
 		books:      books,
@@ -46,7 +41,11 @@ func NewSignal(
 	}
 
 	if err != nil {
-		signal.Error(err)
+		signal.Error(errnie.Err(
+			errnie.Validation,
+			"depthflow: new sample",
+			err,
+		))
 	}
 
 	return signal
@@ -57,26 +56,19 @@ Step processes every trade entry of the tick's frame; book and trade pressure
 feed Bookflow, and each ready outcome lands on the envelope.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
+	var mu sync.Mutex
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		system.Q.Submit(func() {
-			defer wg.Done()
-
+	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
+		for _, data := range trades {
 			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
+				continue
 			}
 
 			price, _ := data.Price.Float64()
 			qty, _ := data.Qty.Float64()
 
 			if price <= 0 || qty <= 0 {
-				return
+				continue
 			}
 
 			var (
@@ -140,29 +132,31 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				})
 			})
 
-			if err != nil || !ready {
+			if err != nil {
 				signal.Error(err)
-				return
+				continue
+			}
+
+			if !ready {
+				continue
 			}
 
 			outcome, err := signal.process.Measure(input)
 
 			if err != nil {
 				signal.Error(err)
-				return
+				continue
 			}
 
 			if !outcome.Ready {
-				return
+				continue
 			}
 
 			mu.Lock()
 			envelope.DepthFlow[data.Symbol] = &outcome
 			mu.Unlock()
-		})
-	}
-
-	wg.Wait()
+		}
+	})
 
 	ui.UI.Write(envelope.Publish("depthflow"))
 	return envelope

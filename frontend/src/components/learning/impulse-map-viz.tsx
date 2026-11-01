@@ -843,7 +843,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					</span>
 				</div>
 
-				{/* Global grid regions R00–R14: stable order, brightness per tick */}
+				{/* Global grid regions R00–R22: stable order, brightness per tick */}
 				<div
 					data-l="region-brightness-panel"
 					className="absolute top-4 left-4 w-72 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl font-mono"

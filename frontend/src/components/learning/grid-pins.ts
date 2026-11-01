@@ -1,88 +1,104 @@
 import type { ImpulseNode } from "./types";
 
-/** Metric → region indices; mirrors nomagique/store/grid_pins.go and SIGNALS.md. */
+/** Mirrors nomagique/store/grid_pins.go and SIGNALS.md (23 regions). */
+export const REGION_COUNT = 23;
+
 export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	cvd: {
-		aggressor_backing: [0],
-		cvd_divergence: [3],
-		initiative_lock: [0],
-		flow_sign_flip: [3],
+		drive: [0],
+		net_fraction: [0],
+		balance: [1],
+		starvation: [2],
+		absorption: [3],
+		net: [3],
+		value: [0],
 	},
 	pumpdump: {
-		coiled_compression: [0],
-		starved_tape: [2],
-		rejection_tick: [3],
-		clock_acceleration: [6],
-		blowoff_dip: [8],
-		board_coiled: [9],
-		board_starved: [9],
+		compression: [0, 18],
+		precursor: [0],
+		rvol: [2],
+		exhaustion: [3, 8, 17],
+		ignition: [6],
+		trend: [5],
+		spread: [14],
+		value: [0],
+		strength: [0],
 	},
 	correlation: {
-		structural_alignment: [1],
-		board_dispersion_squeeze: [9],
-		structure_uncoupling: [13],
+		herd_score: [1, 18, 20],
+		strength: [1],
+		peak_score: [18],
+		alpha_score: [20],
+		noise_score: [19],
+		stress_score: [17, 19],
+		correlation: [1],
+		energy: [1],
 	},
 	leadlag: {
-		led_peer_share: [1],
-		anchor_breakdown: [13],
-		cohort_lift: [1],
-		lag_dispersion: [13],
+		inefficient_score: [1],
+		sync_score: [1, 20],
+		decoupled_score: [19],
+		stall_score: [19],
+		strength: [1],
 	},
 	depthflow: {
-		ask_absorption: [2],
-		bid_ladder_release: [4],
-		ask_ladder_release: [5],
-		bid_ladder_build: [7],
-		board_bid_release: [11],
-		touch_bid_decay: [4],
-		bid_touch_refresh: [7],
-		ask_ladder_build: [5],
-		board_ask_release: [11],
+		loaded_score: [2, 5, 7],
+		thin_score: [4, 8, 18, 21],
+		spoof_score: [4],
+		hypothesis_separation: [6],
+		neutral_score: [7],
+		value: [7],
 	},
 	toxicity: {
-		retreat_fraction: [4],
-		board_withdrawal_rate: [11],
+		support_score: [1, 7, 16, 22],
+		bluff_score: [4],
+		vacuum_score: [4, 18, 21],
+		value: [4],
+		strength: [4],
 	},
 	morphology: {
-		ask_vacuum: [5],
-		book_shape_stable: [7],
 		bid_notional_lean: [2],
+		ask_vacuum: [5],
+		shape_stable: [7],
+		value: [7],
+		strength: [7],
 	},
 	hawkes: {
-		supercritical_cascade: [6],
-		board_cascade: [10],
+		spectral_radius: [6, 18],
 		branching_asymmetry: [6],
-		board_branching_asymmetry: [10],
+		total_buy_descendants: [6],
+		total_sell_descendants: [6],
+		buy_arrival_rate: [7],
+		sell_arrival_rate: [8],
+		immediate_buy_offspring: [6],
+		immediate_sell_offspring: [6],
+		maturity: [18],
 	},
 	sentiment: {
-		cohort_still_aligned: [10],
+		surge_score: [7, 18],
+		breadth: [7, 18],
+		slump_score: [8, 17],
+		divergent_score: [19],
+		change: [12],
+		value: [18],
+		strength: [18],
 	},
 	liquidity: {
-		spread_expansion: [8],
-		market_friction: [12],
-		friction_drag_ratio: [12],
-		capacity_stress: [14],
-		liquidation_impact: [14],
-		move_per_spread: [8],
-		touch_friction: [12],
-		spread_tail_gap: [14],
+		scarcity_score: [8, 13, 21],
+		median_score: [14, 22],
+		depth_score: [16, 22],
+		value: [14],
+		strength: [14],
 	},
 };
 
-export const CATEGORY_NAMES = [
-	"ENTER",
-	"EXIT",
-	"REGIME",
-	"HISTORY",
-	"RISK",
-] as const;
+export const CATEGORY_NAMES = ["ENTER", "EXIT", "HOLD", "ORACLE"] as const;
 
 export const regionCategoryIndex = (regionKey: number): number => {
 	if (regionKey <= 2) return 0;
 	if (regionKey <= 5) return 1;
-	if (regionKey <= 9) return 2;
-	if (regionKey <= 11) return 3;
-	return 4;
+	if (regionKey <= 8) return 2;
+	return 3;
 };
 
 export const sympathyAnchor = (
@@ -99,10 +115,17 @@ export const sympathyAnchor = (
 			y: height * (0.22 + (regionKey - 3) * 0.16),
 		};
 	}
-	const slot = Math.min(Math.max(regionKey - 6, 0), 8);
+	if (regionKey <= 8) {
+		return {
+			x: width * (0.2 + (regionKey - 6) * 0.24),
+			y: height * 0.62,
+		};
+	}
+
+	const slot = Math.min(Math.max(regionKey - 9, 0), 13);
 	return {
-		x: width * (0.14 + (slot / 8) * 0.72),
-		y: height * 0.78,
+		x: width * (0.08 + (slot / 13) * 0.84),
+		y: height * 0.82,
 	};
 };
 
@@ -114,37 +137,12 @@ export interface CanonicalPinDef {
 	regionId: string;
 	category: number;
 	categoryName: string;
-	/** When set, layers live under kernel/aggregate/… instead of kernel/symbol/… */
-	scope?: "aggregate";
 }
-
-const AGGREGATE_METRICS: Record<string, Set<string>> = {
-	correlation: new Set([
-		"structural_alignment",
-		"board_dispersion_squeeze",
-		"structure_uncoupling",
-	]),
-	pumpdump: new Set(["board_coiled", "board_starved"]),
-	depthflow: new Set(["board_bid_release", "board_ask_release"]),
-	hawkes: new Set(["board_cascade", "board_branching_asymmetry"]),
-	liquidity: new Set([
-		"market_friction",
-		"friction_drag_ratio",
-		"capacity_stress",
-		"spread_tail_gap",
-	]),
-	sentiment: new Set(["cohort_still_aligned"]),
-	toxicity: new Set(["board_withdrawal_rate"]),
-	leadlag: new Set(["anchor_breakdown", "lag_dispersion"]),
-};
-
-const pinScope = (source: string, metric: string): "aggregate" | undefined =>
-	AGGREGATE_METRICS[source]?.has(metric) ? "aggregate" : undefined;
 
 export const getCanonicalPinDefs = (): CanonicalPinDef[] => {
 	const pins: CanonicalPinDef[] = [];
 
-	for (let regionKey = 0; regionKey < 15; regionKey++) {
+	for (let regionKey = 0; regionKey < REGION_COUNT; regionKey++) {
 		const regionId = `R${String(regionKey).padStart(2, "0")}`;
 		const category = regionCategoryIndex(regionKey);
 		const categoryName = CATEGORY_NAMES[category];
@@ -152,7 +150,6 @@ export const getCanonicalPinDefs = (): CanonicalPinDef[] => {
 		for (const [source, metricMap] of Object.entries(REGION_METRIC_PINS)) {
 			for (const [metric, targetRegions] of Object.entries(metricMap)) {
 				if (targetRegions.includes(regionKey)) {
-					const scope = pinScope(source, metric);
 					pins.push({
 						id: `${source}:${metric}:${regionId}`,
 						source,
@@ -161,7 +158,6 @@ export const getCanonicalPinDefs = (): CanonicalPinDef[] => {
 						regionId,
 						category,
 						categoryName,
-						...(scope ? { scope } : {}),
 					});
 				}
 			}
@@ -184,7 +180,7 @@ export const createCanonicalGridNodes = (): ImpulseNode[] => {
 
 export const getCanonicalRegionCounts = (): Record<number, number> => {
 	const counts: Record<number, number> = {};
-	for (let i = 0; i < 15; i++) counts[i] = 0;
+	for (let i = 0; i < REGION_COUNT; i++) counts[i] = 0;
 	for (const [, metricMap] of Object.entries(REGION_METRIC_PINS)) {
 		for (const [, targetRegions] of Object.entries(metricMap)) {
 			for (const r of targetRegions) {

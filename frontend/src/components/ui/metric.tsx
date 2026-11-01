@@ -1,11 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { memo, useEffect, useRef } from "react";
-import { atoms } from "#/collections/app";
-import {
-	ensureStore,
-	type Labels,
-	labelsAt,
-} from "#/collections/envelope";
+import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { sourceHeadline } from "#/components/terminal/kernel-meta";
 import {
@@ -21,12 +16,45 @@ import { scaleSparklineValues, setSparkline } from "./sparkline";
 
 const SERIES_WINDOW = 120;
 
-/** Latest label map for this kernel at the dashboard focus symbol. */
+export type Labels = Record<string, number>;
+
+const numericLabels = (value: unknown): Labels | null => {
+	if (!value || typeof value !== "object") return null;
+
+	const out: Labels = {};
+	for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			out[key] = raw;
+			continue;
+		}
+
+		// Flatten one nested object (e.g. hawkes fit.spectral_radius).
+		if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+			for (const [inner, nested] of Object.entries(
+				raw as Record<string, unknown>,
+			)) {
+				if (typeof nested === "number" && Number.isFinite(nested)) {
+					out[inner] = nested;
+				}
+			}
+		}
+	}
+
+	return Object.keys(out).length > 0 ? out : null;
+};
+
+/** Latest numeric fields for this kernel at the dashboard focus symbol. */
 export const useKernelReading = (kernel: string): Labels | null => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const store = ensureStore(kernel);
+	const store = signals[kernel];
 
-	return useSelector(store, (state) => labelsAt(state, focusSymbol));
+	return useSelector(store, (state) => {
+		if (!store || !state) return null;
+		return (
+			numericLabels(state[focusSymbol]) ??
+			numericLabels(state[focusSymbol.replace(/\//g, "-")])
+		);
+	});
 };
 
 interface MetricProps {
@@ -72,7 +100,7 @@ export const MetricRow = memo(
 		return (
 			<div
 				ref={rootRef}
-				className="flex min-h-0 flex-1 flex-col overflow-hidden"
+				className="min-h-0 flex-1 flex flex-col overflow-hidden"
 			>
 				<Button
 					variant="bare"
@@ -104,7 +132,7 @@ export const MetricRow = memo(
 							data-k="badge"
 							data-metric-badge={headline}
 							label={sample === null ? "Standby" : "Live"}
-							variant={sample === null ? "disabled" : "default"}
+							variant={sample === null ? "disabled" : "info"}
 							size="xxs"
 						/>
 					</Flex.Row>

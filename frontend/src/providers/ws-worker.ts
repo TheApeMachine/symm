@@ -12,6 +12,8 @@ const RECONNECT_MAX_MS = 10_000;
 let currentRoute = "dashboard";
 let pendingCommands: Record<string, unknown>[] = [];
 
+const textDecoder = new TextDecoder();
+
 const queueCommand = (command: Record<string, unknown>) => {
 	if (command.type === "hindsight") {
 		pendingCommands = pendingCommands.filter(
@@ -64,9 +66,6 @@ const sendPositionExit = (symbol: string) => {
 };
 
 const teardownSocket = () => {
-	// Invalidate the current socket before an intentional close so its stale
-	// lifecycle handlers can never schedule a reconnect for a replaced or
-	// deliberately disconnected connection.
 	socketGeneration += 1;
 
 	if (
@@ -95,6 +94,38 @@ const scheduleReconnect = () => {
 		reconnectAttempts += 1;
 		connect(connectUrl);
 	}, delay);
+};
+
+const asArrayBuffer = (raw: unknown): ArrayBuffer | null => {
+	if (raw instanceof ArrayBuffer) {
+		return raw;
+	}
+
+	if (raw instanceof Uint8Array) {
+		return raw.buffer.slice(
+			raw.byteOffset,
+			raw.byteOffset + raw.byteLength,
+		) as ArrayBuffer;
+	}
+
+	if (
+		raw &&
+		typeof raw === "object" &&
+		"buffer" in raw &&
+		(raw as { buffer: unknown }).buffer instanceof ArrayBuffer
+	) {
+		const view = raw as {
+			buffer: ArrayBuffer;
+			byteOffset: number;
+			byteLength: number;
+		};
+		return view.buffer.slice(
+			view.byteOffset,
+			view.byteOffset + view.byteLength,
+		);
+	}
+
+	return null;
 };
 
 const connect = (url: string) => {
@@ -141,7 +172,21 @@ const connect = (url: string) => {
 
 	socket.addEventListener("message", (event) => {
 		try {
-			self.postMessage({ type: "ENVELOPE", payload: JSON.parse(event.data) });
+			const arrayBuffer = asArrayBuffer(event.data);
+			if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+				return;
+			}
+
+			const bytes = new Uint8Array(arrayBuffer);
+			// Hub dashboard traffic is JSON envelopes only.
+			if (bytes[0] !== 0x7b /* '{' */) {
+				return;
+			}
+
+			self.postMessage({
+				type: "ENVELOPE",
+				payload: JSON.parse(textDecoder.decode(bytes)),
+			});
 		} catch (err) {
 			console.error("error", err);
 			self.postMessage({ type: "ERROR", error: String(err) });
@@ -165,8 +210,6 @@ self.addEventListener("message", (event: MessageEvent) => {
 			connect(message.url ?? "");
 			return;
 		case "DISCONNECT":
-			// Explicit teardown cancels any pending reconnect so a deliberate
-			// disconnect (unmount, teardown) never spins the backoff loop.
 			if (reconnectTimer !== null) {
 				clearTimeout(reconnectTimer);
 				reconnectTimer = null;

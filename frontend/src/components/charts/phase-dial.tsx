@@ -1,6 +1,5 @@
 import { createStore } from "@tanstack/store";
 import { createRef, useEffect } from "react";
-import type { FluidOscillator } from "#/components/fluid-3d/wire";
 import {
 	clearCanvas,
 	resizeCanvas,
@@ -18,6 +17,14 @@ its oscillator amplitude. Bid and ask resultant vectors show the amplitude-
 weighted phase alignment within each side. The resident omega modes remain a
 faint field context; they are not rotated or presented as retrieval results.
 */
+
+export type FluidOscillator = {
+	phase: number;
+	omega: number;
+	amplitude: number;
+	heat: number;
+	side: "bid" | "ask";
+};
 
 const phaseDialCanvasRef = createRef<HTMLCanvasElement>();
 

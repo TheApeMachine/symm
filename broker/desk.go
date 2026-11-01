@@ -3,17 +3,16 @@ package broker
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"slices"
 	"sync"
 
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -76,16 +75,55 @@ func (desk *Desk) Hello() {
 	// The snapshot replaces the book. A mark tick publishes one lot at a
 	// time and must not reuse this frame, or the page drops every lot that
 	// did not move.
-	io.Copy(ui.UI, data.NewValue("positions", "snapshot", "all").Append(
+	desk.publishPositions(
+		"snapshot",
 		append(
 			desk.positions.AllPositions(),
 			desk.virtuals.AllPositions()...,
-		), "positions",
-	))
+		)...,
+	)
 
-	if frame := desk.balance.Frame(); frame != nil {
-		io.Copy(ui.UI, frame)
+	if desk.balance != nil {
+		desk.balance.Publish()
 	}
+}
+
+/*
+publishPositions fans open lots to the dashboard as plain JSON.
+*/
+func (desk *Desk) publishPositions(mode string, lots ...*Position) {
+	if ui.UI == nil || !ui.UI.Active() {
+		return
+	}
+
+	book := make(map[string]any, len(lots))
+
+	for _, position := range lots {
+		if position == nil {
+			continue
+		}
+
+		scope := position.ID
+
+		if scope == "" {
+			scope = position.Symbol
+
+			if position.Virtual {
+				scope = "virtual:" + scope
+			}
+		}
+
+		if scope == "" {
+			continue
+		}
+
+		book[scope] = position
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"positions":      book,
+		"positions_mode": mode,
+	})
 }
 
 /*
@@ -204,19 +242,7 @@ func (desk *Desk) Refresh(symbols []string) {
 
 		position.Update(mark)
 
-		scope := position.ID
-
-		if scope == "" {
-			scope = position.Symbol
-
-			if position.Virtual {
-				scope = "virtual:" + scope
-			}
-		}
-
-		io.Copy(ui.UI, data.NewValue("positions", "update", scope).Append(
-			position, "position",
-		))
+		desk.publishPositions("update", position)
 	}
 }
 
@@ -234,34 +260,23 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 		desk.price.Tape.Note(trades)
 	}
 
+	updated := make([]*Position, 0, len(trades))
+
 	for _, trade := range trades {
 		var position *Position
 
 		if position = desk.positions.Get(trade.Symbol, true); position != nil {
 			position.Update(&trade.Price)
+			updated = append(updated, position)
 		}
 
 		if position = desk.virtuals.Get(trade.Symbol, true); position != nil {
 			position.Update(&trade.Price)
+			updated = append(updated, position)
 		}
-
-		if position == nil {
-			continue
-		}
-
-		scope := position.ID
-
-		if scope == "" {
-			scope = trade.Symbol
-			if position.Virtual {
-				scope = "virtual:" + scope
-			}
-		}
-
-		io.Copy(ui.UI, data.NewValue("positions", "update", scope).Append(
-			position, "position",
-		))
 	}
+
+	desk.publishPositions("update", updated...)
 }
 
 /*
@@ -326,13 +341,10 @@ func (desk *Desk) Enter(
 		"virtual":  desk.virtuals,
 	} {
 		if cache.Has(symbol) {
-			desk.auditEntryBlocked(symbol, "slot", key+" already exists", virtual)
+			why := key + " already exists"
+			desk.auditEntryBlocked(symbol, "slot", why, virtual)
 
-			return errnie.Err(
-				errnie.TooManyRequests,
-				"[desk.Enter] "+key+" already exists",
-				nil,
-			)
+			return &EntryDenial{Gate: "slot", Reason: why}
 		}
 	}
 
@@ -359,25 +371,17 @@ func (desk *Desk) Enter(
 		errnie.Warn("[desk.Enter] failed to allocate quantity", "symbol", symbol, "why", why)
 		desk.auditEntryBlocked(symbol, "allocate", why, virtual)
 
-		return errnie.Err(
-			errnie.NotFound,
-			fmt.Sprintf(
-				"[desk.Enter] failed to allocate quantity for %s: %s",
-				symbol, why,
-			),
-			nil,
-		)
+		return &EntryDenial{Gate: "allocate", Reason: why}
 	}
 
-	if desk.price != nil {
+	bypass := system.Cfg != nil && system.Cfg.Learning != nil &&
+		system.Cfg.Learning.ResonanceBypass
+
+	if desk.price != nil && !(virtual && bypass) {
 		if phys := CheckEntryPhysical(desk.price, symbol); !phys.Allowed {
 			desk.auditEntryBlocked(symbol, "physical", phys.Reason, virtual)
 
-			return errnie.Err(
-				errnie.Validation,
-				"[desk.Enter] "+phys.Reason+" for "+symbol,
-				nil,
-			)
+			return &EntryDenial{Gate: "physical", Reason: phys.Reason}
 		}
 	}
 
@@ -400,7 +404,8 @@ func (desk *Desk) Enter(
 	if err := position.Enter(path, qty); err != nil {
 		cache.Drop(position.Symbol)
 		desk.auditEntryBlocked(symbol, "send", err.Error(), virtual)
-		return err
+
+		return &EntryDenial{Gate: "send", Reason: err.Error()}
 	}
 
 	if err := desk.history.Store(data.NewValue(
@@ -419,9 +424,7 @@ func (desk *Desk) Enter(
 
 	// The entry is live. Publish this lot; the rest of the book is already
 	// on the page from the last snapshot or its own updates.
-	io.Copy(ui.UI, data.NewValue("positions", "update", position.ID).Append(
-		position, "position",
-	))
+	desk.publishPositions("update", position)
 
 	return nil
 }

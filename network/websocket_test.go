@@ -3,9 +3,11 @@ package network
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -237,4 +239,57 @@ func TestWebsocketOnDisconnectHook(t *testing.T) {
 	if drops.Load() != 1 {
 		t.Fatalf("a drop with no live connection must not re-run the hook, got %d", drops.Load())
 	}
+}
+
+func TestWebsocketWriteSerializesConcurrentWriters(t *testing.T) {
+	if system.Cfg == nil {
+		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
+	}
+	if system.Cfg.WebSocket == nil {
+		system.Cfg.WebSocket = system.NewWebSocket()
+	}
+
+	upgrader := gorilla.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		go func() {
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	client := NewWebsocketClient(t.Context())
+	if err := client.Open(wsURL); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	const writers = 32
+	var started sync.WaitGroup
+	var done sync.WaitGroup
+	started.Add(writers)
+	done.Add(writers)
+	gate := make(chan struct{})
+
+	for i := 0; i < writers; i++ {
+		go func(n int) {
+			defer done.Done()
+			started.Done()
+			<-gate
+			if err := client.Write(fmt.Appendf(nil, `{"n":%d}`, n)); err != nil {
+				t.Errorf("write %d: %v", n, err)
+			}
+		}(i)
+	}
+
+	started.Wait()
+	close(gate)
+	done.Wait()
 }

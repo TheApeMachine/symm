@@ -263,3 +263,4 @@ func TestInsertMinPathLength(t *testing.T) {
 		So(ok, ShouldBeTrue)
 	})
 }
+

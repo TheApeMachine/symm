@@ -9,4 +9,4 @@ export type Book = "paper" | "virtual";
 
 export const bookAtom = createAtom<Book>("paper");
 
-export const triePrefix = (book: Book = bookAtom.get()) => "model/paths";
+export const triePrefix = (_book: Book = bookAtom.get()) => "model/paths";

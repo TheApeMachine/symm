@@ -1,14 +1,7 @@
 import {
-	s3KeyFromIndex,
-	thresholdFromExploreBytes,
-} from "#/collections/cognition";
-import { framePositionRows } from "#/collections/positions";
-import {
 	EXPLORE_BASE_THRESHOLD,
 	filterExploreKeys,
-	pathBookPolicyKey,
 } from "#/components/learning/explore-path";
-import { parseOneValue, type WireValue } from "#/types/decoder";
 
 export type ClosedHistoryEntry = {
 	stamp: { epoch: bigint; tick: bigint; timestamp: bigint };
@@ -31,93 +24,69 @@ export type S3ExploreCompact = {
 
 export type S3PrefixCompact = S3ClosedCompact | S3ExploreCompact;
 
-export const isS3ListPrefix = (wire: WireValue): boolean =>
-	wire.origin === "s3" && wire.role === "prefix";
+const asFiniteNumber = (value: unknown): number | null =>
+	typeof value === "number" && Number.isFinite(value) ? value : null;
 
-const isClosedListScope = (scope: string): boolean =>
-	scope === "position/closed" ||
-	scope === "virtual/closed" ||
-	scope.startsWith("position/closed/") ||
-	scope.startsWith("virtual/closed/");
+const asBigInt = (value: unknown): bigint => {
+	if (typeof value === "bigint") return value;
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return BigInt(Math.trunc(value));
+	}
+	if (typeof value === "string" && value !== "") {
+		try {
+			return BigInt(value);
+		} catch {
+			return 0n;
+		}
+	}
+	return 0n;
+};
 
-const isExploreListScope = (scope: string): boolean =>
-	scope === "model/paths" || scope.startsWith("model/paths/");
-
-export const compactS3ListPrefix = (
-	wire: WireValue,
-): S3PrefixCompact | null => {
-	if (!isS3ListPrefix(wire)) {
+/*
+pathsListingFromEnvelope folds hub WriteJSON {"paths":{…}} into the explore
+compact the cognitive tree already ingests.
+*/
+export const pathsListingFromEnvelope = (
+	payload: unknown,
+): S3ExploreCompact | null => {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
 		return null;
 	}
 
-	if (isClosedListScope(wire.scope)) {
-		return compactClosedHistory(wire);
+	const body = payload as {
+		scope?: unknown;
+		epoch?: unknown;
+		thresholds?: unknown;
+		policy_keys?: unknown;
+		policyKeys?: unknown;
+	};
+
+	const scope = typeof body.scope === "string" ? body.scope : "";
+	if (scope !== "model/paths" && !scope.startsWith("model/paths/")) {
+		return null;
 	}
 
-	if (isExploreListScope(wire.scope)) {
-		return compactExplorePaths(wire);
-	}
-
-	return null;
-};
-
-const compactClosedHistory = (wire: WireValue): S3ClosedCompact => {
-	const entries: ClosedHistoryEntry[] = [];
-
-	for (const layer of wire.layers) {
-		const nested = parseOneValue(layer);
-		if (!nested) {
-			continue;
-		}
-
-		if (nested.role !== "closed") {
-			continue;
-		}
-
-		if (nested.origin !== "position" && nested.origin !== "virtual") {
-			continue;
-		}
-
-		const row = framePositionRows(nested)[0];
-		if (!row || typeof row.id !== "string" || row.id === "") {
-			continue;
-		}
-
-		entries.push({
-			stamp: {
-				epoch: nested.epoch ?? 0n,
-				tick: nested.tick ?? 0n,
-				timestamp: nested.timestamp ?? 0n,
-			},
-			row,
-		});
-	}
-
-	return { kind: "closed", scope: wire.scope, entries };
-};
-
-const compactExplorePaths = (wire: WireValue): S3ExploreCompact => {
-	const policyKeys: string[] = [];
 	const thresholds: Record<string, number> = {};
-
-	for (let i = 0; i < wire.index.length; i++) {
-		const rawKey = s3KeyFromIndex(wire.prefix, wire.index[i]);
-		if (rawKey === null || !rawKey.startsWith(`${wire.scope}/`)) {
-			continue;
+	if (body.thresholds && typeof body.thresholds === "object") {
+		for (const [key, raw] of Object.entries(
+			body.thresholds as Record<string, unknown>,
+		)) {
+			const value = asFiniteNumber(raw);
+			thresholds[key] = value ?? EXPLORE_BASE_THRESHOLD;
 		}
+	}
 
-		const key = pathBookPolicyKey(rawKey, wire.layers[i]);
-		if (!policyKeys.includes(key)) {
-			policyKeys.push(key);
-		}
+	const listedKeys = Array.isArray(body.policy_keys)
+		? body.policy_keys
+		: Array.isArray(body.policyKeys)
+			? body.policyKeys
+			: Object.keys(thresholds);
 
-		const threshold = thresholdFromExploreBytes(wire.layers[i]);
-		if (threshold !== null) {
-			thresholds[key] = threshold;
-			continue;
-		}
-
-		thresholds[key] = EXPLORE_BASE_THRESHOLD;
+	const policyKeys: string[] = [];
+	for (const key of listedKeys) {
+		if (typeof key !== "string" || key === "") continue;
+		if (!(key in thresholds)) thresholds[key] = EXPLORE_BASE_THRESHOLD;
+		policyKeys.push(key);
 	}
 
 	policyKeys.sort();
@@ -126,17 +95,19 @@ const compactExplorePaths = (wire: WireValue): S3ExploreCompact => {
 	const keptThresholds: Record<string, number> = {};
 	for (const key of keptKeys) {
 		const threshold = thresholds[key];
-		if (threshold !== undefined) {
-			keptThresholds[key] = threshold;
-		}
+		if (threshold !== undefined) keptThresholds[key] = threshold;
 	}
 
 	const epoch =
-		wire.epoch != null && wire.epoch !== 0n ? String(wire.epoch) : null;
+		typeof body.epoch === "string" && body.epoch !== ""
+			? body.epoch
+			: typeof body.epoch === "number" && Number.isFinite(body.epoch)
+				? String(Math.trunc(body.epoch))
+				: null;
 
 	return {
 		kind: "explore",
-		scope: wire.scope,
+		scope: "model/paths",
 		epoch,
 		policyKeys: keptKeys,
 		thresholds: keptThresholds,
@@ -144,24 +115,58 @@ const compactExplorePaths = (wire: WireValue): S3ExploreCompact => {
 };
 
 /*
-partitionWireBatch keeps ListPrefix frames off the main thread payload. Their
-layers are folded into S3PrefixCompact records in the worker.
+closedListingFromEnvelope folds hub WriteJSON {"closed":{…}} into history
+entries without decoding data.Value blobs.
 */
-export const partitionWireBatch = (
-	wires: WireValue[],
-): { values: WireValue[]; s3: S3PrefixCompact[] } => {
-	const values: WireValue[] = [];
-	const s3: S3PrefixCompact[] = [];
+export const closedListingFromEnvelope = (
+	payload: unknown,
+): S3ClosedCompact | null => {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		return null;
+	}
 
-	for (const wire of wires) {
-		const compact = compactS3ListPrefix(wire);
-		if (compact) {
-			s3.push(compact);
+	const body = payload as { scope?: unknown; entries?: unknown };
+	const scope = typeof body.scope === "string" ? body.scope : "";
+	if (
+		scope !== "position/closed" &&
+		scope !== "virtual/closed" &&
+		!scope.startsWith("position/closed/") &&
+		!scope.startsWith("virtual/closed/")
+	) {
+		return null;
+	}
+
+	if (!Array.isArray(body.entries)) {
+		return { kind: "closed", scope, entries: [] };
+	}
+
+	const entries: ClosedHistoryEntry[] = [];
+	for (const raw of body.entries) {
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+
+		const entry = raw as {
+			epoch?: unknown;
+			tick?: unknown;
+			timestamp?: unknown;
+			row?: unknown;
+		};
+
+		if (!entry.row || typeof entry.row !== "object" || Array.isArray(entry.row)) {
 			continue;
 		}
 
-		values.push(wire);
+		const row = entry.row as Record<string, unknown>;
+		if (typeof row.id !== "string" || row.id === "") continue;
+
+		entries.push({
+			stamp: {
+				epoch: asBigInt(entry.epoch),
+				tick: asBigInt(entry.tick),
+				timestamp: asBigInt(entry.timestamp),
+			},
+			row,
+		});
 	}
 
-	return { values, s3 };
+	return { kind: "closed", scope, entries };
 };

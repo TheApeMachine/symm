@@ -55,7 +55,7 @@ type Price struct {
 	Instrument *Instrument
 	Books      *Book
 	Tape       *Tape
-	Mover      *Mover
+	ticker     sync.Map
 	balance    *Balance
 	private    Transport
 	fees       *sync.Map
@@ -80,7 +80,6 @@ func NewPrice(
 		private:    private,
 		Books:      books,
 		Tape:       NewTape(),
-		Mover:      NewMover(),
 		balance:    balance,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
@@ -90,8 +89,8 @@ func NewPrice(
 		return nil
 	}
 
-	price.refreshMovers()
-	price.pollMovers()
+	price.refreshTicker()
+	price.pollTicker()
 
 	price.Transition(runtime.READY)
 	return price

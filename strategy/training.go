@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/theapemachine/nomagique/runtime"
@@ -54,6 +53,8 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
+		training.lightBroker(symbol, regions)
+		training.grid.Emit(regions, training.open(symbol))
 		envelope.Regions[symbol] = regions
 
 		cut := training.stepCut(symbol, regions)
@@ -93,29 +94,85 @@ func (training *Training) ResetSequencer(symbol string) {
 	loaded.(*tokenizer.Sequencer).Reset()
 }
 
-/*
-stepCut feeds the brightest lit region into the symbol's sequencer and
-returns the live path cut.
-*/
-func (training *Training) stepCut(symbol string, regions []*runtime.Region) tokenizer.Tokens {
-	var best *runtime.Region
+func (training *Training) open(symbol string) bool {
+	if training == nil || training.desk == nil || symbol == "" {
+		return false
+	}
 
-	for _, region := range regions {
+	position := training.desk.Position(symbol)
+	return position != nil && !position.IsClosed()
+}
+
+// lightBroker paints mover / book oracle sides before Emit collapses each pair.
+func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
+	if training == nil || training.price == nil || symbol == "" {
+		return
+	}
+
+	if len(regions) < store.RegionCount {
+		return
+	}
+
+	price := training.price
+	risk := system.Cfg.Risk
+
+	training.shine(regions, 9, 10, price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD)
+	training.shine(regions, 11, 12, price.ChangePct(symbol) >= risk.MinMoverChangePct)
+
+	spreadOK := false
+
+	if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
+		spreadOK = spread.MustFloat64() <= risk.MaxEntrySpreadPct
+	}
+
+	training.shine(regions, 13, 14, spreadOK)
+	training.shine(regions, 15, 16, price.BookIntact(symbol))
+}
+
+func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
+	if ok {
+		store.Shine(regions[approve])
+		return
+	}
+
+	store.Shine(regions[veto])
+}
+
+// stepCut feeds one regime letter per tick into the time-series sequencer.
+func (training *Training) stepCut(symbol string, regions []*runtime.Region) tokenizer.Tokens {
+	token, brightness := store.PathToken(regions)
+
+	if token == "" {
+		return tokenizer.Tokens{}
+	}
+
+	return training.Sequencer(symbol).Step(token, brightness)
+}
+
+/*
+Board is the Emit region set. Tradable means approve winners only — no veto.
+*/
+type Board []*runtime.Region
+
+func (board Board) Tradable() bool {
+	approved := false
+
+	for _, region := range board {
 		if region == nil || region.Brightness <= 0 {
 			continue
 		}
 
-		if best == nil || region.Brightness > best.Brightness {
-			best = region
+		key := int(region.Key)
+		if key < 9 || key > 22 {
+			continue
 		}
+
+		if key&1 == 1 {
+			return false
+		}
+
+		approved = true
 	}
 
-	if best == nil {
-		return tokenizer.Tokens{}
-	}
-
-	return training.Sequencer(symbol).Step(
-		fmt.Sprintf("R%02d", best.Key),
-		best.Brightness,
-	)
+	return approved
 }

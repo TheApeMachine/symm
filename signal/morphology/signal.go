@@ -8,9 +8,10 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/signal/frame"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -31,17 +32,10 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
+	var mu sync.Mutex
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		system.Q.Submit(func() {
-			defer wg.Done()
-
+	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
+		for _, data := range trades {
 			var (
 				input equation.MorphologyInput
 				ready bool
@@ -72,24 +66,26 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				})
 			})
 
-			if err != nil || !ready {
+			if err != nil {
 				signal.Error(err)
-				return
+				continue
+			}
+
+			if !ready {
+				continue
 			}
 
 			outcome, err := signal.process.Measure(input)
 			if err != nil {
 				signal.Error(err)
-				return
+				continue
 			}
 
 			mu.Lock()
 			envelope.Morphology[data.Symbol] = &outcome
 			mu.Unlock()
-		})
-	}
-
-	wg.Wait()
+		}
+	})
 
 	ui.UI.Write(envelope.Publish("morphology"))
 	return envelope
