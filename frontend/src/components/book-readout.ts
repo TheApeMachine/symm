@@ -1,5 +1,4 @@
 import type { Book } from "#/collections/book";
-import type { GaugeMark } from "#/components/ui/gauge";
 
 const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
@@ -152,77 +151,6 @@ export type PositionReadout = {
 	exitPending: boolean;
 };
 
-/*
-Open PnL and exit_vwap come from broker/price book walks; exit_price is the settled fill when closed.
-Fills only help detect venue round trips when closed_at is absent.
-*/
-const positionCostQuote = (row: Record<string, unknown>): number | null => {
-	const pnl = decimal(row.pnl);
-	const pnlPct = decimal(row.pnl_pct);
-	if (pnl !== null && pnlPct !== null && pnlPct !== 0) {
-		return pnl / (pnlPct / 100);
-	}
-
-	const qty = decimal(row.qty);
-	const entry = decimal(row.entry_price);
-	if (qty !== null && entry !== null) {
-		return qty * entry;
-	}
-
-	return null;
-};
-
-/*
-Maps close-now return to the P&L gauge fill position (0 = max loss, 0.5 = flat, 1 = max gain).
-*/
-export const pnlGaugeValue = (returnPct: number | undefined): number | undefined => {
-	if (returnPct === undefined) return undefined;
-	return 0.5 + Math.max(-0.5, Math.min(0.5, returnPct * 5));
-};
-
-/*
-Book explore exits: profit at zero close-now P&L; stop at twice the opening underwater gap.
-*/
-export const exploreExitGaugeMarks = (
-	row: Record<string, unknown>,
-): GaugeMark[] => {
-	const marks: GaugeMark[] = [
-		{
-			at: 0.5,
-			color: "var(--up)",
-			title: "Profit exit — close-now P&L above zero",
-		},
-	];
-
-	if (row.virtual !== true) {
-		return marks;
-	}
-
-	const openPnl = decimal(row.open_pnl);
-	if (openPnl === null || openPnl >= 0) {
-		return marks;
-	}
-
-	const cost = positionCostQuote(row);
-	if (cost === null || cost <= 0) {
-		return marks;
-	}
-
-	const stopReturn = (2 * openPnl) / cost;
-	const stopAt = pnlGaugeValue(stopReturn);
-	if (stopAt === undefined) {
-		return marks;
-	}
-
-	marks.push({
-		at: stopAt,
-		color: "var(--down)",
-		title: `Stop exit — symmetric book hurdle (${(stopReturn * 100).toFixed(2)}% close-now)`,
-	});
-
-	return marks;
-};
-
 export const positionReadout = (
 	row: Record<string, unknown>,
 ): PositionReadout => {
@@ -314,48 +242,3 @@ export const countsTowardBookPerformance = (
 	row: Record<string, unknown>,
 	book: Book,
 ): boolean => book !== "virtual" || row.path_found === true;
-
-export const lotReturn = (row: Record<string, unknown>): number | null =>
-	positionReadout(row).returnPct;
-
-/* Closed lots own book performance; open lots stand in until one closes. */
-export const bookReadout = (rows: Record<string, unknown>[], book: Book) => {
-	const held = openOnBook(rows, book).filter((row) =>
-		countsTowardBookPerformance(row, book),
-	);
-	const closed = closedOnBook(rows, book).filter((row) =>
-		countsTowardBookPerformance(row, book),
-	);
-	const sample = closed.length > 0 ? closed : held;
-	const returns = sample
-		.map(lotReturn)
-		.filter((value): value is number => value !== null);
-
-	/*
-	A frame where no lot prices yet (returns empty) must not blank the
-	figures the previous frame showed; carry the last computed readout.
-	*/
-	const next =
-		returns.length > 0
-			? {
-					winRate: returns.filter((value) => value > 0).length / returns.length,
-					edge: returns.reduce((sum, value) => sum + value, 0) / returns.length,
-					closed: closed.length,
-				}
-			: null;
-
-	const carried = lastBookReadout.get(book);
-
-	if (next === null) {
-		return carried ?? { winRate: null, edge: null, closed: closed.length };
-	}
-
-	lastBookReadout.set(book, next);
-
-	return next;
-};
-
-const lastBookReadout = new Map<
-	Book,
-	{ winRate: number; edge: number; closed: number }
->();

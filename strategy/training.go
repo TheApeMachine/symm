@@ -4,10 +4,12 @@ import (
 	"context"
 	"sync"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
+	symmstore "github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -17,7 +19,8 @@ type Training struct {
 	price      *broker.Price
 	desk       *broker.Desk
 	grid       *store.Grid
-	client     *store.Client
+	client     *symmstore.Client
+	catalog    *tokenizer.GrammarCatalog
 	sequencers *sync.Map
 }
 
@@ -26,14 +29,19 @@ func NewTraining(
 	price *broker.Price,
 	desk *broker.Desk,
 ) *Training {
-	return &Training{
+	training := &Training{
 		System:     runtime.NewSystem(ctx, "training", price),
 		price:      price,
 		desk:       desk,
 		grid:       store.NewGrid(ctx),
-		client:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		client:     symmstore.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		catalog:    &tokenizer.GrammarCatalog{},
 		sequencers: &sync.Map{},
 	}
+
+	training.catalog.RestoreCatalog(ctx, training.client, training.restoreSequencer)
+
+	return training
 }
 
 func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
@@ -81,6 +89,28 @@ func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	return loaded.(*tokenizer.Sequencer)
 }
 
+func (training *Training) restoreSequencer(symbol string, state tokenizer.SequencerState) {
+	if symbol == "" {
+		return
+	}
+
+	seq := tokenizer.NewSequencer()
+	seq.Restore(state)
+	training.sequencers.Store(symbol, seq)
+}
+
+func (training *Training) persistSequencer(symbol string, seq *tokenizer.Sequencer) {
+	if symbol == "" || seq == nil || training.catalog == nil {
+		return
+	}
+
+	if err := training.catalog.Persist(
+		training.Context(), training.client, symbol, seq.State(),
+	); err != nil {
+		errnie.Error(err)
+	}
+}
+
 func (training *Training) ResetSequencer(symbol string) {
 	if symbol == "" {
 		return
@@ -91,7 +121,9 @@ func (training *Training) ResetSequencer(symbol string) {
 		return
 	}
 
-	loaded.(*tokenizer.Sequencer).Reset()
+	seq := loaded.(*tokenizer.Sequencer)
+	seq.Reset()
+	training.persistSequencer(symbol, seq)
 }
 
 func (training *Training) open(symbol string) bool {
@@ -146,7 +178,11 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) toke
 		return tokenizer.Tokens{}
 	}
 
-	return training.Sequencer(symbol).Step(token, brightness)
+	seq := training.Sequencer(symbol)
+	cut := seq.Step(token, brightness)
+	training.persistSequencer(symbol, seq)
+
+	return cut
 }
 
 /*

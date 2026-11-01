@@ -571,32 +571,61 @@ func (model *Model) exploreEnter(
 
 func (model *Model) flushPending(envelope *runtime.Envelope) {
 	for _, key := range model.desk.Pending() {
-		pending, ok := model.desk.TakePending(key)
+		_, symbol := broker.ParsePendingKey(key)
+		path := model.exitCut(envelope, symbol, nil)
 
+		// Wait for a live regime cut distinct from entry before consuming
+		// the pending settle — never invent exit leaves or reuse entry_path.
+		if path == "" {
+			continue
+		}
+
+		pending, ok := model.desk.TakePending(key)
 		if !ok || pending == nil {
 			continue
 		}
 
-		_, symbol := broker.ParsePendingKey(key)
-		path := ""
+		path = model.exitCut(envelope, symbol, pending)
+		if path == "" {
+			model.desk.PendingPut(key, pending)
+			continue
+		}
 
+		model.Exit(pending, path)
+	}
+}
+
+/*
+exitCut picks a regime path for the exit leaf. Empty means wait.
+*/
+func (model *Model) exitCut(
+	envelope *runtime.Envelope,
+	symbol string,
+	pending *broker.Position,
+) string {
+	path := ""
+
+	if envelope != nil {
 		if cut := envelope.Paths[symbol]; cut != nil {
 			path = cut.String()
 		}
-
-		if path == "" {
-			path = pending.ExitPath
-		}
-
-		if path == "" {
-			if n := len(pending.HoldPaths); n > 0 {
-				path = pending.HoldPaths[n-1]
-			}
-		}
-
-		// Never fall back to EntryPath — exit leaves must stay distinct.
-		model.Exit(pending, path)
 	}
+
+	if path == "" && pending != nil {
+		path = pending.ExitPath
+	}
+
+	if path == "" && pending != nil {
+		if n := len(pending.HoldPaths); n > 0 {
+			path = pending.HoldPaths[n-1]
+		}
+	}
+
+	if pending != nil && (path == "" || path == pending.EntryPath) {
+		return ""
+	}
+
+	return path
 }
 
 func (model *Model) Hold(position *broker.Position, path string) {
@@ -615,19 +644,11 @@ func (model *Model) Hold(position *broker.Position, path string) {
 func (model *Model) Exit(
 	position *broker.Position, path string,
 ) {
-	if position == nil {
+	if position == nil || path == "" || path == position.EntryPath {
 		return
 	}
 
-	if path == "" {
-		if n := len(position.HoldPaths); n > 0 {
-			path = position.HoldPaths[n-1]
-		}
-	}
-
-	if path != "" {
-		position.ExitPath = path
-	}
+	position.ExitPath = path
 
 	tree := model.tree.Load()
 

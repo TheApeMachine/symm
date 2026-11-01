@@ -123,7 +123,7 @@ export const toggleGateLab = () => {
 	gateLabStore.setState((prev) => ({ ...prev, open: !prev.open }));
 };
 
-export const setOracleOverride = (id: string, value: OracleOverride) => {
+const setOracleOverride = (id: string, value: OracleOverride) => {
 	gateLabStore.setState((prev) => ({
 		...prev,
 		overrides: { ...prev.overrides, [id]: value },

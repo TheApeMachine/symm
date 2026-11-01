@@ -16,7 +16,7 @@ import { deskRowsForStats, ingestDeskClosedLots } from "#/lib/lifecycle";
 shadowStopComparison scores matched episodes that finished both the active
 structural stop and the learning shadow. Means are in display percent.
 */
-export const shadowStopComparison = (
+const shadowStopComparison = (
 	rows: Record<string, unknown>[],
 	book: Book,
 ): { n: number; meanOfficial: number; meanShadow: number } | null => {
@@ -146,16 +146,6 @@ export const returnTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
-/** Token emit rate: how often lit ticks become path edges. */
-export const tokenEmitTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 0.15
-			? "good"
-			: value >= 0.05
-				? "warn"
-				: "bad";
-
 /** Blocked rate: high means grid lit but tokenizer/path stayed quiet. */
 export const blockedTone = (value: number | null): Tone =>
 	value === null
@@ -166,25 +156,6 @@ export const blockedTone = (value: number | null): Tone =>
 				? "warn"
 				: "bad";
 
-/** @deprecated use tokenEmitTone */
-export const gatePassTone = tokenEmitTone;
-
-/*
-Surprise is the absolute energy error against the running prediction.
-Lower is better. A negative value is not a better prediction: the error
-has no sign, so a negative reading is a broken measurement.
-*/
-export const surpriseTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value < 0
-			? "bad"
-			: value <= 0.5
-				? "good"
-				: value <= 2
-					? "warn"
-					: "bad";
-
 /* How often the live token path ends on a stored policy path. */
 export const matchTone = (value: number | null): Tone =>
 	value === null
@@ -192,27 +163,6 @@ export const matchTone = (value: number | null): Tone =>
 		: value >= 0.5
 			? "good"
 			: value >= 0.2
-				? "warn"
-				: "bad";
-
-export const pathStableTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 0.85
-			? "good"
-			: value >= 0.6
-				? "warn"
-				: "bad";
-
-export const frictionPassTone = gatePassTone;
-
-/* Coders whose error has settled: the gate can only trust warm symbols. */
-export const warmTone = (value: number | null): Tone =>
-	value === null
-		? "neutral"
-		: value >= 0.7
-			? "good"
-			: value >= 0.4
 				? "warn"
 				: "bad";
 
@@ -310,11 +260,8 @@ export type Verdict = {
 	tone: Tone;
 };
 
-/* Display formatting: fractions as percentages, signed where the sign matters. */
+/* Display formatting: fractions as percentages. */
 export const pct = (value: number) => `${(100 * value).toFixed(1)}%`;
-export const signedPct = (value: number) =>
-	`${value >= 0 ? "+" : ""}${(100 * value).toFixed(1)}%`;
-export const fixed = (value: number, digits = 2) => value.toFixed(digits);
 
 /*
 stopWord answers why a live stop reading is where it is, for the plain-language

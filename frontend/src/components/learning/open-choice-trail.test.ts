@@ -57,9 +57,9 @@ describe("open-choice-trail", () => {
 		).toBeUndefined();
 	});
 
-	it("keeps the adaptive path dashed when it beats; otherwise stays on official", () => {
+	it("dashes the live shadow after official settle; hides a finished loser", () => {
 		resetOpenChoices();
-		const beating = openChoiceSeries([
+		const live = openChoiceSeries([
 			{
 				id: "lot-1",
 				symbol: "DOGE/USD",
@@ -68,15 +68,15 @@ describe("open-choice-trail", () => {
 				pnl_trace: [0, 1, 0.5],
 				learning: {
 					active: true,
-					pnl_trace: [0, 1, 0.5, 0.9, 1.2],
+					pnl_trace: [0, 1, 0.5, 0.4, 0.2],
 				},
 			},
 		]);
 
-		expect(beating).toHaveLength(1);
-		expect(beating[0].values).toEqual([0, 1, 0.5, 0.9, 1.2]);
-		expect(beating[0].dashFrom).toBe(3);
-		expect(beating[0].shadowActive).toBe(true);
+		expect(live).toHaveLength(1);
+		expect(live[0].values).toEqual([0, 1, 0.5, 0.4, 0.2]);
+		expect(live[0].dashFrom).toBe(3);
+		expect(live[0].shadowActive).toBe(true);
 
 		const losing = openChoiceSeries([
 			{
@@ -86,7 +86,9 @@ describe("open-choice-trail", () => {
 				official_exit_pct: 0.5,
 				pnl_trace: [0, 1, 0.5],
 				learning: {
-					active: true,
+					active: false,
+					exit_at: "2026-01-01T00:01:00Z",
+					exit_pct: 0.2,
 					pnl_trace: [0, 1, 0.5, 0.4, 0.2],
 				},
 			},

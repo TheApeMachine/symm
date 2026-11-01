@@ -40,8 +40,12 @@ export type LifeMark = {
 };
 
 export type LifeOutcome = {
+	/** Return as a fraction (−0.024 = −2.4%). Used for win-rate math. */
 	pnl: number;
+	/** Same return in percent points (−2.4). */
 	pnl_pct: number;
+	/** Quote-currency P&L when the desk published it (USD lost/made). */
+	money?: number | null;
 	hold_ns: number;
 	expected_hold_ns: number | null;
 	triggers: string[] | null;
@@ -116,6 +120,12 @@ export type Lifecycle = {
 	bars_held?: number | null;
 	/** Human-readable reason the exit fired. */
 	exit_trigger?: string | null;
+	/** Structural (active) exit mark, percent. */
+	official_exit_pct?: number | null;
+	/** Learning shadow exit mark, percent. */
+	learning_exit_pct?: number | null;
+	/** Why the learning shadow would have exited. */
+	learning_exit_trigger?: string | null;
 	/** Bid marks sampled while the lot was open (for hold charts). */
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
@@ -125,11 +135,7 @@ export type Lifecycle = {
 	desk?: boolean;
 	/** Set when this closed row was restored from S3 history. */
 	history?: boolean;
-	/**
-	Tape ticks the closed round trip covered, carried on the desk position's
-	own run epoch: A some prints before the entry, B the entry, C the exit.
-	The Position Life-Cycle reads these as training-sample markers.
-	*/
+	/** Tape ticks around the round trip: A before entry, B entry, C exit. */
 	marks_a?: number | null;
 	marks_b?: number | null;
 	marks_c?: number | null;
@@ -412,6 +418,12 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			bars_held: life.bars_held ?? existing?.bars_held ?? null,
 			pnl_trace: life.pnl_trace ?? existing?.pnl_trace ?? null,
 			exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
+			official_exit_pct:
+				life.official_exit_pct ?? existing?.official_exit_pct ?? null,
+			learning_exit_pct:
+				life.learning_exit_pct ?? existing?.learning_exit_pct ?? null,
+			learning_exit_trigger:
+				life.learning_exit_trigger ?? existing?.learning_exit_trigger ?? null,
 			events: existing?.events?.length ? existing.events : life.events,
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
@@ -523,7 +535,20 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 
 	historyStamp.set(row.id, entry.stamp);
 
-	const life = lifecycleFromDeskClosed(row);
+	// History is offline — a mid-settle Store may still say learning.active.
+	// That flag only blocks live shadow comparison, not archived closed lots.
+	const archived = {
+		...row,
+		learning: (() => {
+			const learning = row.learning;
+			if (!learning || typeof learning !== "object" || Array.isArray(learning)) {
+				return { active: false };
+			}
+			return { ...(learning as Record<string, unknown>), active: false };
+		})(),
+	};
+
+	const life = lifecycleFromDeskClosed(archived);
 	if (!life) {
 		return false;
 	}
@@ -546,6 +571,12 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 		bars_held: life.bars_held ?? existing?.bars_held ?? null,
 		pnl_trace: life.pnl_trace ?? existing?.pnl_trace ?? null,
 		exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
+		official_exit_pct:
+			life.official_exit_pct ?? existing?.official_exit_pct ?? null,
+		learning_exit_pct:
+			life.learning_exit_pct ?? existing?.learning_exit_pct ?? null,
+		learning_exit_trigger:
+			life.learning_exit_trigger ?? existing?.learning_exit_trigger ?? null,
 		events: existing?.events?.length ? existing.events : life.events,
 		outcome: life.outcome ?? existing?.outcome ?? null,
 		mark: life.mark ?? existing?.mark ?? null,

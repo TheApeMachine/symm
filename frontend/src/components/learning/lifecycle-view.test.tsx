@@ -123,11 +123,11 @@ describe("LifecycleView", () => {
 			"fill",
 			"closed",
 		]);
-		expect(container.textContent).toContain("SUI/USD · closed");
+		expect(container.textContent).toContain("SUI/USD");
 		expect(container.textContent).toContain("R01/R02/R03");
 	});
 
-	it("renders the close with its trigger, and exchange figures as not available", () => {
+	it("states the settle once: money when present, percent once, stop A/B", () => {
 		const { container } = render(<LifecycleView />);
 		deliver([
 			...entered,
@@ -135,16 +135,22 @@ describe("LifecycleView", () => {
 			event("exiting", "exit_match", "policy exit match R02/R03 (depth 2)", {
 				trigger: "policy exit match R02/R03 (depth 2)",
 			}),
-			paperClosed,
+			{
+				...paperClosed,
+				outcome: {
+					...paperClosed.outcome,
+					money: -1.1,
+				},
+			},
 		]);
 
 		const outcome = container.querySelector('[data-l="lifecycle-outcome"]');
+		expect(outcome?.textContent).toContain("−$1.10");
 		expect(outcome?.textContent).toContain("-1.1%");
-		expect(outcome?.textContent).toContain("exchange P&Lnot available");
-		expect(outcome?.textContent).toContain("3.0m / 2.0m");
-		expect(outcome?.textContent).toContain(
-			"policy exit match R02/R03 (depth 2)",
-		);
+		expect(outcome?.textContent).toContain("hold");
+		expect(outcome?.textContent).toContain("Stop A / B");
+		// Percent appears once in the hero (not re-listed as return + return %).
+		expect(outcome?.textContent?.match(/-1\.1%/g)?.length).toBe(1);
 
 		const performance = container.querySelector(
 			'[data-l="lifecycle-performance"]',
@@ -152,7 +158,6 @@ describe("LifecycleView", () => {
 		expect(performance).toContain("1 closed");
 		expect(performance).toContain("paper win 0.0%");
 		expect(performance).toContain("exchange win · edge · P&L not available");
-		expect(container.textContent).not.toMatch(/exchange[^·]*\$?0\.00/);
 	});
 
 	it("draws only the sizing inputs the event carries", () => {
@@ -234,7 +239,7 @@ describe("LifecycleView", () => {
 
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
-		).toContain("virtual return");
+		).toContain("virtual settle");
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
 		).toContain("win");
@@ -274,7 +279,7 @@ describe("LifecycleView", () => {
 			},
 		]);
 
-		expect(container.textContent).toContain("ETH/USD · scratch");
+		expect(container.textContent).toContain("ETH/USD");
 		expect(
 			container.querySelector('[data-l="lifecycle-outcome"]')?.textContent,
 		).toContain("scratch");

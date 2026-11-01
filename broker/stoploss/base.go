@@ -1,4 +1,4 @@
-package broker
+package stoploss
 
 import (
 	"fmt"
@@ -12,37 +12,16 @@ type StopLoss struct {
 	entryPnL     float64
 	peakPnL      float64
 	lowestPnL    float64
-	budget       *LossBudget
+	budget       *Budget
 	baseGiveback float64
 	minGiveback  float64
-}
-
-/*
-StopState is the live proximity of the two stop checks, for the dashboard.
-Each ratio is current-over-threshold: ≥1 means firing. Damage is how much of
-the invalidation budget the lot has already burned on its worst print.
-*/
-type StopState struct {
-	Invalidation         float64 `json:"invalidation"`
-	Trailing             float64 `json:"trailing"`
-	Damage               float64 `json:"damage"`
-	PeakPct              float64 `json:"peakPct"`
-	CurrentPct           float64 `json:"currentPct"`
-	EntryPct             float64 `json:"entryPct"`
-	GivebackPct          float64 `json:"givebackPct"`
-	AllowedGivebackPct   float64 `json:"allowedGivebackPct"`
-	RemainingGivebackPct float64 `json:"remainingGivebackPct"`
-	FloorPct             float64 `json:"floorPct"`
-	Proximity            float64 `json:"proximity"`
-	RoomPct              float64 `json:"roomPct"`
-	MaxLossPct           float64 `json:"maxLossPct"`
 }
 
 func NewStopLoss() *StopLoss {
 	risk := system.Cfg.Risk
 
 	return &StopLoss{
-		budget:       NewLossBudget().Arm(0),
+		budget:       NewBudget().Arm(0),
 		baseGiveback: risk.TrailBaseGivebackPct,
 		minGiveback:  risk.TrailMinGivebackPct,
 	}
@@ -50,8 +29,9 @@ func NewStopLoss() *StopLoss {
 
 func (stoploss *StopLoss) Update(currentPnL float64) (trigger string, ok bool) {
 	if !stoploss.initialized {
+		// Same anchor as Structural: PnL% is already vs entry fill.
 		stoploss.initialized = true
-		stoploss.entryPnL = currentPnL
+		stoploss.entryPnL = 0
 		stoploss.lowestPnL = currentPnL
 		stoploss.peakPnL = currentPnL
 		return "", false
@@ -95,8 +75,8 @@ func (stoploss *StopLoss) Update(currentPnL float64) (trigger string, ok bool) {
 /*
 State snapshots stop proximity after Update has advanced extremes for this mark.
 */
-func (stoploss *StopLoss) State(currentPnL float64) StopState {
-	state := StopState{CurrentPct: currentPnL}
+func (stoploss *StopLoss) State(currentPnL float64) State {
+	state := State{CurrentPct: currentPnL}
 
 	if !stoploss.initialized {
 		return state
@@ -201,4 +181,58 @@ func (stoploss *StopLoss) allowedGiveback(peak, damage float64) float64 {
 	}
 
 	return allowed
+}
+
+/*
+TrailMachine is the learning stop's locked extremes for resume.
+*/
+type TrailMachine struct {
+	Initialized  bool    `json:"initialized"`
+	EntryPnL     float64 `json:"entry_pnl"`
+	PeakPnL      float64 `json:"peak_pnl"`
+	LowestPnL    float64 `json:"lowest_pnl"`
+	MaxLoss      float64 `json:"max_loss"`
+	ArmPct       float64 `json:"arm_pct"`
+	BaseGiveback float64 `json:"base_giveback"`
+	MinGiveback  float64 `json:"min_giveback"`
+}
+
+func (stoploss *StopLoss) Machine() TrailMachine {
+	maxLoss, armPct := 0.0, 0.0
+
+	if stoploss.budget != nil {
+		maxLoss = stoploss.budget.maxLoss
+		armPct = stoploss.budget.armPct
+	}
+
+	return TrailMachine{
+		Initialized:  stoploss.initialized,
+		EntryPnL:     stoploss.entryPnL,
+		PeakPnL:      stoploss.peakPnL,
+		LowestPnL:    stoploss.lowestPnL,
+		MaxLoss:      maxLoss,
+		ArmPct:       armPct,
+		BaseGiveback: stoploss.baseGiveback,
+		MinGiveback:  stoploss.minGiveback,
+	}
+}
+
+func (stoploss *StopLoss) Resume(machine TrailMachine) {
+	if !machine.Initialized {
+		return
+	}
+
+	if stoploss.budget == nil {
+		stoploss.budget = NewBudget().Arm(0)
+	}
+
+	stoploss.initialized = true
+	stoploss.entryPnL = machine.EntryPnL
+	stoploss.peakPnL = machine.PeakPnL
+	stoploss.lowestPnL = machine.LowestPnL
+	stoploss.baseGiveback = machine.BaseGiveback
+	stoploss.minGiveback = machine.MinGiveback
+	stoploss.budget.maxLoss = machine.MaxLoss
+	stoploss.budget.armPct = machine.ArmPct
+	stoploss.budget.armed = machine.MaxLoss > 0
 }

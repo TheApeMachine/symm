@@ -276,14 +276,14 @@ func (booter *Booter) initMarket() error {
 
 	booter.desk = broker.NewDesk(
 		ctx,
-		broker.DeskTransports{
-			Paper: booter.privateTransport,
-			Live:  booter.liveTransport,
+		map[string]broker.Transport{
+			"paper": booter.privateTransport,
+			"real":  booter.liveTransport,
 		},
 		booter.price,
-		broker.DeskBalances{
-			Paper: booter.balance,
-			Live:  booter.liveBalance,
+		map[string]*broker.Balance{
+			"paper": booter.balance,
+			"real":  booter.liveBalance,
 		},
 	)
 

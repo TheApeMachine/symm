@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { policyEpochFromRow, tapeMarksFromDeskRow } from "./desk-tape-marks";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 	shadowComparisonPending,
 } from "./desk-closed-lifecycle";
+import { policyEpochFromRow, tapeMarksFromDeskRow } from "./desk-tape-marks";
 
 describe("tapeMarksFromDeskRow", () => {
 	it("maps entry and exit ticks to B and C with A from mark_a_tick", () => {
@@ -81,6 +81,23 @@ describe("lifecycleFromDeskClosed", () => {
 		};
 		expect(shadowComparisonPending(done)).toBe(false);
 		expect(lifecycleFromDeskClosed(done)?.status).toBe("closed");
+	});
+
+	it("does not block a settled lot that has no live learning shadow", () => {
+		const orphan = {
+			id: "lot-3",
+			symbol: "NIGHT/USD",
+			virtual: true,
+			opened_at: "2026-10-23T20:04:08Z",
+			closed_at: "2026-10-23T20:05:28Z",
+			official_exit_at: "2026-10-23T20:05:28Z",
+			official_exit_pct: 0.4,
+			learning: { active: false },
+			pnl_pct: 0.4,
+		};
+
+		expect(shadowComparisonPending(orphan)).toBe(false);
+		expect(lifecycleFromDeskClosed(orphan)?.status).toBe("closed");
 	});
 });
 

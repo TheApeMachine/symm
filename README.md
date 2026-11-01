@@ -376,30 +376,6 @@ cd frontend && pnpm test && pnpm lint && pnpm typecheck
 - [`specs/manifold.md`](specs/manifold.md), [`specs/pnl.md`](specs/pnl.md) — subsystem contracts
 - [`frontend/README.md`](frontend/README.md) — UI frame conventions
 
-## Terminal
-
-![Image of S.Y.M.M. Terminal](terminal1.png)
-
-![Image of S.Y.M.M. Terminal](terminal2.png)
-
-![Image of S.Y.M.M. Terminal](terminal3.png)
-
-![Image of S.Y.M.M. Terminal](terminal4.png)
-
-![Image of S.Y.M.M. Terminal](terminal5.png)
-
-![Image of S.Y.M.M. Terminal](terminal6.png)
-
-![Image of S.Y.M.M. Terminal](terminal8.png)
-
-![Image of S.Y.M.M. Terminal](terminal9.png)
-
-![Image of S.Y.M.M. Terminal](terminal10.png)
-
-![Image of S.Y.M.M. Terminal](terminal11.png)
-
-![Image of S.Y.M.M. Terminal](terminal12.png)
-
 ---
 
 <sub>Personal research project · no warranty · not financial advice · may change or disappear at any time.</sub>

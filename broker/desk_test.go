@@ -24,23 +24,26 @@ func TestPerBookSlots(t *testing.T) {
 	Convey("Desk allows the same symbol on virtual and paper at once", t, func() {
 		ctx := context.Background()
 		desk := &Desk{
-			papers:   NewCache(ctx),
-			reals:    NewCache(ctx),
-			virtuals: NewCache(ctx),
-			pending:  &sync.Map{},
+			caches: map[string]*Cache{
+				cachePaper:   NewCache(ctx),
+				cacheReal:    NewCache(ctx),
+				cacheVirtual: NewCache(ctx),
+				cacheShadow:  NewCache(ctx),
+			},
+			pending: &sync.Map{},
 		}
 
 		virtual := &Position{Symbol: "BTC/USD", Book: "virtual", Virtual: true}
 		paper := &Position{Symbol: "BTC/USD", Book: "paper"}
 
-		desk.virtuals.Add("BTC/USD", virtual, true)
-		desk.papers.Add("BTC/USD", paper, true)
+		desk.caches[cacheVirtual].Add("BTC/USD", virtual, true)
+		desk.caches[cachePaper].Add("BTC/USD", paper, true)
 
 		So(desk.PositionOn("BTC/USD", LedgerVirtual), ShouldEqual, virtual)
 		So(desk.PositionOn("BTC/USD", LedgerPaper), ShouldEqual, paper)
 		So(len(desk.Positions("BTC/USD")), ShouldEqual, 2)
-		So(desk.cache(LedgerVirtual).Has("BTC/USD"), ShouldBeTrue)
-		So(desk.cache(LedgerPaper).Has("BTC/USD"), ShouldBeTrue)
-		So(desk.cache(LedgerReal).Has("BTC/USD"), ShouldBeFalse)
+		So(desk.cache(cacheVirtual).Has("BTC/USD"), ShouldBeTrue)
+		So(desk.cache(cachePaper).Has("BTC/USD"), ShouldBeTrue)
+		So(desk.cache(cacheReal).Has("BTC/USD"), ShouldBeFalse)
 	})
 }

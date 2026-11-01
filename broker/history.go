@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/broker/stoploss"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 )
@@ -19,14 +20,11 @@ entered, and drops them when the paper wallet resets.
 */
 type History struct {
 	*runtime.System
-	price          *Price
-	papers         *Cache
-	reals          *Cache
-	virtuals       *Cache
-	store          *store.Client
-	paperTransport Transport
-	liveTransport  Transport
-	onSettled      func(*Position)
+	price      *Price
+	caches     map[string]*Cache
+	store      *store.Client
+	transports map[string]Transport
+	onSettled  func(*Position)
 }
 
 /*
@@ -42,34 +40,24 @@ type lotRecord struct {
 func NewHistory(
 	ctx context.Context,
 	price *Price,
-	papers *Cache,
-	reals *Cache,
-	virtuals *Cache,
-	paperTransport Transport,
-	liveTransport Transport,
+	caches map[string]*Cache,
+	transports map[string]Transport,
 	onSettled func(*Position),
-	rails *AdaptiveRails,
+	rails *stoploss.Rails,
 ) *History {
 	history := &History{
-		System:         runtime.NewSystem(ctx, "history"),
-		price:          price,
-		papers:         papers,
-		reals:          reals,
-		virtuals:       virtuals,
-		paperTransport: paperTransport,
-		liveTransport:  liveTransport,
-		store:          store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		onSettled:      onSettled,
+		System:     runtime.NewSystem(ctx, "history"),
+		price:      price,
+		caches:     caches,
+		transports: transports,
+		store:      store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		onSettled:  onSettled,
 	}
 
-	for key, cache := range map[string]*Cache{
-		"paper":   papers,
-		"real":    reals,
-		"virtual": virtuals,
-	} {
-		transport := paperTransport
-		if key == "real" && liveTransport != nil {
-			transport = liveTransport
+	for _, key := range []string{cachePaper, cacheReal, cacheVirtual} {
+		cache := caches[key]
+		if cache == nil {
+			continue
 		}
 
 		for _, state := range []string{"open", "closed"} {
@@ -83,13 +71,15 @@ func NewHistory(
 				}
 
 				position.price = price
-				position.transport = transport
-				position.Structural = NewStructuralStop()
-				position.Learning = NewLearningStop(rails)
+				position.transport = transports[key]
 				position.onSettled = onSettled
 
+				if state == "open" {
+					history.resumeOpenStops(position, rails)
+				}
+
 				if position.Book == "" {
-					position.Book = ParseLedger(key, key == "virtual").String()
+					position.Book = ParseLedger(key, key == cacheVirtual).String()
 					position.Virtual = position.Book == string(LedgerVirtual)
 				}
 
@@ -116,6 +106,29 @@ func (history *History) restore(raw []byte) *Position {
 	}
 
 	return &position
+}
+
+/*
+resumeOpenStops keeps locked peak/floor when the blob carried a machine
+(Structural.UnmarshalJSON already called Resume and dropped mid-phase
+retest narrative). Legacy Enter-only blobs get fresh stops; Learning
+rebinding attaches the live desk Rails.
+*/
+func (history *History) resumeOpenStops(position *Position, rails *stoploss.Rails) {
+	if position == nil {
+		return
+	}
+
+	if position.Structural == nil {
+		position.Structural = stoploss.NewStructural()
+	}
+
+	if position.Learning == nil {
+		position.Learning = stoploss.NewLearning(rails)
+		return
+	}
+
+	position.Learning.Rebind(rails)
 }
 
 /*

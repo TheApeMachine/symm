@@ -36,19 +36,19 @@ export const ExitPolicyPanel = ({
 	const peak = num(row.peak_pnl_pct);
 	const current = num(row.pnl_pct);
 
+	const structural =
+		row.structural && typeof row.structural === "object"
+			? (row.structural as Record<string, unknown>)
+			: null;
+
 	const PNL_TRACE_CAP = 120;
-	const trace = Array.isArray(row.pnl_trace)
-		? row.pnl_trace
+	const trace = Array.isArray(structural?.pnl_trace)
+		? (structural.pnl_trace as unknown[])
 				.filter(
 					(v): v is number => typeof v === "number" && Number.isFinite(v),
 				)
 				.slice(-PNL_TRACE_CAP)
 		: [];
-
-	const structural =
-		row.structural && typeof row.structural === "object"
-			? (row.structural as Record<string, unknown>)
-			: null;
 	const state = structural?.state as Record<string, unknown> | null | undefined;
 	const stop =
 		state && typeof state === "object" ? (state as Record<string, unknown>) : null;

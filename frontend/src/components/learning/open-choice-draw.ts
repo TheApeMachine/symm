@@ -180,11 +180,20 @@ export const drawOpenChoiceChart = async (
 		glm.isGrid = value;
 	};
 
+	const seriesAlive = (data: XyDataSeries | XyyDataSeries) => {
+		try {
+			return Number.isFinite(data.capacity);
+		} catch {
+			return false;
+		}
+	};
+
 	const fillXy = (
 		data: XyDataSeries,
 		xValues: number[],
 		yValues: number[],
 	) => {
+		if (!seriesAlive(data)) return;
 		data.clear();
 		if (xValues.length > 0) data.appendRange(xValues, yValues);
 	};
@@ -195,6 +204,7 @@ export const drawOpenChoiceChart = async (
 		yValues: number[],
 		y1Values: number[],
 	) => {
+		if (!seriesAlive(data)) return;
 		data.clear();
 		if (xValues.length > 0) data.appendRange(xValues, yValues, y1Values);
 	};
@@ -250,7 +260,7 @@ export const drawOpenChoiceChart = async (
 		}
 
 		const heat = Math.max(0, Math.min(1, proximity));
-		const fillAlpha = 0.1 + 0.28 * heat;
+		const fillAlpha = 0.04 + 0.12 * heat;
 
 		sciChartSurface.renderableSeries.add(
 			new FastBandRenderableSeries(wasmContext, {
@@ -262,7 +272,7 @@ export const drawOpenChoiceChart = async (
 					id,
 				),
 				stroke: "#00000000",
-				strokeY1: withAlpha(stroke, dashed ? 0.55 : 0.75 + 0.2 * heat),
+				strokeY1: withAlpha(stroke, dashed ? 0.35 : 0.45 + 0.15 * heat),
 				strokeThickness: 1,
 				strokeY1DashArray: dashed ? [4, 3] : undefined,
 				fill: withAlpha(stroke, fillAlpha),
@@ -346,7 +356,7 @@ export const drawOpenChoiceChart = async (
 
 	const rebuild = (drawn: OpenChoiceSeries[], maxLen: number) => {
 		const wasGrid = glm.isGrid;
-		if (wasGrid) glm.isGrid = false;
+		if (wasGrid) glm.collapseNow();
 
 		sciChartSurface.renderableSeries.clear(true);
 

@@ -9,19 +9,14 @@ import {
 	Flag,
 	Layers,
 	Lock,
-	Radio,
 	Scale,
 	ShieldAlert,
-	ShieldCheck,
-	Zap,
 } from "lucide-react";
 import { useState } from "react";
 import { bookAtom } from "#/collections/book";
 import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
-import { StopProximityPanel } from "#/components/learning/stop-proximity-panel";
 import {
 	Badge,
-	BadgeButton,
 	type BadgeVariant,
 	badgeVariants,
 } from "#/components/ui/badge";
@@ -29,7 +24,6 @@ import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { hubBaseUrl } from "#/lib/hub";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -37,7 +31,6 @@ import {
 	ratePercent,
 	seconds,
 	selectBook,
-	signedMoney,
 	useLifecycles,
 } from "#/lib/lifecycle";
 import { formatExitTrigger } from "#/lib/trigger-labels";
@@ -525,10 +518,6 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 	);
 };
 
-const heldVirtual = (life: Lifecycle) =>
-	(life.book ?? "paper") === "virtual" &&
-	(life.status === "open" || life.status === "holding");
-
 const shownLife = (life: Lifecycle): Lifecycle =>
 	life.book === "virtual" && life.status === "open"
 		? { ...life, status: "holding" }
@@ -555,295 +544,170 @@ const closedVerdict = (life: Lifecycle): TrialWord => {
 	return (life.outcome?.pnl ?? 0) > 0 ? "win" : "loss";
 };
 
-const LifecycleStepper = ({ life }: { life: Lifecycle }) => {
-	const events = life.events ?? [];
-	const hasMatch = events.some((e) => e.kind === "entry_match");
-	const hasSizing = events.some((e) => e.kind === "sizing");
-	const hasFill = events.some((e) => e.kind === "fill");
-	const virtualHold = heldVirtual(life);
-	const isHolding =
-		life.status === "holding" ||
-		life.status === "exiting" ||
-		life.status === "closed" ||
-		virtualHold;
-	const hasExit = events.some(
-		(e) =>
-			e.kind === "exit" || e.kind === "exit_match" || e.kind === "risk_sell",
-	);
-	const isClosed = life.status === "closed";
+const pctMark = (value: number | null | undefined) =>
+	value === null || value === undefined ? "—" : `${value.toFixed(2)}%`;
 
-	const stages = [
-		{ label: "1. Match", done: hasMatch, active: !hasSizing && !virtualHold },
-		{ label: "2. Sizing", done: hasSizing, active: hasSizing && !hasFill },
-		{ label: "3. Fill", done: hasFill, active: hasFill && !isHolding },
-		{
-			label: "4. Hold",
-			done: isHolding,
-			active: life.status === "holding" || virtualHold,
-		},
-		{
-			label: "5. Exit",
-			done: hasExit || isClosed,
-			active: life.status === "exiting",
-		},
-		{ label: "6. Outcome", done: isClosed, active: isClosed },
-	];
-
-	return (
-		<Flex.Row
-			align="center"
-			gap={1}
-			className="px-3 py-1.5 bg-(--surface) border-b border-(--line) overflow-x-auto text-[10px] font-mono shrink-0"
-		>
-			{stages.map((st, idx) => (
-				<Flex.Row key={st.label} align="center" gap={1} className="shrink-0">
-					{idx > 0 && <span className="text-(--f4) select-none">→</span>}
-					<Badge
-						size="xxs"
-						variant={st.done ? "brand" : st.active ? "warning" : "disabled"}
-						className={st.active ? "animate-pulse" : undefined}
-						label={st.label}
-					/>
-				</Flex.Row>
-			))}
-		</Flex.Row>
-	);
-};
+const moneyText = (value: number) =>
+	`${value >= 0 ? "+$" : "−$"}${Math.abs(value).toFixed(2)}`;
 
 /*
-StrategyIntelligenceCard:
-Transforms the top summary into visual strategy recognition, liquidity constraints,
-and real-time trie exit signal monitoring (replacing the bogus "Hold Horizon" timer).
+ClosedHero is the one place the settled result is stated: dollars first,
+percent once, exit reason once. Stop A/B sits beside it — everything else
+that repeated the same loss % is gone.
 */
-const StrategyIntelligenceCard = ({ life }: { life: Lifecycle }) => {
-	const events = life.events ?? [];
-	const entryMatch = events.find((e) => e.kind === "entry_match");
-	const sizing = events.find((e) => e.kind === "sizing");
+const ClosedHero = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
+	if (!outcome || life.status !== "closed") return null;
 
-	const entryPath = entryMatch?.fields?.path;
+	const verdict = closedVerdict(life);
+	const money = outcome.money;
+	const structural = life.official_exit_pct;
+	const learning = life.learning_exit_pct;
+	const hasCompare =
+		structural !== null &&
+		structural !== undefined &&
+		learning !== null &&
+		learning !== undefined;
+	const edge = hasCompare ? learning - structural : null;
+	const triggers =
+		(outcome.triggers ?? []).map(formatExitTrigger).filter(Boolean).join(" · ") ||
+		(life.exit_trigger ? formatExitTrigger(life.exit_trigger) : "—");
 	const path =
-		typeof entryPath === "string" && entryPath !== "" ? entryPath : life.path;
-	const confidence = entryMatch?.fields?.confidence as number | undefined;
-	const candidates = entryMatch?.fields?.candidates as number | undefined;
-
-	const binding = sizing?.fields?.binding as string | undefined;
-	const exitCapacity = sizing?.fields?.exit_capacity as number | undefined;
-	const cash = (sizing?.fields?.allocated ?? sizing?.fields?.cash) as
-		| number
-		| undefined;
-	const mark = life.mark;
-
-	const isClosed = life.status === "closed";
-	const isExiting = life.status === "exiting";
-	const isHolding = life.status === "holding";
+		life.path ||
+		(typeof life.events?.find((e) => e.kind === "entry_match")?.fields?.path ===
+		"string"
+			? (life.events.find((e) => e.kind === "entry_match")?.fields
+					?.path as string)
+			: undefined);
 
 	return (
-		<Grid
-			cols={3}
-			gap={0}
-			responsive={false}
-			className="border-b border-(--line) bg-(--surface) font-mono text-[11px]"
+		<Flex.Column
+			data-l="lifecycle-outcome"
+			className="border-b border-(--line) bg-(--sunken) font-mono"
 		>
-			{/* 1. Strategy Pattern Visual Chain */}
-			<Flex.Column className="border-r border-(--line) min-h-0 bg-(--surface)">
-				<Flex.Row
-					align="center"
-					justify="between"
-					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
-				>
-					<Flex.Row align="center" gap={1}>
-						<Compass className="w-3.5 h-3.5 text-(--acc)" />
-						<span>Strategy Pattern</span>
+			<Flex.Row
+				align="start"
+				justify="between"
+				gap={4}
+				wrap="wrap"
+				className="px-3 py-3"
+			>
+				<Flex.Column gap={1} className="min-w-0">
+					<Flex.Row align="center" gap={2}>
+						<Badge size="xs" variant={trialVariant(verdict)} label={verdict} />
+						<span className="text-[10px] uppercase tracking-wider text-(--f4)">
+							{life.book === "virtual" ? "virtual" : "paper"} settle
+						</span>
 					</Flex.Row>
-					{confidence !== undefined && (
-						<span className="text-(--up) font-bold">
-							confidence {fieldValue(confidence)}
+					{money !== null && money !== undefined ? (
+						<span
+							className={cn("text-[28px] font-bold tabular-nums leading-none", tone(money))}
+						>
+							{moneyText(money)}
+						</span>
+					) : (
+						<span
+							className={cn(
+								"text-[28px] font-bold tabular-nums leading-none",
+								tone(outcome.pnl),
+							)}
+						>
+							{ratePercent(outcome.pnl)}
 						</span>
 					)}
-				</Flex.Row>
-
-				<Flex.Column className="p-3 flex-1 justify-between gap-2">
-					<div>
-						{path ? (
-							<PathChain path={path} />
-						) : (
-							<span className="text-[11px] text-(--f3) font-bold">
-								Direct / Unmatched Entry
+					<Flex.Row align="baseline" gap={2} className="text-[12px] text-(--f3)">
+						{money !== null && money !== undefined ? (
+							<span className={cn("font-bold tabular-nums", tone(outcome.pnl))}>
+								{ratePercent(outcome.pnl)}
 							</span>
-						)}
-					</div>
-
-					<Flex.Row
-						justify="between"
-						className="text-[9.5px] text-(--f3) pt-1.5 border-t border-(--line)/40"
-					>
-						<span>S3 Trie Candidates:</span>
-						<span className="text-(--f1) font-bold">
-							{candidates !== undefined
-								? `${candidates} matching path(s)`
-								: "—"}
-						</span>
+						) : null}
+						<span>hold {seconds(outcome.hold_ns)}</span>
+						{life.peak_pct !== null && life.peak_pct !== undefined ? (
+							<span>peak {life.peak_pct.toFixed(2)}%</span>
+						) : null}
 					</Flex.Row>
+					<span className="max-w-xl text-[11px] leading-snug text-(--f2) wrap-break-word">
+						{triggers}
+					</span>
+					{path ? (
+						<div className="pt-1">
+							<PathChain path={path} />
+						</div>
+					) : null}
 				</Flex.Column>
-			</Flex.Column>
 
-			{/* 2. Liquidity & Sizing Constraints */}
-			<Flex.Column className="border-r border-(--line) min-h-0 bg-(--surface)">
-				<Flex.Row
-					align="center"
-					justify="between"
-					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
+				<Flex.Column
+					data-l="lifecycle-stop-compare"
+					className="min-w-[16rem] flex-1 max-w-md rounded border border-(--line) bg-(--surface)"
 				>
-					<Flex.Row align="center" gap={1}>
-						<Scale className="w-3.5 h-3.5 text-(--info)" />
-						<span>Liquidity & Sizing</span>
+					<Flex.Row
+						align="center"
+						justify="between"
+						className="h-7 px-3 border-b border-(--line) text-[10px] font-bold uppercase tracking-wider text-(--f3)"
+					>
+						<Flex.Row align="center" gap={1}>
+							<Scale className="w-3.5 h-3.5 text-(--info)" />
+							<span>Stop A / B</span>
+						</Flex.Row>
+						{edge === null ? (
+							<Badge size="xxs" variant="disabled" label="no shadow" />
+						) : edge > 0.05 ? (
+							<Badge size="xxs" variant="success" label="learning ahead" />
+						) : edge < -0.05 ? (
+							<Badge size="xxs" variant="brand" label="structural ahead" />
+						) : (
+							<Badge size="xxs" variant="disabled" label="tied" />
+						)}
 					</Flex.Row>
-					<Badge
-						size="xxs"
-						variant={binding === "exit_capacity" ? "warning" : "brand"}
-						label={binding ? `Bound by ${binding}` : "Sized"}
-					/>
-				</Flex.Row>
-
-				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
-					{exitCapacity !== undefined ? (
+					<Grid cols={2} gap={0} responsive={false} className="divide-x divide-(--line)">
+						<Flex.Column gap={1} className="p-3 min-w-0">
+							<span className="text-[9px] uppercase tracking-wider text-(--f4)">
+								Structural
+							</span>
+							<span
+								className={cn(
+									"text-[18px] font-bold tabular-nums",
+									structural == null ? "text-(--f3)" : tone(structural),
+								)}
+							>
+								{pctMark(structural)}
+							</span>
+						</Flex.Column>
+						<Flex.Column gap={1} className="p-3 min-w-0">
+							<span className="text-[9px] uppercase tracking-wider text-(--f4)">
+								Learning
+							</span>
+							<span
+								className={cn(
+									"text-[18px] font-bold tabular-nums",
+									learning == null ? "text-(--f3)" : tone(learning),
+								)}
+							>
+								{pctMark(learning)}
+							</span>
+						</Flex.Column>
+					</Grid>
+					{edge !== null ? (
 						<Flex.Row
 							justify="between"
-							align="baseline"
-							className="text-[11px]"
+							className="px-3 py-1.5 border-t border-(--line) text-[10px] text-(--f3)"
 						>
-							<span className="text-[9.5px] text-(--f4)">
-								Book Exit Capacity:
-							</span>
-							<span className="font-bold text-(--up)">
-								{exitCapacity.toFixed(2)} units
-							</span>
-						</Flex.Row>
-					) : null}
-
-					<Flex.Row justify="between" align="baseline" className="text-[11px]">
-						<span className="text-[9.5px] text-(--f4)">Cash Allocation:</span>
-						<span className="font-bold text-(--f1)">
-							{cash !== undefined ? `${cash.toFixed(2)} USD` : "—"}
-						</span>
-					</Flex.Row>
-
-					{exitCapacity !== undefined ? (
-						<Flex.Row
-							align="center"
-							gap={1}
-							className="text-[9px] text-(--up) pt-1.5 border-t border-(--line)/40"
-						>
-							<ShieldCheck className="w-3 h-3 text-(--up) shrink-0" />
-							<span>
-								Bid depth within 1.5% of touch caps entry size (carry divisor)
+							<span>shadow − structural</span>
+							<span className={cn("font-bold tabular-nums", tone(edge))}>
+								{edge >= 0 ? "+" : ""}
+								{edge.toFixed(2)}pp
 							</span>
 						</Flex.Row>
 					) : null}
 				</Flex.Column>
-			</Flex.Column>
-
-			{/* 3. Trie Exit Signal Monitor */}
-			<Flex.Column className="min-h-0 bg-(--surface)">
-				<Flex.Row
-					align="center"
-					justify="between"
-					className="h-7 px-3 bg-(--sunken) border-b border-(--line) text-[10px] text-(--f3) font-bold uppercase tracking-wider"
-				>
-					<Flex.Row align="center" gap={1}>
-						<Radio
-							className={cn(
-								"w-3.5 h-3.5",
-								isHolding ? "text-(--acc) animate-pulse" : "text-(--f4)",
-							)}
-						/>
-						<span>Trie Exit Monitor</span>
-					</Flex.Row>
-					<Badge
-						size="xxs"
-						variant={isClosed ? "success" : isExiting ? "warning" : "brand"}
-						className={isExiting ? "animate-pulse" : undefined}
-						label={
-							isClosed
-								? "Position Closed"
-								: isExiting
-									? "Exit Triggered"
-									: "Scanning Trie"
-						}
-					/>
-				</Flex.Row>
-
-				<Flex.Column className="p-3 flex-1 justify-between gap-1.5">
-					<div className="py-1">
-						{isClosed ? (
-							<Flex.Row align="center" gap={2}>
-								<Badge
-									size="xs"
-									variant={trialVariant(closedVerdict(life))}
-									label={closedVerdict(life)}
-								/>
-								<span
-									className={cn(
-										"font-bold text-[12px]",
-										tone(outcome?.pnl ?? 0),
-									)}
-								>
-									{ratePercent(outcome?.pnl ?? 0)} book return
-								</span>
-							</Flex.Row>
-						) : (
-							<Flex.Column gap={1}>
-								<Flex.Row
-									align="center"
-									gap={1}
-									className="text-[10px] text-(--f2)"
-								>
-									<Zap className="w-3 h-3 text-(--acc) shrink-0" />
-									<span>Monitoring live tokens for exit prefix</span>
-								</Flex.Row>
-								{mark ? (
-									<span
-										data-l="lifecycle-mark"
-										className={cn(
-											"text-[10px] font-bold",
-											tone(mark.unrealized),
-										)}
-										title={`marked ${time(mark.at)} at the bid ${mark.bid}`}
-									>
-										{signedMoney(mark.unrealized)} USD unrealized (
-										{ratePercent(mark.unrealized_return)}) at bid{" "}
-										{fieldValue(mark.bid)}
-									</span>
-								) : null}
-								<span className="text-[9px] text-(--f4)">
-									Exit rule: policy exit match
-								</span>
-							</Flex.Column>
-						)}
-					</div>
-
-					<Flex.Row
-						justify="between"
-						className="text-[9.5px] text-(--f3) pt-1.5 border-t border-(--line)/40"
-					>
-						<span>Exit Protocol:</span>
-						<span className="text-(--f2)">
-							{isClosed
-								? `Triggers: ${(outcome?.triggers ?? []).join(", ") || "resolved"}`
-								: "Cognition Prefix Engine Active"}
-						</span>
-					</Flex.Row>
-				</Flex.Column>
-			</Flex.Column>
-		</Grid>
+			</Flex.Row>
+		</Flex.Column>
 	);
 };
 
 /*
 lifecycleRow projects a lifecycle back to the raw desk-row shape the stop
-panels read. A closed life with a P&L trace is the episode; an open life
-carries the live stop_state. The panels are null-aware.
+panels read.
 */
 const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 	const outcome = life.outcome;
@@ -867,13 +731,25 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		opened_at: life.opened_at,
 		closed_at: life.closed_at ?? null,
 		entry_path: life.path,
-		exit_path: undefined,
 		pnl_pct: typeof current === "number" ? current : undefined,
 		peak_pnl_pct: typeof peak === "number" ? peak : undefined,
 		bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
 		realized_pct: life.realized_pct ?? outcome?.realized ?? undefined,
 		exit_trigger: life.exit_trigger ?? undefined,
 		outcome_triggers: outcome?.triggers ?? undefined,
+		official_exit_pct: life.official_exit_pct ?? undefined,
+		pnl: outcome?.money ?? undefined,
+		structural: {
+			pnl_trace: life.pnl_trace ?? undefined,
+			state: stop ?? {
+				current_pct: typeof current === "number" ? current : undefined,
+				peak_pct: typeof peak === "number" ? peak : undefined,
+			},
+		},
+		learning: {
+			exit_pct: life.learning_exit_pct ?? undefined,
+			exit_trigger: life.learning_exit_trigger ?? undefined,
+		},
 		pnl_trace: life.pnl_trace ?? undefined,
 		stop_state: stop ?? {
 			current_pct: typeof current === "number" ? current : undefined,
@@ -882,205 +758,11 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 	};
 };
 
-const StopAndPolicyPanels = ({ life }: { life: Lifecycle }) => {
-	const row = lifecycleRow(life);
+const PathChart = ({ life }: { life: Lifecycle }) => {
+	if (!life.pnl_trace || life.pnl_trace.length === 0) return null;
 	return (
-		<Flex.Column
-			gap={2}
-			className="border-(--line) border-b bg-(--surface) px-3 py-2"
-		>
-			<StopProximityPanel row={row} />
-			<ExitPolicyPanel row={row} />
-		</Flex.Column>
-	);
-};
-
-/*
-A closed virtual lot is a finished search: its A B C ticks index the run's
-tape, so the operator labels it up / up_friction / down / chop / flat and
-commits it. A commit POSTs to the hub's hindsight commit — the same label
-boundary the tape scanner uses — and symm train reads nothing but committed
-detections.
-*/
-const SAMPLE_CLASSES = ["up", "up_friction", "down", "chop", "flat"] as const;
-
-const TrainingSampleCard = ({ life }: { life: Lifecycle }) => {
-	const [class_, setClass] = useState<string>("up");
-	const [state, setState] = useState<"idle" | "saving" | "saved" | "error">(
-		"idle",
-	);
-	const [error, setError] = useState<string | null>(null);
-
-	if (life.status !== "closed" || life.book !== "virtual") return null;
-
-	const marks =
-		life.marks_a !== null &&
-		life.marks_a !== undefined &&
-		life.marks_b !== null &&
-		life.marks_b !== undefined &&
-		life.marks_c !== null &&
-		life.marks_c !== undefined
-			? { a: life.marks_a, b: life.marks_b, c: life.marks_c }
-			: null;
-
-	return (
-		<Flex.Column
-			data-l="lifecycle-training-sample"
-			className="border-(--line) border-b bg-(--surface) px-3 py-2 font-mono text-[11px]"
-			gap={2}
-		>
-			<Flex.Row align="center" gap={2} wrap="wrap">
-				<span className="font-bold uppercase tracking-wider text-[10px] text-(--f4)">
-					training sample
-				</span>
-				<span className="text-[10px] text-(--f3)">
-					A {marks === null ? "—" : marks.a} · B{" "}
-					{marks === null ? "—" : marks.b} · C {marks === null ? "—" : marks.c}
-					{life.policy_epoch ? ` · run ${life.policy_epoch}` : ""}
-				</span>
-			</Flex.Row>
-
-			<Flex.Row align="center" gap={2} wrap="wrap">
-				{SAMPLE_CLASSES.map((option) => (
-					<BadgeButton
-						key={option}
-						data-l={`sample-class-${option}`}
-						size="xs"
-						variant={class_ === option ? "brand" : "disabled"}
-						className={
-							class_ === option ? undefined : "hover:bg-(--sunken) text-(--f3)"
-						}
-						onClick={() => setClass(option)}
-						label={option}
-					/>
-				))}
-
-				<BadgeButton
-					data-l="sample-commit"
-					disabled={marks === null || state === "saving"}
-					size="xs"
-					variant="success"
-					className={cn(
-						"ml-auto",
-						marks === null || state === "saving"
-							? "cursor-wait opacity-60"
-							: "hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)]",
-					)}
-					onClick={async () => {
-						if (marks === null || !life.policy_epoch) return;
-
-						setState("saving");
-						setError(null);
-
-						try {
-							const response = await fetch(`${hubBaseUrl()}/hindsight/commit`, {
-								method: "POST",
-								headers: { "Content-Type": "application/json" },
-								body: JSON.stringify({
-									run: life.policy_epoch,
-									symbol: life.symbol,
-									class: class_,
-									a: String(marks.a),
-									b: String(marks.b),
-									c: String(marks.c),
-									d: String(marks.c),
-								}),
-							});
-
-							if (!response.ok) {
-								throw new Error(await response.text());
-							}
-
-							setState("saved");
-						} catch (cause) {
-							setState("error");
-							setError(cause instanceof Error ? cause.message : String(cause));
-						}
-					}}
-					label={
-						state === "saving"
-							? "committing"
-							: state === "saved"
-								? "committed"
-								: "commit"
-					}
-				/>
-			</Flex.Row>
-
-			{marks === null ? (
-				<span className="text-[10px] text-(--f4)">
-					commit needs entry_tick and exit_tick on the desk lot (B and C); A
-					uses mark_a_tick when set, otherwise entry
-				</span>
-			) : null}
-			{marks !== null && !life.policy_epoch ? (
-				<span className="text-[10px] text-(--f4)">
-					commit needs policy_epoch on the lot (the tick run / workspace epoch
-					at entry)
-				</span>
-			) : null}
-
-			{error !== null ? (
-				<span className="text-[10px] text-(--down)">{error}</span>
-			) : null}
-		</Flex.Column>
-	);
-};
-
-const OutcomeCard = ({ life }: { life: Lifecycle }) => {
-	const outcome = life.outcome;
-	if (!outcome || life.status !== "closed") return null;
-
-	const verdict = closedVerdict(life);
-	const pnl = outcome.pnl;
-	const name = life.book === "virtual" ? "virtual" : "paper";
-
-	const rows: Array<[string, string, number?]> = [
-		[`${name} return`, ratePercent(outcome.pnl), outcome.pnl],
-		[`${name} return %`, `${outcome.pnl_pct.toFixed(2)}%`, outcome.pnl_pct],
-		["exchange P&L", NOT_AVAILABLE],
-		["exchange fees", NOT_AVAILABLE],
-		[
-			"hold / policy hold",
-			`${seconds(outcome.hold_ns)} / ${outcome.expected_hold_ns === null ? "—" : seconds(outcome.expected_hold_ns)}`,
-		],
-		["triggers", (outcome.triggers ?? []).join(", ") || "—"],
-	];
-
-	return (
-		<Flex.Column
-			data-l="lifecycle-outcome"
-			className="border-(--line) border-b bg-(--sunken) px-3 py-2.5 font-mono text-[11px]"
-		>
-			<Flex.Row
-				align="center"
-				justify="between"
-				className="pb-2 mb-2 border-b border-(--line)/40"
-			>
-				<Flex.Row align="center" gap={2}>
-					<Badge size="xs" variant={trialVariant(verdict)} label={verdict} />
-					<span className={cn("text-[13px] font-bold", tone(pnl))}>
-						{ratePercent(pnl)} book return
-					</span>
-				</Flex.Row>
-				<div className="text-[10px] text-(--f4)">
-					Triggers:{" "}
-					<span className="text-(--f2)">
-						{(outcome.triggers ?? []).map(formatExitTrigger).join(", ") || "—"}
-					</span>
-				</div>
-			</Flex.Row>
-
-			<Grid cols={2} gapX={6} gapY={1} responsive={false}>
-				{rows.map(([label, value, sign]) => (
-					<Flex.Row key={label} justify="between" gap={2}>
-						<span className="text-(--f4)">{label}</span>
-						<span className={sign === undefined ? "text-(--f2)" : tone(sign)}>
-							{value}
-						</span>
-					</Flex.Row>
-				))}
-			</Grid>
+		<Flex.Column className="border-(--line) border-b bg-(--surface) px-3 py-2">
+			<ExitPolicyPanel row={lifecycleRow(life)} />
 		</Flex.Column>
 	);
 };
@@ -1165,9 +847,8 @@ export const LifecycleView = () => {
 						</Typography.Mono>
 					) : (
 						lifecycles.map((life) => {
-							const pnl = life.outcome
-								? life.outcome.pnl
-								: life.mark?.unrealized_return;
+							const money = life.outcome?.money;
+							const frac = life.outcome?.pnl;
 							const isCurrent = active?.id === life.id;
 							const word = trialWord(life);
 							const variant =
@@ -1201,13 +882,14 @@ export const LifecycleView = () => {
 										justify="between"
 										className="mt-0.5 text-[9px] text-(--f4)"
 									>
-										<span>
-											{time(life.opened_at)} · {(life.events ?? []).length}{" "}
-											events
-										</span>
-										{pnl !== undefined ? (
-											<span className={cn("font-bold text-[9px]", tone(pnl))}>
-												{ratePercent(pnl)}
+										<span>{time(life.closed_at ?? life.opened_at)}</span>
+										{money !== null && money !== undefined ? (
+											<span className={cn("font-bold text-[9px]", tone(money))}>
+												{moneyText(money)}
+											</span>
+										) : frac !== undefined ? (
+											<span className={cn("font-bold text-[9px]", tone(frac))}>
+												{ratePercent(frac)}
 											</span>
 										) : null}
 									</Flex.Row>
@@ -1221,14 +903,11 @@ export const LifecycleView = () => {
 					{active ? (
 						<>
 							<Section.Header
-								title={`${active.symbol} · ${trialWord(active) ?? active.status}`}
-								meta={`opened ${time(active.opened_at)}${active.closed_at ? ` · ended ${time(active.closed_at)}` : ""}`}
+								title={active.symbol}
+								meta={`${time(active.opened_at)} → ${active.closed_at ? time(active.closed_at) : "—"}`}
 							/>
-							<LifecycleStepper life={active} />
-							<StrategyIntelligenceCard life={active} />
-							<StopAndPolicyPanels life={active} />
-							<OutcomeCard life={active} />
-							<TrainingSampleCard life={active} />
+							<ClosedHero life={active} />
+							<PathChart life={active} />
 							{(active.events ?? []).map((event, index) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: events are append-only
 								<EventRow key={index} event={event} />

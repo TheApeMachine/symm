@@ -42,13 +42,9 @@ export const shadowComparisonPending = (
 		return false;
 	}
 
-	if (learning.active === true) return true;
-
-	if (row.official_exit_at != null && row.official_exit_at !== "") {
-		return true;
-	}
-
-	return false;
+	// Only a still-live shadow blocks the closed outcome tab. Official exit
+	// alone must not — history mid-settle rows never grew an exit_at.
+	return learning.active === true;
 };
 
 /*
@@ -112,6 +108,14 @@ for the lifecycle. Everything is optional: a lot restored without a book, or a
 virtual trial opened moments ago, carries none of them and the UI shows the
 meters in their waiting state rather than a fabricated reading.
 */
+const finiteNums = (raw: unknown): number[] | null => {
+	if (!Array.isArray(raw)) return null;
+	const next = raw.filter(
+		(value): value is number => typeof value === "number" && Number.isFinite(value),
+	);
+	return next.length > 0 ? next : null;
+};
+
 const stopFieldsFromRow = (
 	row: Record<string, unknown>,
 ): Pick<
@@ -123,18 +127,33 @@ const stopFieldsFromRow = (
 	| "bars_held"
 	| "pnl_trace"
 	| "exit_trigger"
+	| "official_exit_pct"
+	| "learning_exit_pct"
+	| "learning_exit_trigger"
 > => {
+	const structural = nest(row, "structural");
+	const learning = nest(row, "learning");
 	const peakPct = decimal(row.peak_pnl_pct);
 	const realized = decimal(row.realized_pct);
 	const barsHeld = decimal(row.bars_held);
-	const trace = Array.isArray(row.pnl_trace)
-		? row.pnl_trace.filter(
-				(v): v is number => typeof v === "number" && Number.isFinite(v),
-			)
-		: null;
+	const trace =
+		finiteNums(structural.pnl_trace) ?? finiteNums(row.pnl_trace);
 	const exitTrigger =
 		typeof row.exit_trigger === "string" && row.exit_trigger !== ""
 			? row.exit_trigger
+			: null;
+	const official =
+		typeof row.official_exit_pct === "number" &&
+		Number.isFinite(row.official_exit_pct)
+			? row.official_exit_pct
+			: null;
+	const shadow =
+		typeof learning.exit_pct === "number" && Number.isFinite(learning.exit_pct)
+			? learning.exit_pct
+			: null;
+	const shadowTrigger =
+		typeof learning.exit_trigger === "string" && learning.exit_trigger !== ""
+			? learning.exit_trigger
 			: null;
 
 	return {
@@ -145,6 +164,9 @@ const stopFieldsFromRow = (
 		bars_held: barsHeld !== null && barsHeld > 0 ? barsHeld : null,
 		pnl_trace: trace,
 		exit_trigger: exitTrigger,
+		official_exit_pct: official,
+		learning_exit_pct: shadow,
+		learning_exit_trigger: shadowTrigger,
 	};
 };
 
@@ -241,12 +263,14 @@ export const lifecycleFromDeskClosed = (
 	const settle = settledOutcome(row);
 	const pnl = readout.returnPct ?? settle?.pnl ?? null;
 	const pnlPct = readout.returnPctDisplay ?? settle?.pnl_pct ?? null;
+	const money = decimal(row.pnl);
 
 	const outcome =
 		pnl !== null && pnlPct !== null
 			? ({
 					pnl,
 					pnl_pct: pnlPct,
+					money,
 					hold_ns:
 						settle?.hold_ns ??
 						(readout.closedAt !== null && readout.openedAt !== null

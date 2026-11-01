@@ -1,27 +1,27 @@
-package broker
+package stoploss
 
 import "github.com/theapemachine/symm/system"
 
 /*
-LossBudget freezes the invalidation width at entry from the symbol's
+Budget freezes the invalidation width at entry from the symbol's
 friction. Wide microcap spreads get room to breathe; a hard ceiling keeps
 a small bankroll from taking unrecoverable cuts.
 */
-type LossBudget struct {
+type Budget struct {
 	armed   bool
 	maxLoss float64
 	armPct  float64
 }
 
-func NewLossBudget() *LossBudget {
-	return &LossBudget{}
+func NewBudget() *Budget {
+	return &Budget{}
 }
 
 /*
 Arm locks max loss and trail-arm from friction (fraction of mid). Re-arming
 is a no-op so later spread flicker cannot chase the floor wider.
 */
-func (budget *LossBudget) Arm(frictionFraction float64) *LossBudget {
+func (budget *Budget) Arm(frictionFraction float64) *Budget {
 	if budget.armed {
 		return budget
 	}
@@ -60,7 +60,7 @@ func (budget *LossBudget) Arm(frictionFraction float64) *LossBudget {
 Prefer overlays learned rail preferences after Arm. Still respects the
 configured invalidation ceiling so ruin math cannot drift unbounded.
 */
-func (budget *LossBudget) Prefer(maxLoss, armPct float64) {
+func (budget *Budget) Prefer(maxLoss, armPct float64) {
 	ceiling := system.Cfg.Risk.MaxInvalidationPct
 
 	if maxLoss > 0 {

@@ -73,12 +73,6 @@ type Exiter interface {
 }
 
 /*
-CommitFunc answers POST /hindsight/commit. The body is the dashboard's
-sample JSON. The return bytes are the JSON response.
-*/
-type CommitFunc func(body []byte) ([]byte, error)
-
-/*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
 func NewHub(ctx context.Context) *Hub {
@@ -97,9 +91,6 @@ func NewHub(ctx context.Context) *Hub {
 		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
-	hub.commit.Store(CommitFunc(func([]byte) ([]byte, error) {
-		return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
-	}))
 	hub.streams = make(map[string]context.CancelFunc)
 	hub.streamGen = make(map[string]uint64)
 
@@ -387,16 +378,6 @@ func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
 			done()
 		}
 	})
-}
-
-func (hub *Hub) HandleCommit(fn CommitFunc) {
-	if fn == nil {
-		fn = func([]byte) ([]byte, error) {
-			return nil, errnie.Err(errnie.NotAcceptable, "[hindsight] commit is not attached", nil)
-		}
-	}
-
-	hub.commit.Store(fn)
 }
 
 /*

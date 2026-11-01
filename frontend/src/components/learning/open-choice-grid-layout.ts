@@ -3,16 +3,16 @@ import {
 	ChartModifierBase2D,
 	configure2DSurface,
 	DoubleAnimator,
-	easing,
 	EHorizontalAnchorPoint,
 	ESubSurfacePositionCoordinateMode,
 	EVerticalAnchorPoint,
+	easing,
 	FastBandRenderableSeries,
 	FastLineRenderableSeries,
 	GenericAnimation,
 	type I2DSubSurfaceOptions,
-	type ISciChart2DDefinition,
 	type IRenderableSeries,
+	type ISciChart2DDefinition,
 	NativeTextAnnotation,
 	Rect,
 	SciChartSubSurface,
@@ -44,6 +44,38 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 			this.makeGridLayout();
 		} else {
 			this.makeSingleChart();
+		}
+	}
+
+	/*
+	collapseNow tears the grid down synchronously: detach shared dataSeries,
+	drop subcharts, restore parent visibility. Rebuild must call this before
+	clear(true) — animated makeSingleChart leaves subcharts holding series
+	that clear would dispose, and SciChart then reads .capacity on undefined.
+	*/
+	public collapseNow() {
+		this.isGridProperty = false;
+
+		const surface = this.parentSurface;
+		if (!surface) return;
+
+		for (const subChart of [...surface.subCharts]) {
+			const lotId = String(subChart.title ?? "");
+
+			for (const rs of subChart.renderableSeries.asArray()) {
+				(rs as { dataSeries?: unknown }).dataSeries = undefined;
+			}
+
+			surface.removeSubChart(subChart);
+
+			if (lotId) this.restoreLot(lotId);
+		}
+
+		for (const x of surface.xAxes.asArray()) {
+			x.isVisible = true;
+		}
+		for (const y of surface.yAxes.asArray()) {
+			y.isVisible = true;
 		}
 	}
 
@@ -276,7 +308,13 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		const surfaceDef = this.parentSurface.toJSON(true);
 
 		for (let panel = 0; panel < chartCount; panel++) {
-			this.makeSubChart(surfaceDef, primaryIndexes[panel], panel, width, height);
+			this.makeSubChart(
+				surfaceDef,
+				primaryIndexes[panel],
+				panel,
+				width,
+				height,
+			);
 		}
 
 		for (const rs of all) {

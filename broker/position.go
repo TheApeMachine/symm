@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,26 +14,19 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/broker/stoploss"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 )
-
-/*
-positionTraceCap bounds one lot's net percent path. The path is the episode
-the exit policy learns from, and a lot that runs for days would otherwise
-grow it without end. The oldest marks are the ones a settled round trip no
-longer needs.
-*/
-const positionTraceCap = 4096
 
 type Position struct {
 	*runtime.System
 	mu                sync.Mutex
 	exitInProgress    atomic.Uint32
 	onShadowDone      func(*Position)
-	Structural        *StructuralStop `json:"structural,omitempty"`
-	Learning          *LearningStop   `json:"learning,omitempty"`
+	Structural        *stoploss.Structural `json:"structural,omitempty"`
+	Learning          *stoploss.Learning   `json:"learning,omitempty"`
 	transport         Transport
 	price             *Price
 	onSettled         func(*Position)
@@ -66,7 +58,6 @@ type Position struct {
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	OpenPnL           *decimal.Decimal        `json:"open_pnl,omitempty"`
 	LastPnL           *decimal.Decimal        `json:"last_pnl,omitempty"`
-	PnLTrace          []float64               `json:"pnl_trace,omitempty"`
 	PeakPnLPct        *decimal.Decimal        `json:"peak_pnl_pct,omitempty"`
 	PeakStep          *decimal.Decimal        `json:"peak_step,omitempty"`
 	Impulse           bool                    `json:"impulse,omitempty"`
@@ -106,12 +97,12 @@ func NewPosition(
 ) *Position {
 	return NewPositionWithRails(
 		ctx, symbol, path, pathFound, ledger, price, transport, onSettled,
-		NewAdaptiveRails(),
+		stoploss.NewRails(),
 	)
 }
 
 /*
-NewPositionWithRails wires the desk's AdaptiveRails into the learning shadow.
+NewPositionWithRails wires the desk's Rails into the learning shadow.
 */
 func NewPositionWithRails(
 	ctx context.Context,
@@ -122,7 +113,7 @@ func NewPositionWithRails(
 	price *Price,
 	transport Transport,
 	onSettled func(*Position),
-	rails *AdaptiveRails,
+	rails *stoploss.Rails,
 ) *Position {
 	if ledger == "" {
 		ledger = LedgerPaper
@@ -131,8 +122,8 @@ func NewPositionWithRails(
 	return &Position{
 		System:     runtime.NewSystem(ctx, "position"),
 		price:      price,
-		Structural: NewStructuralStop(),
-		Learning:   NewLearningStop(rails),
+		Structural: stoploss.NewStructural(),
+		Learning:   stoploss.NewLearning(rails),
 		transport:  transport,
 		onSettled:  onSettled,
 		ID:         uuid.NewString(),
@@ -162,16 +153,19 @@ func (position *Position) IsClosed() bool {
 }
 
 /*
-stopExitPath is the path argument passed into Exit when a stop fires.
-exit_path on the lot is still empty until Exit runs. Never use entry_path —
-only the latest hold spell, or a fixed stop tag.
+stopExitPath is the latest hold cut when a stop fires. Empty means the
+venue can still close; model.Exit waits for a distinct regime cut before
+writing an exit leaf. Never invent "stop" or reuse entry_path.
 */
 func stopExitPath(position *Position) string {
 	if n := len(position.HoldPaths); n > 0 {
-		return position.HoldPaths[n-1]
+		path := position.HoldPaths[n-1]
+		if path != "" && path != position.EntryPath {
+			return path
+		}
 	}
 
-	return "stop"
+	return ""
 }
 
 /*
@@ -203,9 +197,10 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		}
 	}
 
+	fired := position.ExitTrigger != "" && position.ClosedAt == nil
 	position.mu.Unlock()
 
-	if path == "" {
+	if !fired {
 		return
 	}
 
@@ -233,13 +228,24 @@ func (position *Position) UpdateShadow(mark *decimal.Decimal) bool {
 		return false
 	}
 
-	if position.price == nil || position.EntryPrice == nil || position.Qty == nil {
+	if position.price == nil || position.EntryPrice == nil {
+		return false
+	}
+
+	// Sell fills may zero Qty after the official settle; shadow still marks
+	// the entry size so the learning episode can finish.
+	qty := position.Qty
+	if qty == nil || qty.Sign() <= 0 {
+		qty = position.shadowQtyLocked()
+	}
+
+	if qty == nil || qty.Sign() <= 0 {
 		return false
 	}
 
 	fee := position.price.feeForTrade(position.Symbol)
 	pct := position.price.roundTripPct(
-		position.Symbol, position.Qty, position.EntryPrice, fee, fee,
+		position.Symbol, qty, position.EntryPrice, fee, fee,
 	)
 
 	if pct == nil {
@@ -280,6 +286,25 @@ func (position *Position) armStopsLocked() {
 
 	position.Structural.Arm(friction)
 	position.Learning.Arm(friction)
+}
+
+/*
+shadowQtyLocked recovers the entry size after a sell fill burned Qty.
+*/
+func (position *Position) shadowQtyLocked() *decimal.Decimal {
+	if position.ExitOrder != nil && position.ExitOrder.Volume != "" {
+		if qty, err := decimal.NewFromString(position.ExitOrder.Volume); err == nil && qty.Sign() > 0 {
+			return qty
+		}
+	}
+
+	if position.EntryOrder != nil && position.EntryOrder.Volume != "" {
+		if qty, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil && qty.Sign() > 0 {
+			return qty
+		}
+	}
+
+	return nil
 }
 
 /*
@@ -341,7 +366,7 @@ func (position *Position) finishExit(path string) {
 	}
 
 	// Learning already finished during the open → score regret now.
-	if position.Learning.done {
+	if position.Learning.ExitAt != nil {
 		position.Learning.Settle(position.OfficialExitPct)
 	}
 
@@ -498,7 +523,9 @@ fill can be applied while this call waits on the paper CLI.
 func (position *Position) Exit(path string) error {
 	position.mu.Lock()
 
-	if path == "" {
+	// Stop-triggered exits may arrive with an empty cut; the model fills
+	// ExitPath later from a live regime path distinct from entry.
+	if path == "" && position.ExitTrigger == "" {
 		position.mu.Unlock()
 		return errnie.Err(
 			errnie.NotFound,
@@ -519,7 +546,10 @@ func (position *Position) Exit(path string) error {
 
 	now := time.Now().UTC()
 	position.ClosedAt = &now
-	position.ExitPath = path
+
+	if path != "" && path != position.EntryPath {
+		position.ExitPath = path
+	}
 
 	if position.price != nil {
 		position.ExitVWAP = position.price.ExitVWAP(position.Symbol, position.Qty)
@@ -614,15 +644,6 @@ func (position *Position) applyLocked(execution kraken.ExecutionData) {
 }
 
 func (position *Position) repriceLocked() {
-	// The mark is the round trip, so it goes into the lot's own net percent
-	// path before anything else can bail out of this reprice. A lot restored
-	// without a price book, or one whose book cannot fill its size, still
-	// settled marks, and those marks are the episode the exit policy learns
-	// from.
-	if position.PnLPct != nil {
-		position.recordTraceLocked(position.PnLPct.MustFloat64())
-	}
-
 	if position.price == nil {
 		return
 	}
@@ -689,33 +710,6 @@ func (position *Position) repriceLocked() {
 			position.RealizedPct = netExit.Sub(cost).Div(cost).MustFloat64()
 		}
 	}
-}
-
-/*
-recordTraceLocked appends one mark to the lot's own net percent path. The
-trace is the episode: it is what the exit policy learns from once the lot
-settles, so it is written on every reprice, virtual and paper alike.
-
-The path is bounded. A lot that runs for hours would otherwise grow the
-record without end, and the oldest marks are the ones a settled episode no
-longer needs: the recent path is what says how this market gives back.
-*/
-func (position *Position) recordTraceLocked(value float64) {
-	position.PnLTrace = appendTrace(position.PnLTrace, value)
-}
-
-func appendTrace(path []float64, value float64) []float64 {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return path
-	}
-
-	if len(path) >= positionTraceCap {
-		copy(path, path[1:])
-		path[len(path)-1] = value
-		return path
-	}
-
-	return append(path, value)
 }
 
 /*

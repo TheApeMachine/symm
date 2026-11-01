@@ -10,79 +10,75 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker/stoploss"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
 
+const (
+	cachePaper   = "paper"
+	cacheReal    = "real"
+	cacheVirtual = "virtual"
+	cacheShadow  = "shadow"
+)
+
 /*
-Desk owns open positions across three concurrent books: virtual (learning),
-paper (validated paths), and real (live wallet when confidence is armed).
+Desk owns open positions across concurrent books plus a learning-shadow
+cache. Transports, balances, and caches are all keyed the same way.
 */
 type Desk struct {
 	*runtime.System
-	paperTransport Transport
-	liveTransport  Transport
+	transports     map[string]Transport
+	balances       map[string]*Balance
+	caches         map[string]*Cache
 	price          *Price
-	paperBalance   *Balance
-	liveBalance    *Balance
 	history        *History
-	papers         *Cache
-	reals          *Cache
-	virtuals       *Cache
-	shadows        *sync.Map // id → *Position learning ghosts after official settle
-	adaptive       *AdaptiveRails
+	adaptive       *stoploss.Rails
 	virtualArchive *sync.Map
 	pending        *sync.Map
 }
 
-type DeskTransports struct {
-	Paper Transport
-	Live  Transport
-}
-
-type DeskBalances struct {
-	Paper *Balance
-	Live  *Balance
-}
-
 func NewDesk(
 	ctx context.Context,
-	transports DeskTransports,
+	transports map[string]Transport,
 	price *Price,
-	balances DeskBalances,
+	balances map[string]*Balance,
 ) *Desk {
-	paperTransport := transports.Paper
-	if paperTransport == nil {
-		paperTransport = transports.Live
+	if transports == nil {
+		transports = map[string]Transport{}
+	}
+
+	if balances == nil {
+		balances = map[string]*Balance{}
 	}
 
 	desk := &Desk{
-		paperTransport: paperTransport,
-		liveTransport:  transports.Live,
-		paperBalance:   balances.Paper,
-		liveBalance:    balances.Live,
+		System:     runtime.NewSystem(ctx, "desk"),
+		transports: transports,
+		balances:   balances,
+		caches: map[string]*Cache{
+			cachePaper:   NewCache(ctx),
+			cacheReal:    NewCache(ctx),
+			cacheVirtual: NewCache(ctx),
+			cacheShadow:  NewCache(ctx),
+		},
 		price:          price,
-		papers:         NewCache(ctx),
-		reals:          NewCache(ctx),
-		virtuals:       NewCache(ctx),
-		shadows:        &sync.Map{},
-		adaptive:       NewAdaptiveRails(),
+		adaptive:       stoploss.NewRails(),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
 	}
 
 	desk.System = runtime.NewSystem(ctx, "desk", desk)
+	desk.adaptive.AttachStore(ctx, store.NewClient(ctx, system.Cfg.Storage.S3.Bucket))
 
 	desk.history = NewHistory(
 		ctx,
 		price,
-		desk.papers,
-		desk.reals,
-		desk.virtuals,
-		paperTransport,
-		transports.Live,
+		desk.caches,
+		desk.transports,
 		desk.onPositionSettled,
 		desk.adaptive,
 	)
@@ -98,15 +94,7 @@ connection is established, and we want to update the client with
 some initial data.
 */
 func (desk *Desk) Hello() {
-	lots := append(
-		append(
-			desk.papers.AllPositions(),
-			desk.reals.AllPositions()...,
-		),
-		desk.virtuals.AllPositions()...,
-	)
-	lots = append(lots, desk.shadowPositions()...)
-	desk.publishPositions("snapshot", lots...)
+	desk.publishPositions("snapshot", desk.allPositions()...)
 	desk.publishBalances()
 }
 
@@ -117,15 +105,14 @@ func (desk *Desk) publishBalances() {
 
 	frame := map[string]any{}
 
-	if desk.paperBalance != nil {
-		if reading := desk.paperBalance.Reading(); reading != nil {
-			frame["paper"] = reading
+	for _, key := range []string{cachePaper, cacheReal} {
+		balance := desk.balances[key]
+		if balance == nil {
+			continue
 		}
-	}
 
-	if desk.liveBalance != nil {
-		if reading := desk.liveBalance.Reading(); reading != nil {
-			frame["real"] = reading
+		if reading := balance.Reading(); reading != nil {
+			frame[key] = reading
 		}
 	}
 
@@ -137,11 +124,11 @@ func (desk *Desk) publishBalances() {
 		"balances": frame,
 	})
 
-	// Keep legacy single-balance frame on the paper wallet for older clients.
-	if desk.paperBalance != nil {
-		desk.paperBalance.Publish()
-	} else if desk.liveBalance != nil {
-		desk.liveBalance.Publish()
+	// Keep legacy single-balance frame for older clients.
+	if paper := desk.balances[cachePaper]; paper != nil {
+		paper.Publish()
+	} else if live := desk.balances[cacheReal]; live != nil {
+		live.Publish()
 	}
 }
 
@@ -185,12 +172,12 @@ func (desk *Desk) publishPositions(mode string, lots ...*Position) {
 }
 
 /*
-OpenPositions returns the open positions in the desk.
+OpenPositions returns the open positions on the venue/virtual books.
 */
 func (desk *Desk) OpenPositions() []*Position {
 	out := make([]*Position, 0)
 
-	for _, cache := range desk.caches() {
+	for _, cache := range desk.bookCaches() {
 		for _, position := range cache.OpenPositions() {
 			if position == nil || position.Symbol == "" {
 				continue
@@ -207,11 +194,11 @@ func (desk *Desk) OpenPositions() []*Position {
 Virtuals returns the virtual positions in the desk.
 */
 func (desk *Desk) Virtuals() []*Position {
-	return desk.virtuals.AllPositions()
+	return desk.caches[cacheVirtual].AllPositions()
 }
 
 /*
-Positions returns every open lot for a symbol across all books.
+Positions returns every open lot for a symbol across the trading books.
 */
 func (desk *Desk) Positions(symbol string) []*Position {
 	if symbol == "" {
@@ -220,7 +207,7 @@ func (desk *Desk) Positions(symbol string) []*Position {
 
 	out := make([]*Position, 0, 3)
 
-	for _, cache := range desk.caches() {
+	for _, cache := range desk.bookCaches() {
 		if position := cache.Get(symbol, true); position != nil {
 			out = append(out, position)
 		}
@@ -233,22 +220,20 @@ func (desk *Desk) Positions(symbol string) []*Position {
 Position returns one open lot for the symbol. Prefer venue books, then virtual.
 */
 func (desk *Desk) Position(symbol string) *Position {
-	if position := desk.papers.Get(symbol, true); position != nil {
-		return position
+	for _, key := range []string{cachePaper, cacheReal, cacheVirtual} {
+		if position := desk.caches[key].Get(symbol, true); position != nil {
+			return position
+		}
 	}
 
-	if position := desk.reals.Get(symbol, true); position != nil {
-		return position
-	}
-
-	return desk.virtuals.Get(symbol, true)
+	return nil
 }
 
 /*
 PositionOn returns the open lot on one book.
 */
 func (desk *Desk) PositionOn(symbol string, ledger Ledger) *Position {
-	return desk.cache(ledger).Get(symbol, true)
+	return desk.cache(ledger.String()).Get(symbol, true)
 }
 
 /*
@@ -256,7 +241,7 @@ ClosedVirtuals returns virtual lots settled this tick and still on the closed
 side of the live cache, awaiting promotion scoring.
 */
 func (desk *Desk) ClosedVirtuals() []*Position {
-	return desk.virtuals.Closed()
+	return desk.caches[cacheVirtual].Closed()
 }
 
 func (desk *Desk) onPositionSettled(position *Position) {
@@ -267,15 +252,13 @@ func (desk *Desk) onPositionSettled(position *Position) {
 	book := position.Ledger()
 	desk.pending.Store(book.PendingKey(position.Symbol), position)
 
-	cache := desk.cache(book)
-
-	cache.Remove(position.Symbol)
+	desk.cache(book.String()).Remove(position.Symbol)
 
 	if desk.history != nil {
-		if err := desk.history.Store(
-			book.HistoryKey()+"/closed/"+position.Symbol+"/"+position.ID,
-			position,
-		); err != nil {
+		closed := book.HistoryKey() + "/closed/" + position.Symbol + "/" + position.ID
+		open := book.HistoryKey() + "/open/" + position.Symbol + "/" + position.ID
+
+		if err := desk.history.Move(closed, position, open); err != nil {
 			errnie.Error(err)
 		}
 	}
@@ -283,7 +266,7 @@ func (desk *Desk) onPositionSettled(position *Position) {
 	// Learning shadow keeps receiving marks after the active structural settle.
 	if position.ShadowLive() {
 		position.onShadowDone = desk.onShadowDone
-		desk.shadows.Store(position.ID, position)
+		desk.caches[cacheShadow].Add(position.ID, position, true)
 		desk.publishPositions("update", position)
 		return
 	}
@@ -291,75 +274,58 @@ func (desk *Desk) onPositionSettled(position *Position) {
 	if position.Learning.ExitAt != nil {
 		desk.persistShadow(position)
 	}
+
+	desk.publishPositions("update", position)
 }
 
 /*
-Refresh reprices open positions against the current book without a trade.
+Refresh reprices open lots and learning shadows from the book mid.
 */
 func (desk *Desk) Refresh(symbols []string) {
-	if len(symbols) == 0 {
-		return
-	}
-
 	for _, symbol := range symbols {
-		for _, position := range desk.Positions(symbol) {
-			mark := desk.price.CurrentMark(position.Symbol)
-
-			if mark == nil {
-				continue
-			}
-
-			position.Update(mark)
-			desk.publishPositions("update", position)
+		if symbol == "" {
+			continue
 		}
 
-		desk.refreshShadows(symbol)
+		desk.markSymbol(symbol, desk.price.CurrentMark(symbol))
 	}
 }
 
 /*
-Update marks open positions against the trade price.
+Update marks open lots and learning shadows from trade prints.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
 	desk.price.Tape.Note(trades)
 
-	updated := make([]*Position, 0, len(trades))
-
 	for _, trade := range trades {
-		for _, position := range desk.Positions(trade.Symbol) {
-			position.Update(&trade.Price)
-			updated = append(updated, position)
-		}
-
-		updated = append(updated, desk.tickShadows(trade.Symbol, &trade.Price)...)
+		desk.markSymbol(trade.Symbol, &trade.Price)
 	}
-
-	desk.publishPositions("update", updated...)
 }
 
-func (desk *Desk) refreshShadows(symbol string) {
-	mark := desk.price.CurrentMark(symbol)
-	if mark == nil {
+/*
+markSymbol advances every open lot and learning shadow on one symbol, then
+publishes once.
+*/
+func (desk *Desk) markSymbol(symbol string, mark *decimal.Decimal) {
+	if symbol == "" || mark == nil {
 		return
-	}
-
-	updated := desk.tickShadows(symbol, mark)
-	if len(updated) > 0 {
-		desk.publishPositions("update", updated...)
-	}
-}
-
-func (desk *Desk) tickShadows(symbol string, mark *decimal.Decimal) []*Position {
-	if mark == nil {
-		return nil
 	}
 
 	updated := make([]*Position, 0)
 
-	desk.shadows.Range(func(key, value any) bool {
-		position, ok := value.(*Position)
-		if !ok || position == nil || position.Symbol != symbol {
-			return true
+	for _, position := range desk.Positions(symbol) {
+		position.Update(mark)
+
+		if !position.IsClosed() {
+			desk.persistOpen(position)
+		}
+
+		updated = append(updated, position)
+	}
+
+	for _, position := range desk.caches[cacheShadow].OpenPositions() {
+		if position == nil || position.Symbol != symbol {
+			continue
 		}
 
 		if position.UpdateShadow(mark) {
@@ -367,10 +333,11 @@ func (desk *Desk) tickShadows(symbol string, mark *decimal.Decimal) []*Position 
 		}
 
 		updated = append(updated, position)
-		return true
-	})
+	}
 
-	return updated
+	if len(updated) > 0 {
+		desk.publishPositions("update", updated...)
+	}
 }
 
 func (desk *Desk) onShadowDone(position *Position) {
@@ -378,9 +345,23 @@ func (desk *Desk) onShadowDone(position *Position) {
 		return
 	}
 
-	desk.shadows.Delete(position.ID)
+	desk.caches[cacheShadow].Drop(position.ID)
 	desk.persistShadow(position)
-	desk.publishPositions("update", position)
+}
+
+func (desk *Desk) persistOpen(position *Position) {
+	if desk.history == nil || position == nil || position.IsClosed() {
+		return
+	}
+
+	book := position.Ledger()
+
+	if err := desk.history.Store(
+		book.HistoryKey()+"/open/"+position.Symbol+"/"+position.ID,
+		position,
+	); err != nil {
+		errnie.Error(err)
+	}
 }
 
 func (desk *Desk) persistShadow(position *Position) {
@@ -388,33 +369,23 @@ func (desk *Desk) persistShadow(position *Position) {
 		return
 	}
 
+	// Rewrite the closed lot once the learning shadow finishes so history
+	// carries exit_at — the mid-settle Store still has learning.active.
+	book := position.Ledger()
+
 	if err := desk.history.Store(
-		"virtual/shadow/"+position.Symbol+"/"+position.ID,
+		book.HistoryKey()+"/closed/"+position.Symbol+"/"+position.ID,
 		position,
 	); err != nil {
 		errnie.Error(err)
 	}
 }
 
-func (desk *Desk) shadowPositions() []*Position {
-	out := make([]*Position, 0)
-
-	desk.shadows.Range(func(_, value any) bool {
-		if position, ok := value.(*Position); ok && position != nil {
-			out = append(out, position)
-		}
-
-		return true
-	})
-
-	return out
-}
-
 /*
-Has reports whether the desk holds an open position on any book for the symbol.
+Has reports whether the desk holds an open position on any trading book.
 */
 func (desk *Desk) Has(symbol string) bool {
-	for _, cache := range desk.caches() {
+	for _, cache := range desk.bookCaches() {
 		if cache.Has(symbol) {
 			return true
 		}
@@ -447,7 +418,7 @@ Apply an execution to the desk.
 */
 func (desk *Desk) Apply(executions *kraken.Execution) {
 	for _, execution := range executions.Data {
-		for _, cache := range desk.caches() {
+		for _, cache := range desk.bookCaches() {
 			position := cache.Get(execution.Symbol, true)
 
 			if position == nil {
@@ -470,7 +441,7 @@ func (desk *Desk) Enter(
 		ledger = LedgerPaper
 	}
 
-	cache := desk.cache(ledger)
+	cache := desk.cache(ledger.String())
 
 	if cache.Has(symbol) {
 		why := ledger.HistoryKey() + " already exists"
@@ -488,9 +459,9 @@ func (desk *Desk) Enter(
 	case LedgerVirtual:
 		qty, why = desk.price.AllocateVirtual(symbol)
 	case LedgerReal:
-		qty, why = desk.price.AllocateFrom(desk.liveBalance, symbol, true)
+		qty, why = desk.price.AllocateFrom(desk.balances[cacheReal], symbol, true)
 	default:
-		qty, why = desk.price.AllocateFrom(desk.paperBalance, symbol, true)
+		qty, why = desk.price.AllocateFrom(desk.balances[cachePaper], symbol, true)
 	}
 
 	if qty == nil || qty.Sign() <= 0 {
@@ -510,8 +481,6 @@ func (desk *Desk) Enter(
 		}
 	}
 
-	transport := desk.transportFor(ledger)
-
 	position := NewPositionWithRails(
 		desk.Context(),
 		symbol,
@@ -519,7 +488,7 @@ func (desk *Desk) Enter(
 		pathFound,
 		ledger,
 		desk.price,
-		transport,
+		desk.transports[ledger.String()],
 		desk.onPositionSettled,
 		desk.adaptive,
 	)
@@ -569,11 +538,11 @@ Exit a position on the requested book.
 func (desk *Desk) Exit(
 	symbol string, path string, ledger Ledger,
 ) error {
-	caches := []*Cache{desk.cache(ledger)}
+	caches := []*Cache{desk.cache(ledger.String())}
 
 	// Fall back across books if the caller only knew the symbol.
 	if ledger == "" {
-		caches = desk.caches()
+		caches = desk.bookCaches()
 	}
 
 	for _, cache := range caches {
@@ -619,6 +588,17 @@ func (desk *Desk) TakePending(key string) (*Position, bool) {
 }
 
 /*
+PendingPut restores a settle that was taken before an exit cut was ready.
+*/
+func (desk *Desk) PendingPut(key string, position *Position) {
+	if key == "" || position == nil {
+		return
+	}
+
+	desk.pending.Store(key, position)
+}
+
+/*
 Pending returns pending settle keys (book:symbol).
 */
 func (desk *Desk) Pending() []string {
@@ -648,32 +628,34 @@ func ParsePendingKey(key string) (Ledger, string) {
 	return ParseLedger(book, book == string(LedgerVirtual)), symbol
 }
 
-func (desk *Desk) caches() []*Cache {
-	return []*Cache{desk.papers, desk.reals, desk.virtuals}
-}
-
-func (desk *Desk) cache(ledger Ledger) *Cache {
-	switch ledger {
-	case LedgerVirtual:
-		return desk.virtuals
-	case LedgerReal:
-		return desk.reals
-	default:
-		return desk.papers
+func (desk *Desk) cache(key string) *Cache {
+	if cache := desk.caches[key]; cache != nil {
+		return cache
 	}
+
+	return desk.caches[cachePaper]
 }
 
-func (desk *Desk) transportFor(ledger Ledger) Transport {
-	switch ledger {
-	case LedgerReal:
-		if desk.liveTransport != nil {
-			return desk.liveTransport
+func (desk *Desk) bookCaches() []*Cache {
+	out := make([]*Cache, 0, 3)
+
+	for _, key := range []string{cachePaper, cacheReal, cacheVirtual} {
+		if cache := desk.caches[key]; cache != nil {
+			out = append(out, cache)
 		}
-
-		return desk.paperTransport
-	case LedgerVirtual:
-		return desk.paperTransport
-	default:
-		return desk.paperTransport
 	}
+
+	return out
+}
+
+func (desk *Desk) allPositions() []*Position {
+	out := make([]*Position, 0)
+
+	for _, key := range []string{cachePaper, cacheReal, cacheVirtual, cacheShadow} {
+		if cache := desk.caches[key]; cache != nil {
+			out = append(out, cache.AllPositions()...)
+		}
+	}
+
+	return out
 }

@@ -26,21 +26,15 @@ func NewLab(ctx context.Context) *Lab {
 }
 
 func (lab *Lab) Desk(price *Price, balance *Balance) *Desk {
-	desk := &Desk{
-		paperBalance:   balance,
-		liveBalance:    balance,
-		price:          price,
-		papers:         NewCache(lab.ctx),
-		reals:          NewCache(lab.ctx),
-		virtuals:       NewCache(lab.ctx),
-		shadows:        &sync.Map{},
-		adaptive:       NewAdaptiveRails(),
-		virtualArchive: &sync.Map{},
-		pending:        &sync.Map{},
-	}
-	desk.System = runtime.NewSystem(lab.ctx, "desk", desk)
-	desk.Transition(runtime.READY)
-	return desk
+	return NewDesk(
+		lab.ctx,
+		map[string]Transport{},
+		price,
+		map[string]*Balance{
+			cachePaper: balance,
+			cacheReal:  balance,
+		},
+	)
 }
 
 func (lab *Lab) ReadyPrice(
@@ -77,24 +71,6 @@ func (lab *Lab) StaticBalance(quote string, amount *decimal.Decimal) *Balance {
 }
 
 func (desk *Desk) AttachTransport(transport Transport) {
-	desk.paperTransport = transport
-	if desk.liveTransport == nil {
-		desk.liveTransport = transport
-	}
-}
-
-func (instrument *Instrument) RememberPair(pair kraken.InstrumentPair) {
-	if pair.Symbol == "" {
-		return
-	}
-
-	instrument.cache.Store(pair.Symbol, pair)
-}
-
-func (price *Price) RememberTakerFee(symbol string, taker *decimal.Decimal) {
-	if taker == nil {
-		return
-	}
-
-	price.fees.Store(price.feeName(symbol), taker)
+	desk.transports[cachePaper] = transport
+	desk.transports[cacheReal] = transport
 }

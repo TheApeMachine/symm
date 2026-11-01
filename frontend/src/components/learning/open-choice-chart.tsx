@@ -106,8 +106,9 @@ export const OpenChoiceChart = memo(
 							Open choices
 						</div>
 						<div className="text-[10px] text-(--f4)">
-							Active floor band under the mark. Dashed path only when the
-							learning shadow beats structural. Toggle grid per lot.
+							Active floor band under the mark. Dashed after structural
+							settle while the learning shadow is still evaluating (kept if
+							it beats). Toggle grid per lot.
 						</div>
 					</div>
 					<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">

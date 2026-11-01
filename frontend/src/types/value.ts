@@ -217,7 +217,7 @@ export class Value {
 	}
 }
 
-export const layerRelativeToPrefix = (
+const layerRelativeToPrefix = (
 	index: string,
 	prefix: string,
 ): string | null => {
@@ -343,30 +343,4 @@ export const mergeWorkspaceAggregate = (
 		index,
 		layers,
 	});
-};
-
-export const workspaceAggregateEqual = (
-	left: Value | undefined,
-	right: Value | undefined,
-): boolean => {
-	if (left === right) return true;
-	if (!left || !right) return false;
-	if (
-		left.tick !== right.tick ||
-		left.prefix !== right.prefix ||
-		left.index.length !== right.index.length
-	) {
-		return false;
-	}
-	for (let i = 0; i < left.index.length; i++) {
-		if (left.index[i] !== right.index[i]) return false;
-		const a = left.layers[i];
-		const b = right.layers[i];
-		if (a === b) continue;
-		if (!a || !b || a.byteLength !== b.byteLength) return false;
-		for (let j = 0; j < a.byteLength; j++) {
-			if (a[j] !== b[j]) return false;
-		}
-	}
-	return true;
 };

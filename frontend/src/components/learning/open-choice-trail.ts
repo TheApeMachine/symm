@@ -69,7 +69,7 @@ export const officialExitDashIndex = (
 	if (!adaptiveBeatsOfficial(row)) return undefined;
 
 	const shadow = finiteNums(learningOf(row).pnl_trace);
-	const official = finiteNums(row.pnl_trace);
+	const official = finiteNums(structuralOf(row).pnl_trace);
 	if (shadow.length === 0 || official.length === 0) return undefined;
 	if (shadow.length <= official.length) return undefined;
 
@@ -214,7 +214,7 @@ export const openChoiceFloorBands = (
 	const stopRaw = finiteNums(structural.floor_trace);
 	const shadowRaw = finiteNums(learning.floor_trace);
 	const shadowPnl = finiteNums(learning.pnl_trace);
-	const officialPnl = finiteNums(row.pnl_trace);
+	const officialPnl = finiteNums(structural.pnl_trace);
 	const sourceLen =
 		shadowPnl.length > 0 ? shadowPnl.length : Math.max(officialPnl.length, values.length);
 
@@ -244,9 +244,9 @@ const clipSeriesWindow = (path: number[]): number[] => {
 };
 
 /*
-openChoiceSeriesValues prefers the learning shadow path when it beats the
-official exit (dashed after settle). Otherwise it keeps the official path
-solid — no "what if" dash for a losing adaptive episode.
+openChoiceSeriesValues shows the learning shadow dashed after the official
+settle while the shadow is still live, or once it has beaten structural.
+A finished shadow that lost stays on the solid official path.
 */
 export const openChoiceSeriesValues = (
 	row: Record<string, unknown>,
@@ -254,7 +254,7 @@ export const openChoiceSeriesValues = (
 ): { values: number[]; dashFrom?: number } => {
 	const learning = learningOf(row);
 	const shadow = finiteNums(learning.pnl_trace);
-	const official = finiteNums(row.pnl_trace);
+	const official = finiteNums(structuralOf(row).pnl_trace);
 	const client = openChoiceValues(id);
 
 	if (shadow.length === 0) {
@@ -263,14 +263,23 @@ export const openChoiceSeriesValues = (
 
 	const settled =
 		row.official_exit_at != null && row.official_exit_at !== "";
+	const shadowLive = learning.active === true;
 	const beats = adaptiveBeatsOfficial(row);
 
-	if (settled && !beats) {
-		const path = official.length > 0 ? official : shadow.slice(0, official.length || shadow.length);
+	if (settled && !shadowLive && !beats) {
+		const path =
+			official.length > 0
+				? official
+				: shadow.slice(0, official.length || shadow.length);
 		return { values: clipSeriesWindow(path.length > 0 ? path : shadow) };
 	}
 
-	const rawDash = officialExitDashIndex(row);
+	const rawDash = settled
+		? (officialExitDashIndex(row) ??
+			(official.length > 0 && shadow.length > official.length
+				? official.length
+				: undefined))
+		: undefined;
 	const start =
 		shadow.length > CHOICE_TRAIL_LENGTH
 			? shadow.length - CHOICE_TRAIL_LENGTH
