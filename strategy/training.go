@@ -73,7 +73,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
-	if training == nil || symbol == "" {
+	if symbol == "" {
 		return tokenizer.NewSequencer()
 	}
 
@@ -82,7 +82,7 @@ func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 }
 
 func (training *Training) ResetSequencer(symbol string) {
-	if training == nil || symbol == "" {
+	if symbol == "" {
 		return
 	}
 
@@ -95,7 +95,7 @@ func (training *Training) ResetSequencer(symbol string) {
 }
 
 func (training *Training) open(symbol string) bool {
-	if training == nil || training.desk == nil || symbol == "" {
+	if symbol == "" {
 		return false
 	}
 
@@ -105,7 +105,7 @@ func (training *Training) open(symbol string) bool {
 
 // lightBroker paints mover / book oracle sides before Emit collapses each pair.
 func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
-	if training == nil || training.price == nil || symbol == "" {
+	if symbol == "" {
 		return
 	}
 

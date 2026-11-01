@@ -19,10 +19,6 @@ type MDLState struct {
 }
 
 func (mdl *MDL) State() MDLState {
-	if mdl == nil {
-		return MDLState{}
-	}
-
 	return MDLState{
 		Stream:   append([]uint32(nil), mdl.stream...),
 		Offset:   mdl.offset,
@@ -34,10 +30,6 @@ func (mdl *MDL) State() MDLState {
 }
 
 func (mdl *MDL) Restore(state MDLState) {
-	if mdl == nil {
-		return
-	}
-
 	mdl.stream = append([]uint32(nil), state.Stream...)
 	mdl.offset = state.Offset
 	mdl.vocab = cloneVocab(state.Vocab)
@@ -53,10 +45,6 @@ func (mdl *MDL) Restore(state MDLState) {
 
 	mdl.dist = histogramFrom(state.Dist)
 	mdl.lastGain = state.LastGain
-
-	if mdl.dist == nil {
-		mdl.dist = newSymbolHistogram()
-	}
 }
 
 func cloneVocab(vocab map[string]uint32) map[string]uint32 {

@@ -26,10 +26,6 @@ func NewLab(ctx context.Context) *Lab {
 }
 
 func (lab *Lab) Desk(price *Price, balance *Balance) *Desk {
-	if lab == nil {
-		lab = NewLab(context.Background())
-	}
-
 	desk := &Desk{
 		paperBalance:   balance,
 		liveBalance:    balance,
@@ -37,6 +33,8 @@ func (lab *Lab) Desk(price *Price, balance *Balance) *Desk {
 		papers:         NewCache(lab.ctx),
 		reals:          NewCache(lab.ctx),
 		virtuals:       NewCache(lab.ctx),
+		shadows:        &sync.Map{},
+		adaptive:       NewAdaptiveRails(),
 		virtualArchive: &sync.Map{},
 		pending:        &sync.Map{},
 	}
@@ -51,10 +49,6 @@ func (lab *Lab) ReadyPrice(
 	normalizer *spot.Normalizer,
 	balance *Balance,
 ) *Price {
-	if lab == nil {
-		lab = NewLab(context.Background())
-	}
-
 	if normalizer == nil {
 		normalizer = spot.NewNormalizer()
 	}
@@ -83,10 +77,6 @@ func (lab *Lab) StaticBalance(quote string, amount *decimal.Decimal) *Balance {
 }
 
 func (desk *Desk) AttachTransport(transport Transport) {
-	if desk == nil {
-		return
-	}
-
 	desk.paperTransport = transport
 	if desk.liveTransport == nil {
 		desk.liveTransport = transport
@@ -94,24 +84,16 @@ func (desk *Desk) AttachTransport(transport Transport) {
 }
 
 func (instrument *Instrument) RememberPair(pair kraken.InstrumentPair) {
-	if instrument == nil || pair.Symbol == "" {
+	if pair.Symbol == "" {
 		return
-	}
-
-	if instrument.cache == nil {
-		instrument.cache = &sync.Map{}
 	}
 
 	instrument.cache.Store(pair.Symbol, pair)
 }
 
 func (price *Price) RememberTakerFee(symbol string, taker *decimal.Decimal) {
-	if price == nil || taker == nil {
+	if taker == nil {
 		return
-	}
-
-	if price.fees == nil {
-		price.fees = &sync.Map{}
 	}
 
 	price.fees.Store(price.feeName(symbol), taker)

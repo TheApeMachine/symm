@@ -35,31 +35,44 @@ const roomText = (room: number) => {
 	return `${room.toFixed(digits)}pp`;
 };
 
+const nest = (
+	row: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> => {
+	const value = row[key];
+	return value && typeof value === "object"
+		? (value as Record<string, unknown>)
+		: {};
+};
+
 const lotKey = (lots: Record<string, unknown>[]) =>
 	lots
-		.map((row) =>
-			[
+		.map((row) => {
+			const structural = nest(row, "structural");
+			const learning = nest(row, "learning");
+
+			return [
 				row.id ?? row.symbol,
-				row.shadow_active === true ? 1 : 0,
-				Array.isArray(row.shadow_pnl_trace) ? row.shadow_pnl_trace.length : 0,
+				learning.active === true ? 1 : 0,
+				Array.isArray(learning.pnl_trace) ? learning.pnl_trace.length : 0,
 				row.official_exit_at ? 1 : 0,
 				row.official_exit_pct,
-				row.shadow_exit_at ? 1 : 0,
-				row.shadow_exit_pct,
+				learning.exit_at ? 1 : 0,
+				learning.exit_pct,
 				row.pnl_pct,
 				row.pnl,
-				row.stop_floor_pct,
-				row.shadow_floor_pct,
-				row.stop_proximity,
-				row.stop_room_pct,
-				row.shadow_proximity,
-				row.shadow_room_pct,
-				Array.isArray(row.stop_floor_trace) ? row.stop_floor_trace.length : 0,
-				Array.isArray(row.shadow_floor_trace)
-					? row.shadow_floor_trace.length
+				structural.floor_pct,
+				learning.floor_pct,
+				structural.proximity,
+				structural.room_pct,
+				learning.proximity,
+				learning.room_pct,
+				Array.isArray(structural.floor_trace)
+					? structural.floor_trace.length
 					: 0,
-			].join(":"),
-		)
+				Array.isArray(learning.floor_trace) ? learning.floor_trace.length : 0,
+			].join(":");
+		})
 		.join("|");
 
 export const OpenChoiceChart = memo(

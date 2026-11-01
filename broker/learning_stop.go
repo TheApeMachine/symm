@@ -1,5 +1,7 @@
 package broker
 
+import "time"
+
 /*
 LearningStop is the probation stop: same invalidation + trail shape as the
 old active StopLoss, but seeded from AdaptiveRails and never settles a lot.
@@ -9,16 +11,28 @@ type LearningStop struct {
 	stop     *StopLoss
 	rails    *AdaptiveRails
 	snapshot RailsSnapshot
+	armed    bool
 	done     bool
 	learned  bool
 	trigger  string
 	exitPct  float64
+
+	Active      bool       `json:"active,omitempty"`
+	PnLTrace    []float64  `json:"pnl_trace,omitempty"`
+	ExitTrigger string     `json:"exit_trigger,omitempty"`
+	ExitAt      *time.Time `json:"exit_at,omitempty"`
+	ExitPct     float64    `json:"exit_pct,omitempty"`
+	FloorPct    float64    `json:"floor_pct,omitempty"`
+	FloorTrace  []float64  `json:"floor_trace,omitempty"`
+	Proximity   float64    `json:"proximity,omitempty"`
+	RoomPct     float64    `json:"room_pct,omitempty"`
 }
 
 func NewLearningStop(rails *AdaptiveRails) *LearningStop {
 	return &LearningStop{
-		stop:  NewStopLoss(),
-		rails: rails,
+		stop:   NewStopLoss(),
+		rails:  rails,
+		Active: true,
 	}
 }
 
@@ -26,122 +40,88 @@ func NewLearningStop(rails *AdaptiveRails) *LearningStop {
 Arm freezes a rails snapshot and friction-aware budget for this episode.
 */
 func (learning *LearningStop) Arm(frictionFraction float64) {
-	if learning == nil || learning.done {
+	if learning.armed || learning.done {
 		return
 	}
 
-	if learning.stop == nil {
-		learning.stop = NewStopLoss()
-	}
-
-	if learning.rails != nil {
-		learning.snapshot = learning.rails.Snapshot()
-	} else {
-		learning.snapshot = NewAdaptiveRails().Snapshot()
-	}
+	learning.armed = true
+	learning.snapshot = learning.rails.Snapshot()
 
 	budget := NewLossBudget().Arm(frictionFraction)
 	budget.Prefer(learning.snapshot.MaxLoss, learning.snapshot.ArmPct)
 
-	learning.stop.BindBudget(budget)
-	learning.stop.BindGiveback(learning.snapshot.BaseGiveback, learning.snapshot.MinGiveback)
-}
-
-func (learning *LearningStop) Done() bool {
-	return learning == nil || learning.done
-}
-
-func (learning *LearningStop) Trigger() string {
-	if learning == nil {
-		return ""
-	}
-
-	return learning.trigger
-}
-
-func (learning *LearningStop) ExitPct() float64 {
-	if learning == nil {
-		return 0
-	}
-
-	return learning.exitPct
-}
-
-func (learning *LearningStop) Snapshot() RailsSnapshot {
-	if learning == nil {
-		return RailsSnapshot{}
-	}
-
-	return learning.snapshot
+	learning.stop.budget = budget
+	learning.stop.baseGiveback = learning.snapshot.BaseGiveback
+	learning.stop.minGiveback = learning.snapshot.MinGiveback
 }
 
 /*
-Update advances the shadow stop. ok means the learning episode would exit.
+Live reports whether the shadow still wants marks.
+*/
+func (learning *LearningStop) Live() bool {
+	return learning.Active && !learning.done
+}
+
+/*
+Update advances the shadow stop and keeps its own traces/floors.
+ok means the learning episode would exit.
 */
 func (learning *LearningStop) Update(currentPnL float64) (trigger string, ok bool) {
-	if learning == nil || learning.done || learning.stop == nil {
+	if learning.done {
 		return "", false
 	}
 
+	learning.PnLTrace = appendTrace(learning.PnLTrace, currentPnL)
+
 	trigger, ok = learning.stop.Update(currentPnL)
+	learning.refresh(currentPnL)
+
 	if !ok {
 		return "", false
 	}
 
-	learning.done = true
-	learning.trigger = trigger
-	learning.exitPct = currentPnL
-
+	learning.close(trigger, currentPnL)
 	return trigger, true
 }
 
-func (learning *LearningStop) State(currentPnL float64) StopState {
-	if learning == nil || learning.stop == nil {
-		return StopState{CurrentPct: currentPnL}
-	}
-
-	return learning.stop.State(currentPnL)
-}
-
-func (learning *LearningStop) ActiveFloor(currentPnL float64) float64 {
-	if learning == nil || learning.stop == nil {
-		return 0
-	}
-
-	return learning.stop.ActiveFloor(currentPnL)
-}
-
-func (learning *LearningStop) Proximity(currentPnL float64) float64 {
-	if learning == nil || learning.stop == nil {
-		return 0
-	}
-
-	return learning.stop.Proximity(currentPnL)
-}
-
 /*
-Finish records a shadow exit when the episode ends outside Update
-(tests / forced close).
+Finish records a shadow exit when the episode ends outside Update.
 */
 func (learning *LearningStop) Finish(trigger string, exitPct float64) {
-	if learning == nil || learning.done {
+	if learning.done {
 		return
 	}
 
-	learning.done = true
-	learning.trigger = trigger
-	learning.exitPct = exitPct
+	learning.close(trigger, exitPct)
 }
 
 /*
-Settle learns from the official structural exit when the shadow already
-finished earlier, or when both end together.
+Settle learns from the official structural exit once the shadow finished.
 */
 func (learning *LearningStop) Settle(officialPct float64) {
-	if learning == nil || learning.rails == nil || !learning.done || learning.learned {
+	if !learning.done || learning.learned {
 		return
 	}
 
 	learning.learned = true
 	learning.rails.Learn(officialPct, learning.exitPct)
+}
+
+func (learning *LearningStop) refresh(currentPnL float64) {
+	learning.FloorPct = learning.stop.ActiveFloor(currentPnL)
+	learning.RoomPct = currentPnL - learning.FloorPct
+	learning.Proximity = learning.stop.Proximity(currentPnL)
+	learning.FloorTrace = appendTrace(learning.FloorTrace, learning.FloorPct)
+}
+
+func (learning *LearningStop) close(trigger string, exitPct float64) {
+	now := time.Now().UTC()
+
+	learning.done = true
+	learning.Active = false
+	learning.trigger = trigger
+	learning.ExitTrigger = trigger
+	learning.exitPct = exitPct
+	learning.ExitPct = exitPct
+	learning.ExitAt = &now
 }

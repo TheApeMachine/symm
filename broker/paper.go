@@ -621,14 +621,6 @@ func (paper *Paper) execute(entity string, command ...string) (datura.Map[any], 
 }
 
 /*
-Balance returns the paper wallet in the same asset-total map shape as the real
-private REST balance endpoint.
-*/
-func (paper *Paper) Balance() (*kraken.Balance, error) {
-	return paper.Balances()
-}
-
-/*
 publishBalance emits a paper wallet frame from `kraken paper balance --verbose`.
 */
 func (paper *Paper) publishBalance(frameType string) error {
@@ -692,7 +684,7 @@ ResumeOpenOrder continues a venue order that was still working when the
 process stopped. The fill watcher does not survive a restart on its own.
 */
 func (paper *Paper) ResumeOpenOrder(orderID, clientOrderID, pair, side string) {
-	if paper == nil || orderID == "" {
+	if orderID == "" {
 		return
 	}
 
@@ -709,7 +701,7 @@ func (paper *Paper) ResumeOpenOrder(orderID, clientOrderID, pair, side string) {
 }
 
 func (paper *Paper) watchOpenExecution(execution *kraken.Execution) {
-	if paper == nil || execution == nil {
+	if execution == nil {
 		return
 	}
 	for _, row := range execution.Data {

@@ -39,43 +39,17 @@ func NewAdaptiveRails() *AdaptiveRails {
 }
 
 func (rails *AdaptiveRails) resetFromConfig() {
-	maxLoss, arm, base, min := 2.0, 0.5, 1.2, 0.45
-
-	if system.Cfg != nil && system.Cfg.Risk != nil {
-		risk := system.Cfg.Risk
-
-		if risk.MaxAllowedLossPct > 0 {
-			maxLoss = risk.MaxAllowedLossPct
-		}
-
-		if risk.TrailPeakArmPct > 0 {
-			arm = risk.TrailPeakArmPct
-		}
-
-		if risk.TrailBaseGivebackPct > 0 {
-			base = risk.TrailBaseGivebackPct
-		}
-
-		if risk.TrailMinGivebackPct > 0 {
-			min = risk.TrailMinGivebackPct
-		}
-	}
-
-	rails.maxLoss = maxLoss
-	rails.armPct = arm
-	rails.baseGiveback = base
-	rails.minGiveback = min
+	risk := system.Cfg.Risk
+	rails.maxLoss = risk.MaxAllowedLossPct
+	rails.armPct = risk.TrailPeakArmPct
+	rails.baseGiveback = risk.TrailBaseGivebackPct
+	rails.minGiveback = risk.TrailMinGivebackPct
 }
 
 /*
 Snapshot copies the current rails for one lot.
 */
 func (rails *AdaptiveRails) Snapshot() RailsSnapshot {
-	if rails == nil {
-		fallback := NewAdaptiveRails()
-		return fallback.Snapshot()
-	}
-
 	rails.mu.Lock()
 	defer rails.mu.Unlock()
 
@@ -92,10 +66,6 @@ Edge is the running mean of (shadowExit − officialExit). Positive means the
 learning stop has been beating the active structural exit on average.
 */
 func (rails *AdaptiveRails) Edge() float64 {
-	if rails == nil {
-		return 0
-	}
-
 	rails.mu.Lock()
 	defer rails.mu.Unlock()
 
@@ -107,10 +77,6 @@ func (rails *AdaptiveRails) Edge() float64 {
 }
 
 func (rails *AdaptiveRails) Episodes() int {
-	if rails == nil {
-		return 0
-	}
-
 	rails.mu.Lock()
 	defer rails.mu.Unlock()
 
@@ -118,14 +84,9 @@ func (rails *AdaptiveRails) Episodes() int {
 }
 
 /*
-Learn nudges rails from one finished A/B pair. shadowEarlier is true when the
-learning stop would have exited before (or as) the official structural exit.
+Learn nudges rails from one finished A/B pair.
 */
 func (rails *AdaptiveRails) Learn(officialPct, shadowPct float64) {
-	if rails == nil {
-		return
-	}
-
 	rails.mu.Lock()
 	defer rails.mu.Unlock()
 
@@ -134,30 +95,26 @@ func (rails *AdaptiveRails) Learn(officialPct, shadowPct float64) {
 	rails.edgeSum += edge
 
 	step := 0.05 * math.Abs(edge)
+
 	if step < 0.02 {
 		step = 0.02
 	}
+
 	if step > 0.25 {
 		step = 0.25
 	}
 
 	switch {
 	case edge > 0.05:
-		// Shadow cut was better — tighten giveback / arm earlier next time.
-		rails.baseGiveback = clampRail(rails.baseGiveback-step, 0.35, 2.5)
-		rails.minGiveback = clampRail(rails.minGiveback-step*0.5, 0.2, 1.5)
-		rails.armPct = clampRail(rails.armPct-step*0.25, 0.25, 2.0)
-		rails.maxLoss = clampRail(rails.maxLoss-step*0.5, 1.0, 4.0)
+		rails.baseGiveback = math.Max(0.35, math.Min(2.5, rails.baseGiveback-step))
+		rails.minGiveback = math.Max(0.2, math.Min(1.5, rails.minGiveback-step*0.5))
+		rails.armPct = math.Max(0.25, math.Min(2.0, rails.armPct-step*0.25))
+		rails.maxLoss = math.Max(1.0, math.Min(4.0, rails.maxLoss-step*0.5))
 
 	case edge < -0.05:
-		// Shadow was worse — either shook out early or held a loser; widen.
-		rails.baseGiveback = clampRail(rails.baseGiveback+step, 0.35, 2.5)
-		rails.minGiveback = clampRail(rails.minGiveback+step*0.5, 0.2, 1.5)
-		rails.armPct = clampRail(rails.armPct+step*0.25, 0.25, 2.0)
-		rails.maxLoss = clampRail(rails.maxLoss+step*0.5, 1.0, 4.0)
+		rails.baseGiveback = math.Max(0.35, math.Min(2.5, rails.baseGiveback+step))
+		rails.minGiveback = math.Max(0.2, math.Min(1.5, rails.minGiveback+step*0.5))
+		rails.armPct = math.Max(0.25, math.Min(2.0, rails.armPct+step*0.25))
+		rails.maxLoss = math.Max(1.0, math.Min(4.0, rails.maxLoss+step*0.5))
 	}
-}
-
-func clampRail(value, lo, hi float64) float64 {
-	return math.Max(lo, math.Min(hi, value))
 }

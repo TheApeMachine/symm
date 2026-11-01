@@ -6,6 +6,19 @@
 - Tests **MUST** use Goconvey and **MUST** mirror the file names they are testing with `_test.go`.
 - Before you call a task done, first pull the files you changed, and re-read them in full again.
 
+## Config
+
+- `system.Cfg` is constructed with validated defaults in the `system` package. **Never** re-validate it.
+- Do **not** write `if system.Cfg != nil`, `if system.Cfg.Risk != nil`, `if x > 0 { use config } else { hardcode }`, or helper fallbacks that duplicate defaults.
+- Read values directly: `system.Cfg.Risk.MaxAllowedLossPct`, `system.Cfg.Learning.MinEnterZ`, etc.
+
+## Methods and nil
+
+- Do **not** add methods whose only job is to return a field or forward to another method (`MaxLoss()`, `Floor()`, `ActiveFloor()` wrappers, `Done()` that only returns `.done`, etc.). Use the field, or call the real collaborator.
+- Do **not** nil-guard the method receiver (`if x == nil { return }`). Constructors always build a usable instance; calling a method on nil is a bug, not a branch.
+- Do **not** nil-guard composed collaborators the constructor always sets (`if stop.budget == nil`, `if learning.stop == nil`). Fix the constructor.
+- Nil checks on **external** inputs (args, map lookups, channel payloads, optional wiring like a missing transport) are fine. Receiver/collaborator ceremony is not.
+
 ## Layout and readability
 
 - Match the vertical rhythm in `strategy/symbols.go`: **blank lines separate logical steps**, not every line.

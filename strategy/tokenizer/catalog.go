@@ -37,7 +37,7 @@ func (catalog *GrammarCatalog) Persist(
 	symbol string,
 	state SequencerState,
 ) error {
-	if catalog == nil || client == nil || symbol == "" {
+	if client == nil || symbol == "" {
 		return nil
 	}
 

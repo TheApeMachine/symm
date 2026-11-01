@@ -183,15 +183,11 @@ func (price *Price) feeForTrade(symbol string) *decimal.Decimal {
 }
 
 func (price *Price) feeName(symbol string) string {
-	if price == nil || price.normalizer == nil {
-		return symbol
-	}
-
 	return price.normalizer.Name(symbol)
 }
 
 func (price *Price) storedFee(table *sync.Map, symbol string) *decimal.Decimal {
-	if price == nil || table == nil {
+	if table == nil {
 		return nil
 	}
 
@@ -205,10 +201,6 @@ func (price *Price) storedFee(table *sync.Map, symbol string) *decimal.Decimal {
 }
 
 func (price *Price) Touch(symbol string) (*decimal.Decimal, *decimal.Decimal) {
-	if price == nil || price.Books == nil {
-		return nil, nil
-	}
-
 	var bid, ask *decimal.Decimal
 
 	price.Books.Book(symbol, func(managed *book.Book) {
@@ -243,7 +235,7 @@ ExitRoom is best-bid size divided by quantity: how many times the touch
 can absorb the lot (1.0 = once).
 */
 func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
-	if price == nil || quantity == nil || quantity.Sign() <= 0 {
+	if quantity == nil || quantity.Sign() <= 0 {
 		return nil
 	}
 
@@ -256,10 +248,6 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.
 }
 
 func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
-	if price == nil || price.Books == nil {
-		return nil
-	}
-
 	var touch *decimal.Decimal
 
 	price.Books.Book(symbol, func(managed *book.Book) {
@@ -317,7 +305,7 @@ TouchBidCash is the quote notional resting on the top three bid levels.
 Used as an absolute liquidity veto so a dead micro-cap book cannot clear entry.
 */
 func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
-	if price == nil || price.Books == nil || symbol == "" {
+	if symbol == "" {
 		return nil, false
 	}
 
@@ -432,10 +420,6 @@ the ask walk and closed immediately into the bid book. This is the entry drag
 the gate must not exceed for paper or virtual.
 */
 func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) {
-	if price == nil {
-		return nil, false
-	}
-
 	qty, _ := price.Allocate(symbol)
 	if qty == nil || qty.Sign() <= 0 {
 		return nil, false
@@ -517,7 +501,7 @@ func (price *Price) PnLPctAtSellPrice(
 	symbol string,
 	quantity, entry, fee, sellPrice *decimal.Decimal,
 ) *decimal.Decimal {
-	if price == nil || quantity == nil || entry == nil || sellPrice == nil ||
+	if quantity == nil || entry == nil || sellPrice == nil ||
 		quantity.Sign() <= 0 || entry.Sign() <= 0 || sellPrice.Sign() <= 0 {
 		return nil
 	}
@@ -539,7 +523,7 @@ func (price *Price) PnLPctAtSellPrice(
 }
 
 func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
-	if price == nil || quantity == nil || quantity.Sign() <= 0 {
+	if quantity == nil || quantity.Sign() <= 0 {
 		return nil
 	}
 
@@ -577,10 +561,6 @@ func (price *Price) EntryCost(
 		return nil, errnie.Err(
 			errnie.Validation, "entry cost: positive quantity required", nil,
 		)
-	}
-
-	if price.Books == nil {
-		return nil, errnie.Err(errnie.NotFound, "entry cost: books unavailable", nil)
 	}
 
 	fee := price.feeForTrade(symbol)
@@ -657,18 +637,6 @@ func (price *Price) AllocateFrom(
 	symbol string,
 	enforceVenueMins bool,
 ) (*decimal.Decimal, string) {
-	if price == nil {
-		return nil, "price is nil"
-	}
-
-	if price.Instrument == nil {
-		return nil, "instrument snapshot is not loaded"
-	}
-
-	if price.Books == nil {
-		return nil, "book manager is not wired"
-	}
-
 	if wallet == nil {
 		wallet = price.balance
 	}
@@ -887,7 +855,7 @@ func (price *Price) bumpToVenueMin(
 	pair kraken.InstrumentPair,
 	fee, budget, touchCap *decimal.Decimal,
 ) (filled, gross *decimal.Decimal, why string) {
-	if price == nil || managed == nil || pair.QtyMin == nil || pair.CostMin == nil ||
+	if managed == nil || pair.QtyMin == nil || pair.CostMin == nil ||
 		fee == nil || budget == nil || touchCap == nil {
 		return nil, nil, "cannot bump to venue minimum (missing book, limits, or budget)"
 	}
@@ -979,7 +947,7 @@ func (price *Price) roundTrip(
 	symbol string,
 	quantity, entry, entryFee, exitFee *decimal.Decimal,
 ) (profit, cost *decimal.Decimal) {
-	if price == nil || price.Books == nil || quantity == nil || entry == nil ||
+	if quantity == nil || entry == nil ||
 		quantity.Sign() <= 0 || entry.Sign() <= 0 || entryFee == nil || exitFee == nil {
 		return nil, nil
 	}
@@ -1031,7 +999,7 @@ func (price *Price) settle(
 	symbol string,
 	quantity, entry, fee *decimal.Decimal,
 ) (profit, cost *decimal.Decimal) {
-	if price == nil || price.Books == nil || quantity == nil || entry == nil ||
+	if quantity == nil || entry == nil ||
 		quantity.Sign() <= 0 || entry.Sign() <= 0 {
 		return nil, nil
 	}
@@ -1146,7 +1114,7 @@ BackingRatio is bidCash/askCash inside the configured mid band. ok is false
 when the book is not ready or the ask side of the band is empty.
 */
 func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
-	if price == nil || price.Books == nil || symbol == "" {
+	if symbol == "" {
 		return 0, false
 	}
 

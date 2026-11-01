@@ -224,10 +224,6 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 Has reports whether the instrument is in the cached universe.
 */
 func (instrument *Instrument) Has(symbol string) bool {
-	if instrument == nil || instrument.cache == nil {
-		return false
-	}
-
 	_, ok := instrument.cache.Load(symbol)
 	return ok
 }
@@ -479,7 +475,7 @@ a live channel alone does not replace the book, so the symbol would stay
 invalid while trades keep flowing.
 */
 func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
-	if instrument == nil || symbol == "" {
+	if symbol == "" {
 		return nil
 	}
 
@@ -630,14 +626,6 @@ WebSocketToken is the private-socket token for this process's API key.
 Live order entry and the executions subscription use it. Paper does not.
 */
 func (instrument *Instrument) WebSocketToken(ctx context.Context) (string, error) {
-	if instrument == nil || instrument.auth == nil {
-		return "", errnie.Err(
-			errnie.Validation,
-			"[instrument] websocket token requested without auth",
-			nil,
-		)
-	}
-
 	return instrument.auth.Token(ctx)
 }
 
@@ -646,12 +634,8 @@ RememberFee stores one pair's account taker schedule. Fees are percent:
 0.40 means 0.40%.
 */
 func (instrument *Instrument) RememberFee(symbol string, taker *decimal.Decimal) {
-	if instrument == nil || symbol == "" || taker == nil {
+	if symbol == "" || taker == nil {
 		return
-	}
-
-	if instrument.takerFees == nil {
-		instrument.takerFees = &sync.Map{}
 	}
 
 	instrument.takerFees.Store(symbol, taker)
@@ -665,7 +649,7 @@ func (instrument *Instrument) TakerFee(symbol string) *decimal.Decimal {
 }
 
 func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decimal {
-	if instrument == nil || table == nil || symbol == "" {
+	if table == nil || symbol == "" {
 		return nil
 	}
 

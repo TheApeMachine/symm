@@ -48,6 +48,7 @@ func NewHistory(
 	paperTransport Transport,
 	liveTransport Transport,
 	onSettled func(*Position),
+	rails *AdaptiveRails,
 ) *History {
 	history := &History{
 		System:         runtime.NewSystem(ctx, "history"),
@@ -83,8 +84,8 @@ func NewHistory(
 
 				position.price = price
 				position.transport = transport
-				position.structural = NewStructuralStop()
-				position.learning = NewLearningStop(nil)
+				position.Structural = NewStructuralStop()
+				position.Learning = NewLearningStop(rails)
 				position.onSettled = onSettled
 
 				if position.Book == "" {
@@ -121,7 +122,7 @@ func (history *History) restore(raw []byte) *Position {
 Store writes one lot at key as JSON {"epoch","tick","timestamp","position"}.
 */
 func (history *History) Store(key string, position *Position) error {
-	if history == nil || history.store == nil || key == "" || position == nil {
+	if key == "" || position == nil {
 		return nil
 	}
 
@@ -154,7 +155,7 @@ func (history *History) Store(key string, position *Position) error {
 }
 
 func (history *History) Drop(prefix string) error {
-	if history == nil || history.store == nil || prefix == "" {
+	if prefix == "" {
 		return nil
 	}
 
@@ -165,7 +166,7 @@ func (history *History) Drop(prefix string) error {
 Move retires the open records of a lot and stores the closed one.
 */
 func (history *History) Move(key string, position *Position, from string) error {
-	if history == nil || history.store == nil || key == "" || position == nil {
+	if key == "" || position == nil {
 		return nil
 	}
 

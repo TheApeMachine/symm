@@ -70,14 +70,9 @@ type ConfidenceSnapshot struct {
 }
 
 func NewConfidence(ctx context.Context) *Confidence {
-	bucket := "symm"
-	if system.Cfg != nil && system.Cfg.Storage != nil {
-		bucket = system.Cfg.Storage.S3.Bucket
-	}
-
 	confidence := &Confidence{
 		ctx:           ctx,
-		store:         store.NewClient(ctx, bucket),
+		store:         store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 		eligibleFloor: PaperEligibleResistance(),
 	}
 
@@ -91,10 +86,6 @@ func NewConfidence(ctx context.Context) *Confidence {
 Armed reports whether new real entries may open.
 */
 func (confidence *Confidence) Armed() bool {
-	if confidence == nil {
-		return false
-	}
-
 	confidence.mu.Lock()
 	defer confidence.mu.Unlock()
 
@@ -105,7 +96,7 @@ func (confidence *Confidence) Armed() bool {
 Record folds one settled venue lot into paper/real edge and re-arms.
 */
 func (confidence *Confidence) Record(position *broker.Position) {
-	if confidence == nil || position == nil {
+	if position == nil {
 		return
 	}
 
@@ -164,15 +155,6 @@ func (confidence *Confidence) Record(position *broker.Position) {
 Snapshot returns the current confidence frame for the dashboard.
 */
 func (confidence *Confidence) Snapshot() ConfidenceSnapshot {
-	if confidence == nil {
-		return ConfidenceSnapshot{
-			Virtual:            BookSnapshot{Active: true},
-			Paper:              BookSnapshot{Active: true},
-			EligibleResistance: PaperEligibleResistance(),
-			RealCeiling:        RealCeilingAllowed(),
-		}
-	}
-
 	confidence.mu.Lock()
 	defer confidence.mu.Unlock()
 
@@ -183,10 +165,6 @@ func (confidence *Confidence) Snapshot() ConfidenceSnapshot {
 Publish pushes the confidence frame to the hub.
 */
 func (confidence *Confidence) Publish() {
-	if confidence == nil {
-		return
-	}
-
 	confidence.mu.Lock()
 	defer confidence.mu.Unlock()
 
@@ -194,28 +172,11 @@ func (confidence *Confidence) Publish() {
 }
 
 func (confidence *Confidence) reevaluateLocked() {
-	var learn *system.Learning
-	if system.Cfg != nil {
-		learn = system.Cfg.Learning
-	}
-
-	confirm := 3
-	minWin := 0.55
-	minEdge := 0.0
-	demotion := 3
-
-	if learn != nil {
-		if learn.ConfirmAfter > 0 {
-			confirm = learn.ConfirmAfter
-		}
-		if learn.MinWinRate > 0 {
-			minWin = learn.MinWinRate
-		}
-		minEdge = learn.MinMeanReturn
-		if learn.DemotionLosses > 0 {
-			demotion = learn.DemotionLosses
-		}
-	}
+	learn := system.Cfg.Learning
+	confirm := learn.ConfirmAfter
+	minWin := learn.MinWinRate
+	minEdge := learn.MinMeanReturn
+	demotion := learn.DemotionLosses
 
 	// Paper establishes the edge; real settlements refine it once armed.
 	closed := confidence.paper.Closed + confidence.real.Closed
@@ -300,10 +261,6 @@ func (confidence *Confidence) publishLocked() {
 }
 
 func (confidence *Confidence) persistLocked() {
-	if confidence.store == nil {
-		return
-	}
-
 	blob := confidenceBlob{
 		Paper:           confidence.paper,
 		Real:            confidence.real,
@@ -325,10 +282,6 @@ func (confidence *Confidence) persistLocked() {
 }
 
 func (confidence *Confidence) restore() {
-	if confidence.store == nil {
-		return
-	}
-
 	raw := confidence.store.Fetch(confidence.ctx, confidenceStoreKey)
 
 	if len(raw) == 0 {

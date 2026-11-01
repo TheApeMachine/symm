@@ -99,10 +99,6 @@ func (sequencer *Sequencer) cut(tailBrightness float64) Tokens {
 	return tokens
 }
 
-func (sequencer *Sequencer) Grammar() *Sequitur {
-	return sequencer.grammar
-}
-
 // SequencerState is one grammar + MDL stream (persisted).
 type SequencerState struct {
 	LastEmitted string     `json:"last_emitted"`

@@ -18,7 +18,7 @@ type Model struct {
 	price      *broker.Price
 	store      *store.Client
 	tree       *atomic.Pointer[Tree]
-	confidence *Confidence
+	Confidence *Confidence
 	resetPath  func(string)
 }
 
@@ -36,13 +36,13 @@ func NewModel(
 		price:      price,
 		store:      client,
 		tree:       &atomic.Pointer[Tree]{},
-		confidence: NewConfidence(ctx),
+		Confidence: NewConfidence(ctx),
 		resetPath:  resetPath,
 	}
 
 	tree := NewTree(ctx, "model/paths/")
 	model.tree.Store(tree)
-	model.confidence.Publish()
+	model.Confidence.Publish()
 
 	return model
 }
@@ -65,7 +65,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		rez := envelope.Resonance[symbol]
 		learn := system.Cfg.Learning
-		bypass := learn != nil && learn.ResonanceBypass
+		bypass := learn.ResonanceBypass
 
 		if rez == nil {
 			if !bypass {
@@ -86,15 +86,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		surprise := rez["surprise"]
 		supported := int(rez["supported_horizon"])
 		confidence, hasPrecision := rez["task_relative_precision"]
-		minHorizon := 2
-		minPrecision := 0.5
-		minSurprise := 0.5
-
-		if learn != nil {
-			minHorizon = learn.MinSupportedHorizon
-			minPrecision = learn.MinTaskRelativePrecision
-			minSurprise = learn.MinSurprise
-		}
+		minHorizon := learn.MinSupportedHorizon
+		minPrecision := learn.MinTaskRelativePrecision
+		minSurprise := learn.MinSurprise
 
 		if !bypass && (rez["calibrated"] < 1 || supported < minHorizon || !hasPrecision || confidence < minPrecision || surprise < minSurprise) {
 			envelope.Decide(&runtime.Decision{
@@ -157,11 +151,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		action, resistance, disagreed := model.tree.Load().Predict(*cut, regime)
 
-		minEnter := 0.35
-
-		if learn != nil {
-			minEnter = learn.MinEnterZ
-		}
+		minEnter := learn.MinEnterZ
 
 		bullish := bypass || (enterNet >= minEnter &&
 			holdNet >= minEnter &&
@@ -207,14 +197,10 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		minPath := 0
-
-		if learn != nil {
-			minPath = learn.MinPathLength
-		}
+		minPath := learn.MinPathLength
 
 		if len(open) > 0 && path != "" && action != ActionExit {
-			if minPath <= 0 || cut.Len() >= minPath {
+			if cut.Len() >= minPath {
 				for _, lot := range open {
 					model.Hold(lot, path)
 				}
@@ -244,7 +230,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		if minPath > 0 && cut.Len() < minPath {
+		if cut.Len() < minPath {
 			envelope.Decide(&runtime.Decision{
 				Symbol:     symbol,
 				Action:     "skip",
@@ -375,7 +361,7 @@ func (model *Model) enterTiers(
 		opened = append(opened, "paper")
 	}
 
-	if model.confidence != nil && model.confidence.Armed() {
+	if model.Confidence.Armed() {
 		if model.openLedger(envelope, symbol, path, broker.LedgerReal, true, confidence) {
 			opened = append(opened, "real")
 		}
@@ -429,7 +415,7 @@ func (model *Model) openLedger(
 	pathFound bool,
 	confidence float64,
 ) bool {
-	if err := model.Enter(symbol, path, ledger, pathFound); err != nil {
+	if err := model.desk.Enter(symbol, path, ledger, pathFound); err != nil {
 		gate, why := "desk", err.Error()
 
 		if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
@@ -465,7 +451,7 @@ func (model *Model) tryEnter(
 	reason string,
 	confidence float64,
 ) {
-	if err := model.Enter(symbol, path, ledger, pathFound); err != nil {
+	if err := model.desk.Enter(symbol, path, ledger, pathFound); err != nil {
 		gate, why := "desk", err.Error()
 
 		if denial, ok := err.(*broker.EntryDenial); ok && denial != nil {
@@ -540,7 +526,7 @@ story/tree/desk without a live manifold.
 func (model *Model) bypassReading(learn *system.Learning) map[string]float64 {
 	horizon := len(resonance.Features)
 
-	if learn != nil && learn.MinSupportedHorizon > horizon {
+	if learn.MinSupportedHorizon > horizon {
 		horizon = learn.MinSupportedHorizon
 	}
 
@@ -584,10 +570,6 @@ func (model *Model) exploreEnter(
 }
 
 func (model *Model) flushPending(envelope *runtime.Envelope) {
-	if model == nil || model.desk == nil {
-		return
-	}
-
 	for _, key := range model.desk.Pending() {
 		pending, ok := model.desk.TakePending(key)
 
@@ -615,15 +597,6 @@ func (model *Model) flushPending(envelope *runtime.Envelope) {
 		// Never fall back to EntryPath — exit leaves must stay distinct.
 		model.Exit(pending, path)
 	}
-}
-
-func (model *Model) Enter(
-	symbol string,
-	path string,
-	ledger broker.Ledger,
-	pathFound bool,
-) error {
-	return model.desk.Enter(symbol, path, ledger, pathFound)
 }
 
 func (model *Model) Hold(position *broker.Position, path string) {
@@ -658,10 +631,6 @@ func (model *Model) Exit(
 
 	tree := model.tree.Load()
 
-	if tree == nil {
-		return
-	}
-
 	// Virtual episode = enter + exit. Hold paths are live tracking, not leaves.
 	// Ensure seeds new leaves at 0.5 once; never Insert-overwrite on re-settle
 	// or resistance resets to ~0 and paper eligibility opens immediately.
@@ -678,19 +647,5 @@ func (model *Model) Exit(
 
 	tree.Update(position.EntryPath, resistance)
 	tree.Update(position.ExitPath, resistance)
-
-	if model.confidence != nil {
-		model.confidence.Record(position)
-	}
-}
-
-/*
-Confidence returns the live edge arming state for the dashboard.
-*/
-func (model *Model) Confidence() *Confidence {
-	if model == nil {
-		return nil
-	}
-
-	return model.confidence
+	model.Confidence.Record(position)
 }

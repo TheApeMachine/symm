@@ -26,10 +26,14 @@ export const shadowStopComparison = (
 
 	for (const row of rows) {
 		if (!onBook(row, book)) continue;
-		if (row.shadow_exit_at == null || row.official_exit_at == null) continue;
+		const learning =
+			row.learning && typeof row.learning === "object"
+				? (row.learning as Record<string, unknown>)
+				: {};
+		if (learning.exit_at == null || row.official_exit_at == null) continue;
 
 		const official = row.official_exit_pct;
-		const shadow = row.shadow_exit_pct;
+		const shadow = learning.exit_pct;
 		if (typeof official !== "number" || !Number.isFinite(official)) continue;
 		if (typeof shadow !== "number" || !Number.isFinite(shadow)) continue;
 
@@ -368,7 +372,11 @@ export const summarizeStops = (
 	let withState = 0;
 
 	for (const row of open) {
-		const state = row.stop_state as Record<string, unknown> | null | undefined;
+		const structural =
+			row.structural && typeof row.structural === "object"
+				? (row.structural as Record<string, unknown>)
+				: null;
+		const state = structural?.state as Record<string, unknown> | null | undefined;
 		if (!state || typeof state !== "object") continue;
 		withState += 1;
 		let rowArmed = false;

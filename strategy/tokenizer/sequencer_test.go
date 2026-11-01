@@ -32,9 +32,9 @@ func TestSequencerStep(t *testing.T) {
 
 		Convey("repeat regime does not append to grammar", func() {
 			_ = seq.Step("R00", 0.3)
-			before := len(seq.Grammar().RootSequence())
+			before := len(seq.grammar.RootSequence())
 			_ = seq.Step("R00", 0.3)
-			So(len(seq.Grammar().RootSequence()), ShouldEqual, before)
+			So(len(seq.grammar.RootSequence()), ShouldEqual, before)
 		})
 
 		Convey("Step builds a multi-tick precursor sequence", func() {
@@ -51,7 +51,7 @@ func TestSequencerStep(t *testing.T) {
 				_ = seq.Step("R08", 0.5)
 			}
 
-			So(len(seq.Grammar().Tail(8)), ShouldBeLessThanOrEqualTo, 4)
+			So(len(seq.grammar.Tail(8)), ShouldBeLessThanOrEqualTo, 4)
 		})
 	})
 }

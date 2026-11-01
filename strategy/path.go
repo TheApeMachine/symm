@@ -37,10 +37,6 @@ func NewPathBook(action Action) *PathBook {
 Apply folds a settled ±delta into the absolute book.
 */
 func (book *PathBook) Apply(delta float64) {
-	if book == nil {
-		return
-	}
-
 	book.Resistance += delta
 }
 
@@ -48,10 +44,6 @@ func (book *PathBook) Apply(delta float64) {
 Bytes marshals the leaf as JSON for S3.
 */
 func (book *PathBook) Bytes() []byte {
-	if book == nil {
-		return nil
-	}
-
 	buf, err := runtime.Sonic.Marshal(book)
 
 	if err != nil {
@@ -90,7 +82,7 @@ func DecodePathBook(raw []byte) *PathBook {
 StorageKey is the S3 object key for this leaf under a token path.
 */
 func (book *PathBook) StorageKey(path string) string {
-	if book == nil || path == "" {
+	if path == "" {
 		return ""
 	}
 

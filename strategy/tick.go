@@ -51,7 +51,7 @@ func (tick *Tick) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 func (tick *Tick) storeFull(envelope *runtime.Envelope) {
-	if tick == nil || tick.store == nil || envelope == nil {
+	if envelope == nil {
 		return
 	}
 
@@ -80,7 +80,7 @@ func (tick *Tick) storeFull(envelope *runtime.Envelope) {
 }
 
 func (tick *Tick) publishLight(envelope *runtime.Envelope) {
-	if tick == nil || envelope == nil || ui.UI == nil || !ui.UI.Active() {
+	if envelope == nil || ui.UI == nil || !ui.UI.Active() {
 		return
 	}
 

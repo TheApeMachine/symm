@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"context"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -16,7 +18,10 @@ func TestCheckEntryPhysicalRejectsNilPrice(t *testing.T) {
 
 func TestCheckEntryPhysicalRejectsThinBids(t *testing.T) {
 	Convey("entry is blocked when top bids have no cash depth", t, func() {
-		price := &Price{}
+		price := &Price{
+			Books: NewBook(context.Background(), spot.NewNormalizer()),
+			Tape:  NewTape(),
+		}
 		decision := CheckEntryPhysical(price, "THIN/USD")
 		So(decision.Allowed, ShouldBeFalse)
 		So(decision.Reason, ShouldContainSubstring, "book too thin")

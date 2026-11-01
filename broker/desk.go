@@ -84,6 +84,7 @@ func NewDesk(
 		paperTransport,
 		transports.Live,
 		desk.onPositionSettled,
+		desk.adaptive,
 	)
 
 	desk.Transition(runtime.READY)
@@ -184,17 +185,6 @@ func (desk *Desk) publishPositions(mode string, lots ...*Position) {
 }
 
 /*
-Price is the desk's book-pricing collaborator (spread, mover, tape, allocate).
-*/
-func (desk *Desk) Price() *Price {
-	if desk == nil {
-		return nil
-	}
-
-	return desk.price
-}
-
-/*
 OpenPositions returns the open positions in the desk.
 */
 func (desk *Desk) OpenPositions() []*Position {
@@ -224,7 +214,7 @@ func (desk *Desk) Virtuals() []*Position {
 Positions returns every open lot for a symbol across all books.
 */
 func (desk *Desk) Positions(symbol string) []*Position {
-	if desk == nil || symbol == "" {
+	if symbol == "" {
 		return nil
 	}
 
@@ -266,10 +256,6 @@ ClosedVirtuals returns virtual lots settled this tick and still on the closed
 side of the live cache, awaiting promotion scoring.
 */
 func (desk *Desk) ClosedVirtuals() []*Position {
-	if desk == nil {
-		return nil
-	}
-
 	return desk.virtuals.Closed()
 }
 
@@ -302,7 +288,7 @@ func (desk *Desk) onPositionSettled(position *Position) {
 		return
 	}
 
-	if position.ShadowExitAt != nil {
+	if position.Learning.ExitAt != nil {
 		desk.persistShadow(position)
 	}
 }
@@ -335,9 +321,7 @@ func (desk *Desk) Refresh(symbols []string) {
 Update marks open positions against the trade price.
 */
 func (desk *Desk) Update(trades []kraken.TradeData) {
-	if desk.price != nil && desk.price.Tape != nil {
-		desk.price.Tape.Note(trades)
-	}
+	desk.price.Tape.Note(trades)
 
 	updated := make([]*Position, 0, len(trades))
 
@@ -354,10 +338,6 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 }
 
 func (desk *Desk) refreshShadows(symbol string) {
-	if desk == nil || desk.price == nil {
-		return
-	}
-
 	mark := desk.price.CurrentMark(symbol)
 	if mark == nil {
 		return
@@ -370,7 +350,7 @@ func (desk *Desk) refreshShadows(symbol string) {
 }
 
 func (desk *Desk) tickShadows(symbol string, mark *decimal.Decimal) []*Position {
-	if desk == nil || desk.shadows == nil || mark == nil {
+	if mark == nil {
 		return nil
 	}
 
@@ -394,7 +374,7 @@ func (desk *Desk) tickShadows(symbol string, mark *decimal.Decimal) []*Position 
 }
 
 func (desk *Desk) onShadowDone(position *Position) {
-	if desk == nil || position == nil {
+	if position == nil {
 		return
 	}
 
@@ -404,7 +384,7 @@ func (desk *Desk) onShadowDone(position *Position) {
 }
 
 func (desk *Desk) persistShadow(position *Position) {
-	if desk == nil || desk.history == nil || position == nil {
+	if desk.history == nil || position == nil {
 		return
 	}
 
@@ -417,10 +397,6 @@ func (desk *Desk) persistShadow(position *Position) {
 }
 
 func (desk *Desk) shadowPositions() []*Position {
-	if desk == nil || desk.shadows == nil {
-		return nil
-	}
-
 	out := make([]*Position, 0)
 
 	desk.shadows.Range(func(_, value any) bool {
@@ -451,7 +427,7 @@ func (desk *Desk) Has(symbol string) bool {
 CanSize reports whether the book and budget can allocate a venue-valid lot.
 */
 func (desk *Desk) CanSize(symbol string) bool {
-	if desk == nil || desk.price == nil || symbol == "" {
+	if symbol == "" {
 		return false
 	}
 
@@ -463,10 +439,6 @@ func (desk *Desk) CanSize(symbol string) bool {
 BookStale reports whether a symbol's book is stale or absent in the price book manager.
 */
 func (desk *Desk) BookStale(symbol string) bool {
-	if desk == nil || desk.price == nil || desk.price.Books == nil {
-		return false
-	}
-
 	return desk.price.Books.StaleSymbol(symbol)
 }
 
@@ -528,10 +500,9 @@ func (desk *Desk) Enter(
 		return &EntryDenial{Gate: "allocate", Reason: why}
 	}
 
-	bypass := system.Cfg != nil && system.Cfg.Learning != nil &&
-		system.Cfg.Learning.ResonanceBypass
+	bypass := system.Cfg.Learning.ResonanceBypass
 
-	if desk.price != nil && !(ledger.Virtual() && bypass) {
+	if !(ledger.Virtual() && bypass) {
 		if phys := CheckEntryPhysical(desk.price, symbol); !phys.Allowed {
 			desk.auditEntryBlocked(symbol, "physical", phys.Reason, ledger)
 
@@ -633,7 +604,7 @@ func (desk *Desk) Exit(
 }
 
 func (desk *Desk) TakePending(key string) (*Position, bool) {
-	if desk == nil || key == "" {
+	if key == "" {
 		return nil, false
 	}
 

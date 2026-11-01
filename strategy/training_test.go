@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
@@ -12,9 +13,16 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+func testPrice() *broker.Price {
+	return &broker.Price{
+		Books: broker.NewBook(context.Background(), spot.NewNormalizer()),
+		Tape:  broker.NewTape(),
+	}
+}
+
 func TestTrainingLightBroker(t *testing.T) {
 	Convey("Given mover volume and day move above floors", t, func() {
-		price := &broker.Price{}
+		price := testPrice()
 		floor := system.Cfg.Risk.MinMoverVolumeUSD
 		price.SetTicker(
 			"AAA/USD",
@@ -39,7 +47,7 @@ func TestTrainingLightBroker(t *testing.T) {
 	})
 
 	Convey("Quiet volume lights the volume veto", t, func() {
-		price := &broker.Price{}
+		price := testPrice()
 		price.SetTicker("QUIET/USD", 1, 5)
 
 		training := NewTraining(context.Background(), price, nil)

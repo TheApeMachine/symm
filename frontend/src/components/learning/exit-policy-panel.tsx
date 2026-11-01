@@ -45,7 +45,11 @@ export const ExitPolicyPanel = ({
 				.slice(-PNL_TRACE_CAP)
 		: [];
 
-	const state = row.stop_state as Record<string, unknown> | null | undefined;
+	const structural =
+		row.structural && typeof row.structural === "object"
+			? (row.structural as Record<string, unknown>)
+			: null;
+	const state = structural?.state as Record<string, unknown> | null | undefined;
 	const stop =
 		state && typeof state === "object" ? (state as Record<string, unknown>) : null;
 	const sNum = (k: string): number | null => {

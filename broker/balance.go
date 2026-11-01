@@ -88,10 +88,6 @@ func (balance *Balance) Trade() *kraken.TradeBalanceResult {
 Reading is the latest cash/equity/unrealized map for the dashboard.
 */
 func (balance *Balance) Reading() map[string]any {
-	if balance == nil {
-		return nil
-	}
-
 	ptr := balance.reading.Load()
 
 	if ptr == nil {
@@ -106,7 +102,7 @@ Publish pushes the cached reading to the dashboard as {"balance": {...}}
 and under balances.<label> for the multi-book top bar.
 */
 func (balance *Balance) Publish() {
-	if balance == nil || ui.UI == nil {
+	if ui.UI == nil {
 		return
 	}
 

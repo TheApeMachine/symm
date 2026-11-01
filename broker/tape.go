@@ -35,7 +35,7 @@ Note appends each print's venue timestamp (or now if zero) and prunes the
 window. Called from desk.Update on every trade frame.
 */
 func (tape *Tape) Note(trades []kraken.TradeData) {
-	if tape == nil || len(trades) == 0 {
+	if len(trades) == 0 {
 		return
 	}
 
@@ -70,7 +70,7 @@ func (tape *Tape) note(symbol string, at, now time.Time) {
 Count is the number of prints for symbol still inside the liveness window.
 */
 func (tape *Tape) Count(symbol string, now time.Time) int {
-	if tape == nil || symbol == "" {
+	if symbol == "" {
 		return 0
 	}
 
@@ -96,10 +96,6 @@ func (tape *Tape) Count(symbol string, now time.Time) int {
 Alive is true when the symbol has at least the configured min prints in-window.
 */
 func (tape *Tape) Alive(symbol string) bool {
-	if tape == nil {
-		return false
-	}
-
 	return tape.Count(symbol, time.Now().UTC()) >= tape.min
 }
 

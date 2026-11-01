@@ -30,16 +30,10 @@ func PaperEligible(resistance float64) bool {
 }
 
 /*
-PaperEligibleResistance is the promotion floor (default 0.2).
+PaperEligibleResistance is the promotion floor from learning config.
 */
 func PaperEligibleResistance() float64 {
-	if system.Cfg != nil && system.Cfg.Learning != nil {
-		if floor := system.Cfg.Learning.PaperEligibleResistance; floor > 0 {
-			return floor
-		}
-	}
-
-	return 0.2
+	return system.Cfg.Learning.PaperEligibleResistance
 }
 
 /*
@@ -47,9 +41,5 @@ RealCeilingAllowed reports whether config permits live entries at all.
 Paper mode keeps the real book structurally present but never arms.
 */
 func RealCeilingAllowed() bool {
-	if system.Cfg == nil || system.Cfg.Market == nil {
-		return false
-	}
-
 	return system.Cfg.Market.Model == "real"
 }

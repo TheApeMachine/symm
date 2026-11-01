@@ -40,7 +40,7 @@ describe("lifecycleFromDeskClosed", () => {
 			entry_path: "R01/R05",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
-			shadow_exit_at: "2026-10-23T20:05:40Z",
+			learning: { exit_at: "2026-10-23T20:05:40Z" },
 			pnl: -0.046,
 			pnl_pct: -4.6,
 			outcome_triggers: ["cleared friction"],
@@ -63,7 +63,7 @@ describe("lifecycleFromDeskClosed", () => {
 			closed_at: "2026-10-23T20:05:28Z",
 			official_exit_at: "2026-10-23T20:05:28Z",
 			official_exit_pct: 0.4,
-			shadow_active: true,
+			learning: { active: true },
 			pnl_pct: 0.4,
 		};
 
@@ -73,9 +73,11 @@ describe("lifecycleFromDeskClosed", () => {
 
 		const done = {
 			...pending,
-			shadow_active: false,
-			shadow_exit_at: "2026-10-23T20:06:00Z",
-			shadow_exit_pct: 0.9,
+			learning: {
+				active: false,
+				exit_at: "2026-10-23T20:06:00Z",
+				exit_pct: 0.9,
+			},
 		};
 		expect(shadowComparisonPending(done)).toBe(false);
 		expect(lifecycleFromDeskClosed(done)?.status).toBe("closed");

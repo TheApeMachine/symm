@@ -18,7 +18,7 @@ type tickerSnap struct {
 
 // SetTicker stores one pair's public Ticker 24h quote volume and day change.
 func (price *Price) SetTicker(symbol string, volumeUSD, changePct float64) {
-	if price == nil || symbol == "" {
+	if symbol == "" {
 		return
 	}
 
@@ -27,7 +27,7 @@ func (price *Price) SetTicker(symbol string, volumeUSD, changePct float64) {
 
 // VolumeUSD is the last Ticker 24h quote notional for the symbol.
 func (price *Price) VolumeUSD(symbol string) float64 {
-	if price == nil || symbol == "" {
+	if symbol == "" {
 		return 0
 	}
 
@@ -41,7 +41,7 @@ func (price *Price) VolumeUSD(symbol string) float64 {
 
 // ChangePct is the last Ticker open-to-last percent move for the symbol.
 func (price *Price) ChangePct(symbol string) float64 {
-	if price == nil || symbol == "" {
+	if symbol == "" {
 		return 0
 	}
 
@@ -54,20 +54,8 @@ func (price *Price) ChangePct(symbol string) float64 {
 }
 
 func (price *Price) refreshTicker() {
-	if price == nil {
-		return
-	}
-
-	path := "/0/public/Ticker"
-
-	if system.Cfg != nil && system.Cfg.WebSocket != nil &&
-		system.Cfg.WebSocket.Endpoints != nil &&
-		system.Cfg.WebSocket.Endpoints.Ticker != "" {
-		path = system.Cfg.WebSocket.Endpoints.Ticker
-	}
-
 	response, err := network.NewREST().Get(
-		"https://api.kraken.com"+path,
+		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.Ticker,
 		map[string]string{"assetVersion": "1"},
 	)
 
@@ -85,10 +73,8 @@ func (price *Price) refreshTicker() {
 	for pair, row := range rows {
 		symbol := pair
 
-		if price.normalizer != nil {
-			if name := price.normalizer.Name(pair); name != "" {
-				symbol = name
-			}
+		if name := price.normalizer.Name(pair); name != "" {
+			symbol = name
 		}
 
 		price.SetTicker(symbol, row.QuoteVolume24h(), row.ChangePct())
@@ -96,10 +82,6 @@ func (price *Price) refreshTicker() {
 }
 
 func (price *Price) pollTicker() {
-	if price == nil {
-		return
-	}
-
 	go func() {
 		ticker := time.NewTicker(tickerRefresh)
 		defer ticker.Stop()

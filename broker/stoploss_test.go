@@ -77,7 +77,7 @@ func TestStopLossActiveFloor(t *testing.T) {
 func TestStopLossFrictionBudget(t *testing.T) {
 	Convey("a friction-armed budget delays invalidation past the static 2pp cut", t, func() {
 		stop := NewStopLoss()
-		stop.BindBudget(NewLossBudget().Arm(0.015))
+		stop.budget = NewLossBudget().Arm(0.015)
 
 		_, armed := stop.Update(0.0)
 		So(armed, ShouldBeFalse)

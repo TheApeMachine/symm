@@ -19,7 +19,7 @@ func TestLearningStopDoesNotShareLiveSettle(t *testing.T) {
 		trigger, fired := learning.Update(1.0)
 		So(fired, ShouldBeTrue)
 		So(trigger, ShouldContainSubstring, "trailing take-profit")
-		So(learning.Done(), ShouldBeTrue)
+		So(learning.done, ShouldBeTrue)
 
 		learning.Settle(0.4)
 		So(rails.Episodes(), ShouldEqual, 1)

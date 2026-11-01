@@ -15,10 +15,6 @@ type EntryDenial struct {
 }
 
 func (denial *EntryDenial) Error() string {
-	if denial == nil {
-		return ""
-	}
-
 	return denial.Reason
 }
 
@@ -108,7 +104,7 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 		}
 	}
 
-	if price.Tape == nil || !price.Tape.Alive(symbol) {
+	if !price.Tape.Alive(symbol) {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason: fmt.Sprintf(
@@ -145,10 +141,6 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 
 // BookIntact is Book Integrity without the spread check (spread has its own oracle).
 func (price *Price) BookIntact(symbol string) bool {
-	if price == nil {
-		return false
-	}
-
 	risk := system.Cfg.Risk
 	cash, ok := price.TouchBidCash(symbol)
 
@@ -162,7 +154,7 @@ func (price *Price) BookIntact(symbol string) bool {
 		return false
 	}
 
-	if price.Tape == nil || !price.Tape.Alive(symbol) {
+	if !price.Tape.Alive(symbol) {
 		return false
 	}
 

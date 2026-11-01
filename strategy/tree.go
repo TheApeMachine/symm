@@ -115,7 +115,7 @@ func (tree *Tree) Predict(
 ) (Action, float64, bool) {
 	min := system.Cfg.Learning.MinPathLength
 
-	if min > 0 && tokens.Len() < min {
+	if tokens.Len() < min {
 		return ActionNone, 0.0, false
 	}
 
@@ -132,7 +132,7 @@ func (tree *Tree) Predict(
 			return false
 		}
 
-		if min > 0 && strings.Count(string(key), "/")+1 < min {
+		if strings.Count(string(key), "/")+1 < min {
 			return false
 		}
 
@@ -193,7 +193,7 @@ func (tree *Tree) Update(path string, resistance float64) {
 		return
 	}
 
-	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+	if strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
 		return
 	}
 
@@ -225,7 +225,7 @@ func (tree *Tree) Insert(path string, book *PathBook) {
 		return
 	}
 
-	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+	if strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
 		return
 	}
 
@@ -247,11 +247,11 @@ same virtual episode must Update resistance, never wipe the book back to a
 blank value (which would restart near 0 and clear the paper floor).
 */
 func (tree *Tree) Ensure(path string, action Action) {
-	if tree == nil || path == "" || action == ActionNone {
+	if path == "" || action == ActionNone {
 		return
 	}
 
-	if min := system.Cfg.Learning.MinPathLength; min > 0 && strings.Count(path, "/")+1 < min {
+	if strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
 		return
 	}
 

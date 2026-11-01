@@ -81,10 +81,6 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 	return book
 }
 
-func (book *Book) Status() runtime.Stage {
-	return book.system.Status()
-}
-
 /*
 Expect keeps the book owner BUSY until every requested snapshot has
 been applied and its observation consumers have been seeded.
@@ -109,7 +105,7 @@ func (book *Book) Wait(timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 
-	for book.Status() != runtime.READY {
+	for book.system.Status() != runtime.READY {
 		select {
 		case <-book.ctx.Done():
 			return errnie.Err(errnie.IO, "book: seed interrupted", book.ctx.Err())
@@ -180,10 +176,6 @@ BlockReason names why a symbol cannot be read for sizing. Empty means the
 book is present and not pending, stale, or invalid.
 */
 func (book *Book) BlockReason(symbol string) string {
-	if book == nil {
-		return "book manager is not wired"
-	}
-
 	if symbol == "" {
 		return "symbol is empty"
 	}
@@ -291,7 +283,7 @@ func (book *Book) Stale(symbols []string) {
 StaleSymbol reports whether a symbol's book is stale, invalid, pending, or absent.
 */
 func (book *Book) StaleSymbol(symbol string) bool {
-	if book == nil || symbol == "" {
+	if symbol == "" {
 		return true
 	}
 
@@ -678,7 +670,7 @@ func (book *Book) SetResubscribe(resubscribe func(string)) {
 }
 
 func (book *Book) requestLevel3Resubscribe(symbol string) {
-	if book == nil || symbol == "" {
+	if symbol == "" {
 		return
 	}
 
@@ -744,7 +736,7 @@ func (book *Book) All() *sync.Map {
 }
 
 func (book *Book) SnapshotInto(out *sync.Map) {
-	if book == nil || out == nil {
+	if out == nil {
 		return
 	}
 
@@ -757,10 +749,6 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 JSON returns the serialized JSON representation of the resident book for symbol.
 */
 func (book *Book) JSON(symbol string) []byte {
-	if book == nil {
-		return nil
-	}
-
 	var raw []byte
 
 	book.Book(symbol, func(b *spotbook.Book) {

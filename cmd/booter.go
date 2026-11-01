@@ -289,8 +289,8 @@ func (booter *Booter) initMarket() error {
 
 	ui.UI.RegisterCallback(func() {
 		booter.desk.Hello()
-		if booter.model != nil && booter.model.Confidence() != nil {
-			booter.model.Confidence().Publish()
+		if booter.model != nil {
+			booter.model.Confidence.Publish()
 		}
 	})
 	ui.UI.Exiter(hubDeskExiter{desk: booter.desk})

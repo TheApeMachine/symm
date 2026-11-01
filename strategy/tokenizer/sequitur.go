@@ -163,13 +163,6 @@ func (sequitur *Sequitur) Tail(n int) []string {
 }
 
 /*
-LastRule is the most recently created production, or nil.
-*/
-func (sequitur *Sequitur) LastRule() *Rule {
-	return sequitur.lastRule
-}
-
-/*
 Symbols is how many distinct symbols the grammar holds, rules included.
 */
 func (sequitur *Sequitur) Symbols() int {
@@ -216,17 +209,10 @@ func (sequitur *Sequitur) RootSequence() []string {
 }
 
 /*
-RootLength is the number of symbols currently in the root sequence.
-*/
-func (sequitur *Sequitur) RootLength() int {
-	return sequitur.length
-}
-
-/*
 TerminalNames flattens rule into terminal token strings (e.g. R08, R07).
 */
 func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {
-	if sequitur == nil || rule == nil || rule.Head == nil {
+	if rule == nil || rule.Head == nil {
 		return nil
 	}
 
@@ -250,7 +236,7 @@ func (sequitur *Sequitur) collectTerminalNames(rule *Rule, names *[]string) {
 
 // TerminalsForRef expands a root symbol (R01 or M1) into region terminals.
 func (sequitur *Sequitur) TerminalsForRef(ref string) []string {
-	if sequitur == nil || ref == "" {
+	if ref == "" {
 		return nil
 	}
 
@@ -527,10 +513,6 @@ func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {
 // Sentence drops the current root and keeps the rules. The next letter starts
 // a new phrase with the same rule ids.
 func (sequitur *Sequitur) Sentence() {
-	if sequitur == nil {
-		return
-	}
-
 	sequitur.clearRootLocked()
 }
 
@@ -563,7 +545,7 @@ func parseDisplay(symbol string) Symbol {
 
 // Learn copies one rule into this grammar so a restart replays digrams the same way.
 func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
-	if sequitur == nil || id <= 0 || len(symbols) == 0 {
+	if id <= 0 || len(symbols) == 0 {
 		return
 	}
 
@@ -604,10 +586,6 @@ func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
 
 // RestoreRoot installs a saved sentence without discovering new rules.
 func (sequitur *Sequitur) RestoreRoot(symbols []string) {
-	if sequitur == nil {
-		return
-	}
-
 	sequitur.clearRootLocked()
 
 	var prev *Node

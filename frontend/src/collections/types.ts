@@ -43,25 +43,6 @@ export type Position = {
 	exit_trigger?: string;
 	outcome_triggers?: string[];
 
-	/*
-	Stop-loss telemetry the desk publishes on every mark. Mirrors
-	broker/stoploss.go StopState. Decimals cross the wire as JSON strings, so
-	they are string|number here and parsed by the decimal() helper on read.
-	*/
-	/** Live proximity of invalidation / trailing / damage, refreshed per mark. */
-	stop_state?: {
-		invalidation?: number;
-		trailing?: number;
-		damage?: number;
-		peak_pct?: number;
-		current_pct?: number;
-		entry_pct?: number;
-		giveback_pct?: number;
-		allowed_giveback_pct?: number;
-		remaining_giveback_pct?: number;
-		floor_pct?: number;
-		floorPct?: number;
-	} | null;
 	/** Highest mark-to-market return (percent) the lot has reached. */
 	peak_pnl_pct?: string | number;
 	/** Legacy learned trailing giveback (percent); unused by the fixed stop. */
@@ -80,27 +61,44 @@ export type Position = {
 	realized_pct?: number;
 	/** Net percent path, one mark per reprice — the episode the policy learns from. */
 	pnl_trace?: number[];
-	/** Full structural-shadow series (shared prefix with pnl_trace + post-official continuation). */
-	shadow_pnl_trace?: number[];
-	/** True while the virtual structural ghost still wants marks. */
-	shadow_active?: boolean;
-	shadow_exit_trigger?: string;
 	official_exit_at?: string | null;
-	shadow_exit_at?: string | null;
 	official_exit_pct?: number;
-	shadow_exit_pct?: number;
-	/** Active official stop rail in PnL % (trail only while green). */
-	stop_floor_pct?: number;
-	/** Live structural shadow floor in PnL %. */
-	shadow_floor_pct?: number;
-	/** Official floor path, one sample per reprice. */
-	stop_floor_trace?: number[];
-	/** Structural floor path, one sample per shadow mark. */
-	shadow_floor_trace?: number[];
-	/** 0..1+ toward the active official stop. */
-	stop_proximity?: number;
-	/** PnL points remaining above the active official floor. */
-	stop_room_pct?: number;
-	shadow_proximity?: number;
-	shadow_room_pct?: number;
+	/** Active structural settler composed on the lot. */
+	structural?: {
+		floor_pct?: number;
+		room_pct?: number;
+		proximity?: number;
+		floor_trace?: number[];
+		state?: {
+			invalidation?: number;
+			trailing?: number;
+			damage?: number;
+			peakPct?: number;
+			peak_pct?: number;
+			currentPct?: number;
+			current_pct?: number;
+			entryPct?: number;
+			entry_pct?: number;
+			givebackPct?: number;
+			giveback_pct?: number;
+			allowedGivebackPct?: number;
+			allowed_giveback_pct?: number;
+			remainingGivebackPct?: number;
+			remaining_giveback_pct?: number;
+			floorPct?: number;
+			floor_pct?: number;
+		} | null;
+	};
+	/** Learning shadow composed on the lot; never settles the venue lot. */
+	learning?: {
+		active?: boolean;
+		pnl_trace?: number[];
+		exit_trigger?: string;
+		exit_at?: string | null;
+		exit_pct?: number;
+		floor_pct?: number;
+		floor_trace?: number[];
+		proximity?: number;
+		room_pct?: number;
+	};
 };

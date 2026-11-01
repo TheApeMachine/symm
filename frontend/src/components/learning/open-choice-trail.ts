@@ -17,6 +17,19 @@ const finiteNums = (raw: unknown): number[] => {
 const finiteFloor = (raw: unknown): number | undefined =>
 	typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 
+const nest = (
+	row: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> => {
+	const value = row[key];
+	return value && typeof value === "object"
+		? (value as Record<string, unknown>)
+		: {};
+};
+
+const structuralOf = (row: Record<string, unknown>) => nest(row, "structural");
+const learningOf = (row: Record<string, unknown>) => nest(row, "learning");
+
 /*
 adaptiveBeatsOfficial is true when the learning shadow exit (or its live mark)
 is strictly better than the official structural exit. That is the only case
@@ -28,12 +41,14 @@ export const adaptiveBeatsOfficial = (
 	const official = finiteFloor(row.official_exit_pct);
 	if (official === undefined) return false;
 
-	if (row.shadow_exit_at != null && row.shadow_exit_at !== "") {
-		const done = finiteFloor(row.shadow_exit_pct);
+	const learning = learningOf(row);
+
+	if (learning.exit_at != null && learning.exit_at !== "") {
+		const done = finiteFloor(learning.exit_pct);
 		return done !== undefined && done > official;
 	}
 
-	const shadow = finiteNums(row.shadow_pnl_trace);
+	const shadow = finiteNums(learning.pnl_trace);
 	if (shadow.length === 0) return false;
 
 	const live = shadow[shadow.length - 1];
@@ -53,7 +68,7 @@ export const officialExitDashIndex = (
 
 	if (!adaptiveBeatsOfficial(row)) return undefined;
 
-	const shadow = finiteNums(row.shadow_pnl_trace);
+	const shadow = finiteNums(learningOf(row).pnl_trace);
 	const official = finiteNums(row.pnl_trace);
 	if (shadow.length === 0 || official.length === 0) return undefined;
 	if (shadow.length <= official.length) return undefined;
@@ -160,18 +175,21 @@ export const clipTraceToValues = (
 export const openChoiceFloors = (
 	row: Record<string, unknown>,
 ): { stopFloor?: number; shadowFloor?: number } => {
+	const structural = structuralOf(row);
+	const learning = learningOf(row);
+	const state =
+		structural.state && typeof structural.state === "object"
+			? (structural.state as Record<string, unknown>)
+			: {};
+
 	const stopFloor =
-		finiteFloor(row.stop_floor_pct) ??
-		finiteFloor(
-			row.stop_state && typeof row.stop_state === "object"
-				? ((row.stop_state as Record<string, unknown>).floorPct ??
-					(row.stop_state as Record<string, unknown>).floor_pct)
-				: undefined,
-		);
+		finiteFloor(structural.floor_pct) ??
+		finiteFloor(state.floorPct ?? state.floor_pct);
 
-	const shadowFloor = finiteFloor(row.shadow_floor_pct);
-
-	return { stopFloor, shadowFloor };
+	return {
+		stopFloor,
+		shadowFloor: finiteFloor(learning.floor_pct),
+	};
 };
 
 /** Absolute money PnL from the desk lot (not percent). */
@@ -191,9 +209,11 @@ export const openChoiceFloorBands = (
 	row: Record<string, unknown>,
 	values: number[],
 ): { stopFloorTrace?: number[]; shadowFloorTrace?: number[] } => {
-	const stopRaw = finiteNums(row.stop_floor_trace);
-	const shadowRaw = finiteNums(row.shadow_floor_trace);
-	const shadowPnl = finiteNums(row.shadow_pnl_trace);
+	const structural = structuralOf(row);
+	const learning = learningOf(row);
+	const stopRaw = finiteNums(structural.floor_trace);
+	const shadowRaw = finiteNums(learning.floor_trace);
+	const shadowPnl = finiteNums(learning.pnl_trace);
 	const officialPnl = finiteNums(row.pnl_trace);
 	const sourceLen =
 		shadowPnl.length > 0 ? shadowPnl.length : Math.max(officialPnl.length, values.length);
@@ -232,7 +252,8 @@ export const openChoiceSeriesValues = (
 	row: Record<string, unknown>,
 	id: string,
 ): { values: number[]; dashFrom?: number } => {
-	const shadow = finiteNums(row.shadow_pnl_trace);
+	const learning = learningOf(row);
+	const shadow = finiteNums(learning.pnl_trace);
 	const official = finiteNums(row.pnl_trace);
 	const client = openChoiceValues(id);
 
@@ -285,16 +306,16 @@ export const openChoiceSeries = (
 			values,
 			stroke: strokeFor(id),
 			dashFrom,
-			shadowActive: row.shadow_active === true,
+			shadowActive: learningOf(row).active === true,
 			stopFloor,
 			shadowFloor,
 			stopFloorTrace,
 			shadowFloorTrace,
 			pnlMoney: openChoicePnlMoney(row),
-			stopProximity: finiteFloor(row.stop_proximity),
-			stopRoomPct: finiteFloor(row.stop_room_pct),
-			shadowProximity: finiteFloor(row.shadow_proximity),
-			shadowRoomPct: finiteFloor(row.shadow_room_pct),
+			stopProximity: finiteFloor(structuralOf(row).proximity),
+			stopRoomPct: finiteFloor(structuralOf(row).room_pct),
+			shadowProximity: finiteFloor(learningOf(row).proximity),
+			shadowRoomPct: finiteFloor(learningOf(row).room_pct),
 		};
 	});
 
@@ -329,16 +350,19 @@ export const resetOpenChoices = () => {
 
 export type OpenChoiceLot = { id: string; pnl: number | null; stamp: string };
 
-export const openChoiceMarkStamp = (row: Record<string, unknown>): string =>
-	[
+export const openChoiceMarkStamp = (row: Record<string, unknown>): string => {
+	const learning = learningOf(row);
+
+	return [
 		row.pnl_pct,
 		row.mark,
 		row.peak_pnl_pct,
 		row.exit_vwap,
 		row.bars_held,
-		Array.isArray(row.shadow_pnl_trace) ? row.shadow_pnl_trace.length : 0,
-		row.shadow_active === true ? 1 : 0,
+		Array.isArray(learning.pnl_trace) ? learning.pnl_trace.length : 0,
+		learning.active === true ? 1 : 0,
 	].join("|");
+};
 
 export const openChoiceLotsFromRows = (
 	rows: Record<string, unknown>[],

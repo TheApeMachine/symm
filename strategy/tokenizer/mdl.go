@@ -35,7 +35,7 @@ Analyze ingests one grammar symbol from the active Sequitur root sequence.
 It returns whether an MDL cut was committed and the penalized split gain.
 */
 func (mdl *MDL) Analyze(symbol string) (cut bool, gain float64) {
-	if mdl == nil || symbol == "" {
+	if symbol == "" {
 		return false, 0
 	}
 
@@ -104,9 +104,9 @@ func (mdl *MDL) detectBoundary(stream []uint32, dist *symbolHistogram) (bool, in
 			continue
 		}
 
-		fullParams := max(dist.distinct()-1, 1)
-		leftParams := max(left.distinct()-1, 1)
-		rightParams := max(right.distinct()-1, 1)
+		fullParams := max(dist.numDistinct-1, 1)
+		leftParams := max(left.numDistinct-1, 1)
+		rightParams := max(right.numDistinct-1, 1)
 
 		penaltyFull := 0.5 * float64(fullParams) * math.Log(float64(n))
 		penaltyLeft := 0.5 * float64(leftParams) * math.Log(float64(i))
@@ -126,10 +126,6 @@ func (mdl *MDL) detectBoundary(stream []uint32, dist *symbolHistogram) (bool, in
 }
 
 func (mdl *MDL) LastGain() float64 {
-	if mdl == nil {
-		return 0
-	}
-
 	if mdl.lastGain > 1.0 {
 		return 1.0
 	}
@@ -168,10 +164,6 @@ func (hist *symbolHistogram) remove(id uint32) {
 		delete(hist.counts, id)
 		hist.numDistinct--
 	}
-}
-
-func (hist *symbolHistogram) distinct() int {
-	return hist.numDistinct
 }
 
 func (hist *symbolHistogram) cost() float64 {

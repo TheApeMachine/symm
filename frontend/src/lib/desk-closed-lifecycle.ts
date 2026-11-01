@@ -23,14 +23,26 @@ complete close or stable identity is not a closed round trip.
 shadowComparisonPending is true while the learning shadow has not finished
 after the active structural exit. Closed lifecycle waits for both.
 */
+const nest = (
+	row: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> => {
+	const value = row[key];
+	return value && typeof value === "object"
+		? (value as Record<string, unknown>)
+		: {};
+};
+
 export const shadowComparisonPending = (
 	row: Record<string, unknown>,
 ): boolean => {
-	if (row.shadow_exit_at != null && row.shadow_exit_at !== "") {
+	const learning = nest(row, "learning");
+
+	if (learning.exit_at != null && learning.exit_at !== "") {
 		return false;
 	}
 
-	if (row.shadow_active === true) return true;
+	if (learning.active === true) return true;
 
 	if (row.official_exit_at != null && row.official_exit_at !== "") {
 		return true;
@@ -40,14 +52,13 @@ export const shadowComparisonPending = (
 };
 
 /*
-stopStateFromRow parses the stop-check proximity object the desk publishes on
-a raw row. A non-object stop_state is null so the UI reads "no stop telemetry
-yet" rather than inventing proximity.
+stopStateFromRow parses structural.state from the composed stop on the lot.
 */
 const stopStateFromRow = (
 	row: Record<string, unknown>,
 ): LiveStopState | null => {
-	const value = row.stop_state;
+	const structural = nest(row, "structural");
+	const value = structural.state;
 	if (!value || typeof value !== "object") return null;
 	const record = value as Record<string, unknown>;
 	const num = (key: string): number | undefined => {
@@ -256,15 +267,15 @@ export const lifecycleFromDeskClosed = (
 		: `desk open · tick ${tape?.b ?? "—"}`;
 	const exitTick = tape?.c;
 	const exitTickText = exitTick === undefined ? "" : ` · tick ${exitTick}`;
+	const learning = nest(row, "learning");
 	const officialPct =
 		typeof row.official_exit_pct === "number" &&
 		Number.isFinite(row.official_exit_pct)
 			? row.official_exit_pct
 			: null;
 	const shadowPct =
-		typeof row.shadow_exit_pct === "number" &&
-		Number.isFinite(row.shadow_exit_pct)
-			? row.shadow_exit_pct
+		typeof learning.exit_pct === "number" && Number.isFinite(learning.exit_pct)
+			? learning.exit_pct
 			: null;
 	const compareText =
 		officialPct !== null && shadowPct !== null

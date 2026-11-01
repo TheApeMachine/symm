@@ -127,7 +127,7 @@ func TestRuleCount(t *testing.T) {
 				root := seq.RootSequence()
 				So(len(root), ShouldBeGreaterThan, 0)
 				So(root[len(root)-1], ShouldEqual, "M1")
-				So(seq.RootLength(), ShouldEqual, len(root))
+				So(seq.length, ShouldEqual, len(root))
 			})
 		})
 

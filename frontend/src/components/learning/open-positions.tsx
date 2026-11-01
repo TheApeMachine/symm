@@ -36,7 +36,11 @@ export const positionsRevision = (state: Record<string, Position>): string => {
 export const chartHeldRow = (row: Record<string, unknown>, book: Book) => {
 	if (!onBook(row, book)) return false;
 	if (!positionReadout(row).closed) return true;
-	return row.shadow_active === true;
+	const learning =
+		row.learning && typeof row.learning === "object"
+			? (row.learning as Record<string, unknown>)
+			: null;
+	return learning?.active === true;
 };
 
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>

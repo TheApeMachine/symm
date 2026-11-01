@@ -14,7 +14,7 @@ on every mark — hard invalidation (2pp), ratcheted trailing take-profit, and
 damage — as meters plus one plain-language verdict. This is the "why is this
 lot still held, or about to exit, right now" readout.
 
-Data is read directly off the raw desk row (stop_state, peak_pnl_pct).
+Data is read directly off the raw desk row (structural.state, peak_pnl_pct).
 Everything is optional: a lot that has no stop telemetry yet renders in its
 waiting state rather than a fabricated zero.
 */
@@ -24,7 +24,11 @@ const num = (value: unknown): number | null =>
 	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const readStop = (row: StopRow) => {
-	const state = row.stop_state as Record<string, unknown> | null | undefined;
+	const structural =
+		row.structural && typeof row.structural === "object"
+			? (row.structural as Record<string, unknown>)
+			: null;
+	const state = structural?.state as Record<string, unknown> | null | undefined;
 	const stop =
 		state && typeof state === "object"
 			? (state as Record<string, unknown>)

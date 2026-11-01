@@ -24,22 +24,20 @@ func TestPositionLearningShadowTracksBesideOfficial(t *testing.T) {
 			rails,
 		)
 
-		So(pos.structural, ShouldNotBeNil)
-		So(pos.learning, ShouldNotBeNil)
-		So(pos.ShadowActive, ShouldBeTrue)
+		So(pos.Structural, ShouldNotBeNil)
+		So(pos.Learning, ShouldNotBeNil)
+		So(pos.Learning.Live(), ShouldBeTrue)
 
 		pos.mu.Lock()
-		pos.armLossBudgetLocked()
-		pos.recordShadowTraceLocked(0.0)
-		_, ok0 := pos.learning.Update(0.0)
-		pos.recordShadowTraceLocked(1.2)
-		_, ok1 := pos.learning.Update(1.2)
+		pos.armStopsLocked()
+		_, ok0 := pos.Learning.Update(0.0)
+		_, ok1 := pos.Learning.Update(1.2)
 		pos.mu.Unlock()
 
 		So(ok0, ShouldBeFalse)
 		So(ok1, ShouldBeFalse)
 		So(pos.ShadowLive(), ShouldBeTrue)
-		So(len(pos.ShadowPnLTrace), ShouldEqual, 2)
+		So(len(pos.Learning.PnLTrace), ShouldEqual, 2)
 	})
 }
 
@@ -57,26 +55,25 @@ func TestOfficialSettleKeepsLearningShadowUpdating(t *testing.T) {
 
 		settled := 0
 		pos := &Position{
-			ID:           "ghost-1",
-			Symbol:       "ETH/USD",
-			Book:         "virtual",
-			Virtual:      true,
-			ShadowActive: true,
-			structural:   NewStructuralStop(),
-			learning:     NewLearningStop(rails),
-			EntryPrice:   dFloat(100),
-			Qty:          dFloat(1),
-			PnLPct:       dFloat(0.4),
+			ID:         "ghost-1",
+			Symbol:     "ETH/USD",
+			Book:       "virtual",
+			Virtual:    true,
+			Structural: NewStructuralStop(),
+			Learning:   NewLearningStop(rails),
+			EntryPrice: dFloat(100),
+			Qty:        dFloat(1),
+			PnLPct:     dFloat(0.4),
 			onSettled: func(p *Position) {
 				settled++
 				desk.onPositionSettled(p)
 			},
 		}
-		pos.structural.Update(0.0)
-		pos.structural.Update(0.5)
-		pos.learning.Arm(0)
-		pos.learning.Update(0.0)
-		pos.learning.Update(0.5)
+		pos.Structural.Update(0.0)
+		pos.Structural.Update(0.5)
+		pos.Learning.Arm(0)
+		pos.Learning.Update(0.0)
+		pos.Learning.Update(0.5)
 
 		now := time.Now().UTC()
 		pos.ClosedAt = &now
@@ -89,12 +86,13 @@ func TestOfficialSettleKeepsLearningShadowUpdating(t *testing.T) {
 		So(ok, ShouldBeTrue)
 		So(pos.ShadowLive(), ShouldBeTrue)
 
-		pos.finishShadowLocked("trailing take-profit: test", 0.2)
+		pos.Learning.Finish("trailing take-profit: test", 0.2)
+		pos.Learning.Settle(pos.OfficialExitPct)
 		desk.onShadowDone(pos)
 
 		_, still := desk.shadows.Load(pos.ID)
 		So(still, ShouldBeFalse)
-		So(pos.ShadowExitAt, ShouldNotBeNil)
+		So(pos.Learning.ExitAt, ShouldNotBeNil)
 		So(rails.Episodes(), ShouldEqual, 1)
 		So(settled, ShouldEqual, 0)
 	})
@@ -113,8 +111,8 @@ func TestPaperLotsEvaluateLearningShadow(t *testing.T) {
 			nil,
 		)
 
-		So(pos.structural, ShouldNotBeNil)
-		So(pos.learning, ShouldNotBeNil)
-		So(pos.ShadowActive, ShouldBeTrue)
+		So(pos.Structural, ShouldNotBeNil)
+		So(pos.Learning, ShouldNotBeNil)
+		So(pos.Learning.Live(), ShouldBeTrue)
 	})
 }
