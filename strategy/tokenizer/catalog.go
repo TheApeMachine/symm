@@ -7,7 +7,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/nomagique/store"
 )
 
 const grammarSymbolDir = "model/grammar/symbol/"

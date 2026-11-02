@@ -12,75 +12,176 @@ type Catalog struct {
 	bucket string
 }
 
+/*
+seed is one view: prefer the S3-backed definition, fall back to an empty typed
+view when the prefix has no objects yet (DuckDB rejects empty globs).
+*/
+type seed struct {
+	name    string
+	primary string
+	empty   string
+}
+
 func NewCatalog(bucket string) *Catalog {
 	return &Catalog{bucket: bucket}
 }
 
-func (catalog *Catalog) statements() []string {
-	out := make([]string, 0, 10)
+/*
+qualified names views in the attached `warehouse` catalog so Perspective's
+WarehouseHandler can keep filtering out its own `memory` working tables.
+*/
+func qualified(name string) string {
+	return "warehouse.main." + identifier(name)
+}
+
+func (catalog *Catalog) seeds() []seed {
+	out := make([]seed, 0, 10)
 
 	for _, ledger := range []string{"paper", "real", "virtual"} {
 		for _, state := range []string{"open", "closed"} {
 			name := state + "_" + ledger
 			glob := fmt.Sprintf("s3://%s/%s/%s/**", catalog.bucket, ledger, state)
 
-			out = append(out, catalog.lotView(name, glob))
+			out = append(out, seed{
+				name:    name,
+				primary: catalog.lotView(name, glob),
+				empty:   catalog.emptyLotView(name),
+			})
 		}
 	}
 
 	framesGlob := fmt.Sprintf("s3://%s/market/level3/**/*.ndjson", catalog.bucket)
 
-	out = append(out, catalog.level3FramesView(framesGlob))
-	out = append(out, catalog.level3EventsView(framesGlob))
+	out = append(out, seed{
+		name:    "level3_frames",
+		primary: catalog.level3FramesView(framesGlob),
+		empty:   catalog.emptyLevel3FramesView(),
+	})
+	out = append(out, seed{
+		name:    "level3_events",
+		primary: catalog.level3EventsView(framesGlob),
+		empty:   catalog.emptyLevel3EventsView(),
+	})
 
 	return out
 }
 
 func (catalog *Catalog) lotView(name, glob string) string {
-	columns := []string{
+	// Explicit columns avoid read_json_auto sampling the whole prefix at CREATE VIEW.
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT %s FROM read_json(%s, union_by_name=true, columns=%s)",
+		qualified(name),
+		strings.Join(lotProjections(), ", "),
+		literal(glob),
+		lotColumnMap(),
+	)
+}
+
+func (catalog *Catalog) emptyLotView(name string) string {
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT %s WHERE false",
+		qualified(name),
+		strings.Join(emptyLotColumns(), ", "),
+	)
+}
+
+func lotColumnMap() string {
+	return `{` +
+		`'epoch': 'UBIGINT', ` +
+		`'tick': 'UBIGINT', ` +
+		`'timestamp': 'UBIGINT', ` +
+		`'position': 'JSON'` +
+		`}`
+}
+
+func lotProjections() []string {
+	return []string{
 		"epoch",
 		"tick",
 		"timestamp",
-		"position.id AS id",
-		"position.symbol AS symbol",
-		"position.book AS book",
-		"position.virtual AS virtual",
-		"position.entry_path AS entry_path",
-		"position.exit_path AS exit_path",
-		"position.exit_trigger AS exit_trigger",
-		"position.qty AS qty",
-		"position.entry_price AS entry_price",
-		"position.exit_price AS exit_price",
-		"position.entry_fee AS entry_fee",
-		"position.exit_fee AS exit_fee",
-		"position.pnl AS pnl",
-		"position.pnl_pct AS pnl_pct",
-		"position.open_pnl AS open_pnl",
-		"position.realized_pct AS realized_pct",
-		"position.opened_at AS opened_at",
-		"position.closed_at AS closed_at",
-		"to_json(position.fills)::VARCHAR AS fills",
-		"to_json(position.hold_paths)::VARCHAR AS hold_paths",
-		"to_json(position.structural)::VARCHAR AS structural",
-		"to_json(position.learning)::VARCHAR AS learning",
+		"json_extract_string(position, '$.id') AS id",
+		"json_extract_string(position, '$.symbol') AS symbol",
+		"json_extract_string(position, '$.book') AS book",
+		"CAST(json_extract(position, '$.virtual') AS BOOLEAN) AS virtual",
+		"json_extract_string(position, '$.entry_path') AS entry_path",
+		"json_extract_string(position, '$.exit_path') AS exit_path",
+		"json_extract_string(position, '$.exit_trigger') AS exit_trigger",
+		"json_extract_string(position, '$.qty') AS qty",
+		"json_extract_string(position, '$.entry_price') AS entry_price",
+		"json_extract_string(position, '$.exit_price') AS exit_price",
+		"json_extract_string(position, '$.entry_fee') AS entry_fee",
+		"json_extract_string(position, '$.exit_fee') AS exit_fee",
+		"json_extract_string(position, '$.pnl') AS pnl",
+		"CAST(json_extract(position, '$.pnl_pct') AS DOUBLE) AS pnl_pct",
+		"json_extract_string(position, '$.open_pnl') AS open_pnl",
+		"CAST(json_extract(position, '$.realized_pct') AS DOUBLE) AS realized_pct",
+		"json_extract_string(position, '$.opened_at') AS opened_at",
+		"json_extract_string(position, '$.closed_at') AS closed_at",
+		"json_extract(position, '$.fills')::VARCHAR AS fills",
+		"json_extract(position, '$.hold_paths')::VARCHAR AS hold_paths",
+		"json_extract(position, '$.structural')::VARCHAR AS structural",
+		"json_extract(position, '$.learning')::VARCHAR AS learning",
 	}
+}
 
-	return fmt.Sprintf(
-		"CREATE OR REPLACE VIEW %s AS SELECT %s FROM read_json_auto(%s, union_by_name=true)",
-		identifier(name),
-		strings.Join(columns, ", "),
-		literal(glob),
-	)
+func emptyLotColumns() []string {
+	return []string{
+		"CAST(NULL AS UBIGINT) AS epoch",
+		"CAST(NULL AS UBIGINT) AS tick",
+		"CAST(NULL AS UBIGINT) AS timestamp",
+		"CAST(NULL AS VARCHAR) AS id",
+		"CAST(NULL AS VARCHAR) AS symbol",
+		"CAST(NULL AS VARCHAR) AS book",
+		"CAST(NULL AS BOOLEAN) AS virtual",
+		"CAST(NULL AS VARCHAR) AS entry_path",
+		"CAST(NULL AS VARCHAR) AS exit_path",
+		"CAST(NULL AS VARCHAR) AS exit_trigger",
+		"CAST(NULL AS VARCHAR) AS qty",
+		"CAST(NULL AS VARCHAR) AS entry_price",
+		"CAST(NULL AS VARCHAR) AS exit_price",
+		"CAST(NULL AS VARCHAR) AS entry_fee",
+		"CAST(NULL AS VARCHAR) AS exit_fee",
+		"CAST(NULL AS VARCHAR) AS pnl",
+		"CAST(NULL AS DOUBLE) AS pnl_pct",
+		"CAST(NULL AS VARCHAR) AS open_pnl",
+		"CAST(NULL AS DOUBLE) AS realized_pct",
+		"CAST(NULL AS VARCHAR) AS opened_at",
+		"CAST(NULL AS VARCHAR) AS closed_at",
+		"CAST(NULL AS VARCHAR) AS fills",
+		"CAST(NULL AS VARCHAR) AS hold_paths",
+		"CAST(NULL AS VARCHAR) AS structural",
+		"CAST(NULL AS VARCHAR) AS learning",
+	}
 }
 
 func (catalog *Catalog) level3FramesView(glob string) string {
 	return fmt.Sprintf(
 		"CREATE OR REPLACE VIEW %s AS SELECT "+
-			"channel, type, to_json(data)::VARCHAR AS data "+
-			"FROM read_json_auto(%s, format='newline_delimited', union_by_name=true)",
-		identifier("level3_frames"),
+			"channel, type, data::VARCHAR AS data "+
+			"FROM read_json(%s, format='newline_delimited', columns=%s)",
+		qualified("level3_frames"),
 		literal(glob),
+		level3ColumnMap(),
 	)
+}
+
+func (catalog *Catalog) emptyLevel3FramesView() string {
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT "+
+			"CAST(NULL AS VARCHAR) AS channel, "+
+			"CAST(NULL AS VARCHAR) AS type, "+
+			"CAST(NULL AS VARCHAR) AS data "+
+			"WHERE false",
+		qualified("level3_frames"),
+	)
+}
+
+func level3ColumnMap() string {
+	return `{` +
+		`'channel': 'VARCHAR', ` +
+		`'type': 'VARCHAR', ` +
+		`'data': 'JSON'` +
+		`}`
 }
 
 func (catalog *Catalog) level3EventsView(glob string) string {
@@ -88,15 +189,32 @@ func (catalog *Catalog) level3EventsView(glob string) string {
 		"CREATE OR REPLACE VIEW %s AS SELECT "+
 			"f.channel AS channel, "+
 			"f.type AS frame_type, "+
-			"e.symbol AS symbol, "+
-			"e.type AS type, "+
-			"e.timestamp AS timestamp, "+
-			"e.checksum AS checksum, "+
-			"to_json(e.bids)::VARCHAR AS bids, "+
-			"to_json(e.asks)::VARCHAR AS asks "+
-			"FROM read_json_auto(%s, format='newline_delimited', union_by_name=true) AS f, "+
-			"UNNEST(f.data) AS t(e)",
-		identifier("level3_events"),
+			"json_extract_string(e, '$.symbol') AS symbol, "+
+			"json_extract_string(e, '$.type') AS type, "+
+			"json_extract_string(e, '$.timestamp') AS timestamp, "+
+			"TRY_CAST(json_extract(e, '$.checksum') AS UBIGINT) AS checksum, "+
+			"json_extract(e, '$.bids')::VARCHAR AS bids, "+
+			"json_extract(e, '$.asks')::VARCHAR AS asks "+
+			"FROM read_json(%s, format='newline_delimited', columns=%s) AS f, "+
+			"UNNEST(CAST(f.data AS JSON[])) AS t(e)",
+		qualified("level3_events"),
 		literal(glob),
+		level3ColumnMap(),
+	)
+}
+
+func (catalog *Catalog) emptyLevel3EventsView() string {
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT "+
+			"CAST(NULL AS VARCHAR) AS channel, "+
+			"CAST(NULL AS VARCHAR) AS frame_type, "+
+			"CAST(NULL AS VARCHAR) AS symbol, "+
+			"CAST(NULL AS VARCHAR) AS type, "+
+			"CAST(NULL AS VARCHAR) AS timestamp, "+
+			"CAST(NULL AS UBIGINT) AS checksum, "+
+			"CAST(NULL AS VARCHAR) AS bids, "+
+			"CAST(NULL AS VARCHAR) AS asks "+
+			"WHERE false",
+		qualified("level3_events"),
 	)
 }

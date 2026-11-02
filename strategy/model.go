@@ -8,7 +8,7 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
 

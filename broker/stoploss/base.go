@@ -7,6 +7,9 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+// trailGivebackFraction of peak PnL is the proportional runner breathe room.
+const trailGivebackFraction = 0.25
+
 type StopLoss struct {
 	initialized  bool
 	entryPnL     float64
@@ -162,19 +165,32 @@ func (stoploss *StopLoss) Proximity(currentPnL float64) float64 {
 	return proximity
 }
 
+/*
+damageRatio is adverse drawdown past the entry friction hurdle, relative to
+the remaining invalidation budget. Opening taker+spread drag alone is not
+treated as catastrophic damage.
+*/
 func (stoploss *StopLoss) damageRatio() float64 {
 	maxLoss := stoploss.budget.maxLoss
 	if maxLoss <= 0 {
 		return 0
 	}
 
-	drawdown := stoploss.entryPnL - stoploss.lowestPnL
-	return math.Min(1.0, math.Max(0.0, drawdown/maxLoss))
+	frictionHurdle := stoploss.budget.armPct
+	adverse := stoploss.entryPnL - stoploss.lowestPnL
+	excess := math.Max(0, adverse-frictionHurdle)
+	room := math.Max(0.5, maxLoss-frictionHurdle)
+
+	return math.Min(1.0, math.Max(0.0, excess/room))
 }
 
+/*
+allowedGiveback widens with peak so runners breathe, while minGiveback
+keeps a floor under small peaks. Prior excess damage tightens tolerance.
+*/
 func (stoploss *StopLoss) allowedGiveback(peak, damage float64) float64 {
-	allowed := stoploss.baseGiveback * (2.0 / (peak + 1.0))
-	allowed = allowed * (1.0 - (0.5 * damage))
+	allowed := math.Max(stoploss.baseGiveback, peak*trailGivebackFraction)
+	allowed = allowed * (1.0 - (0.4 * damage))
 
 	if allowed < stoploss.minGiveback {
 		return stoploss.minGiveback

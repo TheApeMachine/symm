@@ -60,25 +60,25 @@ func local(t *testing.T) *workbench.Warehouse {
 	statements := []string{
 		`CREATE OR REPLACE VIEW closed_paper AS SELECT
 			epoch, tick, timestamp,
-			position.id AS id,
-			position.symbol AS symbol,
-			position.book AS book,
-			to_json(position.fills)::VARCHAR AS fills,
-			to_json(position.hold_paths)::VARCHAR AS hold_paths
-		FROM read_json_auto('` + lotURL + `', union_by_name=true)`,
+			json_extract_string(position, '$.id') AS id,
+			json_extract_string(position, '$.symbol') AS symbol,
+			json_extract_string(position, '$.book') AS book,
+			json_extract(position, '$.fills')::VARCHAR AS fills,
+			json_extract(position, '$.hold_paths')::VARCHAR AS hold_paths
+		FROM read_json('` + lotURL + `', columns={'epoch':'UBIGINT','tick':'UBIGINT','timestamp':'UBIGINT','position':'JSON'})`,
 		`CREATE OR REPLACE VIEW level3_frames AS SELECT
-			channel, type, to_json(data)::VARCHAR AS data
-		FROM read_json_auto('` + framesURL + `', format='newline_delimited', union_by_name=true)`,
+			channel, type, data::VARCHAR AS data
+		FROM read_json('` + framesURL + `', format='newline_delimited', columns={'channel':'VARCHAR','type':'VARCHAR','data':'JSON'})`,
 		`CREATE OR REPLACE VIEW level3_events AS SELECT
 			f.channel AS channel,
 			f.type AS frame_type,
-			e.symbol AS symbol,
-			e.type AS type,
-			e.checksum AS checksum,
-			to_json(e.bids)::VARCHAR AS bids,
-			to_json(e.asks)::VARCHAR AS asks
-		FROM read_json_auto('` + framesURL + `', format='newline_delimited', union_by_name=true) AS f,
-		UNNEST(f.data) AS t(e)`,
+			json_extract_string(e, '$.symbol') AS symbol,
+			json_extract_string(e, '$.type') AS type,
+			TRY_CAST(json_extract(e, '$.checksum') AS UBIGINT) AS checksum,
+			json_extract(e, '$.bids')::VARCHAR AS bids,
+			json_extract(e, '$.asks')::VARCHAR AS asks
+		FROM read_json('` + framesURL + `', format='newline_delimited', columns={'channel':'VARCHAR','type':'VARCHAR','data':'JSON'}) AS f,
+		UNNEST(CAST(f.data AS JSON[])) AS t(e)`,
 	}
 
 	for _, statement := range statements {

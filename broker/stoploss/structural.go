@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	structuralPhaseIdle     = ""
 	structuralPhasePeak     = "peak"
 	structuralPhasePullback = "pullback"
 	structuralPhaseBounce   = "bounce"
@@ -60,26 +61,32 @@ type Machine struct {
 }
 
 func NewStructural() *Structural {
-	return &Structural{budget: NewBudget().Arm(0)}
+	return &Structural{
+		budget: NewBudget().Arm(0),
+		phase:  structuralPhaseIdle,
+	}
 }
 
-// Arm freezes zone-0 from entry friction once. Later calls are no-ops.
+// Arm freezes zone-0 from entry friction. Only lock once friction is known.
 func (stop *Structural) Arm(frictionFraction float64) {
-	if stop.armed {
+	if stop.armed || frictionFraction <= 0 {
 		return
 	}
 
+	stop.budget = NewBudget().Arm(frictionFraction)
 	stop.armed = true
 
-	if frictionFraction > 0 {
-		stop.budget = NewBudget().Arm(frictionFraction)
+	// Widen provisional invalidation if Update ran before real friction.
+	if stop.initialized && stop.milestone == 0 {
+		stop.floor = math.Min(stop.floor, -stop.budget.maxLoss)
 	}
 }
 
 /*
 Resume reloads locked rails after a restart. Mid-phase pullback/bounce
 is discarded so an unobserved gap cannot finish a retest that never
-played out live; peak and floor stay.
+played out live; peak and floor stay. Retest stays idle until peak
+has cleared the arm hurdle.
 */
 func (stop *Structural) Resume(machine Machine) {
 	if !machine.Initialized {
@@ -102,11 +109,15 @@ func (stop *Structural) Resume(machine Machine) {
 	stop.budget.armPct = machine.ArmPct
 	stop.budget.armed = machine.Armed || machine.MaxLoss > 0
 
-	// Reseed phase from the locked peak; next Update compares live mark.
 	stop.priorPeak = machine.PeakPnL
 	stop.trough = machine.PeakPnL
 	stop.bounceHigh = machine.PeakPnL
-	stop.phase = structuralPhasePeak
+	stop.phase = structuralPhaseIdle
+
+	if stop.peakPnL > stop.budget.armPct {
+		stop.phase = structuralPhasePeak
+	}
+
 	stop.FloorPct = machine.Floor
 	stop.State.PeakPct = machine.PeakPnL
 	stop.State.FloorPct = machine.Floor
@@ -199,7 +210,11 @@ func (stop *Structural) Update(currentPnL float64) (string, bool) {
 		stop.initialized = true
 		stop.entryPnL = 0
 		stop.floor = -stop.budget.maxLoss
-		stop.setPeak(currentPnL)
+		stop.peakPnL = currentPnL
+		stop.priorPeak = currentPnL
+		stop.trough = currentPnL
+		stop.bounceHigh = currentPnL
+		stop.phase = structuralPhaseIdle
 		return "", false
 	}
 
@@ -210,9 +225,25 @@ func (stop *Structural) Update(currentPnL float64) (string, bool) {
 		))
 	}
 
-	noise := system.Cfg.Risk.StructuralPullbackPct
+	if currentPnL > stop.peakPnL {
+		stop.peakPnL = currentPnL
+		stop.ratchetMilestone()
+	}
+
+	// Retest exhaustion only after the lot has cleared friction and is green.
+	if stop.peakPnL <= stop.budget.armPct || currentPnL <= 0 {
+		stop.phase = structuralPhaseIdle
+		return "", false
+	}
+
+	// Scale noise with peak so massive runners aren't clipped by fixed ticks.
+	baseNoise := system.Cfg.Risk.StructuralPullbackPct
+	noise := math.Max(baseNoise, stop.peakPnL*0.15)
 
 	switch stop.phase {
+	case structuralPhaseIdle:
+		stop.setPeak(currentPnL)
+
 	case structuralPhasePeak:
 		if currentPnL > stop.peakPnL {
 			stop.setPeak(currentPnL)
@@ -220,18 +251,23 @@ func (stop *Structural) Update(currentPnL float64) (string, bool) {
 			stop.phase = structuralPhasePullback
 			stop.trough = currentPnL
 		}
+
 	case structuralPhasePullback:
 		stop.trough = math.Min(stop.trough, currentPnL)
 
-		if currentPnL > stop.trough+noise*0.25 {
+		if currentPnL > stop.trough+noise*0.35 {
 			stop.phase = structuralPhaseBounce
 			stop.bounceHigh = currentPnL
 		}
+
 	case structuralPhaseBounce:
 		stop.bounceHigh = math.Max(stop.bounceHigh, currentPnL)
 
 		if currentPnL > stop.priorPeak {
-			stop.floor = math.Max(stop.floor, stop.trough)
+			if stop.trough > 0 {
+				stop.floor = math.Max(stop.floor, stop.trough)
+			}
+
 			stop.setPeak(currentPnL)
 			return "", false
 		}

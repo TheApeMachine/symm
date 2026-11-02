@@ -8,7 +8,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -114,7 +114,8 @@ func (rails *Rails) Episodes() int {
 }
 
 /*
-Learn nudges rails from one finished A/B pair.
+Learn nudges rails from one finished A/B pair, separating invalidation
+adjustments from take-profit trailing adjustments.
 */
 func (rails *Rails) Learn(officialPct, shadowPct float64) {
 	rails.mu.Lock()
@@ -134,18 +135,30 @@ func (rails *Rails) Learn(officialPct, shadowPct float64) {
 		step = 0.25
 	}
 
-	switch {
-	case edge > 0.05:
-		rails.baseGiveback = math.Max(0.35, math.Min(2.5, rails.baseGiveback-step))
-		rails.minGiveback = math.Max(0.2, math.Min(1.5, rails.minGiveback-step*0.5))
-		rails.armPct = math.Max(0.25, math.Min(2.0, rails.armPct-step*0.25))
-		rails.maxLoss = math.Max(1.0, math.Min(4.0, rails.maxLoss-step*0.5))
+	ceiling := system.Cfg.Risk.MaxInvalidationPct
 
-	case edge < -0.05:
-		rails.baseGiveback = math.Max(0.35, math.Min(2.5, rails.baseGiveback+step))
-		rails.minGiveback = math.Max(0.2, math.Min(1.5, rails.minGiveback+step*0.5))
-		rails.armPct = math.Max(0.25, math.Min(2.0, rails.armPct+step*0.25))
-		rails.maxLoss = math.Max(1.0, math.Min(4.0, rails.maxLoss+step*0.5))
+	if shadowPct > 0 || officialPct > 0 {
+		switch {
+		case edge > 0.05:
+			// Shadow held a better trail exit — more giveback, earlier arm.
+			rails.baseGiveback = math.Min(2.5, rails.baseGiveback+step*0.5)
+			rails.armPct = math.Max(0.5, rails.armPct-step*0.25)
+
+		case edge < -0.05:
+			// Shadow gave back too much — tighten the trail.
+			rails.baseGiveback = math.Max(0.5, rails.baseGiveback-step*0.5)
+			rails.minGiveback = math.Max(0.3, rails.minGiveback-step*0.25)
+		}
+	} else {
+		switch {
+		case edge > 0.05:
+			// Shadow cut the red lot cleaner — tighten invalidation.
+			rails.maxLoss = math.Max(1.5, rails.maxLoss-step*0.5)
+
+		case edge < -0.05:
+			// Shadow took a worse loss — widen invalidation up to the ceiling.
+			rails.maxLoss = math.Min(ceiling, rails.maxLoss+step*0.5)
+		}
 	}
 
 	rails.persistLocked()

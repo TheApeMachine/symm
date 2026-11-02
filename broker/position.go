@@ -191,7 +191,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 				path = stopExitPath(position)
 			}
 
-			if _, ok := position.Learning.Update(current); ok && position.OfficialExitAt != nil {
+			if _, ok := position.Learning.Update(current, position.learningBookLocked()); ok && position.OfficialExitAt != nil {
 				position.Learning.Settle(position.OfficialExitPct)
 			}
 		}
@@ -255,9 +255,10 @@ func (position *Position) UpdateShadow(mark *decimal.Decimal) bool {
 	current := pct.MustFloat64()
 	position.Mark = mark
 	position.PnLPct = pct
+	position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
 	position.armStopsLocked()
 
-	_, ok := position.Learning.Update(current)
+	_, ok := position.Learning.Update(current, position.learningBookLocked())
 	if !ok {
 		return false
 	}
@@ -267,6 +268,25 @@ func (position *Position) UpdateShadow(mark *decimal.Decimal) bool {
 	}
 
 	return true
+}
+
+/*
+learningBookLocked is the microstructure pulse for the shadow stop.
+*/
+func (position *Position) learningBookLocked() stoploss.Book {
+	book := stoploss.Book{}
+
+	if position.ExitRoom != nil && position.ExitRoom.Sign() > 0 {
+		book.ExitRoom = position.ExitRoom.MustFloat64()
+	}
+
+	if position.price != nil {
+		if ratio, ok := position.price.BackingRatio(position.Symbol); ok {
+			book.Backing = ratio
+		}
+	}
+
+	return book
 }
 
 /*

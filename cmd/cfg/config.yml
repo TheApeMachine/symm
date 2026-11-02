@@ -334,7 +334,7 @@ risk:
   # Touch spread cap for mover pre-filter and desk entry (% of mid).
   max_entry_spread_pct: 2.0
   # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
-  max_entry_open_drag_pct: 2.0
+  max_entry_open_drag_pct: 2.5
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
   # Prints inside this lookback count toward tape liveness at entry.
@@ -343,18 +343,18 @@ risk:
   min_tape_trades: 8
   # Base adverse PnL drop from entry that fires invalidation (pp).
   # Widens with entry friction × loss_friction_mult, hard-capped below.
-  max_allowed_loss_pct: 2.0
+  max_allowed_loss_pct: 2.5
   # Friction (fraction of mid) × this = minimum invalidation width (pp).
   loss_friction_mult: 2.0
   # Hard ceiling on invalidation width so a $200 book cannot take ruin cuts.
-  max_invalidation_pct: 4.0
+  max_invalidation_pct: 4.5
   # Peak PnL (%) before the trailing take-profit arms (also ≥ one friction).
-  trail_peak_arm_pct: 0.75
+  trail_peak_arm_pct: 1.2
   # Base giveback room before the peak/damage ratchet — loose enough that
   # structural milestones can lock larger winners before trail cuts.
-  trail_base_giveback_pct: 1.2
+  trail_base_giveback_pct: 1.5
   # Noise floor so spread flicker does not exit a trailed lot.
-  trail_min_giveback_pct: 0.45
+  trail_min_giveback_pct: 0.60
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
@@ -362,13 +362,14 @@ risk:
   # Active settler: structural milestone floors + failed-retest exhaustion.
   # (structural_live kept for compatibility; structural always settles now.)
   structural_live: true
-  structural_pullback_pct: 0.4
-  structural_milestone_1_pct: 1.0
-  structural_milestone_2_pct: 2.0
-  structural_milestone_3_pct: 3.5
-  structural_floor_1_pct: 0.35
-  structural_floor_2_pct: 1.0
-  structural_floor_3_pct: 2.2
+  # 0.4% sits inside a single microcap tick; 1.0% requires a real pullback.
+  structural_pullback_pct: 1.0
+  structural_milestone_1_pct: 1.5
+  structural_milestone_2_pct: 3.0
+  structural_milestone_3_pct: 5.0
+  structural_floor_1_pct: 0.50
+  structural_floor_2_pct: 1.80
+  structural_floor_3_pct: 3.50
   # Evaluated shadow: LearningStop starts from trail/invalidation statics above
   # and nudges them from official-vs-shadow P/L regret. Never settles.
 

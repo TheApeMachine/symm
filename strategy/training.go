@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-	symmstore "github.com/theapemachine/symm/store"
+	symmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )

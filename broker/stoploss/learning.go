@@ -1,15 +1,21 @@
 package stoploss
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/bytedance/sonic"
 )
 
+const (
+	learningExitRoomFloor = 0.75
+	learningBackingFloor  = 0.35
+)
+
 /*
-Learning is the probation stop: same invalidation + trail shape as the
-old active trail, but seeded from Rails and never settles a lot. When its
-shadow episode ends, Rails.Learn compares shadow vs official.
+Learning is the probation stop: continuous trail + book exhaustion,
+seeded from Rails and never settles a lot. When its shadow episode ends,
+Rails.Learn compares shadow vs official.
 */
 type Learning struct {
 	stop     *StopLoss
@@ -32,6 +38,15 @@ type Learning struct {
 	RoomPct     float64    `json:"room_pct,omitempty"`
 }
 
+/*
+Book is the live microstructure pulse Position feeds into the shadow stop.
+Zero ExitRoom / Backing means "unknown" and skips that gate.
+*/
+type Book struct {
+	ExitRoom float64
+	Backing  float64
+}
+
 func NewLearning(rails *Rails) *Learning {
 	return &Learning{
 		stop:   NewStopLoss(),
@@ -42,9 +57,11 @@ func NewLearning(rails *Rails) *Learning {
 
 /*
 Arm freezes a rails snapshot and friction-aware budget for this episode.
+Only locks once a positive friction arrives so provisional zero does not
+freeze maxLoss before the book is known.
 */
 func (learning *Learning) Arm(frictionFraction float64) {
-	if learning.armed || learning.done {
+	if learning.armed || learning.done || frictionFraction <= 0 {
 		return
 	}
 
@@ -160,9 +177,10 @@ func (learning *Learning) Live() bool {
 
 /*
 Update advances the shadow stop and keeps its own traces/floors.
-ok means the learning episode would exit.
+ok means the learning episode would exit. Book gates fire only once the
+lot is green past the arm hurdle.
 */
-func (learning *Learning) Update(currentPnL float64) (trigger string, ok bool) {
+func (learning *Learning) Update(currentPnL float64, book Book) (trigger string, ok bool) {
 	if learning.done {
 		return "", false
 	}
@@ -172,12 +190,17 @@ func (learning *Learning) Update(currentPnL float64) (trigger string, ok bool) {
 	trigger, ok = learning.stop.Update(currentPnL)
 	learning.refresh(currentPnL)
 
-	if !ok {
-		return "", false
+	if ok {
+		learning.close(trigger, currentPnL)
+		return trigger, true
 	}
 
-	learning.close(trigger, currentPnL)
-	return trigger, true
+	if trigger, ok = learning.liquidity(currentPnL, book); ok {
+		learning.close(trigger, currentPnL)
+		return trigger, true
+	}
+
+	return "", false
 }
 
 /*
@@ -201,6 +224,28 @@ func (learning *Learning) Settle(officialPct float64) {
 
 	learning.learned = true
 	learning.rails.Learn(officialPct, learning.exitPct)
+}
+
+func (learning *Learning) liquidity(currentPnL float64, book Book) (string, bool) {
+	if learning.stop.peakPnL <= learning.stop.budget.armPct || currentPnL <= 0 {
+		return "", false
+	}
+
+	if book.ExitRoom > 0 && book.ExitRoom < learningExitRoomFloor {
+		return fmt.Sprintf(
+			"shadow book exhaustion: exit room %.2fx (backing %.2f)",
+			book.ExitRoom, book.Backing,
+		), true
+	}
+
+	if book.Backing > 0 && book.Backing < learningBackingFloor {
+		return fmt.Sprintf(
+			"shadow book exhaustion: backing ratio %.2f (exit room %.2fx)",
+			book.Backing, book.ExitRoom,
+		), true
+	}
+
+	return "", false
 }
 
 func (learning *Learning) refresh(currentPnL float64) {

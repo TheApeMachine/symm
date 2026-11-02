@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
-	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 )

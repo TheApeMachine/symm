@@ -20,6 +20,7 @@ type UIWebRTC struct {
 type UIWebSocket struct {
 	LearningInterval time.Duration
 	MaxMessageBytes  int
+	QueueFrames      int
 }
 
 func NewUI() *UI {
@@ -28,6 +29,7 @@ func NewUI() *UI {
 	viper.SetDefault("ui.webrtc.buffered_segments", 64)
 	viper.SetDefault("ui.websocket.learning_interval", 100*time.Millisecond)
 	viper.SetDefault("ui.websocket.max_message_bytes", 4194304)
+	viper.SetDefault("ui.websocket.queue_frames", 256)
 
 	return &UI{
 		Addr: viper.GetString("ui.addr"),
@@ -38,6 +40,7 @@ func NewUI() *UI {
 		WebSocket: &UIWebSocket{
 			LearningInterval: viper.GetDuration("ui.websocket.learning_interval"),
 			MaxMessageBytes:  viper.GetInt("ui.websocket.max_message_bytes"),
+			QueueFrames:      viper.GetInt("ui.websocket.queue_frames"),
 		},
 	}
 }

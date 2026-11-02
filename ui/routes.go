@@ -16,6 +16,12 @@ func NewRoutes(hub *Hub) *Routes {
 }
 
 func (routes *Routes) Register() {
+	// The workbench sidecar listens on loopback; Fiber's proxy SSRF guard
+	// blocks that unless private IPs are allowed.
+	policy := proxy.DefaultSecurityPolicy()
+	policy.AllowPrivateIPs = true
+	proxy.WithSecurityPolicy(policy)
+
 	routes.hub.app.Use("/ws", func(reqCtx fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(reqCtx) {
 			reqCtx.Locals("allowed", true)
@@ -28,11 +34,7 @@ func (routes *Routes) Register() {
 	routes.hub.app.Get("/ws", routes.hub.wsHandler())
 
 	routes.hub.app.Post("/workbench/query", func(reqCtx fiber.Ctx) error {
-		targetURL := "http://127.0.0.1:8081/workbench/query"
-
-		if system.Cfg != nil && system.Cfg.Workbench != nil && system.Cfg.Workbench.URL != "" {
-			targetURL = system.Cfg.Workbench.URL
-		}
+		targetURL := system.Cfg.Workbench.URL
 
 		origin := reqCtx.Get("Origin")
 

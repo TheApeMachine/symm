@@ -15,8 +15,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/internal/disconnect"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"golang.design/x/lockfree/lf"
@@ -252,14 +252,22 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 
 /*
 Write fans one serialized frame out to every connected dashboard client
-without blocking: no client, or a full client queue, drops the frame.
+without blocking: no client skips the frame; a full queue drops the oldest.
 p must be a fresh buffer.
 */
 func (hub *Hub) Write(p []byte) (n int, err error) {
-	if hub.active() {
-		hub.queue.Enqueue(p)
+	if !hub.active() {
+		return len(p), nil
 	}
 
+	cap := uint64(system.Cfg.UI.WebSocket.QueueFrames)
+	for hub.queue.Length() >= cap {
+		if _, ok := hub.queue.Dequeue(); !ok {
+			break
+		}
+	}
+
+	hub.queue.Enqueue(p)
 	return len(p), nil
 }
 

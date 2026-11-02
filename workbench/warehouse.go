@@ -98,9 +98,46 @@ func (warehouse *Warehouse) connect(ctx context.Context) (*sql.DB, error) {
 		}
 	}
 
+	for _, view := range warehouse.catalog.seeds() {
+		if err := seedView(ctx, db, view); err != nil {
+			_ = db.Close()
+
+			return nil, err
+		}
+	}
+
 	warehouse.db = db
 
 	return db, nil
+}
+
+func seedView(ctx context.Context, db *sql.DB, view seed) error {
+	if _, err := db.ExecContext(ctx, view.primary); err == nil {
+		return nil
+	} else if !emptyGlob(err) {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway, "workbench: "+view.primary, err,
+		))
+	}
+
+	if _, err := db.ExecContext(ctx, view.empty); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.BadGateway, "workbench: "+view.empty, err,
+		))
+	}
+
+	return nil
+}
+
+func emptyGlob(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+
+	return strings.Contains(message, "No files found") ||
+		strings.Contains(message, "No files found that match the pattern")
 }
 
 func (warehouse *Warehouse) boot() []string {
@@ -116,7 +153,7 @@ func (warehouse *Warehouse) boot() []string {
 		secret = "anonymous"
 	}
 
-	statements := []string{
+	return []string{
 		fmt.Sprintf("SET GLOBAL memory_limit=%s", literal(system.Cfg.Workbench.MemoryLimit)),
 		fmt.Sprintf(
 			"SET GLOBAL max_temp_directory_size=%s",
@@ -137,10 +174,10 @@ func (warehouse *Warehouse) boot() []string {
 			literal(host),
 			secure,
 		),
+		// Named catalog keeps seeded views out of `memory`, which Perspective
+		// reserves for its own materialized working tables.
+		"ATTACH ':memory:' AS warehouse",
 	}
-
-	statements = append(statements, warehouse.catalog.statements()...)
-	return statements
 }
 
 func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
