@@ -15,16 +15,11 @@ import {
 import { useState } from "react";
 import { bookAtom } from "#/collections/book";
 import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
-import {
-	Badge,
-	type BadgeVariant,
-	badgeVariants,
-} from "#/components/ui/badge";
+import { Badge, type BadgeVariant, badgeVariants } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { stateTone } from "#/lib/stop-telemetry";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -34,6 +29,7 @@ import {
 	selectBook,
 	useLifecycles,
 } from "#/lib/lifecycle";
+import { stateTone } from "#/lib/stop-telemetry";
 import { formatExitTrigger } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -571,7 +567,10 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 				? formatExitTrigger(stop.exit_reason)
 				: null;
 	const triggers =
-		(outcome.triggers ?? []).map(formatExitTrigger).filter(Boolean).join(" · ") ||
+		(outcome.triggers ?? [])
+			.map(formatExitTrigger)
+			.filter(Boolean)
+			.join(" · ") ||
 		(life.exit_trigger ? formatExitTrigger(life.exit_trigger) : "—");
 	const path =
 		life.path ||
@@ -602,7 +601,10 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 					</Flex.Row>
 					{money !== null && money !== undefined ? (
 						<span
-							className={cn("text-[28px] font-bold tabular-nums leading-none", tone(money))}
+							className={cn(
+								"text-[28px] font-bold tabular-nums leading-none",
+								tone(money),
+							)}
 						>
 							{moneyText(money)}
 						</span>
@@ -616,7 +618,11 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 							{ratePercent(outcome.pnl)}
 						</span>
 					)}
-					<Flex.Row align="baseline" gap={2} className="text-[12px] text-(--f3)">
+					<Flex.Row
+						align="baseline"
+						gap={2}
+						className="text-[12px] text-(--f3)"
+					>
 						{money !== null && money !== undefined ? (
 							<span className={cn("font-bold tabular-nums", tone(outcome.pnl))}>
 								{ratePercent(outcome.pnl)}
@@ -696,36 +702,24 @@ panels read.
 const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 	const outcome = life.outcome;
 	const stop = life.stop_state;
-	const peak =
-		life.peak_pct ??
-		(outcome?.mark !== null && outcome?.mark !== undefined
-			? outcome.mark * 100
-			: undefined) ??
-		stop?.peak_pnl ??
-		undefined;
 	const current =
 		outcome?.pnl_pct ??
 		(life.mark != null && life.mark.unrealized_return != null
 			? life.mark.unrealized_return * 100
 			: undefined) ??
 		stop?.current_pnl;
+
 	return {
 		id: life.id,
 		symbol: life.symbol,
-		virtual: life.book === "virtual",
-		path_found: life.path_found,
+		book: life.book,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at ?? null,
 		entry_path: life.path,
 		pnl_pct: typeof current === "number" ? current : undefined,
-		peak_pnl_pct: typeof peak === "number" ? peak : undefined,
-		bars_held: life.bars_held ?? outcome?.bars_held ?? undefined,
-		realized_pct: life.realized_pct ?? outcome?.realized ?? undefined,
 		exit_trigger: life.exit_trigger ?? undefined,
 		outcome_triggers: outcome?.triggers ?? undefined,
-		official_exit_pct: life.official_exit_pct ?? undefined,
 		pnl: outcome?.money ?? undefined,
-		pnl_trace: life.pnl_trace ?? undefined,
 		stoploss: stop ?? undefined,
 	};
 };

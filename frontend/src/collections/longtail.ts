@@ -21,6 +21,7 @@ import {
 	ingestDeskClosedLots,
 	requestClosedPositionHistory,
 } from "#/lib/lifecycle";
+import { normalizeStoploss } from "#/lib/stoploss";
 
 /*
 Longtail samples the path-learning trajectory from live truth the hub already
@@ -336,40 +337,24 @@ export const summarizeStops = (
 	let withState = 0;
 
 	for (const row of open) {
-		const stoploss =
-			row.stoploss && typeof row.stoploss === "object"
-				? (row.stoploss as Record<string, unknown>)
-				: null;
+		const stoploss = normalizeStoploss(row.stoploss);
 		if (!stoploss) continue;
 		withState += 1;
 
-		const state = stoploss.state;
-		const proximity =
-			typeof stoploss.proximity === "number" &&
-			Number.isFinite(stoploss.proximity)
-				? stoploss.proximity
-				: 0;
-		const downside =
-			typeof stoploss.downside_pressure === "number" &&
-			Number.isFinite(stoploss.downside_pressure)
-				? stoploss.downside_pressure
-				: 0;
-		const magnitude =
-			typeof stoploss.downside_magnitude_ratio === "number" &&
-			Number.isFinite(stoploss.downside_magnitude_ratio)
-				? stoploss.downside_magnitude_ratio
-				: 0;
+		const proximity = stoploss.proximity;
+		const downside = stoploss.downside_pressure;
+		const magnitude = stoploss.downside_magnitude_ratio;
 
 		if (downside > 0) pressureSamples.push(downside);
-		if (stoploss.has_floor === true && proximity > 0) {
+		if (stoploss.has_floor && proximity > 0) {
 			proximitySamples.push(proximity);
 		}
 		if (magnitude > 0) magnitudeSamples.push(magnitude);
 
 		const rowArmed =
-			state === "Stalled" ||
-			state === "Dangerous" ||
-			state === "Triggered" ||
+			stoploss.state === "Critical" ||
+			stoploss.state === "Dangerous" ||
+			stoploss.state === "Triggered" ||
 			proximity >= 0.7 ||
 			downside >= 0.7;
 		if (rowArmed) armed += 1;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Position } from "#/collections/types";
-import { chartHeld, CHOICE_TRAIL_LENGTH } from "./open-choice-draw";
+import { CHOICE_TRAIL_LENGTH, chartHeld } from "./open-choice-draw";
 
 describe("open-choice chartHeld", () => {
 	it("keeps open paper lots and drops closed lots", () => {
@@ -10,7 +10,6 @@ describe("open-choice chartHeld", () => {
 			entry_path: "",
 			exit_path: "",
 			opened_at: "2026-01-01T00:00:00Z",
-			virtual: false,
 		} as Position;
 
 		expect(chartHeld(open, "paper")).toBe(true);

@@ -113,20 +113,27 @@ const selectPositions = (
 		// Closed lots belong to the closed section below, not the open cards.
 		if (readout.closedAt) continue;
 
-		const positionStatus = currentPosition.virtual ? "virtual" : "open";
+		const book =
+			typeof currentPosition.book === "string" && currentPosition.book !== ""
+				? String(currentPosition.book)
+				: "open";
 		const pnlFrac = readout.returnPct ?? 0;
+		const path =
+			typeof currentPosition.entry_path === "string"
+				? currentPosition.entry_path
+				: "—";
 
 		result.push({
 			capacity: "—",
 			capacityShort: false,
 			capacityRatioNum: undefined,
-			budget: currentPosition.path ? String(currentPosition.path) : "—",
+			budget: path,
 			venuePnl: "—",
 			shadowPnl: formatValue(pnlFrac, "pct"),
 			shadowValue: pnlFrac,
 			sells: sellMarkers(undefined),
 			symbol: currentSymbol,
-			status: positionStatus,
+			status: book,
 			pnl: formatValue(pnlFrac, "pct"),
 			pnlValue: pnlFrac,
 			entryPrice: formatNumber(readout.entryPrice, 6),

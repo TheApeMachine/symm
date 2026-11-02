@@ -6,23 +6,22 @@ import {
 import { policyEpochFromRow, tapeMarksFromDeskRow } from "./desk-tape-marks";
 
 describe("tapeMarksFromDeskRow", () => {
-	it("maps entry and exit ticks to B and C with A from mark_a_tick", () => {
-		expect(
-			tapeMarksFromDeskRow({
-				mark_a_tick: 100,
-				entry_tick: 105,
-				exit_tick: 120,
-			}),
-		).toEqual({ a: 100, b: 105, c: 120 });
-	});
-
-	it("uses entry as A when mark_a_tick is absent", () => {
+	it("maps entry and exit ticks with A equal to entry", () => {
 		expect(
 			tapeMarksFromDeskRow({
 				entry_tick: 105,
 				exit_tick: 120,
 			}),
 		).toEqual({ a: 105, b: 105, c: 120 });
+	});
+
+	it("rejects inverted exit ticks", () => {
+		expect(
+			tapeMarksFromDeskRow({
+				entry_tick: 120,
+				exit_tick: 105,
+			}),
+		).toBeNull();
 	});
 });
 
@@ -31,9 +30,8 @@ describe("lifecycleFromDeskClosed", () => {
 		const life = lifecycleFromDeskClosed({
 			id: "lot-1",
 			symbol: "DOS/USD",
-			virtual: true,
+			book: "virtual",
 			policy_epoch: 1792169333015760400,
-			mark_a_tick: 36300,
 			entry_tick: 36340,
 			exit_tick: 36349,
 			entry_path: "R01/R05",
@@ -44,7 +42,7 @@ describe("lifecycleFromDeskClosed", () => {
 			outcome_triggers: ["cleared friction"],
 		});
 
-		expect(life?.marks_a).toBe(36300);
+		expect(life?.marks_a).toBe(36340);
 		expect(life?.marks_b).toBe(36340);
 		expect(life?.marks_c).toBe(36349);
 		expect(life?.policy_epoch).toBe("1792169333015760400");
@@ -56,11 +54,9 @@ describe("lifecycleFromDeskClosed", () => {
 		const closed = {
 			id: "lot-2",
 			symbol: "ETH/USD",
-			virtual: true,
+			book: "virtual",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
-			official_exit_at: "2026-10-23T20:05:28Z",
-			official_exit_pct: 0.4,
 			pnl_pct: 0.4,
 		};
 

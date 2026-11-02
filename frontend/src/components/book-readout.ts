@@ -26,13 +26,6 @@ const dateText = (value: unknown): string | null => {
 const returnFraction = (row: Record<string, unknown>) => {
 	const pnlPct = decimal(row.pnl_pct);
 	if (pnlPct !== null) return pnlPct / 100;
-
-	const cost = decimal(row.cost);
-	const profit = decimal(row.profit);
-	if (cost !== null && profit !== null && cost > 0) {
-		return profit / cost;
-	}
-
 	return null;
 };
 
@@ -54,20 +47,20 @@ export const settledOutcome = (
 ): SettledOutcome | null => {
 	const pnlPct = decimal(row.pnl_pct);
 	const frac = returnFraction(row);
-	const cost = decimal(row.cost);
-	const profit = decimal(row.profit);
 
-	let pnl = frac;
-	if (pnl === null && profit !== null && cost !== null && cost > 0) {
-		pnl = profit / cost;
-	}
+	if (frac === null && pnlPct === null) return null;
 
-	if (pnl === null && pnlPct === null) return null;
+	const openedAt = dateText(row.opened_at);
+	const closedAt = dateText(row.closed_at);
+	const holdNs =
+		closedAt !== null && openedAt !== null
+			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
+			: null;
 
 	return {
-		pnl,
-		pnl_pct: pnlPct ?? (pnl === null ? null : pnl * 100),
-		hold_ns: decimal(row.hold_ns),
+		pnl: frac,
+		pnl_pct: pnlPct ?? (frac === null ? null : frac * 100),
+		hold_ns: holdNs,
 		triggers: outcomeTriggers(row.outcome_triggers),
 	};
 };
@@ -75,6 +68,8 @@ export const settledOutcome = (
 type ExecutionTotals = {
 	qty: number | null;
 	cost: number | null;
+	fee: number | null;
+	vwap: number | null;
 	firstAt: string | null;
 	lastAt: string | null;
 };
@@ -85,8 +80,12 @@ const executionTotals = (
 ): ExecutionTotals => {
 	let qty = 0;
 	let cost = 0;
+	let fee = 0;
+	let priceQty = 0;
+	let priceNotional = 0;
 	let sawFill = false;
 	let costKnown = true;
+	let feeKnown = true;
 	let firstAt: string | null = null;
 	let lastAt: string | null = null;
 	const seen = new Set<string>();
@@ -103,10 +102,13 @@ const executionTotals = (
 			seen.add(key);
 		}
 
-		const fillQty = decimal(fill.last_qty);
-		if (fillQty === null) continue;
+		const fillQty = decimal(fill.last_qty) ?? decimal(fill.cum_qty);
+		if (fillQty === null || fillQty <= 0) continue;
 
-		const fillCost = decimal(fill.cost);
+		const fillCost = decimal(fill.cost) ?? decimal(fill.cum_cost);
+		const fillFee = decimal(fill.fee_usd_equiv);
+		const fillPrice =
+			decimal(fill.avg_price) ?? decimal(fill.last_price);
 		const fillAt = dateText(fill.timestamp);
 
 		qty += fillQty;
@@ -118,16 +120,41 @@ const executionTotals = (
 			cost += fillCost;
 		}
 
+		if (fillFee === null) {
+			feeKnown = false;
+		} else {
+			fee += fillFee;
+		}
+
+		if (fillPrice !== null) {
+			priceQty += fillQty;
+			priceNotional += fillPrice * fillQty;
+		}
+
 		firstAt ??= fillAt;
 		lastAt = fillAt ?? lastAt;
 	}
 
+	const vwap =
+		costKnown && qty > 0
+			? cost / qty
+			: priceQty > 0
+				? priceNotional / priceQty
+				: null;
+
 	return {
 		qty: sawFill ? qty : null,
 		cost: sawFill && costKnown ? cost : null,
+		fee: sawFill && feeKnown ? fee : null,
+		vwap,
 		firstAt,
 		lastAt,
 	};
+};
+
+const orderVolume = (order: unknown): number | null => {
+	if (!order || typeof order !== "object") return null;
+	return decimal((order as Record<string, unknown>).volume);
 };
 
 export type PositionReadout = {
@@ -156,51 +183,48 @@ export const positionReadout = (
 ): PositionReadout => {
 	const buys = executionTotals(row, "buy");
 	const sells = executionTotals(row, "sell");
-	const qty = decimal(row.qty);
-	const entryPrice = decimal(row.entry_price);
+	const orderedQty = orderVolume(row.entry_order);
+	const qty = buys.qty ?? orderedQty;
+	const entryPrice = buys.vwap;
 	const mark = decimal(row.mark);
-	const exitVwap = decimal(row.exit_vwap);
+	const exitVwap = decimal(row.exit_vwap) ?? sells.vwap;
 	const exitRoom = decimal(row.exit_room);
-	const entryFee = decimal(row.entry_fee);
-	const exitFee = decimal(row.exit_fee);
+	const entryFee = buys.fee;
+	const exitFee = sells.fee;
+	const fees =
+		entryFee !== null || exitFee !== null
+			? (entryFee ?? 0) + (exitFee ?? 0)
+			: null;
 	const openedAt = dateText(row.opened_at) ?? buys.firstAt;
+	const closedAt = dateText(row.closed_at);
 	const fullySold =
 		buys.qty !== null && sells.qty !== null && sells.qty >= buys.qty;
-
-	const closed =
-		row.closed_at !== null && row.closed_at !== undefined
-			? row.virtual !== true ||
-				decimal(row.pnl_pct) !== null ||
-				(decimal(row.cost) !== null && decimal(row.profit) !== null)
-			: fullySold;
-
-	const closedAt = dateText(row.closed_at) ?? (fullySold ? sells.lastAt : null);
+	const closed = closedAt !== null || fullySold;
 	const holdNs =
-		row.hold_ns ??
-		(closedAt !== null && openedAt !== null
+		closedAt !== null && openedAt !== null
 			? (Date.parse(closedAt) - Date.parse(openedAt)) * 1e6
-			: null);
+			: null;
 
 	const returnPct = returnFraction(row);
 	const returnPctDisplay = decimal(row.pnl_pct);
 
 	return {
 		qty,
-		entryQty: buys.qty,
+		entryQty: buys.qty ?? orderedQty,
 		entryCost: buys.cost,
 		exitQty: sells.qty,
 		entryPrice,
 		mark,
 		entryFee,
 		exitFee,
-		fees: null,
+		fees,
 		exitVwap,
 		exitRoom,
 		returnPct,
 		returnPctDisplay,
 		openedAt,
-		closedAt,
-		holdNs: holdNs as number | null,
+		closedAt: closedAt ?? (fullySold ? sells.lastAt : null),
+		holdNs,
 		closed,
 		exitPending: row.exit_order != null && !closed,
 	};
@@ -218,18 +242,15 @@ export const closeNowReturnPct = (
 };
 
 /*
-Match a desk row to the selected ledger. Prefer the explicit book field;
-fall back to the legacy virtual bool for older snapshots.
+Match a desk row to the selected ledger. Lots without a book label (not yet
+on the wire) default to paper so virtual/real tabs stay empty until labeled.
 */
 export const onBook = (row: Record<string, unknown>, book: Book) => {
-	const labeled =
-		typeof row.book === "string" && row.book !== ""
-			? row.book
-			: row.virtual === true
-				? "virtual"
-				: "paper";
+	if (typeof row.book === "string" && row.book !== "") {
+		return row.book === book;
+	}
 
-	return labeled === book;
+	return book === "paper";
 };
 
 export const openOnBook = (rows: Record<string, unknown>[], book: Book) =>
@@ -241,4 +262,4 @@ export const closedOnBook = (rows: Record<string, unknown>[], book: Book) =>
 export const countsTowardBookPerformance = (
 	row: Record<string, unknown>,
 	book: Book,
-): boolean => book !== "virtual" || row.path_found === true;
+): boolean => onBook(row, book);

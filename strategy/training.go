@@ -60,7 +60,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		symbol, sources := symbol, sources
 		wg.Add(1)
 
-		system.Q.Submit(func() {
+		task := func() {
 			defer wg.Done()
 
 			regions, err := training.grid.Observe(symbol, sources)
@@ -85,7 +85,11 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Regions[symbol] = regions
 			envelope.Paths[symbol] = cut
 			mu.Unlock()
-		})
+		}
+
+		if system.Q.Submit(task) != nil {
+			task()
+		}
 	}
 
 	wg.Wait()

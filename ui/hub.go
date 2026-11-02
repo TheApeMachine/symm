@@ -7,6 +7,7 @@ import (
 	neturl "net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
-	"golang.design/x/lockfree/lf"
 )
 
 var UI *Hub
@@ -48,13 +48,15 @@ type Hub struct {
 	app            *fiber.App
 	listenAddr     string
 	routes         *Routes
-	queue          *lf.Queue[[]byte]
+	frameCh        chan []byte
+	pumpOnce       sync.Once
 	conn           atomic.Pointer[websocket.Conn]
 	connected      atomic.Bool
 	connectedSince atomic.Int64
 	callbacks      []func()
 	commit         atomic.Value
 	store          *store.Client
+	streamMu       sync.Mutex
 	streams        map[string]context.CancelFunc
 	streamGen      map[string]uint64
 	nextStream     uint64
@@ -64,6 +66,12 @@ type Hub struct {
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
 */
 func NewHub(ctx context.Context) *Hub {
+	frames := system.Cfg.UI.WebSocket.QueueFrames
+
+	if frames <= 0 {
+		frames = 256
+	}
+
 	hub := &Hub{
 		ctx:        ctx,
 		listenAddr: system.Cfg.UI.Addr,
@@ -74,7 +82,7 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		queue:     lf.NewQueue[[]byte](),
+		frameCh:   make(chan []byte, frames),
 		callbacks: make([]func(), 0),
 		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
@@ -130,20 +138,23 @@ func (hub *Hub) wsHandler() fiber.Handler {
 			}
 		}()
 
-		old := hub.conn.Swap(conn)
+		// Pause delivery so the drain below cannot forward leftovers onto
+		// the socket we are about to attach.
+		hub.connected.Store(false)
+		hub.connectedSince.Store(0)
+
+		old := hub.conn.Swap((*websocket.Conn)(nil))
 
 		if old != nil {
 			old.Close()
 		}
 
-		// A fresh connection starts from an empty queue: stale frames for
-		// the previous connection would carry wire sequence numbers the new
-		// dashboard reads as duplicates and drop.
-		for {
-			if _, ok := hub.queue.Dequeue(); !ok {
-				break
-			}
-		}
+		// Stale frames carry wire sequence numbers the new dashboard
+		// reads as duplicates and drops.
+		hub.drainFrames()
+
+		hub.conn.Store(conn)
+		hub.ensurePump()
 
 		// Attached: publishers may produce again, and the replay below
 		// (Hello) flows through Write. Record the attach instant so the first
@@ -154,45 +165,6 @@ func (hub *Hub) wsHandler() fiber.Handler {
 		for _, callback := range hub.callbacks {
 			callback()
 		}
-
-		// This drain is the connection's writer: it lives on the handler
-		// goroutine, so it is retired the instant the handler returns and no
-		// drained frame can outlive its socket. It exits quietly once the
-		// handler swaps in a replacement connection.
-		go func() {
-			for {
-				if hub.ctx.Err() != nil {
-					return
-				}
-
-				if hub.conn.Load() != conn {
-					return
-				}
-
-				p, ok := hub.queue.Dequeue()
-
-				if !ok {
-					time.Sleep(5 * time.Millisecond)
-					continue
-				}
-
-				maxBytes := system.Cfg.UI.WebSocket.MaxMessageBytes
-				if maxBytes > 0 && len(p) > maxBytes {
-					errnie.Warn(fmt.Sprintf(
-						"[hub] dropping frame (%d bytes > max %d)",
-						len(p), maxBytes,
-					))
-					continue
-				}
-
-				err := conn.WriteMessage(websocket.BinaryMessage, p)
-
-				if err != nil {
-					hub.retireConnection(conn, err, len(p))
-					return
-				}
-			}
-		}()
 
 		for {
 			select {
@@ -205,7 +177,7 @@ func (hub *Hub) wsHandler() fiber.Handler {
 
 			if err != nil {
 				// The dashboard is gone; the deferred teardown above
-				// retires this connection and the drain with it.
+				// retires this connection.
 				return
 			}
 
@@ -239,25 +211,81 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 }
 
 /*
-Write fans one serialized frame out to every connected dashboard client
-without blocking: no client skips the frame; a full queue drops the oldest.
+Write enqueues one frame without blocking. A full buffer drops the oldest.
 p must be a fresh buffer.
 */
-func (hub *Hub) Write(p []byte) (n int, err error) {
+func (hub *Hub) Write(p []byte) (int, error) {
 	if len(p) == 0 || !hub.active() {
 		return len(p), nil
 	}
 
-	cap := uint64(system.Cfg.UI.WebSocket.QueueFrames)
+	select {
+	case hub.frameCh <- p:
+		return len(p), nil
+	default:
+		select {
+		case <-hub.frameCh:
+		default:
+		}
 
-	for hub.queue.Length() >= cap {
-		if _, ok := hub.queue.Dequeue(); !ok {
-			break
+		select {
+		case hub.frameCh <- p:
+		default:
 		}
 	}
 
-	hub.queue.Enqueue(p)
 	return len(p), nil
+}
+
+func (hub *Hub) drainFrames() {
+	for {
+		select {
+		case <-hub.frameCh:
+		default:
+			return
+		}
+	}
+}
+
+func (hub *Hub) ensurePump() {
+	hub.pumpOnce.Do(func() {
+		go hub.pump()
+	})
+}
+
+/*
+pump writes frames for the life of the hub. A nil conn drops the frame,
+so a reconnect can drain leftovers before the next socket is attached.
+*/
+func (hub *Hub) pump() {
+	for {
+		select {
+		case <-hub.ctx.Done():
+			return
+		case p := <-hub.frameCh:
+			conn := hub.conn.Load()
+
+			if conn == nil {
+				continue
+			}
+
+			maxBytes := system.Cfg.UI.WebSocket.MaxMessageBytes
+
+			if maxBytes > 0 && len(p) > maxBytes {
+				errnie.Warn(fmt.Sprintf(
+					"[hub] dropping frame (%d bytes > max %d)",
+					len(p), maxBytes,
+				))
+				continue
+			}
+
+			err := conn.WriteMessage(websocket.BinaryMessage, p)
+
+			if err != nil {
+				hub.retireConnection(conn, err, len(p))
+			}
+		}
+	}
 }
 
 /*
@@ -318,16 +346,20 @@ func (hub *Hub) RegisterCallback(callback func()) {
 }
 
 func (hub *Hub) cancelStream(kind string) {
-	if cancel := hub.streams[kind]; cancel != nil {
+	hub.streamMu.Lock()
+	cancel := hub.streams[kind]
+	delete(hub.streams, kind)
+	hub.streamMu.Unlock()
+
+	if cancel != nil {
 		cancel()
-		delete(hub.streams, kind)
 	}
 }
 
 func (hub *Hub) startStream(kind string, run func(context.Context)) {
-	if cancel := hub.streams[kind]; cancel != nil {
-		cancel()
-	}
+	hub.streamMu.Lock()
+
+	prev := hub.streams[kind]
 
 	ctx, cancel := context.WithCancel(hub.ctx)
 	hub.nextStream++
@@ -335,8 +367,18 @@ func (hub *Hub) startStream(kind string, run func(context.Context)) {
 	hub.streams[kind] = cancel
 	hub.streamGen[kind] = gen
 
+	hub.streamMu.Unlock()
+
+	if prev != nil {
+		prev()
+	}
+
 	go func() {
 		run(ctx)
+
+		hub.streamMu.Lock()
+		defer hub.streamMu.Unlock()
+
 		if hub.streamGen[kind] == gen {
 			delete(hub.streams, kind)
 			delete(hub.streamGen, kind)

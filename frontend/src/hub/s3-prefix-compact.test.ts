@@ -54,6 +54,7 @@ describe("s3-prefix-compact", () => {
 
 		expect(compact.entries).toHaveLength(1);
 		expect(compact.entries[0]?.row.id).toBe("hist-compact");
+		expect(compact.entries[0]?.row.book).toBe("virtual");
 		expect(compact.entries[0]?.stamp.tick).toBe(5n);
 	});
 

@@ -124,17 +124,18 @@ func (desk *Desk) Enter(
 		)
 	}
 
+	tier.Unlocked(desk.tiers[TierTypePaper])
 	return tier.Enter(symbol, path, pathFound)
 }
 
-func (desk *Desk) Exit(symbol string, path string, tt TierType) error {
+func (desk *Desk) Exit(position *Position, tt TierType) error {
 	if tier := desk.tiers[tt]; tier != nil {
-		return tier.Exit(symbol, path)
+		return tier.Exit(position)
 	}
 
 	for _, tier := range desk.tiers {
-		if tier.positions.Has(symbol) {
-			return tier.Exit(symbol, path)
+		if tier.positions.Has(position.Symbol) {
+			return tier.Exit(position)
 		}
 	}
 
@@ -252,7 +253,7 @@ func (desk *Desk) CanSize(symbol string) bool {
 		return false
 	}
 
-	qty, _ := desk.price.Allocate(symbol)
+	qty, _ := desk.price.Allocate(symbol, nil)
 	return qty != nil && qty.Sign() > 0
 }
 

@@ -185,6 +185,17 @@ func asInt64(value any) int64 {
 		return int64(v)
 	case int:
 		return int64(v)
+	case uint:
+		if uint64(v) > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(v)
+	case uint8:
+		return int64(v)
+	case uint16:
+		return int64(v)
+	case uint32:
+		return int64(v)
 	case uint64:
 		if v > math.MaxInt64 {
 			return math.MaxInt64

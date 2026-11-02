@@ -143,20 +143,22 @@ func (tier *Tier) ClearPending(symbol string) {
 	tier.pending.Delete(symbol)
 }
 
-func (tier *Tier) Unlocked(paper *Tier) bool {
-	switch tier.Type {
-	case TierTypeVirtual, TierTypePaper:
-		tier.unlocked = true
-	case TierTypeReal:
-		if paper == nil {
-			tier.unlocked = false
-		}
+func (tier *Tier) ok() bool {
+	return tier.WinRate > 0.5 && tier.Edge > 0
+}
 
-		if tier.WinRate > 0.5 && tier.Edge > 0 && paper.WinRate > 0.5 && paper.Edge > 0 {
-			tier.unlocked = true
-		}
+/*
+Unlocked: virtual/paper always. Real needs paper ok; once real has closed
+history it must stay ok too (paper healthy does not keep a failing real open).
+*/
+func (tier *Tier) Unlocked(paper *Tier) bool {
+	if tier.Type != TierTypeReal {
+		tier.unlocked = true
+		return true
 	}
 
+	virgin := tier.WinRate == 0 && tier.Edge == 0
+	tier.unlocked = paper != nil && paper.ok() && (virgin || tier.ok())
 	return tier.unlocked
 }
 
@@ -197,31 +199,62 @@ func (tier *Tier) Enter(
 		},
 	)
 
-	// 1. Size the position and create internal orders
-	if err := pos.Enter(path, nil); err != nil {
+	// Real sizes from its own wallet. Paper and virtual keep the desk balance.
+	var wallet *market.Balance
+
+	if tier.Type == TierTypeReal {
+		wallet = tier.balance
+	}
+
+	if err := pos.Enter(path, nil, wallet); err != nil {
 		return errnie.Error(err)
 	}
 
 	// 2. Add to active cache
 	tier.positions.Add(symbol, pos, true)
 
-	// 3. For live and paper tiers, dispatch the order to the transport
-	if tier.transport != nil && pos.EntryOrder != nil {
+	if err := tier.Send(pos, "enter"); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
+}
+
+func (tier *Tier) Exit(
+	position *Position,
+) error {
+	tier.positions.Remove(position.Symbol)
+
+	if err := tier.Send(position, "exit"); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
+}
+
+func (tier *Tier) Send(position *Position, action string) error {
+	order := position.EntryOrder
+
+	if action == "exit" {
+		order = position.ExitOrder
+	}
+
+	if tier.transport != nil && order != nil {
 		msg := map[string]any{
 			"method": "add_order",
 			"params": map[string]any{
-				"symbol":     symbol,
-				"side":       pos.EntryOrder.Type,
-				"order_type": pos.EntryOrder.OrderType,
-				"order_qty":  pos.EntryOrder.Volume,
-				"cl_ord_id":  pos.EntryOrder.ClOrdId,
+				"symbol":     position.Symbol,
+				"side":       order.Type,
+				"order_type": order.OrderType,
+				"order_qty":  order.Volume,
+				"cl_ord_id":  order.ClOrdId,
 			},
 		}
 
 		buf, err := sonic.Marshal(msg)
 
 		if err != nil {
-			tier.positions.Drop(symbol)
+			tier.positions.Drop(position.Symbol)
 
 			return errnie.Err(
 				errnie.Internal,
@@ -231,26 +264,11 @@ func (tier *Tier) Enter(
 		}
 
 		if err := tier.transport.Write(buf); err != nil {
-			tier.positions.Drop(symbol)
+			tier.positions.Drop(position.Symbol)
 			return errnie.Error(err)
 		}
 	}
 
-	return nil
-}
-
-func (tier *Tier) Exit(
-	symbol string, path string,
-) error {
-	if !tier.positions.Has(symbol) {
-		return errnie.Err(
-			errnie.NotFound,
-			"[broker.Tier.Exit] position not found",
-			nil,
-		)
-	}
-
-	tier.positions.Remove(symbol)
 	return nil
 }
 
@@ -291,7 +309,7 @@ func (tier *Tier) Recalculate() {
 	tier.WinRate = float64(wins) / float64(count)
 	tier.Edge = totalReturn / float64(count)
 
-	if tier.Type == TierTypeReal && tier.WinRate <= 0.5 && tier.Edge <= 0 {
+	if tier.Type == TierTypeReal && !tier.ok() {
 		tier.unlocked = false
 	}
 }

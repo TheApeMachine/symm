@@ -69,7 +69,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		symbol, cut := symbol, cut
 		wg.Add(1)
 
-		system.Q.Submit(func() {
+		task := func() {
 			defer wg.Done()
 
 			path := cut.String()
@@ -219,7 +219,11 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			if wantEnter {
 				model.enterTiers(decide, symbol, path, resistance, false, bypass)
 			}
-		})
+		}
+
+		if system.Q.Submit(task) != nil {
+			task()
+		}
 	}
 
 	wg.Wait()

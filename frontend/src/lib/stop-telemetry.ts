@@ -3,9 +3,7 @@ Human words and tones for DynamicStoploss so a held lot is never a black box.
 State comes from broker.DynamicStoploss on each position frame.
 */
 
-import type {
-	DynamicStoplossState,
-} from "#/collections/types";
+import type { DynamicStoplossState } from "#/collections/types";
 
 export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
@@ -20,12 +18,7 @@ export const toneColor = (tone: Tone): string =>
 					? "var(--info)"
 					: "var(--f3)";
 
-export type MeterTone =
-	| "success"
-	| "warning"
-	| "error"
-	| "info"
-	| "disabled";
+export type MeterTone = "success" | "warning" | "error" | "info" | "disabled";
 
 export const meterTone = (tone: Tone): MeterTone =>
 	tone === "good"
@@ -38,7 +31,9 @@ export const meterTone = (tone: Tone): MeterTone =>
 					? "info"
 					: "disabled";
 
-export const proximityPct = (ratio: number | null | undefined): number | null => {
+export const proximityPct = (
+	ratio: number | null | undefined,
+): number | null => {
 	if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
 		return null;
 	}
@@ -53,9 +48,8 @@ export const stateTone = (
 			return "good";
 		case "Protected":
 			return "info";
-		case "Stalled":
-			return "warn";
 		case "Dangerous":
+		case "Critical":
 		case "Triggered":
 			return "bad";
 		default:
@@ -95,19 +89,26 @@ export const heldVerdict = (args: {
 		};
 	}
 
-	if (args.state === "Stalled") {
+	if (args.state === "Critical") {
 		return {
-			text: "Stalled — consecutive down marks without a new peak",
-			tone: "warn",
+			text: "Critical — room to floor is thinner than entry drag",
+			tone: "bad",
 		};
 	}
 
-	const currentKnown = args.current !== null && Number.isFinite(args.current);
-	if (!currentKnown) {
-		return { text: "Waiting for the desk book to price the lot", tone: "neutral" };
+	const current = args.current;
+	if (current === null || !Number.isFinite(current)) {
+		return {
+			text: "Waiting for the desk book to price the lot",
+			tone: "neutral",
+		};
 	}
 
-	if (args.has_floor && args.proximity !== null && args.proximity !== undefined) {
+	if (
+		args.has_floor &&
+		args.proximity !== null &&
+		args.proximity !== undefined
+	) {
 		if (args.proximity >= 1) {
 			return { text: "At the profit floor — stop should arm", tone: "bad" };
 		}
@@ -146,7 +147,7 @@ export const heldVerdict = (args: {
 	}
 
 	return {
-		text: `Holding near entry (${args.current!.toFixed(2)}%) — stop healthy`,
+		text: `Holding near entry (${current.toFixed(2)}%) — stop healthy`,
 		tone: stateTone(args.state) === "neutral" ? "good" : stateTone(args.state),
 	};
 };
@@ -173,7 +174,11 @@ const pressureTone = (ratio: number | null | undefined): Tone => {
 };
 
 const floorTone = (proximity: number | null | undefined): Tone => {
-	if (proximity === null || proximity === undefined || !Number.isFinite(proximity)) {
+	if (
+		proximity === null ||
+		proximity === undefined ||
+		!Number.isFinite(proximity)
+	) {
 		return "neutral";
 	}
 	if (proximity >= 1) return "bad";
@@ -225,8 +230,7 @@ export const buildStopChecks = (args: {
 			role: "defence",
 			word: {
 				label: "Downside pressure",
-				short:
-					pressure !== null ? `${Math.round(pressure)}%` : "calm",
+				short: pressure !== null ? `${Math.round(pressure)}%` : "calm",
 				title:
 					pressure !== null
 						? `Cascade pressure from consecutive adverse marks — ${Math.round(pressure)}% of the exit budget.`
@@ -242,30 +246,30 @@ export const buildStopChecks = (args: {
 			word: {
 				label: "Stall",
 				short:
-					args.state === "Stalled"
-						? "stalled"
+					args.state === "Critical"
+						? "critical"
 						: typeof args.consecutive_down === "number" &&
 								args.consecutive_down > 0
 							? `${args.consecutive_down}↓`
 							: "clear",
 				title:
-					args.state === "Stalled"
-						? "Mark path is stalling — no new peak while printing lower highs."
+					args.state === "Critical"
+						? "Room to floor is thinner than entry drag."
 						: typeof args.consecutive_down === "number" &&
 								args.consecutive_down > 0
 							? `${args.consecutive_down} consecutive down marks without a new peak.`
 							: "No stall pattern on the current path.",
 			},
 			percent:
-				args.state === "Stalled"
-					? 85
+				args.state === "Critical"
+					? 90
 					: typeof args.consecutive_down === "number" &&
 							args.consecutive_down > 0
 						? Math.min(100, args.consecutive_down * 20)
 						: null,
 			tone:
-				args.state === "Stalled"
-					? "warn"
+				args.state === "Critical"
+					? "bad"
 					: typeof args.consecutive_down === "number" &&
 							args.consecutive_down >= 3
 						? "info"

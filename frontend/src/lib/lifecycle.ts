@@ -165,13 +165,9 @@ type HistoryStamp = {
 
 const historyStamp = new Map<string, HistoryStamp>();
 
-const countsTowardPerformance = (life: Lifecycle): boolean =>
-	(life.book ?? "paper") !== "virtual" || life.path_found === true;
-
 const summarize = (all: Lifecycle[]): LifecycleReport => {
 	const closed = all.filter(
-		(life) =>
-			life.status === "closed" && life.outcome && countsTowardPerformance(life),
+		(life) => life.status === "closed" && life.outcome,
 	);
 	const returns = closed.map((life) => (life.outcome as LifeOutcome).pnl);
 	const wins = closed.filter((life) => (life.outcome as LifeOutcome).pnl > 0);
@@ -435,8 +431,6 @@ const deskRowFromClosedLife = (
 		id: life.id,
 		symbol: life.symbol,
 		book,
-		virtual: book === "virtual",
-		path_found: life.path_found === true,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at,
 		pnl: outcome.pnl,

@@ -26,6 +26,7 @@ import {
 	onBook,
 	positionReadout,
 } from "#/components/book-readout";
+import { normalizeStoploss } from "#/lib/stoploss";
 import { GridLayoutModifier } from "./open-choice-grid-layout";
 
 /** SciChart fifo capacity — the DataSeries is the trail store. */
@@ -111,20 +112,24 @@ const markY = (pos: Position): number | undefined =>
 	asFinite(pos.pnl_pct);
 
 const markFloor = (pos: Position): number | undefined => {
-	if (pos.stoploss?.has_floor !== true) return undefined;
-	return asFinite(pos.stoploss.floor_pnl);
+	const stop = normalizeStoploss(pos.stoploss);
+	if (stop?.has_floor !== true) return undefined;
+	return asFinite(stop.floor_pnl);
 };
 
 /** Skip duplicate store publishes that did not move this lot's mark. */
-const markStamp = (pos: Position): string =>
-	[
+const markStamp = (pos: Position): string => {
+	const stop = normalizeStoploss(pos.stoploss);
+
+	return [
 		pos.pnl_pct,
 		pos.pnl,
 		pos.mark,
-		pos.stoploss?.floor_pnl,
-		pos.stoploss?.proximity,
-		pos.stoploss?.room_pct,
+		stop?.floor_pnl,
+		stop?.proximity,
+		stop?.room_pct,
 	].join("|");
+};
 
 type LotBind = {
 	line: FastLineRenderableSeries;
@@ -279,8 +284,9 @@ export const drawOpenChoiceChart = async (
 	const syncTip = (pos: Position, stroke: string, x: number, y: number) => {
 		const id = tipId(pos.id);
 		const pnl = asFinite(pos.pnl);
-		const room = pos.stoploss?.room_pct;
-		const proximity = pos.stoploss?.proximity ?? 0;
+		const stop = normalizeStoploss(pos.stoploss);
+		const room = stop?.room_pct;
+		const proximity = stop?.proximity ?? 0;
 		const hint =
 			proximity >= 1
 				? "STOP"
@@ -359,14 +365,16 @@ export const drawOpenChoiceChart = async (
 
 			rows.push({ pos, bind, stroke, y, floor });
 
+			const stop = normalizeStoploss(pos.stoploss);
+
 			legend.push({
 				id,
 				name: pos.symbol,
 				stroke,
 				pnlMoney: asFinite(pos.pnl),
 				pnlPct: asFinite(pos.pnl_pct),
-				stopRoomPct: pos.stoploss?.room_pct,
-				stopProximity: pos.stoploss?.proximity,
+				stopRoomPct: stop?.room_pct,
+				stopProximity: stop?.proximity,
 			});
 		}
 

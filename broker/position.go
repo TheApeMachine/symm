@@ -10,6 +10,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
@@ -192,9 +193,10 @@ func (position *Position) Update(mark *decimal.Decimal) {
 
 /*
 Enter records the buy. qty must be a venue-valid size from Price.Allocate;
-when nil or non-positive, Allocate is called once inside Enter.
+when nil or non-positive, Allocate sizes once from wallet. A nil wallet
+uses the price desk balance.
 */
-func (position *Position) Enter(path string, qty *decimal.Decimal) error {
+func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *market.Balance) error {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -208,7 +210,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal) error {
 
 	if qty == nil || qty.Sign() <= 0 {
 		var why string
-		qty, why = position.price.Allocate(position.Symbol)
+		qty, why = position.price.Allocate(position.Symbol, wallet)
 
 		if qty == nil || qty.Sign() <= 0 {
 			msg := "[position.Enter] cannot size " + position.Symbol

@@ -4,18 +4,24 @@ export type Balance = {
 	equity: number;
 };
 
+/*
+Stoploss state as Go's StoplossState iota (broker/stoploss.go). Wire JSON
+ships the numeric enum unless a string label is present.
+*/
+export type StoplossStateCode = 0 | 1 | 2 | 3 | 4 | 5;
+
 export type DynamicStoplossState =
 	| "Healthy"
 	| "Protected"
-	| "Stalled"
+	| "Critical"
 	| "Dangerous"
 	| "Triggered";
 
-/** Live dynamic stop composed on an open lot (broker DynamicStoploss JSON). */
+/** UI-facing stop telemetry derived from broker.Stoploss JSON. */
 export type DynamicStoploss = {
 	state: DynamicStoplossState;
 	exit_reason?: string;
-	/** Percentage points. */
+	/** Absolute entry drag (percentage points). */
 	friction: number;
 	current_pnl: number;
 	peak_pnl: number;
@@ -30,64 +36,66 @@ export type DynamicStoploss = {
 	last_peak_time?: string;
 };
 
-/*
-Position shapes crossing the wire.
+/** Kraken spot OrderRequest as embedded on a desk lot. */
+export type PositionOrder = {
+	cl_ord_id?: string;
+	ordertype?: string;
+	type?: string;
+	volume?: string;
+	price?: string;
+};
 
-A desk position arrives as one Value frame per lot whose "position" layer
-holds the broker's Position JSON: the desk emits the frame with the symbol as
-scope and the decoded position object as the layer payload, so the fields here
-mirror the JSON exactly.
+/** One execution fill on a desk lot (kraken.ExecutionData). */
+export type PositionFill = {
+	order_id?: string;
+	cl_ord_id?: string;
+	exec_id?: string;
+	exec_type?: string;
+	trade_id?: number;
+	symbol?: string;
+	side?: string;
+	last_qty?: string | number;
+	last_price?: string | number;
+	cost?: string | number;
+	order_type?: string;
+	timestamp?: string;
+	order_status?: string;
+	cum_qty?: string | number;
+	cum_cost?: string | number;
+	avg_price?: string | number;
+	fee_usd_equiv?: string | number;
+};
+
+/*
+Position mirrors broker.Position JSON. Qty / entry price / fees come from
+entry_order, exit_order, and fills — not duplicated scalars on the lot.
+`book` is stamped by the frontend from the S3 tier prefix (paper|virtual|real);
+the Go struct does not carry it.
 */
 export type Position = {
 	id: string;
 	entry_path: string;
-	hold_path?: string;
+	hold_paths?: string[];
 	exit_path: string;
+	exit_trigger?: string;
+	outcome_triggers?: string[];
 	symbol: string;
 	opened_at: string;
 	closed_at?: string | null;
+	updated_at?: string | null;
 	policy_epoch?: number;
-	mark_a_tick?: number;
 	entry_tick?: number;
 	exit_tick?: number;
-	qty?: string | number;
-	entry_price?: string | number;
-	exit_price?: string | number;
-	entry_fee?: string | number;
-	exit_fee?: string | number;
+	entry_order?: PositionOrder | null;
+	exit_order?: PositionOrder | null;
+	fills?: PositionFill[];
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: string | number;
 	pnl?: string | number;
 	pnl_pct?: string | number;
-	open_pnl?: string | number;
-	hold_ns?: number;
-	virtual?: boolean;
-	/** True when virtual enter matched a stored prefix, not a first-time explore step. */
-	path_found?: boolean;
-	/** Human-readable reason the exit fired, e.g. "invalidation stop: …". */
-	exit_trigger?: string;
-	outcome_triggers?: string[];
-
-	/** Highest mark-to-market return (percent) the lot has reached. */
-	peak_pnl_pct?: string | number;
-	/** Legacy learned trailing giveback (percent); unused by the fixed stop. */
-	exit_pullback_pct?: string | number;
-	/** Legacy learned invalidation cut (percent); unused by the fixed stop. */
-	nursery_cut_pct?: string | number;
-	/** Legacy empirical winning horizon in reprice bars. */
-	max_lifetime_bars?: number;
-	/** Legacy empirical duration ceiling in nanoseconds. */
-	max_lifetime_ns?: number;
-	/** Worst return ever realized on this symbol, feeds the learned horizon. */
-	worst_pct?: string | number;
-	/** Repress events the lot has held (tape timebase, not wall clock). */
-	bars_held?: number;
-	/** Fee-net realized return captured at exit (fraction, not percent). */
-	realized_pct?: number;
-	/** Net percent path, one mark per reprice — the episode the policy learns from. */
-	pnl_trace?: number[];
-	official_exit_at?: string | null;
-	official_exit_pct?: number;
-	stoploss?: DynamicStoploss;
+	/** Ledger stamp — from S3 scope or unlabeled→paper in onBook. */
+	book?: "paper" | "virtual" | "real" | string;
+	/** Raw broker.Stoploss object — normalize via normalizeStoploss. */
+	stoploss?: Record<string, unknown> | DynamicStoploss;
 };

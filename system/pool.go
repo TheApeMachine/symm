@@ -28,6 +28,6 @@ func NewPool() *Pool {
 	}
 }
 
-func (pool *Pool) Submit(task func()) {
-	pool.handle.Submit(task)
+func (pool *Pool) Submit(task func()) error {
+	return pool.handle.Submit(task)
 }

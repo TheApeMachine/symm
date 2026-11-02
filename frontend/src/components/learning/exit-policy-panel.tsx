@@ -1,5 +1,3 @@
-import { memo } from "react";
-import type { DynamicStoploss } from "#/collections/types";
 import { decimal } from "#/components/book-readout";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
@@ -12,11 +10,12 @@ import {
 	stateTone,
 	stopRule,
 } from "#/lib/stop-telemetry";
+import { normalizeStoploss } from "#/lib/stoploss";
 import { cn } from "#/lib/utils";
 
 /*
 ExitPolicyPanel shows DynamicStoploss on a lot: state, floor/peak/friction,
-proximity to floor, and the net P&L trace when the desk publishes one.
+and proximity to floor.
 */
 export const ExitPolicyPanel = ({
 	row,
@@ -25,26 +24,10 @@ export const ExitPolicyPanel = ({
 	row: Record<string, unknown>;
 	className?: string;
 }) => {
-	const num = (v: unknown): number | null => decimal(v);
+	const current = decimal(row.pnl_pct);
+	const stoploss = normalizeStoploss(row.stoploss);
 
-	const peak = num(row.peak_pnl_pct);
-	const current = num(row.pnl_pct);
-
-	const stoploss =
-		row.stoploss && typeof row.stoploss === "object"
-			? (row.stoploss as DynamicStoploss)
-			: null;
-
-	const PNL_TRACE_CAP = 120;
-	const trace = Array.isArray(row.pnl_trace)
-		? (row.pnl_trace as unknown[])
-				.filter(
-					(v): v is number => typeof v === "number" && Number.isFinite(v),
-				)
-				.slice(-PNL_TRACE_CAP)
-		: [];
-
-	const peakStop = stoploss?.peak_pnl ?? peak;
+	const peakStop = stoploss?.peak_pnl ?? null;
 	const currentStop = stoploss?.current_pnl ?? current;
 	const floorStop = stoploss?.has_floor ? stoploss.floor_pnl : null;
 
@@ -133,28 +116,6 @@ export const ExitPolicyPanel = ({
 				/>
 			</Grid>
 
-			{trace.length > 0 ? (
-				<Flex.Column gap={1}>
-					<Flex.Row justify="between" className="text-[9px] text-(--f4)">
-						<span>Net P&L path (one mark per reprice)</span>
-						<span className="text-(--f3)">
-							{trace.length > 1
-								? `${trace.length} marks`
-								: peak !== null || current !== null
-									? "marking"
-									: "no trace"}
-						</span>
-					</Flex.Row>
-					<PnlTrace
-						trace={trace}
-						entry={0}
-						peak={peakStop}
-						floor={floorStop}
-						current={currentStop}
-					/>
-				</Flex.Column>
-			) : null}
-
 			<Flex.Row gap={1} wrap="wrap">
 				{checks.map((check) => (
 					<Meter
@@ -204,121 +165,3 @@ const BoundaryFact = ({
 		</div>
 	);
 };
-
-const PnlTrace = memo(
-	({
-		trace,
-		entry,
-		peak,
-		floor,
-		current,
-	}: {
-		trace: number[];
-		entry: number;
-		peak: number | null;
-		floor: number | null;
-		current: number | null;
-	}) => {
-		const width = 100;
-		const height = 32;
-		const pad = 3;
-
-		const plotTrace =
-			trace.length >= 2
-				? trace
-				: trace.length === 1
-					? [trace[0], trace[0]]
-					: [entry, entry];
-
-		const all = [
-			...plotTrace,
-			entry,
-			...(peak !== null ? [peak] : []),
-			...(floor !== null ? [floor] : []),
-			0,
-		];
-		const min = Math.min(...all);
-		const max = Math.max(...all);
-		const span = max - min || 1;
-		const x = (i: number) =>
-			pad + (i / (plotTrace.length - 1)) * (width - pad * 2);
-		const y = (v: number) =>
-			height - pad - ((v - min) / span) * (height - pad * 2);
-
-		const line = plotTrace
-			.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`)
-			.join(" ");
-		const last = plotTrace[plotTrace.length - 1];
-		const tone =
-			current !== null
-				? current > 0
-					? "var(--up)"
-					: current < 0
-						? "var(--down)"
-						: "var(--f3)"
-				: "var(--f3)";
-
-		return (
-			<svg
-				viewBox={`0 0 ${width} ${height}`}
-				preserveAspectRatio="none"
-				className="h-8 w-full"
-				role="img"
-				aria-label="Net P&L trajectory of the lot"
-			>
-				<title>
-					Net P&L trajectory{peak !== null ? ` — peak ${peak.toFixed(1)}%` : ""}
-				</title>
-				<line
-					x1={0}
-					x2={width}
-					y1={y(0)}
-					y2={y(0)}
-					stroke="var(--f4)"
-					strokeDasharray="2 2"
-					strokeWidth="0.5"
-					vectorEffect="non-scaling-stroke"
-				/>
-				{floor !== null ? (
-					<line
-						x1={0}
-						x2={width}
-						y1={y(floor)}
-						y2={y(floor)}
-						stroke="var(--warn)"
-						strokeDasharray="3 2"
-						strokeWidth="0.6"
-						vectorEffect="non-scaling-stroke"
-					/>
-				) : null}
-				{peak !== null && peak > 0 ? (
-					<line
-						x1={0}
-						x2={width}
-						y1={y(peak)}
-						y2={y(peak)}
-						stroke="var(--up)"
-						strokeDasharray="2 3"
-						strokeWidth="0.5"
-						vectorEffect="non-scaling-stroke"
-						opacity="0.7"
-					/>
-				) : null}
-				<path
-					d={line}
-					fill="none"
-					stroke={tone}
-					strokeWidth="1.1"
-					vectorEffect="non-scaling-stroke"
-				/>
-				<circle
-					cx={x(plotTrace.length - 1)}
-					cy={y(last)}
-					r="1.4"
-					fill={tone}
-				/>
-			</svg>
-		);
-	},
-);
-PnlTrace.displayName = "PnlTrace";

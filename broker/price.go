@@ -507,7 +507,7 @@ the ask walk and closed immediately into the bid book. This is the entry drag
 the gate must not exceed for paper or virtual.
 */
 func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) {
-	qty, _ := price.Allocate(symbol)
+	qty, _ := price.Allocate(symbol, nil)
 	if qty == nil || qty.Sign() <= 0 {
 		return nil, false
 	}
@@ -696,6 +696,7 @@ func (price *Price) EntryCost(
 
 /*
 Allocate is the base quantity of a new long and a short reason when nil.
+A nil wallet uses the wired desk balance (paper).
 
 The size is at most one third of the best bid, so an exit is not the whole
 touch, and the fee-inclusive cost of lifting the asks is at most
@@ -703,8 +704,8 @@ risk.max_fraction of reference cash. The quantity is floored to the venue
 increment. It is nil when that size is below the venue minimum, the book
 cannot fill it, or the fee or the cash is unknown.
 */
-func (price *Price) Allocate(symbol string) (*decimal.Decimal, string) {
-	return price.AllocateFrom(nil, symbol, true)
+func (price *Price) Allocate(symbol string, wallet *market.Balance) (*decimal.Decimal, string) {
+	return price.AllocateFrom(wallet, symbol, true)
 }
 
 /*

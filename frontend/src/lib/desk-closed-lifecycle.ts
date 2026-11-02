@@ -7,126 +7,15 @@ import {
 	policyEpochFromRow,
 	tapeMarksFromDeskRow,
 } from "#/lib/desk-tape-marks";
-import type {
-	DynamicStoploss,
-	DynamicStoplossState,
-} from "#/collections/types";
-import type {
-	LearnedExitPolicy,
-	Lifecycle,
-	LifeOutcome,
-	LiveStopState,
-} from "#/lib/lifecycle";
+import type { Lifecycle, LifeOutcome, LiveStopState } from "#/lib/lifecycle";
+import { normalizeStoploss } from "#/lib/stoploss";
 
-/*
-Desk lifecycle rows mirror the broker position JSON. A row without a
-complete close or stable identity is not a closed round trip.
-*/
-
-const nest = (
-	row: Record<string, unknown>,
-	key: string,
-): Record<string, unknown> => {
-	const value = row[key];
-	return value && typeof value === "object"
-		? (value as Record<string, unknown>)
-		: {};
-};
-
-const STOP_STATES: DynamicStoplossState[] = [
-	"Healthy",
-	"Protected",
-	"Stalled",
-	"Dangerous",
-	"Triggered",
-];
-
-const stopStateFromRow = (
-	row: Record<string, unknown>,
-): LiveStopState | null => {
-	const sl = nest(row, "stoploss");
-	const state = sl.state;
-	if (typeof state !== "string" || !STOP_STATES.includes(state as DynamicStoplossState)) {
-		return null;
+const bookFromRow = (row: Record<string, unknown>): string => {
+	if (typeof row.book === "string" && row.book !== "") {
+		return row.book;
 	}
 
-	const num = (key: string): number | undefined => {
-		const item = sl[key];
-		return typeof item === "number" && Number.isFinite(item) ? item : undefined;
-	};
-
-	const friction = num("friction");
-	const current = num("current_pnl");
-	const peak = num("peak_pnl");
-	const floor = num("floor_pnl");
-	if (
-		friction === undefined ||
-		current === undefined ||
-		peak === undefined ||
-		floor === undefined
-	) {
-		return null;
-	}
-
-	const stop: DynamicStoploss = {
-		state: state as DynamicStoplossState,
-		friction,
-		current_pnl: current,
-		peak_pnl: peak,
-		floor_pnl: floor,
-		has_floor: sl.has_floor === true,
-		room_pct: num("room_pct") ?? 0,
-		proximity: num("proximity") ?? 0,
-		downside_pressure: num("downside_pressure") ?? 0,
-		downside_magnitude_ratio: num("downside_magnitude_ratio") ?? 0,
-		consecutive_down: num("consecutive_down") ?? 0,
-	};
-
-	if (typeof sl.exit_reason === "string" && sl.exit_reason !== "") {
-		stop.exit_reason = sl.exit_reason;
-	}
-	if (typeof sl.opened_at === "string" && sl.opened_at !== "") {
-		stop.opened_at = sl.opened_at;
-	}
-	if (typeof sl.last_peak_time === "string" && sl.last_peak_time !== "") {
-		stop.last_peak_time = sl.last_peak_time;
-	}
-
-	return stop;
-};
-
-/*
-policyFromRow lifts the learned exit policy off a raw row. Each learned
-boundary is a JSON decimal string on the wire; absent or zero fields stay
-null so the UI can say "not learned yet" instead of a fabricated 0%.
-*/
-const policyFromRow = (
-	row: Record<string, unknown>,
-): LearnedExitPolicy | null => {
-	const trailing = decimal(row.exit_pullback_pct);
-	const cut = decimal(row.nursery_cut_pct);
-	const maxBars = decimal(row.max_lifetime_bars);
-	const worst = decimal(row.worst_pct);
-	const hasAny =
-		(trailing ?? 0) > 0 ||
-		(cut ?? 0) > 0 ||
-		(maxBars ?? 0) > 0 ||
-		worst !== null;
-	if (!hasAny) return null;
-	return {
-		trailing: trailing !== null && trailing > 0 ? trailing : null,
-		cut: cut !== null && cut > 0 ? cut : null,
-		maxBars: maxBars !== null && maxBars > 0 ? maxBars : null,
-		worst,
-	};
-};
-
-const finiteNums = (raw: unknown): number[] | null => {
-	if (!Array.isArray(raw)) return null;
-	const next = raw.filter(
-		(value): value is number => typeof value === "number" && Number.isFinite(value),
-	);
-	return next.length > 0 ? next : null;
+	return "paper";
 };
 
 const stopFieldsFromRow = (
@@ -142,29 +31,21 @@ const stopFieldsFromRow = (
 	| "exit_trigger"
 	| "official_exit_pct"
 > => {
-	const peakPct = decimal(row.peak_pnl_pct);
-	const realized = decimal(row.realized_pct);
-	const barsHeld = decimal(row.bars_held);
-	const trace = finiteNums(row.pnl_trace);
+	const stop = normalizeStoploss(row.stoploss) as LiveStopState | null;
 	const exitTrigger =
 		typeof row.exit_trigger === "string" && row.exit_trigger !== ""
 			? row.exit_trigger
 			: null;
-	const official =
-		typeof row.official_exit_pct === "number" &&
-		Number.isFinite(row.official_exit_pct)
-			? row.official_exit_pct
-			: null;
 
 	return {
-		stop_state: stopStateFromRow(row),
-		policy: policyFromRow(row),
-		peak_pct: peakPct,
-		realized_pct: realized,
-		bars_held: barsHeld !== null && barsHeld > 0 ? barsHeld : null,
-		pnl_trace: trace,
+		stop_state: stop,
+		policy: null,
+		peak_pct: stop?.peak_pnl ?? null,
+		realized_pct: decimal(row.pnl_pct),
+		bars_held: null,
+		pnl_trace: null,
 		exit_trigger: exitTrigger,
-		official_exit_pct: official,
+		official_exit_pct: decimal(row.pnl_pct),
 	};
 };
 
@@ -195,7 +76,8 @@ export const lifecycleFromDeskOpen = (
 					unrealized_return: readout.returnPct ?? 0,
 				};
 
-	const openDetail = row.virtual ? "virtual trial opened" : "desk lot opened";
+	const entryPath =
+		typeof row.entry_path === "string" ? row.entry_path : undefined;
 
 	return {
 		id: row.id as string,
@@ -203,15 +85,10 @@ export const lifecycleFromDeskOpen = (
 		status: "holding",
 		opened_at: readout.openedAt,
 		closed_at: null,
-		book:
-			typeof row.book === "string" && row.book !== ""
-				? (row.book as string)
-				: row.virtual
-					? "virtual"
-					: "paper",
+		book: bookFromRow(row),
 		desk: true,
-		path_found: row.path_found === true,
-		path: row.path as string | undefined,
+		path_found: false,
+		path: entryPath,
 		mark: live,
 		marks: live ? [live] : [],
 		...stopFieldsFromRow(row),
@@ -219,7 +96,7 @@ export const lifecycleFromDeskOpen = (
 			{
 				at: readout.openedAt,
 				kind: "opened",
-				detail: openDetail,
+				detail: `desk lot opened${entryPath ? ` · ${entryPath}` : ""}`,
 			},
 		],
 	};
@@ -265,24 +142,15 @@ export const lifecycleFromDeskClosed = (
 	const entryPath =
 		typeof row.entry_path === "string" ? row.entry_path : undefined;
 	const triggers = settle?.triggers ?? [];
-	const openDetail = row.virtual
-		? `virtual open · tick ${tape?.b ?? "—"}${entryPath ? ` · ${entryPath}` : ""}`
-		: `desk open · tick ${tape?.b ?? "—"}`;
+	const openDetail = `desk open · tick ${tape?.b ?? "—"}${entryPath ? ` · ${entryPath}` : ""}`;
 	const exitTick = tape?.c;
 	const exitTickText = exitTick === undefined ? "" : ` · tick ${exitTick}`;
-	const officialPct =
-		typeof row.official_exit_pct === "number" &&
-		Number.isFinite(row.official_exit_pct)
-			? row.official_exit_pct
-			: null;
-	const exitAtText =
-		officialPct !== null ? ` · exit ${officialPct.toFixed(2)}%` : "";
 	const closeDetail =
 		triggers.length > 0
-			? `${triggers.join(", ")}${exitTickText}${exitAtText}`
+			? `${triggers.join(", ")}${exitTickText}`
 			: pnlPct === null
-				? `closed${exitTickText}${exitAtText}`
-				: `return ${pnlPct.toFixed(2)}%${exitTickText}${exitAtText}`;
+				? `closed${exitTickText}`
+				: `return ${pnlPct.toFixed(2)}%${exitTickText}`;
 
 	return {
 		id: row.id as string,
@@ -290,16 +158,11 @@ export const lifecycleFromDeskClosed = (
 		status: "closed",
 		opened_at: readout.openedAt,
 		closed_at: readout.closedAt,
-		book:
-			typeof row.book === "string" && row.book !== ""
-				? (row.book as string)
-				: row.virtual
-					? "virtual"
-					: "paper",
+		book: bookFromRow(row),
 		desk: true,
-		path_found: row.path_found === true,
+		path_found: false,
 		policy_epoch: policyEpochFromRow(row),
-		path: entryPath ?? (row.path as string | undefined),
+		path: entryPath,
 		marks_a: tape?.a ?? null,
 		marks_b: tape?.b ?? null,
 		marks_c: tape?.c ?? null,

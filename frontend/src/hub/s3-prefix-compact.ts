@@ -140,6 +140,8 @@ export const closedListingFromEnvelope = (
 		return { kind: "closed", scope, entries: [] };
 	}
 
+	const book = bookFromClosedScope(scope);
+
 	const entries: ClosedHistoryEntry[] = [];
 	for (const raw of body.entries) {
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
@@ -158,15 +160,27 @@ export const closedListingFromEnvelope = (
 		const row = entry.row as Record<string, unknown>;
 		if (typeof row.id !== "string" || row.id === "") continue;
 
+		// Position JSON has no book field — stamp it from the S3 tier prefix.
+		const stamped =
+			typeof row.book === "string" && row.book !== ""
+				? row
+				: { ...row, book };
+
 		entries.push({
 			stamp: {
 				epoch: asBigInt(entry.epoch),
 				tick: asBigInt(entry.tick),
 				timestamp: asBigInt(entry.timestamp),
 			},
-			row,
+			row: stamped,
 		});
 	}
 
 	return { kind: "closed", scope, entries };
+};
+
+const bookFromClosedScope = (scope: string): "paper" | "virtual" | "real" => {
+	if (scope.startsWith("virtual/")) return "virtual";
+	if (scope.startsWith("real/")) return "real";
+	return "paper";
 };

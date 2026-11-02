@@ -59,11 +59,15 @@ func (symbols *Symbols) Each(work func(trades []*market.TradeData)) {
 		trades := trades
 		wg.Add(1)
 
-		system.Q.Submit(func() {
+		task := func() {
 			defer wg.Done()
 
 			work(trades)
-		})
+		}
+
+		if system.Q.Submit(task) != nil {
+			task()
+		}
 	}
 
 	wg.Wait()

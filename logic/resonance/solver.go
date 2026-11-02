@@ -77,7 +77,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		symbol, sources := symbol, sources
 		wg.Add(1)
 
-		system.Q.Submit(func() {
+		task := func() {
 			defer wg.Done()
 
 			reading := solver.stepSymbol(symbol, sources)
@@ -94,7 +94,11 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					"resonance": map[string]any{symbol: reading},
 				})
 			}
-		})
+		}
+
+		if system.Q.Submit(task) != nil {
+			task()
+		}
 	}
 
 	wg.Wait()

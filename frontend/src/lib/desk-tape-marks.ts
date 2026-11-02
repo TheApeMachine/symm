@@ -1,6 +1,6 @@
 /*
 Tape ticks on a closed desk lot index workspace/tick/aggregate/<epoch>/<tick>.
-A is the precursor anchor (mark_a_tick when set, else entry), B entry, C exit.
+A is the entry tick, B entry, C exit (no separate precursor mark on the lot).
 */
 export const tickUint = (value: unknown): number | null => {
 	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -17,7 +17,7 @@ export const tickUint = (value: unknown): number | null => {
 export const policyEpochFromRow = (
 	row: Record<string, unknown>,
 ): string | undefined => {
-	const epoch = row.policy_epoch ?? row.run;
+	const epoch = row.policy_epoch;
 	if (epoch === undefined || epoch === null || epoch === "") {
 		return undefined;
 	}
@@ -34,16 +34,5 @@ export const tapeMarksFromDeskRow = (
 		return null;
 	}
 
-	const legacy = row.marks as Record<string, unknown> | undefined;
-	const legacyA = tickUint(legacy?.a);
-	const legacyB = tickUint(legacy?.b);
-	const legacyC = tickUint(legacy?.c);
-	if (legacyA !== null && legacyB !== null && legacyC !== null) {
-		return { a: legacyA, b: legacyB, c: legacyC };
-	}
-
-	const markA = tickUint(row.mark_a_tick) ?? entry;
-	const a = markA <= entry ? markA : entry;
-
-	return { a, b: entry, c: exit };
+	return { a: entry, b: entry, c: exit };
 };

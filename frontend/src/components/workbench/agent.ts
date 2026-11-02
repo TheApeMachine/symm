@@ -20,11 +20,12 @@ const DATASET_DOCS = [
 		title: "Symm warehouse tables",
 		text:
 			"Tables include open_* and closed_* lot views plus level3_frames and " +
-			"level3_events. Lot columns: symbol, book, virtual (paper/sim), qty, " +
-			"entry_price, exit_price, pnl, pnl_pct, realized_pct, entry_path, " +
-			"exit_path, exit_trigger, opened_at, closed_at. pnl_pct and " +
-			"realized_pct are ratios (e.g. 0.05 is 5%), not percent points. " +
-			"level3_events has symbol, bids, asks, checksum, frame_type.",
+			"level3_events. Lot columns: symbol, entry_path, exit_path, " +
+			"exit_trigger, opened_at, closed_at, pnl, pnl_pct, mark, " +
+			"entry_order, exit_order, fills. Qty and entry price come from " +
+			"fills / entry_order.volume — not separate scalar columns. " +
+			"pnl_pct is percentage points. level3_events has symbol, bids, " +
+			"asks, checksum, frame_type.",
 	},
 ];
 
