@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/grafana/pyroscope-go"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	shopdecimal "github.com/shopspring/decimal"
@@ -19,7 +20,6 @@ import (
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
@@ -39,45 +39,6 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
-type hubDeskExiter struct {
-	desk   *broker.Desk
-	record func(*broker.Position)
-	path   func(string, *broker.Position) string
-}
-
-func (exiter hubDeskExiter) Exit(symbol string, book string) error {
-	ledger := broker.ParseLedger(book, book == "virtual")
-	position := exiter.desk.PositionOn(symbol, ledger)
-
-	if position == nil {
-		position = exiter.desk.Position(symbol)
-	}
-
-	path := ""
-	if position != nil {
-		if exiter.path != nil {
-			path = exiter.path(symbol, position)
-		}
-		if path == "" {
-			path = position.EntryPath
-		}
-
-		if ledger == "" {
-			ledger = position.Ledger()
-		}
-	}
-
-	if err := exiter.desk.Exit(symbol, path, ledger); err != nil {
-		return err
-	}
-
-	if ledger.Virtual() && exiter.record != nil && position != nil {
-		exiter.record(position)
-	}
-
-	return nil
-}
-
 /*
 Booter encapsulates the bootstrapping, component assembly, and supervision
 lifecycle for daemon processes (such as symm collect).
@@ -91,8 +52,6 @@ type Booter struct {
 	instrument       *broker.Instrument
 	book             *broker.Book
 	price            *broker.Price
-	balance          *broker.Balance
-	liveBalance      *broker.Balance
 	desk             *broker.Desk
 	normalizer       *spot.Normalizer
 	signals          []nmruntime.Node
@@ -100,7 +59,6 @@ type Booter struct {
 	model            *strategy.Model
 	workspace        *nmruntime.Workspace
 	store            *store.Client
-	level3Tape       *broker.Level3Tape
 	replies          sync.Map
 }
 
@@ -139,9 +97,8 @@ func NewBooter(ctx context.Context, name string) *Booter {
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
 	return &Booter{
-		System:     nmruntime.NewSystem(ctx, name, nil),
-		store:      client,
-		level3Tape: broker.NewLevel3Tape(client, ""),
+		System: nmruntime.NewSystem(ctx, name, nil),
+		store:  client,
 	}
 }
 
@@ -186,8 +143,7 @@ func (booter *Booter) Run() error {
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
-	booter.level3Tape.Close()
-	store.FlushAll()
+	booter.store.Close()
 	return nil
 }
 
@@ -246,29 +202,12 @@ func (booter *Booter) initMarket() error {
 	booter.normalizer = broker.NormalizerFor(booter.instrument)
 	booter.book = broker.NewBook(ctx, booter.normalizer)
 
-	booter.balance = broker.NewLabeledBalance(
-		ctx,
-		booter.privateTransport,
-		decimal.NewFromInt64(int64(system.Cfg.Market.Balance)),
-		"paper",
-	)
-
-	if booter.liveTransport != nil {
-		booter.liveBalance = broker.NewLabeledBalance(
-			ctx,
-			booter.liveTransport,
-			decimal.NewFromInt64(int64(system.Cfg.Market.Balance)),
-			"real",
-		)
-	}
-
 	booter.price = broker.NewPrice(
 		ctx,
 		booter.book,
 		booter.privateTransport,
 		booter.instrument,
 		booter.normalizer,
-		booter.balance,
 	)
 
 	if booter.price.Status() != nmruntime.READY {
@@ -286,19 +225,12 @@ func (booter *Booter) initMarket() error {
 			"real":  booter.liveTransport,
 		},
 		booter.price,
-		map[string]*broker.Balance{
-			"paper": booter.balance,
-			"real":  booter.liveBalance,
-		},
 	)
 
 	ui.UI.RegisterCallback(func() {
 		booter.desk.Hello()
-		if booter.model != nil {
-			booter.model.Confidence.Publish()
-		}
 	})
-	ui.UI.Exiter(hubDeskExiter{desk: booter.desk})
+
 	booter.startPrivateIngress()
 
 	if err := broker.SubscribeExecutions(ctx, booter.privateTransport, booter.instrument); err != nil {
@@ -345,15 +277,14 @@ func (booter *Booter) initPipeline() error {
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
 			}},
+			{Group: "resonance", Nodes: []nmruntime.Node{
+				resonance.NewSolver(ctx),
+			}},
 			{Group: "training", Nodes: []nmruntime.Node{
 				training,
-				resonance.NewSolver(ctx, booter.price),
 			}},
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
-			}},
-			{Group: "tick", Nodes: []nmruntime.Node{
-				strategy.NewTick(ctx),
 			}},
 		},
 	)
@@ -555,8 +486,6 @@ func (booter *Booter) startIngress(
 					continue
 				}
 
-				booter.level3Tape.Record(buf)
-
 				if err := booter.book.Update(
 					level3,
 				); err != nil && !nmruntime.ShuttingDown(
@@ -569,13 +498,25 @@ func (booter *Booter) startIngress(
 				// sees the new exit VWAP and depth without waiting for a trade.
 				if booter.desk != nil {
 					symbols := make([]string, 0, len(level3.Data))
+
 					for _, d := range level3.Data {
 						if d.Symbol != "" {
 							symbols = append(symbols, d.Symbol)
 						}
 					}
+
 					booter.desk.Refresh(symbols)
 				}
+
+				booter.store.WriteAtPrefix(
+					fmt.Sprintf(
+						"workspace/tick/level3/%019d/%019d",
+						data.Tick.Load(),
+						data.SeqIdx.Add(1),
+					),
+
+					buf,
+				)
 			case "trade":
 				data.Tick.Add(1)
 
@@ -599,7 +540,7 @@ func (booter *Booter) startIngress(
 					booter.desk.Update(trade.Data)
 				}
 
-				data := make([]*market.TradeData, 0, len(trade.Data))
+				dat := make([]*market.TradeData, 0, len(trade.Data))
 
 				for _, d := range trade.Data {
 					price, err := shopdecimal.NewFromString(d.Price.String())
@@ -612,7 +553,7 @@ func (booter *Booter) startIngress(
 						))
 					}
 
-					data = append(data, &market.TradeData{
+					dat = append(dat, &market.TradeData{
 						Symbol:    d.Symbol,
 						Side:      market.Side(d.Side),
 						Price:     price,
@@ -621,11 +562,29 @@ func (booter *Booter) startIngress(
 					})
 				}
 
-				booter.workspace.Step(runtime.NewEnvelope(market.NewTrade(
+				tick := booter.workspace.Step(runtime.NewEnvelope(market.NewTrade(
 					trade.Channel,
 					trade.Type,
-					data,
+					dat,
 				)))
+
+				json, err := sonic.Marshal(tick)
+
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO,
+						"[booter] error marshalling tick",
+						err,
+					))
+				}
+
+				booter.store.WriteAtPrefix(
+					fmt.Sprintf(
+						"workspace/workspace/tick/aggregate/%019d",
+						data.Tick.Load(),
+					),
+					json,
+				)
 			case "heartbeat", "status":
 			default:
 				// Request acknowledgements (subscribe, unsubscribe, ...). A

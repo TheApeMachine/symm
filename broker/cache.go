@@ -2,226 +2,166 @@ package broker
 
 import (
 	"context"
-	"iter"
-	"slices"
-	"strings"
+	"fmt"
 	"sync"
 
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/system"
 )
 
 type Cache struct {
 	*runtime.System
-	open   *sync.Map
-	closed *sync.Map
+	mu        sync.RWMutex
+	tierKey   string
+	store     *store.Client
+	transport Transport
+	positions map[string]map[string]*Position
 }
 
-func NewCache(ctx context.Context) *Cache {
-	return &Cache{
-		System: runtime.NewSystem(ctx, "cache"),
-		open:   &sync.Map{},
-		closed: &sync.Map{},
+func NewCache(
+	ctx context.Context, tierKey string, transport Transport,
+) *Cache {
+	cache := &Cache{
+		System:    runtime.NewSystem(ctx, "cache"),
+		tierKey:   tierKey,
+		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		transport: transport,
+		positions: make(map[string]map[string]*Position),
 	}
-}
 
-func (cache *Cache) AllPositions() []*Position {
-	positions := make([]*Position, 0)
+	for _, state := range []string{"open", "closed"} {
+		cache.positions[state] = make(map[string]*Position)
 
-	cache.open.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
-		return true
-	})
+		for raw := range cache.store.Stream(
+			cache.Context(), fmt.Sprintf("%s/%s", cache.tierKey, state),
+		) {
+			position := cache.Restore(raw)
 
-	cache.closed.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
-		return true
-	})
-
-	sortPositions(positions)
-	return positions
-}
-
-/*
-OpenPositions returns all positions in the cache, ordered by symbol so the
-published frame is deterministic: without the sort, sync.Map's random
-range order reshuffles the frontend's rows every tick.
-*/
-func (cache *Cache) OpenPositions() []*Position {
-	positions := make([]*Position, 0)
-
-	cache.open.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
-		return true
-	})
-
-	sortPositions(positions)
-	return positions
-}
-
-func (cache *Cache) ClosedPositions() []*Position {
-	positions := make([]*Position, 0)
-
-	cache.closed.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
-		return true
-	})
-
-	sortPositions(positions)
-	return positions
-}
-
-/*
-Stream the positions in the cache.
-*/
-func (cache *Cache) Stream(prefix string) iter.Seq[*Position] {
-	return func(yield func(*Position) bool) {
-		cache.open.Range(func(key, value any) bool {
-			if !yield(value.(*Position)) {
-				return false
+			if position == nil {
+				continue
 			}
 
-			return true
-		})
+			cache.positions[state][position.Symbol] = position
+		}
 	}
+
+	return cache
 }
 
-/*
-Get a position from the cache.
-*/
-func (cache *Cache) Get(symbol string, open bool) *Position {
-	if open {
-		found, ok := cache.open.Load(symbol)
+func (cache *Cache) All(symbols ...string) []*Position {
+	return append(cache.Open(symbols...), cache.Closed(symbols...)...)
+}
 
-		if !ok {
-			return nil
-		}
+func (cache *Cache) Open(symbols ...string) []*Position {
+	return cache.list("open", symbols...)
+}
 
-		return found.(*Position)
-	}
+func (cache *Cache) Closed(symbols ...string) []*Position {
+	return cache.list("closed", symbols...)
+}
 
-	found, ok := cache.closed.Load(symbol)
-
-	if !ok {
+func (cache *Cache) Restore(raw []byte) *Position {
+	if len(raw) == 0 {
 		return nil
 	}
 
-	return found.(*Position)
-}
+	position := &Position{}
 
-/*
-Restore re-admits a position from history. A position without a symbol is
-not addressable — it can never be matched by an update or closed — so it
-never enters the cache.
-*/
-func (cache *Cache) Restore(position *Position) {
-	if position == nil || position.Symbol == "" {
-		return
+	if err := sonic.Unmarshal(raw, position); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
+		))
+
+		return nil
 	}
 
-	if position.ClosedAt != nil && !position.ClosedAt.IsZero() {
-		cache.closed.Store(position.Symbol, position)
-	} else {
-		cache.open.Store(position.Symbol, position)
-	}
-}
-
-/*
-Count reports how many positions sit on the given side.
-*/
-func (cache *Cache) Count(open bool) int {
-	side := cache.closed
-
-	if open {
-		side = cache.open
+	if position.Symbol == "" {
+		return nil
 	}
 
-	count := 0
+	position.System = runtime.NewSystem(cache.Context(), "position")
+	position.transport = cache.transport
 
-	side.Range(func(_, _ any) bool {
-		count++
-		return true
-	})
-
-	return count
+	return position
 }
 
 func (cache *Cache) Has(symbol string) bool {
-	_, ok := cache.open.Load(symbol)
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+
+	_, ok := cache.positions["open"][symbol]
 	return ok
 }
 
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
-	if symbol == "" {
+	if symbol == "" || position == nil {
 		return true
 	}
+
+	state := "closed"
 
 	if open {
-		_, ok := cache.open.LoadOrStore(symbol, position)
-		return ok
+		state = "open"
 	}
 
-	_, ok := cache.closed.LoadOrStore(symbol, position)
-	return ok
-}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
 
-/*
-Closed returns positions on the closed side only, in symbol order.
-*/
-func (cache *Cache) Closed() []*Position {
-	positions := make([]*Position, 0)
-
-	cache.closed.Range(func(key, value any) bool {
-		positions = append(positions, value.(*Position))
+	if _, loaded := cache.positions[state][symbol]; loaded {
 		return true
-	})
+	}
 
-	sortPositions(positions)
-	return positions
-}
-
-/*
-sortPositions orders a published book by symbol, then id. sync.Map's range
-order is not stable, and a reshuffled frame reorders the rows on the page.
-*/
-func sortPositions(positions []*Position) {
-	slices.SortFunc(positions, func(a, b *Position) int {
-		if a == nil || b == nil {
-			switch {
-			case a == nil && b == nil:
-				return 0
-			case a == nil:
-				return 1
-			default:
-				return -1
-			}
-		}
-
-		if cmp := strings.Compare(a.Symbol, b.Symbol); cmp != 0 {
-			return cmp
-		}
-
-		return strings.Compare(a.ID, b.ID)
-	})
+	cache.positions[state][symbol] = position
+	return false
 }
 
 func (cache *Cache) Remove(symbol string) bool {
-	loaded, ok := cache.open.LoadAndDelete(symbol)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+
+	loaded, ok := cache.positions["open"][symbol]
 
 	if !ok {
 		return false
 	}
 
-	position := loaded.(*Position)
-	cache.closed.Store(symbol, position)
+	delete(cache.positions["open"], symbol)
+	cache.positions["closed"][symbol] = loaded
 	return true
 }
 
-/*
-Drop retires a position from both sides of the cache. Remove closes it and
-keeps it referenceable; Drop is the separate retirement once its outcome
-has been settled.
-*/
 func (cache *Cache) Drop(symbol string) {
-	cache.open.Delete(symbol)
-	cache.closed.Delete(symbol)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+
+	delete(cache.positions["open"], symbol)
+	delete(cache.positions["closed"], symbol)
+}
+
+func (cache *Cache) list(state string, symbols ...string) []*Position {
+	positions := make([]*Position, 0)
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+
+	if len(symbols) == 0 {
+		for _, position := range cache.positions[state] {
+			if position != nil {
+				positions = append(positions, position)
+			}
+		}
+
+		return positions
+	}
+
+	for _, symbol := range symbols {
+		if position := cache.positions[state][symbol]; position != nil {
+			positions = append(positions, position)
+		}
+	}
+
+	return positions
 }

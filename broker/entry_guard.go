@@ -78,6 +78,14 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 		}
 	}
 
+	return checkBookPhysical(price, symbol)
+}
+
+/*
+checkBookPhysical is the non-spread half of CheckEntryPhysical. Spread has its
+own oracle pair; book integrity must still share this path with the desk.
+*/
+func checkBookPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	minCash := system.Cfg.Risk.MinTouchBidCash
 	cash, ok := price.TouchBidCash(symbol)
 
@@ -100,17 +108,6 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 				"bid support thinner than asks within %.0f%% of mid (ratio %.2f)",
 				system.Cfg.Risk.BackingBandFrac*100,
 				ratio,
-			),
-		}
-	}
-
-	if !price.Tape.Alive(symbol) {
-		return EntryPhysicalDecision{
-			Allowed: false,
-			Reason: fmt.Sprintf(
-				"tape too quiet (< %d trades in %s)",
-				system.Cfg.Risk.MinTapeTrades,
-				system.Cfg.Risk.TapeWindow,
 			),
 		}
 	}
@@ -139,30 +136,7 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	return EntryPhysicalDecision{Allowed: true}
 }
 
-// BookIntact is Book Integrity without the spread check (spread has its own oracle).
+// BookIntact is book integrity without the spread check (spread has its own oracle).
 func (price *Price) BookIntact(symbol string) bool {
-	risk := system.Cfg.Risk
-	cash, ok := price.TouchBidCash(symbol)
-
-	if !ok || cash == nil || cash.MustFloat64() < risk.MinTouchBidCash {
-		return false
-	}
-
-	ratio, ok := price.BackingRatio(symbol)
-
-	if !ok || ratio < risk.MinBackingRatio {
-		return false
-	}
-
-	if !price.Tape.Alive(symbol) {
-		return false
-	}
-
-	pnl, ok := price.EntryCloseNowPnLPct(symbol)
-
-	if !ok || pnl == nil {
-		return false
-	}
-
-	return pnl.MustFloat64() >= -risk.MaxEntryOpenDragPct
+	return checkBookPhysical(price, symbol).Allowed
 }

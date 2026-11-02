@@ -139,4 +139,22 @@ func TestWarehouseExecuteSession(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(dropped), ShouldEqual, 0)
 	})
+
+	Convey("Warehouse materializes Perspective working tables", t, func() {
+		warehouse := local(t)
+		ctx := context.Background()
+
+		empty, err := warehouse.Execute(ctx,
+			`CREATE TABLE snap AS SELECT id, symbol FROM closed_paper`)
+		So(err, ShouldBeNil)
+		So(len(empty), ShouldEqual, 0)
+
+		stream, err := warehouse.Execute(ctx, `SELECT id FROM snap`)
+		So(err, ShouldBeNil)
+		So(len(stream), ShouldBeGreaterThan, 0)
+
+		dropped, err := warehouse.Execute(ctx, `DROP TABLE snap`)
+		So(err, ShouldBeNil)
+		So(len(dropped), ShouldEqual, 0)
+	})
 }

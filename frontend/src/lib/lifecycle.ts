@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
+import type { DynamicStoploss } from "#/collections/types";
 import { positionReadout } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import {
@@ -77,23 +78,8 @@ export type LearnedExitPolicy = {
 	worst?: number | null;
 };
 
-/*
-LiveStopState is the per-mark proximity of the simplified stop checks, as
-computed by broker.StopLoss.State and published on every position frame. Each
-ratio is current-value-over-threshold: >1 means firing, <1 means armed.
-Damage is 0–1 of the 2pp invalidation budget burned on the worst print.
-*/
-export type LiveStopState = {
-	invalidation?: number;
-	trailing?: number;
-	damage?: number;
-	peak_pct?: number;
-	current_pct?: number;
-	entry_pct?: number;
-	giveback_pct?: number;
-	allowed_giveback_pct?: number;
-	remaining_giveback_pct?: number;
-};
+/** Live DynamicStoploss snapshot copied onto lifecycle rows from desk lots. */
+export type LiveStopState = DynamicStoploss;
 
 export type Lifecycle = {
 	id: string;
@@ -106,7 +92,7 @@ export type Lifecycle = {
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
-	/** Live stop-check proximity, refreshed every mark by broker.StopLoss.State. */
+	/** Live DynamicStoploss snapshot from the desk lot. */
 	stop_state?: LiveStopState | null;
 	/** Learned exit policy for this symbol (Causal MCTS), copied on at entry. */
 	policy?: LearnedExitPolicy | null;
@@ -120,12 +106,8 @@ export type Lifecycle = {
 	bars_held?: number | null;
 	/** Human-readable reason the exit fired. */
 	exit_trigger?: string | null;
-	/** Structural (active) exit mark, percent. */
+	/** Exit mark at official close, percent. */
 	official_exit_pct?: number | null;
-	/** Learning shadow exit mark, percent. */
-	learning_exit_pct?: number | null;
-	/** Why the learning shadow would have exited. */
-	learning_exit_trigger?: string | null;
 	/** Bid marks sampled while the lot was open (for hold charts). */
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
@@ -420,10 +402,6 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 			exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
 			official_exit_pct:
 				life.official_exit_pct ?? existing?.official_exit_pct ?? null,
-			learning_exit_pct:
-				life.learning_exit_pct ?? existing?.learning_exit_pct ?? null,
-			learning_exit_trigger:
-				life.learning_exit_trigger ?? existing?.learning_exit_trigger ?? null,
 			events: existing?.events?.length ? existing.events : life.events,
 			outcome: life.outcome ?? existing?.outcome ?? life.outcome ?? null,
 			mark: life.mark ?? existing?.mark ?? null,
@@ -539,20 +517,7 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 
 	historyStamp.set(row.id, entry.stamp);
 
-	// History is offline — a mid-settle Store may still say learning.active.
-	// That flag only blocks live shadow comparison, not archived closed lots.
-	const archived = {
-		...row,
-		learning: (() => {
-			const learning = row.learning;
-			if (!learning || typeof learning !== "object" || Array.isArray(learning)) {
-				return { active: false };
-			}
-			return { ...(learning as Record<string, unknown>), active: false };
-		})(),
-	};
-
-	const life = lifecycleFromDeskClosed(archived);
+	const life = lifecycleFromDeskClosed(row);
 	if (!life) {
 		return false;
 	}
@@ -577,10 +542,6 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 		exit_trigger: life.exit_trigger ?? existing?.exit_trigger ?? null,
 		official_exit_pct:
 			life.official_exit_pct ?? existing?.official_exit_pct ?? null,
-		learning_exit_pct:
-			life.learning_exit_pct ?? existing?.learning_exit_pct ?? null,
-		learning_exit_trigger:
-			life.learning_exit_trigger ?? existing?.learning_exit_trigger ?? null,
 		events: existing?.events?.length ? existing.events : life.events,
 		outcome: life.outcome ?? existing?.outcome ?? null,
 		mark: life.mark ?? existing?.mark ?? null,

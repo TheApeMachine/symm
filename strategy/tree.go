@@ -5,9 +5,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
-	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -18,6 +20,9 @@ const (
 	ActionEnter Action = "enter"
 	ActionHold  Action = "hold"
 	ActionExit  Action = "exit"
+
+	// seedResistance is the desk baseline for a brand-new leaf.
+	seedResistance = 0.5
 )
 
 func NewAction(action string) Action {
@@ -38,45 +43,23 @@ func (action Action) String() string {
 }
 
 /*
-Regime scopes which action leaves may vote under a cut. Flat books only see
-enter; open lots only see hold/exit — so exploration holds cannot disagree
-with entry leaves, and old exits cannot silence a flat-book enter.
+Tree is a path → Decision radix. Leaves are decisions, not a separate book type.
 */
-type Regime struct {
-	open bool
-}
-
-func FlatRegime() Regime { return Regime{} }
-
-func OpenRegime() Regime { return Regime{open: true} }
-
-func (regime Regime) Allows(action Action) bool {
-	if regime.open {
-		return action == ActionHold || action == ActionExit
-	}
-
-	return action == ActionEnter
-}
-
 type Tree struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	mu     sync.RWMutex
-	root   *iradix.Tree[*PathBook]
+	root   *iradix.Tree[*runtime.Decision]
 	store  *store.Client
 }
 
-/*
-NewTree creates a new tree with the given context and seed prefix and restores
-it from S3 in a bounded group.
-*/
 func NewTree(ctx context.Context, seedPrefix string) *Tree {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree := &Tree{
 		ctx:    ctx,
 		cancel: cancel,
-		root:   iradix.New[*PathBook](),
+		root:   iradix.New[*runtime.Decision](),
 		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
@@ -87,19 +70,23 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 			}
 
 			raw := tree.store.Fetch(ctx, *object.Key)
-			book := DecodePathBook(raw)
+			decision := &runtime.Decision{}
 
-			if book == nil {
+			if err := sonic.Unmarshal(raw, decision); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[tree] error unmarshalling decision", err,
+				))
 				continue
 			}
 
-			path := PathFromStorageKey(*object.Key)
+			path := strings.TrimSuffix(strings.TrimPrefix(*object.Key, seedPrefix), ".json")
+			path = strings.TrimSuffix(path, ".bin")
 
 			if path == "" {
 				continue
 			}
 
-			tree.root, _, _ = tree.root.Insert([]byte(path), book)
+			tree.root, _, _ = tree.root.Insert([]byte(path), decision)
 		}
 	}
 
@@ -107,28 +94,29 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 }
 
 /*
-Predict the action under the current cut, only among leaves allowed by
-regime. Same-regime leaves must agree; out-of-regime leaves are ignored.
+Predict returns the agreed action and average resistance under the cut.
+disagreed is true when matching leaves name different actions.
 */
-func (tree *Tree) Predict(
-	tokens tokenizer.Tokens, regime Regime,
-) (Action, float64, bool) {
+func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	min := system.Cfg.Learning.MinPathLength
 
 	if tokens.Len() < min {
-		return ActionNone, 0.0, false
+		return ActionNone, 0, false
 	}
+
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
 
 	var (
 		current    = ActionNone
 		disagreed  bool
-		resistance = 0.0
-		count      = 0
+		resistance float64
+		count      int
 		prunes     []string
 	)
 
-	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, book *PathBook) bool {
-		if book == nil {
+	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, decision *runtime.Decision) bool {
+		if decision == nil {
 			return false
 		}
 
@@ -136,11 +124,7 @@ func (tree *Tree) Predict(
 			return false
 		}
 
-		action := NewAction(book.Action)
-
-		if !regime.Allows(action) {
-			return false
-		}
+		action := NewAction(decision.Action)
 
 		if current != ActionNone && current != action {
 			disagreed = true
@@ -148,15 +132,14 @@ func (tree *Tree) Predict(
 		}
 
 		current = action
-		add := book.Resistance
 
-		if add > 0.8 {
+		if decision.Resistance > 0.8 {
 			prunes = append(prunes, string(key))
-		} else {
-			resistance += add
-			count++
+			return false
 		}
 
+		resistance += decision.Resistance
+		count++
 		return false
 	})
 
@@ -169,26 +152,26 @@ func (tree *Tree) Predict(
 	}
 
 	if disagreed {
-		return ActionNone, 0.0, true
+		return ActionNone, 0, true
 	}
 
 	if count == 0 {
-		return ActionNone, 0.0, false
+		return ActionNone, 0, false
 	}
 
 	resistance /= float64(count)
 
 	if tokens.Last().Brightness <= resistance {
-		return ActionNone, 0.0, false
+		return ActionNone, 0, false
 	}
 
 	return current, resistance, false
 }
 
 /*
-Update existing paths with the new resistance delta.
+Update applies a settled ±delta to every decision under path.
 */
-func (tree *Tree) Update(path string, resistance float64) {
+func (tree *Tree) Update(path string, delta float64) {
 	if path == "" {
 		return
 	}
@@ -200,28 +183,22 @@ func (tree *Tree) Update(path string, resistance float64) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
-	tree.root.Root().WalkPrefix([]byte(path), func(key []byte, book *PathBook) bool {
-		if book == nil {
+	tree.root.Root().WalkPrefix([]byte(path), func(key []byte, decision *runtime.Decision) bool {
+		if decision == nil {
 			return false
 		}
 
-		book.Apply(resistance)
-
-		if tree.store != nil {
-			if raw := book.Bytes(); len(raw) > 0 {
-				tree.store.WriteAtPrefix(book.StorageKey(string(key)), raw)
-			}
-		}
-
+		decision.Resistance += delta
+		tree.persist(string(key), decision)
 		return false
 	})
 }
 
 /*
-Insert writes a path to the tree and S3.
+Insert writes a decision leaf under path.
 */
-func (tree *Tree) Insert(path string, book *PathBook) {
-	if path == "" || book == nil {
+func (tree *Tree) Insert(path string, decision *runtime.Decision) {
+	if path == "" || decision == nil {
 		return
 	}
 
@@ -232,19 +209,12 @@ func (tree *Tree) Insert(path string, book *PathBook) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
-	tree.root, _, _ = tree.root.Insert([]byte(path), book)
-
-	if tree.store != nil {
-		if raw := book.Bytes(); len(raw) > 0 {
-			tree.store.WriteAtPrefix(book.StorageKey(path), raw)
-		}
-	}
+	tree.root, _, _ = tree.root.Insert([]byte(path), decision)
+	tree.persist(path, decision)
 }
 
 /*
-Ensure inserts a seeded leaf only when the path is missing. Re-settling the
-same virtual episode must Update resistance, never wipe the book back to a
-blank value (which would restart near 0 and clear the paper floor).
+Ensure seeds a leaf once. Re-settling must Update, never wipe resistance.
 */
 func (tree *Tree) Ensure(path string, action Action) {
 	if path == "" || action == ActionNone {
@@ -263,16 +233,30 @@ func (tree *Tree) Ensure(path string, action Action) {
 		return
 	}
 
-	tree.Insert(path, NewPathBook(action))
+	tree.Insert(path, &runtime.Decision{
+		Action:     action.String(),
+		Path:       path,
+		Resistance: seedResistance,
+	})
 }
 
-/*
-Delete deletes a path from the tree and S3.
-*/
 func (tree *Tree) Delete(path string) {
 	tree.mu.Lock()
 	defer tree.mu.Unlock()
 
 	tree.root, _, _ = tree.root.Delete([]byte(path))
 	tree.store.DeletePrefix("model/paths/" + path)
+}
+
+func (tree *Tree) persist(path string, decision *runtime.Decision) {
+	if tree.store == nil || decision == nil {
+		return
+	}
+
+	raw, err := sonic.Marshal(decision)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+
+	tree.store.WriteAtPrefix("model/paths/"+path+".json", raw)
 }

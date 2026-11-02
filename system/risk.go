@@ -7,33 +7,22 @@ import (
 )
 
 type Risk struct {
-	MaxFraction          float64
-	TouchDivisor         float64
-	MinMoverVolumeUSD    float64
-	MinMoverChangePct    float64
-	MaxEntrySpreadPct    float64
-	MaxEntryOpenDragPct  float64
-	MinTouchBidCash      float64
-	TapeWindow           time.Duration
-	MinTapeTrades        int
-	MaxAllowedLossPct    float64
-	TrailPeakArmPct      float64
-	TrailBaseGivebackPct float64
-	TrailMinGivebackPct  float64
-	BackingBandFrac      float64
-	MinBackingRatio      float64
-	// Friction-aware invalidation: width ≥ friction×mult, capped for ruin.
-	LossFrictionMult   float64
-	MaxInvalidationPct float64
-	// Structural stop: milestone floors + failed-retest exhaustion.
-	StructuralLive          bool
-	StructuralPullbackPct   float64
-	StructuralMilestone1Pct float64
-	StructuralMilestone2Pct float64
-	StructuralMilestone3Pct float64
-	StructuralFloor1Pct     float64
-	StructuralFloor2Pct     float64
-	StructuralFloor3Pct     float64
+	MaxFraction         float64
+	TouchDivisor        float64
+	MinMoverVolumeUSD   float64
+	MinMoverChangePct   float64
+	MaxEntrySpreadPct   float64
+	MaxEntryOpenDragPct float64
+	MinTouchBidCash     float64
+	TapeWindow          time.Duration
+	MinTapeTrades       int
+	MaxAllowedLossPct   float64
+	BackingBandFrac     float64
+	MinBackingRatio     float64
+	// StopPaceHalflife is the TimeElastic memory for mark-arrival speed.
+	StopPaceHalflife time.Duration
+	// StopPaceEpsilon floors the TimeElastic baseline denominator.
+	StopPaceEpsilon float64
 }
 
 func NewRisk() *Risk {
@@ -47,48 +36,26 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.tape_window", 10*time.Minute)
 	viper.SetDefault("risk.min_tape_trades", 8)
 	viper.SetDefault("risk.max_allowed_loss_pct", 2.5)
-	viper.SetDefault("risk.trail_peak_arm_pct", 1.2)
-	viper.SetDefault("risk.trail_base_giveback_pct", 1.5)
-	viper.SetDefault("risk.trail_min_giveback_pct", 0.60)
 	viper.SetDefault("risk.backing_band_frac", 0.01)
 	viper.SetDefault("risk.min_backing_ratio", 0.6)
-	viper.SetDefault("risk.loss_friction_mult", 2.0)
-	viper.SetDefault("risk.max_invalidation_pct", 4.5)
-	viper.SetDefault("risk.structural_live", true)
-	viper.SetDefault("risk.structural_pullback_pct", 1.0)
-	viper.SetDefault("risk.structural_milestone_1_pct", 1.5)
-	viper.SetDefault("risk.structural_milestone_2_pct", 3.0)
-	viper.SetDefault("risk.structural_milestone_3_pct", 5.0)
-	viper.SetDefault("risk.structural_floor_1_pct", 0.50)
-	viper.SetDefault("risk.structural_floor_2_pct", 1.80)
-	viper.SetDefault("risk.structural_floor_3_pct", 3.50)
+	viper.SetDefault("risk.stop_pace_halflife", 2*time.Second)
+	viper.SetDefault("risk.stop_pace_epsilon", 1e-6)
 
 	return &Risk{
-		MaxFraction:             viper.GetFloat64("risk.max_fraction"),
-		TouchDivisor:            float64(viper.GetInt("risk.touch_divisor")),
-		MinMoverVolumeUSD:       viper.GetFloat64("risk.min_mover_volume_usd"),
-		MinMoverChangePct:       viper.GetFloat64("risk.min_mover_change_pct"),
-		MaxEntrySpreadPct:       viper.GetFloat64("risk.max_entry_spread_pct"),
-		MaxEntryOpenDragPct:     viper.GetFloat64("risk.max_entry_open_drag_pct"),
-		MinTouchBidCash:         viper.GetFloat64("risk.min_touch_bid_cash"),
-		TapeWindow:              viper.GetDuration("risk.tape_window"),
-		MinTapeTrades:           viper.GetInt("risk.min_tape_trades"),
-		MaxAllowedLossPct:       viper.GetFloat64("risk.max_allowed_loss_pct"),
-		TrailPeakArmPct:         viper.GetFloat64("risk.trail_peak_arm_pct"),
-		TrailBaseGivebackPct:    viper.GetFloat64("risk.trail_base_giveback_pct"),
-		TrailMinGivebackPct:     viper.GetFloat64("risk.trail_min_giveback_pct"),
-		BackingBandFrac:         viper.GetFloat64("risk.backing_band_frac"),
-		MinBackingRatio:         viper.GetFloat64("risk.min_backing_ratio"),
-		LossFrictionMult:        viper.GetFloat64("risk.loss_friction_mult"),
-		MaxInvalidationPct:      viper.GetFloat64("risk.max_invalidation_pct"),
-		StructuralLive:          viper.GetBool("risk.structural_live"),
-		StructuralPullbackPct:   viper.GetFloat64("risk.structural_pullback_pct"),
-		StructuralMilestone1Pct: viper.GetFloat64("risk.structural_milestone_1_pct"),
-		StructuralMilestone2Pct: viper.GetFloat64("risk.structural_milestone_2_pct"),
-		StructuralMilestone3Pct: viper.GetFloat64("risk.structural_milestone_3_pct"),
-		StructuralFloor1Pct:     viper.GetFloat64("risk.structural_floor_1_pct"),
-		StructuralFloor2Pct:     viper.GetFloat64("risk.structural_floor_2_pct"),
-		StructuralFloor3Pct:     viper.GetFloat64("risk.structural_floor_3_pct"),
+		MaxFraction:         viper.GetFloat64("risk.max_fraction"),
+		TouchDivisor:        float64(viper.GetInt("risk.touch_divisor")),
+		MinMoverVolumeUSD:   viper.GetFloat64("risk.min_mover_volume_usd"),
+		MinMoverChangePct:   viper.GetFloat64("risk.min_mover_change_pct"),
+		MaxEntrySpreadPct:   viper.GetFloat64("risk.max_entry_spread_pct"),
+		MaxEntryOpenDragPct: viper.GetFloat64("risk.max_entry_open_drag_pct"),
+		MinTouchBidCash:     viper.GetFloat64("risk.min_touch_bid_cash"),
+		TapeWindow:          viper.GetDuration("risk.tape_window"),
+		MinTapeTrades:       viper.GetInt("risk.min_tape_trades"),
+		MaxAllowedLossPct:   viper.GetFloat64("risk.max_allowed_loss_pct"),
+		BackingBandFrac:     viper.GetFloat64("risk.backing_band_frac"),
+		MinBackingRatio:     viper.GetFloat64("risk.min_backing_ratio"),
+		StopPaceHalflife:    viper.GetDuration("risk.stop_pace_halflife"),
+		StopPaceEpsilon:     viper.GetFloat64("risk.stop_pace_epsilon"),
 	}
 }
 

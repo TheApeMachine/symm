@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
@@ -54,9 +57,8 @@ type Price struct {
 	*runtime.System
 	Instrument *Instrument
 	Books      *Book
-	Tape       *Tape
 	ticker     sync.Map
-	balance    *Balance
+	balance    *market.Balance
 	private    Transport
 	fees       *sync.Map
 	normalizer *spot.Normalizer
@@ -68,7 +70,6 @@ func NewPrice(
 	private Transport,
 	instrument *Instrument,
 	normalizer *spot.Normalizer,
-	balance *Balance,
 ) *Price {
 	if normalizer == nil {
 		normalizer = spot.NewNormalizer()
@@ -79,8 +80,6 @@ func NewPrice(
 		Instrument: instrument,
 		private:    private,
 		Books:      books,
-		Tape:       NewTape(),
-		balance:    balance,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 	}
@@ -94,6 +93,94 @@ func NewPrice(
 
 	price.Transition(runtime.READY)
 	return price
+}
+
+type tickerSnap struct {
+	volumeUSD float64
+	changePct float64
+}
+
+const tickerRefresh = time.Minute
+
+// SetTicker stores one pair's public Ticker 24h quote volume and day change.
+func (price *Price) SetTicker(symbol string, volumeUSD, changePct float64) {
+	if symbol == "" {
+		return
+	}
+
+	price.ticker.Store(symbol, tickerSnap{volumeUSD, changePct})
+}
+
+// VolumeUSD is the last Ticker 24h quote notional for the symbol.
+func (price *Price) VolumeUSD(symbol string) float64 {
+	if symbol == "" {
+		return 0
+	}
+
+	raw, ok := price.ticker.Load(symbol)
+	if !ok {
+		return 0
+	}
+
+	return raw.(tickerSnap).volumeUSD
+}
+
+// ChangePct is the last Ticker open-to-last percent move for the symbol.
+func (price *Price) ChangePct(symbol string) float64 {
+	if symbol == "" {
+		return 0
+	}
+
+	raw, ok := price.ticker.Load(symbol)
+	if !ok {
+		return 0
+	}
+
+	return raw.(tickerSnap).changePct
+}
+
+func (price *Price) refreshTicker() {
+	response, err := network.NewREST().Get(
+		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.Ticker,
+		map[string]string{"assetVersion": "1"},
+	)
+
+	if err != nil {
+		errnie.Warn("[price] ticker poll failed", "err", err)
+		return
+	}
+
+	rows, err := kraken.ParseTicker(response.Body())
+	if err != nil {
+		errnie.Warn("[price] ticker parse failed", "err", err)
+		return
+	}
+
+	for pair, row := range rows {
+		symbol := pair
+
+		if name := price.normalizer.Name(pair); name != "" {
+			symbol = name
+		}
+
+		price.SetTicker(symbol, row.QuoteVolume24h(), row.ChangePct())
+	}
+}
+
+func (price *Price) pollTicker() {
+	go func() {
+		ticker := time.NewTicker(tickerRefresh)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-price.Context().Done():
+				return
+			case <-ticker.C:
+				price.refreshTicker()
+			}
+		}
+	}()
 }
 
 func (price *Price) loadFees() bool {
@@ -179,7 +266,7 @@ func (price *Price) feeForTrade(symbol string) *decimal.Decimal {
 		return fee
 	}
 
-	return dFloat(defaultTakerFeePercent)
+	return decimal.NewFromFloat64(defaultTakerFeePercent)
 }
 
 func (price *Price) feeName(symbol string) string {
@@ -209,11 +296,11 @@ func (price *Price) Touch(symbol string) (*decimal.Decimal, *decimal.Decimal) {
 		}
 
 		if bestBid := managed.BestBid(); bestBid != nil {
-			bid = levelPrice(bestBid)
+			bid = price.levelPrice(bestBid)
 		}
 
 		if bestAsk := managed.BestAsk(); bestAsk != nil {
-			ask = levelPrice(bestAsk)
+			ask = price.levelPrice(bestAsk)
 		}
 	})
 
@@ -256,35 +343,35 @@ func (price *Price) touchBidQuantity(symbol string) *decimal.Decimal {
 		}
 
 		bestBid := managed.BestBid()
-		qty := levelQty(bestBid)
+		qty := price.levelQty(bestBid)
 
 		if qty == nil || qty.Sign() <= 0 {
 			return
 		}
 
 		totalDepth := qty
-		bestPrice := levelPrice(bestBid)
+		bestPrice := price.levelPrice(bestBid)
 		var maxDrop *decimal.Decimal
 
 		if managed.BestAsk() != nil && managed.BestAsk().Price != nil {
-			spread := levelPrice(managed.BestAsk()).Sub(bestPrice)
+			spread := price.levelPrice(managed.BestAsk()).Sub(bestPrice)
 
 			if spread.Sign() > 0 {
-				maxDrop = spread.Div(dInt(2))
+				maxDrop = spread.Div(decimal.NewFromInt64(2))
 			}
 		}
 
 		cursor := bestBid.Lower
 
 		for count := 0; count < 3 && cursor != nil && cursor.Price != nil; count++ {
-			cursorQty := levelQty(cursor)
+			cursorQty := price.levelQty(cursor)
 
 			if cursorQty == nil || cursorQty.Sign() <= 0 {
 				cursor = cursor.Lower
 				continue
 			}
 
-			drop := bestPrice.Sub(levelPrice(cursor))
+			drop := bestPrice.Sub(price.levelPrice(cursor))
 
 			if maxDrop != nil && drop.Cmp(maxDrop) > 0 {
 				break
@@ -320,7 +407,7 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 		level := managed.BestBid()
 
 		for count := 0; count < 3 && level != nil; count++ {
-			px, qty := levelPrice(level), levelQty(level)
+			px, qty := price.levelPrice(level), price.levelQty(level)
 
 			if px != nil && qty != nil && px.Sign() > 0 && qty.Sign() > 0 {
 				total = total.Add(notional(px, qty))
@@ -351,7 +438,7 @@ func (price *Price) spreadFraction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	mid := bid.Add(ask).Div(dInt(2))
+	mid := bid.Add(ask).Div(decimal.NewFromInt64(2))
 
 	if mid.Sign() <= 0 {
 		return nil, false
@@ -388,7 +475,7 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	twoLegFee := fee.Mul(decimalPercent).Mul(dInt(2))
+	twoLegFee := fee.Mul(decimalPercent).Mul(decimal.NewFromInt64(2))
 	hurdle := spread.Add(twoLegFee)
 
 	if hurdle.Sign() <= 0 {
@@ -410,7 +497,7 @@ func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
 		return nil, false
 	}
 
-	budget := friction.Mul(dInt(3)).Mul(decimalHundred)
+	budget := friction.Mul(decimal.NewFromInt64(3)).Mul(decimalHundred)
 	return budget, true
 }
 
@@ -633,7 +720,7 @@ AllocateFrom sizes against an explicit wallet (paper or live). A nil balance
 falls back to the price's wired desk balance.
 */
 func (price *Price) AllocateFrom(
-	wallet *Balance,
+	wallet *market.Balance,
 	symbol string,
 	enforceVenueMins bool,
 ) (*decimal.Decimal, string) {
@@ -646,15 +733,15 @@ func (price *Price) AllocateFrom(
 	}
 
 	pair := price.Instrument.Pair(symbol)
-	cashShop := wallet.cash(pair.Quote)
+	raw := wallet.Cash(pair.Quote)
 
-	if cashShop == nil {
-		cashShop = wallet.cash(wallet.Quote)
+	if raw == nil {
+		raw = wallet.Cash(wallet.Quote)
 	}
 
 	fee := price.feeForTrade(symbol)
 
-	if cashShop == nil {
+	if raw == nil {
 		return nil, fmt.Sprintf(
 			"quote cash unknown (pair quote %q, desk quote %q)",
 			pair.Quote,
@@ -662,14 +749,18 @@ func (price *Price) AllocateFrom(
 		)
 	}
 
-	cash := cashShop
+	cash, err := decimal.NewFromString(raw.String())
+
+	if err != nil || cash == nil {
+		return nil, "quote cash is not a decimal"
+	}
 
 	if pair.QtyMin == nil || pair.CostMin == nil {
 		return nil, "instrument limits missing (QtyMin or CostMin unset)"
 	}
 
 	budget := cash.SetScale(int64(pair.PricePrecision)).Mul(
-		dFloat(system.Cfg.Risk.MaxFraction),
+		decimal.NewFromFloat64(system.Cfg.Risk.MaxFraction),
 	)
 
 	if budget.Sign() <= 0 {
@@ -698,7 +789,7 @@ func (price *Price) AllocateFrom(
 			return
 		}
 
-		touchBid := levelQty(managed.BestBid())
+		touchBid := price.levelQty(managed.BestBid())
 
 		if touchBid == nil || touchBid.Sign() <= 0 {
 			reason = "best bid quantity missing or zero"
@@ -706,21 +797,21 @@ func (price *Price) AllocateFrom(
 		}
 
 		touchCap := touchBid.SetScale(int64(pair.QtyPrecision)).Div(
-			dFloat(system.Cfg.Risk.TouchDivisor),
+			decimal.NewFromFloat64(system.Cfg.Risk.TouchDivisor),
 		)
 		qAccum := decimalZero
 		remainingGross := grossBudget
 		level := managed.BestAsk()
 
-		if level == nil || levelPrice(level) == nil {
+		if level == nil || price.levelPrice(level) == nil {
 			reason = "best ask missing"
 			return
 		}
 
-		maxAsk := levelPrice(level).Mul(dInt(2))
+		maxAsk := price.levelPrice(level).Mul(decimal.NewFromInt64(2))
 
 		for level != nil && remainingGross.Sign() > 0 {
-			px, qty := levelPrice(level), levelQty(level)
+			px, qty := price.levelPrice(level), price.levelQty(level)
 
 			if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
 				level = level.Higher
@@ -757,7 +848,7 @@ func (price *Price) AllocateFrom(
 			return
 		}
 
-		if sized, normErr := formatSize(price.normalizer, symbol, qAccum); normErr == nil {
+		if sized, normErr := price.formatSize(symbol, qAccum); normErr == nil {
 			qAccum = sized
 		}
 
@@ -863,7 +954,7 @@ func (price *Price) bumpToVenueMin(
 	target := pair.QtyMin
 
 	ask := managed.BestAsk()
-	askPx := levelPrice(ask)
+	askPx := price.levelPrice(ask)
 
 	if ask == nil || askPx == nil || askPx.Sign() <= 0 {
 		return nil, nil, "cannot bump to venue minimum (best ask missing)"
@@ -885,7 +976,7 @@ func (price *Price) bumpToVenueMin(
 		}
 	}
 
-	if sized, err := formatSize(price.normalizer, symbol, target); err == nil {
+	if sized, err := price.formatSize(symbol, target); err == nil {
 		target = sized
 	}
 
@@ -1065,7 +1156,7 @@ func (price *Price) walk(
 			next = level.Higher
 		}
 
-		fill := levelQty(level)
+		fill := price.levelQty(level)
 
 		if fill == nil {
 			level = next
@@ -1076,7 +1167,7 @@ func (price *Price) walk(
 			fill = remaining
 		}
 
-		gross = gross.Add(notional(levelPrice(level), fill))
+		gross = gross.Add(notional(price.levelPrice(level), fill))
 		quantity = quantity.Add(fill)
 		remaining = remaining.Sub(fill)
 		level = next
@@ -1121,20 +1212,20 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 	band := system.Cfg.Risk.BackingBandFrac
 
 	price.Books.Book(symbol, func(managed *book.Book) {
-		mid := mustFromSDK(managed.Midpoint())
+		mid, _ := decimal.NewFromString(managed.Midpoint().String())
 
 		if !bookReady(managed) || mid == nil || mid.Sign() <= 0 {
 			return
 		}
 
-		lo := mid.Mul(dFloat(1 - band))
-		hi := mid.Mul(dFloat(1 + band))
+		lo := mid.Mul(decimal.NewFromFloat64(1 - band))
+		hi := mid.Mul(decimal.NewFromFloat64(1 + band))
 
 		var cash [2]float64
 
 		for idx, start := range []*book.Level{managed.BestBid(), managed.BestAsk()} {
 			for lvl := start; lvl != nil; lvl = [...]*book.Level{lvl.Lower, lvl.Higher}[idx] {
-				px, qty := levelPrice(lvl), levelQty(lvl)
+				px, qty := price.levelPrice(lvl), price.levelQty(lvl)
 
 				if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
 					continue
@@ -1170,4 +1261,48 @@ func bookReady(managed *book.Book) bool {
 
 func notional(unit, quantity *decimal.Decimal) *decimal.Decimal {
 	return unit.SetScale(decimal.DefaultScale).Mul(quantity)
+}
+
+func (price *Price) levelPrice(level *book.Level) *decimal.Decimal {
+	if level == nil || level.Price == nil {
+		return nil
+	}
+
+	parsed, err := decimal.NewFromString(level.Price.String())
+	if err != nil {
+		return nil
+	}
+
+	return parsed
+}
+
+func (price *Price) levelQty(level *book.Level) *decimal.Decimal {
+	if level == nil || level.Quantity == nil {
+		return nil
+	}
+
+	parsed, err := decimal.NewFromString(level.Quantity.String())
+	if err != nil {
+		return nil
+	}
+
+	return parsed
+}
+
+func (price *Price) formatSize(symbol string, value *decimal.Decimal) (*decimal.Decimal, error) {
+	if price.normalizer == nil || value == nil {
+		return value, nil
+	}
+
+	raw, err := sdkdecimal.NewFromString(value.String())
+	if err != nil {
+		return nil, err
+	}
+
+	sized, err := price.normalizer.FormatSize(symbol, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return decimal.NewFromString(sized.String())
 }

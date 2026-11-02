@@ -127,7 +127,7 @@ describe("LifecycleView", () => {
 		expect(container.textContent).toContain("R01/R02/R03");
 	});
 
-	it("states the settle once: money when present, percent once, stop A/B", () => {
+	it("states the settle once: money when present, percent once, exit panel", () => {
 		const { container } = render(<LifecycleView />);
 		deliver([
 			...entered,
@@ -148,7 +148,7 @@ describe("LifecycleView", () => {
 		expect(outcome?.textContent).toContain("−$1.10");
 		expect(outcome?.textContent).toContain("-1.1%");
 		expect(outcome?.textContent).toContain("hold");
-		expect(outcome?.textContent).toContain("Stop A / B");
+		expect(outcome?.textContent).toContain("Official exit");
 		// Percent appears once in the hero (not re-listed as return + return %).
 		expect(outcome?.textContent?.match(/-1\.1%/g)?.length).toBe(1);
 

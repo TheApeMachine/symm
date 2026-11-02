@@ -14,6 +14,7 @@ import (
 	"github.com/bytedance/sonic"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -516,7 +517,7 @@ func (book *Book) apply(
 
 							for _, queued := range level.Queue() {
 								if queued.ID == order.OrderID {
-									order.LimitPrice = mustFromSDK(level.Price)
+									order.LimitPrice, _ = decimal.NewFromString(level.Price.String())
 									break
 								}
 							}
@@ -531,7 +532,13 @@ func (book *Book) apply(
 						continue
 					}
 
-					price := scaledBookDecimal(order.LimitPrice, pair.PairDecimals)
+					price, err := sdkdecimal.NewFromString(order.LimitPrice.String())
+
+					if err != nil {
+						return err
+					}
+
+					price = price.SetScale(int64(pair.PairDecimals))
 
 					if order.OrderID != "" {
 						for _, level := range symbolSide.Levels {
@@ -545,7 +552,7 @@ func (book *Book) apply(
 										Direction: direction,
 										ID:        order.OrderID,
 										Price:     level.Price,
-										Quantity:  scaledBookDecimal(dInt(0), pair.LotDecimals),
+										Quantity:  sdkdecimal.NewFromInt64(0).SetScale(int64(pair.LotDecimals)),
 										Silent:    true,
 									})
 									break
@@ -557,10 +564,16 @@ func (book *Book) apply(
 					quantity := order.OrderQty
 
 					if order.Event == "delete" || quantity == nil {
-						quantity = dInt(0)
+						quantity = decimal.NewFromInt64(0)
 					}
 
-					qty := scaledBookDecimal(quantity, pair.LotDecimals)
+					qty, err := sdkdecimal.NewFromString(quantity.String())
+
+					if err != nil {
+						return err
+					}
+
+					qty = qty.SetScale(int64(pair.LotDecimals))
 
 					// The SDK dereferences an absent level on zero-quantity updates.
 					// Absence is a lost-book precondition, not an empty order to insert.
@@ -721,10 +734,15 @@ func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data,
 	}
 	book.lastTouch.Store(data.Symbol, [2]float64{bidPrice, askPrice})
 
+	bidPx, _ := decimal.NewFromString(bid.Price.String())
+	bidQty, _ := decimal.NewFromString(bid.Quantity.String())
+	askPx, _ := decimal.NewFromString(ask.Price.String())
+	askQty, _ := decimal.NewFromString(ask.Quantity.String())
+
 	*touches = append(*touches, kraken.Level3Touch{
 		Symbol: data.Symbol, Timestamp: data.Timestamp,
-		Bid: mustFromSDK(bid.Price), BidQty: mustFromSDK(bid.Quantity),
-		Ask: mustFromSDK(ask.Price), AskQty: mustFromSDK(ask.Quantity),
+		Bid: bidPx, BidQty: bidQty,
+		Ask: askPx, AskQty: askQty,
 	})
 }
 

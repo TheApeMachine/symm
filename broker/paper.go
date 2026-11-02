@@ -12,12 +12,15 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -319,12 +322,26 @@ func (paper *Paper) OpenOrders() (spot.OpenOrdersResult, error) {
 			))
 		}
 
+		var volume, filled, price *sdkdecimal.Decimal
+
+		if row.Volume != nil {
+			volume, _ = sdkdecimal.NewFromString(row.Volume.String())
+		}
+
+		if row.Filled != nil {
+			filled, _ = sdkdecimal.NewFromString(row.Filled.String())
+		}
+
+		if row.Price != nil {
+			price, _ = sdkdecimal.NewFromString(row.Price.String())
+		}
+
 		result.Open[orderID] = spot.Order{
 			ClOrdID:        row.ClientOrderID,
 			Status:         row.Status,
-			Volume:         mustToSDK(row.Volume),
-			VolumeExecuted: mustToSDK(row.Filled),
-			Price:          mustToSDK(row.Price),
+			Volume:         volume,
+			VolumeExecuted: filled,
+			Price:          price,
 			Description: &spot.OrderDescription{
 				Pair:      row.Pair,
 				Type:      row.Side,
@@ -425,7 +442,7 @@ func (paper *Paper) TradeBalance() (*kraken.TradeBalanceResult, error) {
 		))
 	}
 
-	result.AvailableCash = dInt(0)
+	result.AvailableCash = decimal.NewFromInt64(0)
 
 	if row, found := balance.Balances[quote]; found {
 		result.AvailableCash = row.Available
@@ -464,7 +481,7 @@ func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, er
 		))
 	}
 
-	feePercent := dFloat(feeRate).Mul(dInt(100))
+	feePercent := decimal.NewFromFloat64(feeRate).Mul(decimal.NewFromInt64(100))
 	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
 	feesMaker := make(map[string]kraken.TradeVolumeFee, len(symbols))
 
@@ -912,4 +929,29 @@ func (paper *Paper) publish(payload any) error {
 	case <-paper.Context().Done():
 		return errnie.Error(paper.Context().Err())
 	}
+}
+
+// Fetch loads the paper wallet into market.Asset rows.
+func (paper *Paper) Fetch(ctx context.Context) ([]*market.Asset, error) {
+	_ = ctx
+
+	wallet, err := paper.Balances()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if wallet == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[paper] empty balance response", nil,
+		))
+	}
+
+	trade, err := paper.TradeBalance()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	return assetsFromWallet(system.Cfg.Market.QuoteCurrency, wallet, trade), nil
 }

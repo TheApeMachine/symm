@@ -4,6 +4,32 @@ export type Balance = {
 	equity: number;
 };
 
+export type DynamicStoplossState =
+	| "Healthy"
+	| "Protected"
+	| "Stalled"
+	| "Dangerous"
+	| "Triggered";
+
+/** Live dynamic stop composed on an open lot (broker DynamicStoploss JSON). */
+export type DynamicStoploss = {
+	state: DynamicStoplossState;
+	exit_reason?: string;
+	/** Percentage points. */
+	friction: number;
+	current_pnl: number;
+	peak_pnl: number;
+	floor_pnl: number;
+	has_floor: boolean;
+	room_pct: number;
+	proximity: number;
+	downside_pressure: number;
+	downside_magnitude_ratio: number;
+	consecutive_down: number;
+	opened_at?: string;
+	last_peak_time?: string;
+};
+
 /*
 Position shapes crossing the wire.
 
@@ -63,42 +89,5 @@ export type Position = {
 	pnl_trace?: number[];
 	official_exit_at?: string | null;
 	official_exit_pct?: number;
-	/** Active structural settler composed on the lot. */
-	structural?: {
-		floor_pct?: number;
-		room_pct?: number;
-		proximity?: number;
-		floor_trace?: number[];
-		state?: {
-			invalidation?: number;
-			trailing?: number;
-			damage?: number;
-			peakPct?: number;
-			peak_pct?: number;
-			currentPct?: number;
-			current_pct?: number;
-			entryPct?: number;
-			entry_pct?: number;
-			givebackPct?: number;
-			giveback_pct?: number;
-			allowedGivebackPct?: number;
-			allowed_giveback_pct?: number;
-			remainingGivebackPct?: number;
-			remaining_giveback_pct?: number;
-			floorPct?: number;
-			floor_pct?: number;
-		} | null;
-	};
-	/** Learning shadow composed on the lot; never settles the venue lot. */
-	learning?: {
-		active?: boolean;
-		pnl_trace?: number[];
-		exit_trigger?: string;
-		exit_at?: string | null;
-		exit_pct?: number;
-		floor_pct?: number;
-		floor_trace?: number[];
-		proximity?: number;
-		room_pct?: number;
-	};
+	stoploss?: DynamicStoploss;
 };

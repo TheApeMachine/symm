@@ -56,14 +56,12 @@ reads the result, so the empty answer has to be shaped like a result.
 */
 const rowless = { toArray: () => [], schema: { fields: [] } };
 
+/*
+Perspective sometimes emits `SELECT FROM` with no projection. DuckDB rejects
+that; a NULL projection is enough for those metadata probes.
+*/
 const sanitizeSql = (sql: string): string =>
-	sql
-		.replace(/\bSELECT\s+FROM\b/gi, "SELECT NULL FROM")
-		.replace(
-			/\bCREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+([^\s]+)\s+AS\b/gi,
-			"CREATE OR REPLACE VIEW $1 AS",
-		)
-		.replace(/\bDROP\s+TABLE\b/gi, "DROP VIEW");
+	sql.replace(/\bSELECT\s+FROM\b/gi, "SELECT NULL FROM");
 
 /*
 warehouse is the connection the handler is given. `query` is used for the
@@ -146,7 +144,52 @@ type ViewportBuffer = {
 };
 
 const viewportBuffers = new Map<string, ViewportBuffer>();
-const inFlightFetches = new Map<string, AbortController>();
+const inFlightFetches = new Map<string, Promise<void>>();
+
+/*
+How many rows to pull around the visible window. The datagrid asks for ~one
+screen at a time; without a buffer every wheel tick is another round trip.
+*/
+const BUFFER_ROWS = 2_000;
+const OVERSCAN_ROWS = 400;
+
+type Viewport = {
+	start_row?: number;
+	end_row?: number;
+	start_col?: number;
+	end_col?: number;
+};
+
+const covers = (
+	cached: ViewportBuffer,
+	startRow: number,
+	endRow: number,
+	viewport: Viewport,
+): boolean =>
+	cached.startCol === viewport.start_col &&
+	cached.endCol === viewport.end_col &&
+	startRow >= cached.startRow &&
+	endRow <= cached.endRow;
+
+const fillSlice = (
+	cached: ViewportBuffer,
+	startRow: number,
+	endRow: number,
+	dataSlice: { fromArrowIpc: (ipc: Uint8Array) => void },
+): void => {
+	const relStart = Math.min(
+		cached.table.numRows,
+		Math.max(0, startRow - cached.startRow),
+	);
+	const relEnd = Math.min(
+		cached.table.numRows,
+		Math.max(relStart, endRow - cached.startRow),
+	);
+
+	dataSlice.fromArrowIpc(
+		tableToIPC(cached.table.slice(relStart, relEnd), "stream"),
+	);
+};
 
 /*
 WarehouseHandler is the shipped DuckDB handler with one method replaced.
@@ -220,6 +263,15 @@ export class WarehouseHandler extends DuckDBHandler {
 		return remember(widths, args[0], () => super.viewColumnSize(...args));
 	}
 
+	/*
+		Scroll traffic is a stream of tiny viewports. Fetching exactly those
+		rows makes every wheel tick a warehouse round trip; aborting the
+		previous trip left the grid with nothing until scrolling stopped.
+
+		One buffered window is kept per view. Concurrent callers share a single
+		in-flight fetch and re-check the buffer when it lands, so a miss becomes
+		at most one request and never returns empty mid-scroll.
+	*/
 	async viewGetData(...args: Parameters<DuckDBHandler["viewGetData"]>) {
 		const [viewId, config, schema, viewport, dataSlice] = args;
 		const startRow = viewport.start_row ?? 0;
@@ -230,97 +282,102 @@ export class WarehouseHandler extends DuckDBHandler {
 			return super.viewGetData(...args);
 		}
 
-		const cached = viewportBuffers.get(viewId);
-		const sameCols =
-			cached !== undefined &&
-			cached.startCol === viewport.start_col &&
-			cached.endCol === viewport.end_col;
+		const fromCache = (): boolean => {
+			const cached = viewportBuffers.get(viewId);
 
-		if (
-			cached &&
-			sameCols &&
-			startRow >= cached.startRow &&
-			endRow <= cached.endRow
-		) {
-			const relStart = startRow - cached.startRow;
-			const relEnd = endRow - cached.startRow;
-			const slice = cached.table.slice(relStart, relEnd);
-			dataSlice.fromArrowIpc(tableToIPC(slice, "stream"));
+			if (!cached || !covers(cached, startRow, endRow, viewport)) {
+				return false;
+			}
+
+			fillSlice(cached, startRow, endRow, dataSlice);
+
+			return true;
+		};
+
+		for (let attempt = 0; attempt < 4; attempt++) {
+			if (fromCache()) {
+				return;
+			}
+
+			let pending = inFlightFetches.get(viewId);
+
+			if (!pending) {
+				pending = this.fetchViewportBuffer(
+					viewId,
+					config,
+					schema,
+					viewport,
+					startRow,
+					rowCount,
+				).finally(() => {
+					if (inFlightFetches.get(viewId) === pending) {
+						inFlightFetches.delete(viewId);
+					}
+				});
+
+				inFlightFetches.set(viewId, pending);
+			}
+
+			await pending;
+		}
+
+		if (fromCache()) {
 			return;
 		}
 
-		const previousAbort = inFlightFetches.get(viewId);
-		if (previousAbort) {
-			previousAbort.abort();
+		return super.viewGetData(...args);
+	}
+
+	private async fetchViewportBuffer(
+		viewId: string,
+		config: Parameters<DuckDBHandler["viewGetData"]>[1],
+		schema: Parameters<DuckDBHandler["viewGetData"]>[2],
+		viewport: Viewport,
+		startRow: number,
+		rowCount: number,
+	): Promise<void> {
+		const targetStart = Math.max(0, startRow - OVERSCAN_ROWS);
+		const targetEnd =
+			targetStart + Math.max(BUFFER_ROWS, rowCount + OVERSCAN_ROWS);
+
+		const query = (
+			this as unknown as {
+				sqlBuilder: {
+					viewGetData: (
+						viewId: string,
+						config: unknown,
+						viewport: unknown,
+						schema: unknown,
+					) => string;
+				};
+			}
+		).sqlBuilder.viewGetData(
+			viewId,
+			config,
+			{
+				...viewport,
+				start_row: targetStart,
+				end_row: targetEnd,
+			},
+			schema,
+		);
+
+		const ipc = await runWarehouseStatement(sanitizeSql(query));
+
+		if (ipc.byteLength === 0) {
+			return;
 		}
 
-		const abortController = new AbortController();
-		inFlightFetches.set(viewId, abortController);
+		const table = tableFromIPC(ipc);
 
-		const BUFFER_ROWS = 600;
-		const targetStart = Math.max(0, startRow - 100);
-		const targetEnd = targetStart + Math.max(BUFFER_ROWS, rowCount);
-
-		const bufferedViewport = {
-			...viewport,
-			start_row: targetStart,
-			end_row: targetEnd,
-		};
-
-		try {
-			const query = (
-				this as unknown as {
-					sqlBuilder: {
-						viewGetData: (
-							viewId: string,
-							config: unknown,
-							viewport: unknown,
-							schema: unknown,
-						) => string;
-					};
-				}
-			).sqlBuilder.viewGetData(viewId, config, bufferedViewport, schema);
-
-			const ipc = await runWarehouseStatement(
-				sanitizeSql(query),
-				abortController.signal,
-			);
-
-			if (ipc.byteLength === 0) {
-				return super.viewGetData(...args);
-			}
-
-			const table = tableFromIPC(ipc);
-
-			viewportBuffers.set(viewId, {
-				viewId,
-				startRow: targetStart,
-				endRow: targetStart + table.numRows,
-				startCol: viewport.start_col,
-				endCol: viewport.end_col,
-				table,
-			});
-
-			const relStart = Math.min(
-				table.numRows,
-				Math.max(0, startRow - targetStart),
-			);
-			const relEnd = Math.min(
-				table.numRows,
-				Math.max(relStart, endRow - targetStart),
-			);
-			const slice = table.slice(relStart, relEnd);
-			dataSlice.fromArrowIpc(tableToIPC(slice, "stream"));
-		} catch (cause) {
-			if (abortController.signal.aborted) {
-				return;
-			}
-			throw cause;
-		} finally {
-			if (inFlightFetches.get(viewId) === abortController) {
-				inFlightFetches.delete(viewId);
-			}
-		}
+		viewportBuffers.set(viewId, {
+			viewId,
+			startRow: targetStart,
+			endRow: targetStart + table.numRows,
+			startCol: viewport.start_col,
+			endCol: viewport.end_col,
+			table,
+		});
 	}
 
 	async viewDelete(viewId: string) {
@@ -328,13 +385,8 @@ export class WarehouseHandler extends DuckDBHandler {
 		sizes.delete(viewId);
 		widths.delete(viewId);
 		viewportBuffers.delete(viewId);
-
-		const inFlight = inFlightFetches.get(viewId);
-		if (inFlight) {
-			inFlight.abort();
-			inFlightFetches.delete(viewId);
-		}
+		inFlightFetches.delete(viewId);
 
 		return super.viewDelete(viewId);
 	}
-}
+};

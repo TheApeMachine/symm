@@ -20,7 +20,6 @@ func TestCheckEntryPhysicalRejectsThinBids(t *testing.T) {
 	Convey("entry is blocked when top bids have no cash depth", t, func() {
 		price := &Price{
 			Books: NewBook(context.Background(), spot.NewNormalizer()),
-			Tape:  NewTape(),
 		}
 		decision := CheckEntryPhysical(price, "THIN/USD")
 		So(decision.Allowed, ShouldBeFalse)

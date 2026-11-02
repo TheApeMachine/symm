@@ -5,12 +5,16 @@ Write a single text file aggregating repository source files for offline review.
 Includes only selected extensions, skips Go tests and TypeScript declaration
 files (*.d.ts), skips dotfiles/dotdirs, named noise files, and common
 dependency and build artifact directories.
+
+Also appends the local replace module github.com/theapemachine/nomagique,
+but only packages that appear in this project's go list -deps closure.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,7 +51,7 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "fluid-3d",
         "influence",
         "hindsight",
-        "frontend"
+        "frontend",
     }
 )
 
@@ -77,8 +81,10 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".h",
     "cuh",
     ".cu",
-    ".inc"
+    ".inc",
 )
+
+NOMAGIQUE_MODULE = "github.com/theapemachine/nomagique"
 
 
 def repository_root(start: Path) -> Path:
@@ -165,6 +171,104 @@ def filter_relative_paths(
     return filtered_paths
 
 
+def run_go_list(root: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["go", "list", *args],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "go list failed"
+        raise RuntimeError(f"dump-repo: {detail}")
+
+    return completed.stdout
+
+
+def nomagique_module_dir(root: Path) -> Path | None:
+    try:
+        output = run_go_list(root, "-m", "-f", "{{.Dir}}", NOMAGIQUE_MODULE)
+    except RuntimeError:
+        return None
+
+    line = output.strip().splitlines()
+    if not line:
+        return None
+
+    path = Path(line[0].strip())
+    if not path.is_dir():
+        return None
+
+    return path.resolve()
+
+
+def used_nomagique_package_dirs(root: Path) -> list[Path]:
+    template = (
+        "{{if .Module}}"
+        "{{if eq .Module.Path \"" + NOMAGIQUE_MODULE + "\"}}"
+        "{{.Dir}}"
+        "{{end}}"
+        "{{end}}"
+    )
+
+    output = run_go_list(root, "-deps", "-f", template, "./...")
+    dirs = sorted(
+        {
+            Path(line.strip()).resolve()
+            for line in output.splitlines()
+            if line.strip()
+        }
+    )
+
+    return [path for path in dirs if path.is_dir()]
+
+
+def collect_nomagique_dump_files(
+    root: Path,
+) -> list[tuple[str, Path]]:
+    module_dir = nomagique_module_dir(root)
+    if module_dir is None:
+        print(
+            f"dump-repo: {NOMAGIQUE_MODULE} not on the module graph; skipping",
+            file=sys.stderr,
+        )
+        return []
+
+    files: list[tuple[str, Path]] = []
+
+    for package_dir in used_nomagique_package_dirs(root):
+        try:
+            relative_dir = package_dir.relative_to(module_dir)
+        except ValueError:
+            continue
+
+        for entry in sorted(package_dir.iterdir()):
+            if not entry.is_file():
+                continue
+
+            name = entry.name
+            if name.startswith("."):
+                continue
+
+            if not name.endswith(".go"):
+                continue
+
+            if name.endswith("_test.go"):
+                continue
+
+            if relative_dir.as_posix() == ".":
+                display = f"nomagique/{name}"
+            else:
+                display = f"nomagique/{relative_dir.as_posix()}/{name}"
+
+            files.append((display, entry.resolve()))
+
+    files.sort(key=lambda item: item[0])
+    return files
+
+
 def build_path_trie(paths: list[str]) -> dict[str, dict[str, object] | None]:
     trie: dict[str, dict[str, object] | None] = {}
 
@@ -213,16 +317,18 @@ def file_delimiter(display_path: str) -> str:
     return f"\n---\n\n---\nFile: {display_path}\n---\n\n"
 
 
-def write_aggregate(output_path: Path, tree_text: str, root: Path, paths: list[str]) -> None:
+def write_aggregate(
+    output_path: Path,
+    tree_text: str,
+    entries: list[tuple[str, Path]],
+) -> None:
     with output_path.open("w", encoding="utf-8", newline="\n") as sink:
         sink.write(tree_text)
         sink.write("\n\n")
 
-        for index, relative_posix in enumerate(paths):
-            display_path = f"/{relative_posix}"
-            sink.write(file_delimiter(display_path))
+        for index, (display_path, absolute_path) in enumerate(entries):
+            sink.write(file_delimiter(f"/{display_path}"))
 
-            absolute_path = root / relative_posix
             raw_bytes = absolute_path.read_bytes()
 
             try:
@@ -234,7 +340,7 @@ def write_aggregate(output_path: Path, tree_text: str, root: Path, paths: list[s
 
             sink.write(contents)
 
-            if index < len(paths) - 1 and not contents.endswith("\n"):
+            if index < len(entries) - 1 and not contents.endswith("\n"):
                 sink.write("\n")
 
 
@@ -282,6 +388,11 @@ def parse_arguments() -> argparse.Namespace:
         metavar="PREFIX",
         help="Exclude paths under PREFIX (repeatable)",
     )
+    parser.add_argument(
+        "--skip-nomagique",
+        action="store_true",
+        help="Do not append used nomagique packages",
+    )
 
     return parser.parse_args()
 
@@ -304,23 +415,42 @@ def main() -> int:
 
         return 1
 
-    paths = collect_relative_paths(root)
-    paths = filter_relative_paths(
-        paths,
+    relative_paths = collect_relative_paths(root)
+    relative_paths = filter_relative_paths(
+        relative_paths,
         arguments.include_prefixes,
         arguments.exclude_prefixes,
     )
 
-    if not paths:
+    entries: list[tuple[str, Path]] = [
+        (relative_posix, (root / relative_posix).resolve())
+        for relative_posix in relative_paths
+    ]
+
+    if not arguments.skip_nomagique:
+        try:
+            nomagique_entries = collect_nomagique_dump_files(root)
+        except RuntimeError as runtime_error:
+            print(runtime_error, file=sys.stderr)
+            return 1
+
+        entries.extend(nomagique_entries)
+
+    if not entries:
         print("dump-repo: no matching files found", file=sys.stderr)
 
         return 1
 
-    trie = build_path_trie(paths)
+    display_paths = [display for display, _ in entries]
+    trie = build_path_trie(display_paths)
     tree_text = format_directory_tree(trie)
-    write_aggregate(output_path.resolve(), tree_text, root, paths)
+    write_aggregate(output_path.resolve(), tree_text, entries)
 
-    print(f"dump-repo: wrote {len(paths)} files to {output_path.resolve()}")
+    nomagique_count = sum(1 for display, _ in entries if display.startswith("nomagique/"))
+    print(
+        f"dump-repo: wrote {len(entries)} files"
+        f" ({nomagique_count} nomagique) to {output_path.resolve()}"
+    )
 
     return 0
 

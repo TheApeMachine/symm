@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-	symmstore "github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -19,7 +18,7 @@ type Training struct {
 	price      *broker.Price
 	desk       *broker.Desk
 	grid       *store.Grid
-	client     *symmstore.Client
+	client     *store.Client
 	catalog    *tokenizer.GrammarCatalog
 	sequencers *sync.Map
 }
@@ -34,7 +33,7 @@ func NewTraining(
 		price:      price,
 		desk:       desk,
 		grid:       store.NewGrid(ctx),
-		client:     symmstore.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		client:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 		catalog:    &tokenizer.GrammarCatalog{},
 		sequencers: &sync.Map{},
 	}
@@ -49,32 +48,54 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		return nil
 	}
 
-	for symbol, sources := range envelope.Metrics() {
+	metrics := envelope.Metrics()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for symbol, sources := range metrics {
 		if symbol == "" || symbol == "aggregate" {
 			continue
 		}
 
-		regions, err := training.grid.Observe(symbol, sources)
+		symbol, sources := symbol, sources
+		wg.Add(1)
 
-		if err != nil {
-			training.Error(err)
-			continue
-		}
+		system.Q.Submit(func() {
+			defer wg.Done()
 
-		training.lightBroker(symbol, regions)
-		training.grid.Emit(regions, training.open(symbol))
-		envelope.Regions[symbol] = regions
+			regions, err := training.grid.Observe(symbol, sources)
 
-		cut := training.stepCut(symbol, regions)
-		envelope.Paths[symbol] = &cut
+			if err != nil {
+				training.Error(err)
+				return
+			}
+
+			training.lightBroker(symbol, regions)
+
+			open := false
+			if position := training.desk.Position(symbol); position != nil {
+				open = position.ClosedAt == nil
+			}
+
+			training.grid.Emit(regions, open)
+
+			cut := training.stepCut(symbol, regions)
+
+			mu.Lock()
+			envelope.Regions[symbol] = regions
+			envelope.Paths[symbol] = cut
+			mu.Unlock()
+		})
 	}
 
-	if frame := envelope.Publish("regions"); len(frame) > 0 {
-		ui.UI.Write(frame)
+	wg.Wait()
+
+	if payload := envelope.Publish("regions"); len(payload) > 0 {
+		ui.UI.Write(payload)
 	}
 
-	if frame := envelope.Publish("paths"); len(frame) > 0 {
-		ui.UI.Write(frame)
+	if payload := envelope.Publish("paths"); len(payload) > 0 {
+		ui.UI.Write(payload)
 	}
 
 	return envelope
@@ -100,7 +121,7 @@ func (training *Training) restoreSequencer(symbol string, state tokenizer.Sequen
 }
 
 func (training *Training) persistSequencer(symbol string, seq *tokenizer.Sequencer) {
-	if symbol == "" || seq == nil || training.catalog == nil {
+	if symbol == "" || seq == nil {
 		return
 	}
 
@@ -126,21 +147,8 @@ func (training *Training) ResetSequencer(symbol string) {
 	training.persistSequencer(symbol, seq)
 }
 
-func (training *Training) open(symbol string) bool {
-	if symbol == "" {
-		return false
-	}
-
-	position := training.desk.Position(symbol)
-	return position != nil && !position.IsClosed()
-}
-
-// lightBroker paints mover / book oracle sides before Emit collapses each pair.
+// lightBroker paints volume / day / spread / book oracle sides before Emit.
 func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
-	if symbol == "" {
-		return
-	}
-
 	if len(regions) < store.RegionCount {
 		return
 	}
@@ -152,7 +160,6 @@ func (training *Training) lightBroker(symbol string, regions []*runtime.Region) 
 	training.shine(regions, 11, 12, price.ChangePct(symbol) >= risk.MinMoverChangePct)
 
 	spreadOK := false
-
 	if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
 		spreadOK = spread.MustFloat64() <= risk.MaxEntrySpreadPct
 	}
@@ -164,30 +171,40 @@ func (training *Training) lightBroker(symbol string, regions []*runtime.Region) 
 func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
 	if ok {
 		store.Shine(regions[approve])
+		zeroRegion(regions[veto])
 		return
 	}
 
 	store.Shine(regions[veto])
+	zeroRegion(regions[approve])
 }
 
-// stepCut feeds one regime letter per tick into the time-series sequencer.
-func (training *Training) stepCut(symbol string, regions []*runtime.Region) tokenizer.Tokens {
+func zeroRegion(region *runtime.Region) {
+	if region == nil {
+		return
+	}
+
+	region.Brightness = 0
+	region.Deformation = 0
+	region.Counts = 0
+}
+
+func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
 	token, brightness := store.PathToken(regions)
 
 	if token == "" {
-		return tokenizer.Tokens{}
+		cut := runtime.Tokens{}
+		return &cut
 	}
 
 	seq := training.Sequencer(symbol)
 	cut := seq.Step(token, brightness)
 	training.persistSequencer(symbol, seq)
 
-	return cut
+	return &cut
 }
 
-/*
-Board is the Emit region set. Tradable means approve winners only — no veto.
-*/
+// Board is the Emit region set. Tradable means approve winners only — no veto.
 type Board []*runtime.Region
 
 func (board Board) Tradable() bool {

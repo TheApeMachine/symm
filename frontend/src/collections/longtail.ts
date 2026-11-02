@@ -316,8 +316,10 @@ export const summarizeBook = (
 };
 
 /*
-summarizeStops folds open-lot structural.state for one book. Exit reason maps
-are not stored here — use summarizeExits so samples stay fixed-size.
+summarizeStops folds open-lot DynamicStoploss for one book. Legacy field names
+(invalidation / trailing / damage) map to pressure, floor proximity, and
+magnitude ratio so longtail history stays compatible. Exit reason maps are not
+stored here — use summarizeExits so samples stay fixed-size.
 */
 export const summarizeStops = (
 	rows: Record<string, unknown>[],
@@ -326,44 +328,59 @@ export const summarizeStops = (
 	const open = rows.filter(
 		(row) => onBook(row, book) && !positionReadout(row).closed,
 	);
-	const ratios = ["invalidation", "trailing", "damage"] as const;
-	const perCheck = ratios.map(() => [] as number[]);
+	const pressureSamples: number[] = [];
+	const proximitySamples: number[] = [];
+	const magnitudeSamples: number[] = [];
 	let armed = 0;
 	let maxProximity = 0;
 	let withState = 0;
 
 	for (const row of open) {
-		const structural =
-			row.structural && typeof row.structural === "object"
-				? (row.structural as Record<string, unknown>)
+		const stoploss =
+			row.stoploss && typeof row.stoploss === "object"
+				? (row.stoploss as Record<string, unknown>)
 				: null;
-		const state = structural?.state as
-			| Record<string, unknown>
-			| null
-			| undefined;
-		if (!state || typeof state !== "object") continue;
+		if (!stoploss) continue;
 		withState += 1;
-		let rowArmed = false;
-		let rowMax = 0;
-		ratios.forEach((check, i) => {
-			const value = state[check];
-			if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-				return;
-			}
-			perCheck[i].push(value);
-			if (check === "damage") return;
-			if (value >= 0.7) rowArmed = true;
-			if (value > rowMax) rowMax = value;
-		});
+
+		const state = stoploss.state;
+		const proximity =
+			typeof stoploss.proximity === "number" &&
+			Number.isFinite(stoploss.proximity)
+				? stoploss.proximity
+				: 0;
+		const downside =
+			typeof stoploss.downside_pressure === "number" &&
+			Number.isFinite(stoploss.downside_pressure)
+				? stoploss.downside_pressure
+				: 0;
+		const magnitude =
+			typeof stoploss.downside_magnitude_ratio === "number" &&
+			Number.isFinite(stoploss.downside_magnitude_ratio)
+				? stoploss.downside_magnitude_ratio
+				: 0;
+
+		if (downside > 0) pressureSamples.push(downside);
+		if (stoploss.has_floor === true && proximity > 0) {
+			proximitySamples.push(proximity);
+		}
+		if (magnitude > 0) magnitudeSamples.push(magnitude);
+
+		const rowArmed =
+			state === "Stalled" ||
+			state === "Dangerous" ||
+			state === "Triggered" ||
+			proximity >= 0.7 ||
+			downside >= 0.7;
 		if (rowArmed) armed += 1;
-		if (rowMax > maxProximity) maxProximity = rowMax;
+		if (proximity > maxProximity) maxProximity = proximity;
 	}
 
 	return {
 		open: open.length > 0 ? open.length : null,
-		invalidation: mean(perCheck[0]),
-		trailing: mean(perCheck[1]),
-		damage: mean(perCheck[2]),
+		invalidation: mean(pressureSamples),
+		trailing: mean(proximitySamples),
+		damage: mean(magnitudeSamples),
 		armed: withState > 0 ? armed : null,
 		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
 	};

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
-	shadowComparisonPending,
 } from "./desk-closed-lifecycle";
 import { policyEpochFromRow, tapeMarksFromDeskRow } from "./desk-tape-marks";
 
@@ -40,7 +39,6 @@ describe("lifecycleFromDeskClosed", () => {
 			entry_path: "R01/R05",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
-			learning: { exit_at: "2026-10-23T20:05:40Z" },
 			pnl: -0.046,
 			pnl_pct: -4.6,
 			outcome_triggers: ["cleared friction"],
@@ -54,8 +52,8 @@ describe("lifecycleFromDeskClosed", () => {
 		expect(life?.events?.[1]?.detail).toContain("cleared friction");
 	});
 
-	it("waits for the learning shadow before promoting a closed row", () => {
-		const pending = {
+	it("promotes a closed row immediately without a shadow wait", () => {
+		const closed = {
 			id: "lot-2",
 			symbol: "ETH/USD",
 			virtual: true,
@@ -63,41 +61,11 @@ describe("lifecycleFromDeskClosed", () => {
 			closed_at: "2026-10-23T20:05:28Z",
 			official_exit_at: "2026-10-23T20:05:28Z",
 			official_exit_pct: 0.4,
-			learning: { active: true },
 			pnl_pct: 0.4,
 		};
 
-		expect(shadowComparisonPending(pending)).toBe(true);
-		expect(lifecycleFromDeskClosed(pending)).toBeNull();
-		expect(lifecycleFromDeskOpen(pending)?.status).toBe("holding");
-
-		const done = {
-			...pending,
-			learning: {
-				active: false,
-				exit_at: "2026-10-23T20:06:00Z",
-				exit_pct: 0.9,
-			},
-		};
-		expect(shadowComparisonPending(done)).toBe(false);
-		expect(lifecycleFromDeskClosed(done)?.status).toBe("closed");
-	});
-
-	it("does not block a settled lot that has no live learning shadow", () => {
-		const orphan = {
-			id: "lot-3",
-			symbol: "NIGHT/USD",
-			virtual: true,
-			opened_at: "2026-10-23T20:04:08Z",
-			closed_at: "2026-10-23T20:05:28Z",
-			official_exit_at: "2026-10-23T20:05:28Z",
-			official_exit_pct: 0.4,
-			learning: { active: false },
-			pnl_pct: 0.4,
-		};
-
-		expect(shadowComparisonPending(orphan)).toBe(false);
-		expect(lifecycleFromDeskClosed(orphan)?.status).toBe("closed");
+		expect(lifecycleFromDeskClosed(closed)?.status).toBe("closed");
+		expect(lifecycleFromDeskOpen(closed)).toBeNull();
 	});
 });
 

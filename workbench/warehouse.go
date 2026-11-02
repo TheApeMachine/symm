@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	duckdb "github.com/duckdb/duckdb-go/v2"
 	"github.com/theapemachine/errnie"
@@ -164,6 +165,13 @@ func (warehouse *Warehouse) boot() []string {
 		"SET GLOBAL order_by_non_integer_literal=true",
 		"INSTALL httpfs",
 		"LOAD httpfs",
+		/*
+			Open/closed lot JSON is rewritten in place while the desk runs.
+			CREATE TABLE snapshots (and any long S3 scan) otherwise die with
+			"ETag ... changed after it was opened". The workbench accepts a
+			tear-consistent read of live prefixes rather than failing the viewer.
+		*/
+		"SET GLOBAL unsafe_disable_etag_checks=true",
 		fmt.Sprintf(
 			"CREATE OR REPLACE SECRET warehouse_store ("+
 				"TYPE s3, KEY_ID %s, SECRET %s, REGION %s, "+
@@ -229,12 +237,8 @@ func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]by
 	}
 
 	if !selects {
-		if _, err := conn.ExecContext(ctx, statement); err != nil {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"workbench: execute statement: "+statement,
-				err,
-			))
+		if err := warehouse.exec(ctx, conn, statement); err != nil {
+			return nil, err
 		}
 
 		return []byte{}, nil
@@ -247,6 +251,58 @@ func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]by
 	}
 
 	return warehouse.stream(ctx, conn, projected)
+}
+
+/*
+exec runs a non-SELECT statement, retrying briefly when a live S3 object is
+rewritten mid-scan. ETag checks are already disabled at boot; retries cover
+hosts that still surface the race (or an older httpfs without the setting).
+*/
+func (warehouse *Warehouse) exec(
+	ctx context.Context, conn *sql.Conn, statement string,
+) error {
+	var err error
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"workbench: execute statement: "+statement,
+					ctx.Err(),
+				))
+			case <-time.After(time.Duration(attempt) * 50 * time.Millisecond):
+			}
+		}
+
+		_, err = conn.ExecContext(ctx, statement)
+
+		if err == nil || !etagChanged(err) {
+			break
+		}
+	}
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"workbench: execute statement: "+statement,
+			err,
+		))
+	}
+
+	return nil
+}
+
+func etagChanged(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := err.Error()
+
+	return strings.Contains(message, "ETag") &&
+		strings.Contains(message, "changed after it was opened")
 }
 
 func (warehouse *Warehouse) selects(

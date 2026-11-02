@@ -1,28 +1,22 @@
 import { memo } from "react";
+import type { DynamicStoploss } from "#/collections/types";
 import { decimal } from "#/components/book-readout";
+import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Meter } from "#/components/ui/meter";
 import {
 	buildStopChecks,
+	heldVerdict,
 	meterTone,
+	stateTone,
 	stopRule,
 } from "#/lib/stop-telemetry";
 import { cn } from "#/lib/utils";
 
 /*
-ExitPolicyPanel shows the fixed stop rules this lot is under and how the mark
-path is running against them. The simplified stop uses a hard 2pp invalidation
-cut and a damage-ratcheted trail (base 1.5pp, floor 0.35pp) — not learned
-Causal-MCTS boundaries.
-
-  - the two fixed rules plus live damage / allowed giveback;
-  - a P&L trace sparkline of the lot's net path;
-  - the same proximity meters as the live panel so open and settled lots read
-    identically.
-
-Every figure is optional and null-aware: a restored lot with no trace renders a
-waiting sparkline rather than a fabricated line.
+ExitPolicyPanel shows DynamicStoploss on a lot: state, floor/peak/friction,
+proximity to floor, and the net P&L trace when the desk publishes one.
 */
 export const ExitPolicyPanel = ({
 	row,
@@ -36,96 +30,73 @@ export const ExitPolicyPanel = ({
 	const peak = num(row.peak_pnl_pct);
 	const current = num(row.pnl_pct);
 
-	const structural =
-		row.structural && typeof row.structural === "object"
-			? (row.structural as Record<string, unknown>)
+	const stoploss =
+		row.stoploss && typeof row.stoploss === "object"
+			? (row.stoploss as DynamicStoploss)
 			: null;
 
 	const PNL_TRACE_CAP = 120;
-	const trace = Array.isArray(structural?.pnl_trace)
-		? (structural.pnl_trace as unknown[])
+	const trace = Array.isArray(row.pnl_trace)
+		? (row.pnl_trace as unknown[])
 				.filter(
 					(v): v is number => typeof v === "number" && Number.isFinite(v),
 				)
 				.slice(-PNL_TRACE_CAP)
 		: [];
-	const state = structural?.state as Record<string, unknown> | null | undefined;
-	const stop =
-		state && typeof state === "object" ? (state as Record<string, unknown>) : null;
-	const sNum = (k: string): number | null => {
-		const v = stop?.[k];
-		return typeof v === "number" && Number.isFinite(v) ? v : null;
-	};
 
-	const peakStop = sNum("peak_pct") ?? sNum("peakPct") ?? peak;
-	const currentStop = sNum("current_pct") ?? sNum("currentPct") ?? current;
-	const trailRatio = sNum("trailing");
-	const damage = sNum("damage");
-	const giveback =
-		sNum("giveback_pct") ??
-		sNum("givebackPct") ??
-		(peakStop !== null && currentStop !== null
-			? Math.max(0, peakStop - currentStop)
-			: null);
-	let allowedGiveback =
-		sNum("allowed_giveback_pct") ?? sNum("allowedGivebackPct");
-	let remainingGiveback =
-		sNum("remaining_giveback_pct") ?? sNum("remainingGivebackPct");
-	if (
-		allowedGiveback === null &&
-		giveback !== null &&
-		trailRatio !== null &&
-		trailRatio > 0
-	) {
-		allowedGiveback = giveback / trailRatio;
-	}
-	if (
-		remainingGiveback === null &&
-		allowedGiveback !== null &&
-		giveback !== null
-	) {
-		remainingGiveback = Math.max(0, allowedGiveback - giveback);
-	}
+	const peakStop = stoploss?.peak_pnl ?? peak;
+	const currentStop = stoploss?.current_pnl ?? current;
+	const floorStop = stoploss?.has_floor ? stoploss.floor_pnl : null;
 
 	const checks = buildStopChecks({
-		invalidation: sNum("invalidation") ?? undefined,
-		trailing: trailRatio ?? undefined,
-		damage: damage ?? undefined,
+		state: stoploss?.state,
+		proximity: stoploss?.proximity,
+		downside_pressure: stoploss?.downside_pressure,
+		downside_magnitude_ratio: stoploss?.downside_magnitude_ratio,
+		consecutive_down: stoploss?.consecutive_down,
+		has_floor: stoploss?.has_floor,
+		room_pct: stoploss?.room_pct,
 		current: currentStop,
-		peak: peakStop,
-		giveback: giveback ?? undefined,
-		allowedGiveback: allowedGiveback ?? undefined,
-		remainingGiveback: remainingGiveback ?? undefined,
 	});
 
-	const invalidationRule = stopRule(
-		"Invalidation cut",
-		"2.0pp",
-		"Hard invalidation: exit when adverse drop from the entry mark reaches 2.0 percentage points.",
+	const verdict = heldVerdict({
+		state: stoploss?.state,
+		current: currentStop,
+		peak: peakStop,
+		floor: floorStop,
+		friction: stoploss?.friction ?? null,
+		has_floor: stoploss?.has_floor,
+		proximity: stoploss?.proximity,
+		downside_pressure: stoploss?.downside_pressure,
+		exit_reason: stoploss?.exit_reason ?? null,
+		room_pct: stoploss?.room_pct,
+	});
+
+	const stateBadgeVariant = (() => {
+		const tone = stateTone(stoploss?.state);
+		if (tone === "good") return "success" as const;
+		if (tone === "warn") return "warning" as const;
+		if (tone === "bad") return "error" as const;
+		if (tone === "info") return "info" as const;
+		return "disabled" as const;
+	})();
+
+	const frictionRule = stopRule(
+		"Friction",
+		stoploss !== null ? `${stoploss.friction.toFixed(2)}pp` : "—",
+		"Minimum peak before the dynamic floor can arm.",
 	);
-	const trailRule = stopRule(
-		"Trail base",
-		allowedGiveback !== null
-			? `${allowedGiveback.toFixed(2)}pp live`
-			: "1.5pp base",
-		allowedGiveback !== null
-			? `Live allowed giveback ${allowedGiveback.toFixed(2)}pp (base 1.5pp, ratcheted by peak and damage, floor 0.35pp).`
-			: "Trailing take-profit arms once peak clears +0.5% while still green; base giveback 1.5pp, floor 0.35pp.",
+	const peakRule = stopRule(
+		"Peak",
+		peakStop !== null ? `${peakStop.toFixed(2)}%` : "—",
+		"Highest fee-net return this lot has marked.",
 	);
-	const damageRule = stopRule(
-		"Damage",
-		damage !== null ? `${Math.round(damage * 100)}%` : "clean",
-		damage !== null && damage > 0
-			? `Worst drawdown has burned ${Math.round(damage * 100)}% of the 2pp cut — trail tightens with damage.`
-			: "No adverse excursion yet; trail uses the full base giveback room.",
-	);
-	const entryRule = stopRule(
-		"Entry mark",
-		(() => {
-			const entry = sNum("entry_pct") ?? sNum("entryPct");
-			return entry !== null ? `${entry.toFixed(2)}%` : "—";
-		})(),
-		"First mark PnL the stop treats as entry — adverse drop is measured from here.",
+	const floorRule = stopRule(
+		"Floor",
+		floorStop !== null ? `${floorStop.toFixed(2)}%` : "not set",
+		stoploss?.has_floor
+			? `Profit floor — ${stoploss.room_pct.toFixed(2)}pp room on this mark.`
+			: "Floor has not armed yet.",
 	);
 
 	return (
@@ -136,41 +107,58 @@ export const ExitPolicyPanel = ({
 				className,
 			)}
 		>
-			<div className="text-[10px] font-bold uppercase tracking-wider text-(--f3)">
-				Stop rules
-			</div>
+			<Flex.Row align="center" justify="between" gap={2}>
+				<div className="text-[10px] font-bold uppercase tracking-wider text-(--f3)">
+					Dynamic stop
+				</div>
+				{stoploss ? (
+					<Badge size="xxs" variant={stateBadgeVariant} label={stoploss.state} />
+				) : (
+					<Badge size="xxs" variant="disabled" label="no stop" />
+				)}
+			</Flex.Row>
+
+			<p className="text-[10px] leading-snug text-(--f2)">{verdict.text}</p>
 
 			<Grid cols={2} gap={2} responsive={false}>
-				<BoundaryFact {...invalidationRule} />
-				<BoundaryFact {...trailRule} />
-				<BoundaryFact {...damageRule} />
-				<BoundaryFact {...entryRule} />
+				<BoundaryFact {...frictionRule} />
+				<BoundaryFact {...peakRule} />
+				<BoundaryFact {...floorRule} />
+				<BoundaryFact
+					{...stopRule(
+						"Mark",
+						currentStop !== null ? `${currentStop.toFixed(2)}%` : "—",
+						"Current fee-net return on the live book.",
+					)}
+				/>
 			</Grid>
 
-			<Flex.Column gap={1}>
-				<Flex.Row justify="between" className="text-[9px] text-(--f4)">
-					<span>Net P&L path (one mark per reprice)</span>
-					<span className="text-(--f3)">
-						{trace.length > 1
-							? `${trace.length} marks`
-							: peak !== null || current !== null
-								? "marking"
-								: "no trace"}
-					</span>
-				</Flex.Row>
-				<PnlTrace
-					trace={trace}
-					entry={sNum("entry_pct") ?? sNum("entryPct") ?? 0}
-					peak={peak}
-					cut={-2}
-					current={current}
-				/>
-			</Flex.Column>
+			{trace.length > 0 ? (
+				<Flex.Column gap={1}>
+					<Flex.Row justify="between" className="text-[9px] text-(--f4)">
+						<span>Net P&L path (one mark per reprice)</span>
+						<span className="text-(--f3)">
+							{trace.length > 1
+								? `${trace.length} marks`
+								: peak !== null || current !== null
+									? "marking"
+									: "no trace"}
+						</span>
+					</Flex.Row>
+					<PnlTrace
+						trace={trace}
+						entry={0}
+						peak={peakStop}
+						floor={floorStop}
+						current={currentStop}
+					/>
+				</Flex.Column>
+			) : null}
 
 			<Flex.Row gap={1} wrap="wrap">
 				{checks.map((check) => (
 					<Meter
-						key={check.id}
+						key={check.name}
 						size="xs"
 						layout="inline"
 						variant={meterTone(check.tone)}
@@ -196,7 +184,7 @@ const BoundaryFact = ({
 	short: string;
 	title: string;
 }) => {
-	const known = short !== "—" && short !== "clean";
+	const known = short !== "—" && short !== "clean" && short !== "not set";
 	return (
 		<div
 			className="rounded-xs border border-(--line) bg-(--sunken) px-2 py-1"
@@ -222,13 +210,13 @@ const PnlTrace = memo(
 		trace,
 		entry,
 		peak,
-		cut,
+		floor,
 		current,
 	}: {
 		trace: number[];
 		entry: number;
 		peak: number | null;
-		cut: number | null;
+		floor: number | null;
 		current: number | null;
 	}) => {
 		const width = 100;
@@ -242,12 +230,11 @@ const PnlTrace = memo(
 					? [trace[0], trace[0]]
 					: [entry, entry];
 
-		const cutLine = cut !== null ? entry + cut : null;
 		const all = [
 			...plotTrace,
 			entry,
 			...(peak !== null ? [peak] : []),
-			...(cutLine !== null ? [cutLine] : []),
+			...(floor !== null ? [floor] : []),
 			0,
 		];
 		const min = Math.min(...all);
@@ -292,13 +279,13 @@ const PnlTrace = memo(
 					strokeWidth="0.5"
 					vectorEffect="non-scaling-stroke"
 				/>
-				{cutLine !== null ? (
+				{floor !== null ? (
 					<line
 						x1={0}
 						x2={width}
-						y1={y(cutLine)}
-						y2={y(cutLine)}
-						stroke="var(--down)"
+						y1={y(floor)}
+						y2={y(floor)}
+						stroke="var(--warn)"
 						strokeDasharray="3 2"
 						strokeWidth="0.6"
 						vectorEffect="non-scaling-stroke"

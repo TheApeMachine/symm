@@ -1,10 +1,18 @@
 import "@perspective-dev/viewer/dist/css/themes.css";
 
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
+import { Agent } from "#/components/workbench/agent";
 import {
 	type WarehouseClient,
 	warehouseClient,
@@ -20,6 +28,44 @@ const PerspectiveViewer = lazy(() =>
 		default: module.PerspectiveViewer,
 	})),
 );
+
+/*
+ViewerWithAgent mounts the Perspective surface and opts its element into the
+LM Studio agent once the custom element is in the DOM. The React wrapper does
+not forward a ref to that element.
+*/
+const ViewerWithAgent = ({
+	client,
+	table,
+}: {
+	client: WarehouseClient;
+	table: string;
+}) => {
+	const host = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		const viewer = host.current?.querySelector("perspective-viewer") as
+			| { agentConfig: (config: unknown) => void }
+			| null
+			| undefined;
+
+		if (!viewer) {
+			return;
+		}
+
+		void Agent.configure(viewer);
+	}, []);
+
+	return (
+		<div ref={host} className="absolute inset-0 h-full w-full">
+			<PerspectiveViewer
+				client={client}
+				config={{ table, theme: "Pro Dark" }}
+				className="h-full w-full"
+			/>
+		</div>
+	);
+};
 
 /*
 opening picks the table the surface starts on.
@@ -177,12 +223,7 @@ export const Workbench = () => {
 
 			<div className="relative min-h-0 flex-1">
 				<Suspense fallback={null}>
-					<PerspectiveViewer
-						key={table}
-						client={client}
-						config={{ table, theme: "Pro Dark" }}
-						className="absolute inset-0 h-full w-full"
-					/>
+					<ViewerWithAgent key={table} client={client} table={table} />
 				</Suspense>
 			</div>
 		</Flex.Column>

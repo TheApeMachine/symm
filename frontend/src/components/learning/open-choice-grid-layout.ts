@@ -8,7 +8,6 @@ import {
 	EVerticalAnchorPoint,
 	easing,
 	FastBandRenderableSeries,
-	FastLineRenderableSeries,
 	GenericAnimation,
 	type I2DSubSurfaceOptions,
 	type IRenderableSeries,
@@ -84,40 +83,18 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 	}
 
 	private lotIdFromSeriesName(name: string) {
-		return name.replace(/::(shadow|stop-band|shadow-band)$/, "");
+		return name.replace(/::stop-band$/, "");
 	}
 
 	private isCompanion(rs: { dataSeries?: { dataSeriesName?: string } | null }) {
 		const name = this.seriesName(rs);
-		return (
-			name.includes("::shadow") ||
-			name.includes("::stop-band") ||
-			name.includes("::shadow-band")
-		);
+		return name.includes("::stop-band");
 	}
 
 	private findByName(name: string) {
 		return this.parentSurface.renderableSeries
 			.asArray()
 			.find((item) => this.seriesName(item) === name);
-	}
-
-	private attachCompanionLine(
-		subChart: SciChartSubSurface,
-		source: IRenderableSeries | undefined,
-		dashed: boolean,
-	) {
-		if (!source?.dataSeries) return;
-
-		subChart.renderableSeries.add(
-			new FastLineRenderableSeries(this.parentSurface.webAssemblyContext2D, {
-				dataSeries: source.dataSeries,
-				stroke: source.stroke,
-				strokeThickness: source.strokeThickness,
-				strokeDashArray: dashed ? [6, 4] : undefined,
-			}),
-		);
-		source.isVisible = false;
 	}
 
 	private attachCompanionBand(
@@ -239,17 +216,6 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 			this.findByName(`${lotId}::stop-band`),
 			false,
 			0,
-		);
-		this.attachCompanionBand(
-			subChart,
-			this.findByName(`${lotId}::shadow-band`),
-			true,
-			subChart.renderableSeries.size() > 1 ? 1 : 0,
-		);
-		this.attachCompanionLine(
-			subChart,
-			this.findByName(`${lotId}::shadow`),
-			true,
 		);
 		this.attachTip(subChart, lotId);
 

@@ -12,6 +12,7 @@ import (
 	"github.com/theapemachine/nomagique/data"
 
 	"github.com/bytedance/sonic"
+	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -205,6 +206,12 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 		update.NewAssets[pair.Base] = spot.AssetInfo{AltName: pair.Base}
 		update.NewAssets[pair.Quote] = spot.AssetInfo{AltName: pair.Quote}
 
+		var tick *sdkdecimal.Decimal
+
+		if pair.TickSize != nil {
+			tick, _ = sdkdecimal.NewFromString(pair.TickSize.String())
+		}
+
 		update.NewPairs[pair.Base+pair.Quote] = spot.AssetPair{
 			WSName:        pair.Symbol,
 			Base:          pair.Base,
@@ -212,7 +219,7 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 			PairDecimals:  pair.PricePrecision,
 			LotDecimals:   pair.QtyPrecision,
 			LotMultiplier: 1,
-			TickSize:      mustToSDK(pair.TickSize),
+			TickSize:      tick,
 		}
 	}
 

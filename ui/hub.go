@@ -42,34 +42,22 @@ func runningGoTest() bool {
 }
 
 type Hub struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	app        *fiber.App
-	listenAddr string
-	routes     *Routes
-	queue      *lf.Queue[[]byte]
-	conn       atomic.Pointer[websocket.Conn]
-	connected  atomic.Bool
-	// connectedSince is the monotonic instant the most recent connection was
-	// established. The writer treats a connection within the grace window as
-	// active even if the `connected` flag has already been cleared, so the
-	// first ticks after a dashboard attaches are not silently dropped.
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	app            *fiber.App
+	listenAddr     string
+	routes         *Routes
+	queue          *lf.Queue[[]byte]
+	conn           atomic.Pointer[websocket.Conn]
+	connected      atomic.Bool
 	connectedSince atomic.Int64
 	callbacks      []func()
 	commit         atomic.Value
 	store          *store.Client
-	exiter         Exiter
 	streams        map[string]context.CancelFunc
 	streamGen      map[string]uint64
 	nextStream     uint64
-}
-
-/*
-Exiter closes a dashboard-commanded lot on the desk.
-*/
-type Exiter interface {
-	Exit(symbol string, book string) error
 }
 
 /*
@@ -256,11 +244,12 @@ without blocking: no client skips the frame; a full queue drops the oldest.
 p must be a fresh buffer.
 */
 func (hub *Hub) Write(p []byte) (n int, err error) {
-	if !hub.active() {
+	if len(p) == 0 || !hub.active() {
 		return len(p), nil
 	}
 
 	cap := uint64(system.Cfg.UI.WebSocket.QueueFrames)
+
 	for hub.queue.Length() >= cap {
 		if _, ok := hub.queue.Dequeue(); !ok {
 			break
@@ -275,7 +264,7 @@ func (hub *Hub) Write(p []byte) (n int, err error) {
 WriteJSON marshals one envelope object and fans it to the dashboard.
 */
 func (hub *Hub) WriteJSON(frame map[string]any) {
-	if hub == nil || frame == nil || !hub.active() {
+	if frame == nil || !hub.active() {
 		return
 	}
 
@@ -304,11 +293,12 @@ produced tick would otherwise be dropped and a freshly-attached dashboard would
 show no metrics until the next symbol-bearing tick.
 */
 func (hub *Hub) active() bool {
-	if hub.connected.Load() {
+	if hub.connected.Load() && hub.conn.Load() != nil {
 		return true
 	}
 
 	since := hub.connectedSince.Load()
+
 	if since == 0 {
 		return false
 	}
@@ -325,16 +315,6 @@ RegisterCallback registers a callback to be called when a new websocket connecti
 */
 func (hub *Hub) RegisterCallback(callback func()) {
 	hub.callbacks = append(hub.callbacks, callback)
-}
-
-/*
-HandleCommit registers the function that stores a labelled training sample.
-*/
-/*
-Exiter registers the desk serving position.exit commands.
-*/
-func (hub *Hub) Exiter(exiter Exiter) {
-	hub.exiter = exiter
 }
 
 func (hub *Hub) cancelStream(kind string) {
@@ -448,35 +428,6 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		delete(patch, "type")
 		if system.Cfg != nil && system.Cfg.Learning != nil {
 			system.Cfg.Learning.ApplyResonance(patch)
-		}
-	case "position.exit":
-		if hub.exiter == nil {
-			return errnie.Error(errnie.Err(
-				errnie.ServiceUnavailable,
-				"[hub] position.exit command with no desk: "+string(payload),
-				nil,
-			))
-		}
-
-		if request.Symbol == "" {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"[hub] position.exit command needs a symbol: "+string(payload),
-				nil,
-			))
-		}
-
-		book := request.Book
-		if book == "" {
-			if request.Virtual {
-				book = "virtual"
-			} else {
-				book = "paper"
-			}
-		}
-
-		if err := hub.exiter.Exit(request.Symbol, book); err != nil {
-			return errnie.Error(err)
 		}
 	case "hindsight":
 	case "s3":

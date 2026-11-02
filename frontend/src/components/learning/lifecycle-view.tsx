@@ -24,6 +24,7 @@ import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import { stateTone } from "#/lib/stop-telemetry";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -552,8 +553,7 @@ const moneyText = (value: number) =>
 
 /*
 ClosedHero is the one place the settled result is stated: dollars first,
-percent once, exit reason once. Stop A/B sits beside it — everything else
-that repeated the same loss % is gone.
+percent once, exit reason once, with the official exit mark beside it.
 */
 const ClosedHero = ({ life }: { life: Lifecycle }) => {
 	const outcome = life.outcome;
@@ -561,14 +561,15 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 
 	const verdict = closedVerdict(life);
 	const money = outcome.money;
-	const structural = life.official_exit_pct;
-	const learning = life.learning_exit_pct;
-	const hasCompare =
-		structural !== null &&
-		structural !== undefined &&
-		learning !== null &&
-		learning !== undefined;
-	const edge = hasCompare ? learning - structural : null;
+	const exitPct = life.official_exit_pct;
+	const stop = life.stop_state;
+	const stopState = stop?.state;
+	const exitReason =
+		life.exit_trigger && life.exit_trigger !== ""
+			? formatExitTrigger(life.exit_trigger)
+			: stop?.exit_reason
+				? formatExitTrigger(stop.exit_reason)
+				: null;
 	const triggers =
 		(outcome.triggers ?? []).map(formatExitTrigger).filter(Boolean).join(" · ") ||
 		(life.exit_trigger ? formatExitTrigger(life.exit_trigger) : "—");
@@ -637,7 +638,7 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 				</Flex.Column>
 
 				<Flex.Column
-					data-l="lifecycle-stop-compare"
+					data-l="lifecycle-stop-exit"
 					className="min-w-[16rem] flex-1 max-w-md rounded border border-(--line) bg-(--surface)"
 				>
 					<Flex.Row
@@ -645,60 +646,43 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 						justify="between"
 						className="h-7 px-3 border-b border-(--line) text-[10px] font-bold uppercase tracking-wider text-(--f3)"
 					>
-						<Flex.Row align="center" gap={1}>
-							<Scale className="w-3.5 h-3.5 text-(--info)" />
-							<span>Stop A / B</span>
-						</Flex.Row>
-						{edge === null ? (
-							<Badge size="xxs" variant="disabled" label="no shadow" />
-						) : edge > 0.05 ? (
-							<Badge size="xxs" variant="success" label="learning ahead" />
-						) : edge < -0.05 ? (
-							<Badge size="xxs" variant="brand" label="structural ahead" />
+						<span>Exit</span>
+						{stopState ? (
+							<Badge
+								size="xxs"
+								variant={
+									stateTone(stopState) === "bad"
+										? "error"
+										: stateTone(stopState) === "warn"
+											? "warning"
+											: stateTone(stopState) === "good"
+												? "success"
+												: "info"
+								}
+								label={stopState}
+							/>
 						) : (
-							<Badge size="xxs" variant="disabled" label="tied" />
+							<Badge size="xxs" variant="disabled" label="no stop" />
 						)}
 					</Flex.Row>
-					<Grid cols={2} gap={0} responsive={false} className="divide-x divide-(--line)">
-						<Flex.Column gap={1} className="p-3 min-w-0">
-							<span className="text-[9px] uppercase tracking-wider text-(--f4)">
-								Structural
-							</span>
-							<span
-								className={cn(
-									"text-[18px] font-bold tabular-nums",
-									structural == null ? "text-(--f3)" : tone(structural),
-								)}
-							>
-								{pctMark(structural)}
-							</span>
-						</Flex.Column>
-						<Flex.Column gap={1} className="p-3 min-w-0">
-							<span className="text-[9px] uppercase tracking-wider text-(--f4)">
-								Learning
-							</span>
-							<span
-								className={cn(
-									"text-[18px] font-bold tabular-nums",
-									learning == null ? "text-(--f3)" : tone(learning),
-								)}
-							>
-								{pctMark(learning)}
-							</span>
-						</Flex.Column>
-					</Grid>
-					{edge !== null ? (
-						<Flex.Row
-							justify="between"
-							className="px-3 py-1.5 border-t border-(--line) text-[10px] text-(--f3)"
+					<Flex.Column gap={1} className="p-3 min-w-0">
+						<span className="text-[9px] uppercase tracking-wider text-(--f4)">
+							Official exit
+						</span>
+						<span
+							className={cn(
+								"text-[18px] font-bold tabular-nums",
+								exitPct == null ? "text-(--f3)" : tone(exitPct),
+							)}
 						>
-							<span>shadow − structural</span>
-							<span className={cn("font-bold tabular-nums", tone(edge))}>
-								{edge >= 0 ? "+" : ""}
-								{edge.toFixed(2)}pp
+							{pctMark(exitPct)}
+						</span>
+						{exitReason ? (
+							<span className="text-[10px] leading-snug text-(--f2) wrap-break-word">
+								{exitReason}
 							</span>
-						</Flex.Row>
-					) : null}
+						) : null}
+					</Flex.Column>
 				</Flex.Column>
 			</Flex.Row>
 		</Flex.Column>
@@ -717,12 +701,14 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		(outcome?.mark !== null && outcome?.mark !== undefined
 			? outcome.mark * 100
 			: undefined) ??
+		stop?.peak_pnl ??
 		undefined;
 	const current =
 		outcome?.pnl_pct ??
 		(life.mark != null && life.mark.unrealized_return != null
 			? life.mark.unrealized_return * 100
-			: undefined);
+			: undefined) ??
+		stop?.current_pnl;
 	return {
 		id: life.id,
 		symbol: life.symbol,
@@ -739,22 +725,8 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		outcome_triggers: outcome?.triggers ?? undefined,
 		official_exit_pct: life.official_exit_pct ?? undefined,
 		pnl: outcome?.money ?? undefined,
-		structural: {
-			pnl_trace: life.pnl_trace ?? undefined,
-			state: stop ?? {
-				current_pct: typeof current === "number" ? current : undefined,
-				peak_pct: typeof peak === "number" ? peak : undefined,
-			},
-		},
-		learning: {
-			exit_pct: life.learning_exit_pct ?? undefined,
-			exit_trigger: life.learning_exit_trigger ?? undefined,
-		},
 		pnl_trace: life.pnl_trace ?? undefined,
-		stop_state: stop ?? {
-			current_pct: typeof current === "number" ? current : undefined,
-			peak_pct: typeof peak === "number" ? peak : undefined,
-		},
+		stoploss: stop ?? undefined,
 	};
 };
 

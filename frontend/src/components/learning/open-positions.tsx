@@ -1,14 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import { useLayoutEffect, useMemo, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
 import { onBook, positionReadout } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
-import {
-	openChoiceLotsFromRows,
-	syncOpenChoiceLots,
-} from "#/components/learning/open-choice-trail";
+import { chartHeld } from "#/components/learning/open-choice-draw";
 import { Flex } from "#/components/ui";
 import { comparePositionRows } from "#/lib/frame-position";
 
@@ -32,15 +28,10 @@ export const positionsRevision = (state: Record<string, Position>): string => {
 	return parts.join("|");
 };
 
-/** Open lots, plus learning ghosts that still trail after structural settle. */
+/** Open lots on the selected book. */
 export const chartHeldRow = (row: Record<string, unknown>, book: Book) => {
 	if (!onBook(row, book)) return false;
-	if (!positionReadout(row).closed) return true;
-	const learning =
-		row.learning && typeof row.learning === "object"
-			? (row.learning as Record<string, unknown>)
-			: null;
-	return learning?.active === true;
+	return !positionReadout(row).closed;
 };
 
 export const openLots = (rows: Record<string, unknown>[], book: Book) =>
@@ -57,24 +48,11 @@ export const lotInProfit = (row: Record<string, unknown>) => {
 
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const positionsState = useSelector(signals.positions, (state) => state);
-	const held = useMemo(
-		() =>
-			positionRows(positionsState)
-				.filter((row) => chartHeldRow(row, book))
-				.sort(comparePositionRows),
-		[book, positionsState],
+	const watching = useSelector(signals.positions, (state) =>
+		hasHeld(state as Record<string, Position>, book),
 	);
 
-	const [trailGen, setTrailGen] = useState(0);
-
-	useLayoutEffect(() => {
-		if (syncOpenChoiceLots(openChoiceLotsFromRows(held))) {
-			setTrailGen((gen) => gen + 1);
-		}
-	}, [held]);
-
-	if (held.length === 0) {
+	if (!watching) {
 		return (
 			<Flex.Column
 				align="center"
@@ -103,7 +81,14 @@ export const OpenPositions = () => {
 
 	return (
 		<Flex.Column className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
-			<OpenChoiceChart lots={held} trailGen={trailGen} />
+			<OpenChoiceChart />
 		</Flex.Column>
 	);
+};
+
+const hasHeld = (state: Record<string, Position>, book: Book) => {
+	for (const pos of Object.values(state)) {
+		if (chartHeld(pos, book)) return true;
+	}
+	return false;
 };

@@ -16,7 +16,6 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.10.2
 	github.com/theapemachine/nomagique v0.0.10
-	golang.org/x/time v0.15.0
 	golang.org/x/tools v0.51.0
 )
 

@@ -26,16 +26,19 @@ export const EXIT_TRIGGER_LABEL: Record<string, string> = {
 	"spike retrace": "SPIKE RETRACE",
 	"statistical invalidation stop": "STAT STOP",
 	"entry drag exceeded": "DRAG STOP",
-	// broker/stoploss.go check 1: hard 2pp invalidation cut.
+	// Legacy invalidation / trail strings (history).
 	"invalidation stop": "STOP",
-	// Legacy: physical book liquidity evaporation (removed from stop).
 	"liquidity evaporation": "EVAP",
-	// broker/stoploss.go check 2: damage-ratcheted trailing take-profit.
 	"trailing take-profit": "TRAIL",
 	"ratcheted trailing stop": "TRAIL",
 	"damaged recovery ratcheted stop": "TRAIL",
-	// Legacy: empirical move expiry (removed from stop).
 	"move expired": "EXPIRE",
+	// DynamicStoploss exit reasons (prefix match via formatExitTrigger).
+	"maximum loss reached": "MAX LOSS",
+	"maximum holding time reached": "MAX HOLD",
+	"dynamic floor reached": "FLOOR",
+	"seller cascade": "CASCADE",
+	"tempo exhaustion": "TEMPO",
 	// Gate exit path.
 	"policy exit match": "EXIT",
 };
@@ -68,14 +71,27 @@ export const triggerTone = (trigger: string): "good" | "bad" | "warn" | "neutral
 	if (
 		label.includes("invalidation") ||
 		label.includes("evaporation") ||
-		label.includes("stop") && !label.includes("trailing")
+		label.includes("maximum loss") ||
+		label.includes("seller cascade") ||
+		label.includes("tempo exhaustion") ||
+		(label.includes("stop") && !label.includes("trailing") && !label.includes("dynamic floor"))
 	) {
 		return "bad";
 	}
-	if (label.includes("trailing") || label.includes("harvest") || label.includes("profit")) {
+	if (
+		label.includes("trailing") ||
+		label.includes("harvest") ||
+		label.includes("dynamic floor") ||
+		label.includes("profit")
+	) {
 		return "good";
 	}
-	if (label.includes("expired") || label.includes("expire")) {
+	if (
+		label.includes("expired") ||
+		label.includes("expire") ||
+		label.includes("holding time") ||
+		label.includes("stalled")
+	) {
 		return "warn";
 	}
 	return "neutral";

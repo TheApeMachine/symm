@@ -7,80 +7,69 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/strategy/tokenizer"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
 
-func MakeAction(action Action) *PathBook {
-	return &PathBook{
-		Action:     action.String(),
-		Resistance: 0.75,
-	}
-}
-
-func MakeActionResistance(action Action, resistance float64) *PathBook {
-	return &PathBook{
+func leaf(action Action, resistance float64) *runtime.Decision {
+	return &runtime.Decision{
 		Action:     action.String(),
 		Resistance: resistance,
 	}
 }
 
-func WithTree(f func(*Tree)) func() {
+func withTree(f func(*Tree)) func() {
 	return func() {
-		tree := &Tree{root: iradix.New[*PathBook]()}
+		tree := &Tree{root: iradix.New[*runtime.Decision]()}
 
-		for path, book := range map[string]*PathBook{
-			"R06.R00":                 MakeAction(ActionEnter),
-			"R06.R00/R07.R01":         MakeAction(ActionEnter),
-			"R06.R00/R07.R01/R08.R02": MakeAction(ActionEnter),
-			"R07.R01":                 MakeAction(ActionHold),
-			"R07.R01/R08.R02":         MakeAction(ActionHold),
-			"R07.R01/R08.R02/R09.R03": MakeAction(ActionHold),
-			"R08.R01":                 MakeAction(ActionExit),
-			"R08.R01/R09.R02":         MakeAction(ActionExit),
-			"R08.R01/R09.R02/R10.R03": MakeAction(ActionExit),
-			"R09.R01":                 MakeAction(ActionEnter),
-			"R09.R01/R10.R02":         MakeAction(ActionHold),
-			"R09.R01/R10.R02/R11.R03": MakeAction(ActionExit),
+		for path, decision := range map[string]*runtime.Decision{
+			"R06.R00":                 leaf(ActionEnter, 0.75),
+			"R06.R00/R07.R01":         leaf(ActionEnter, 0.75),
+			"R06.R00/R07.R01/R08.R02": leaf(ActionEnter, 0.75),
+			"R07.R01":                 leaf(ActionHold, 0.75),
+			"R07.R01/R08.R02":         leaf(ActionHold, 0.75),
+			"R07.R01/R08.R02/R09.R03": leaf(ActionHold, 0.75),
+			"R08.R01":                 leaf(ActionExit, 0.75),
+			"R08.R01/R09.R02":         leaf(ActionExit, 0.75),
+			"R08.R01/R09.R02/R10.R03": leaf(ActionExit, 0.75),
+			"R09.R01":                 leaf(ActionEnter, 0.75),
+			"R09.R01/R10.R02":         leaf(ActionHold, 0.75),
+			"R09.R01/R10.R02/R11.R03": leaf(ActionExit, 0.75),
 		} {
-			tree.root, _, _ = tree.root.Insert([]byte(path), book)
+			tree.root, _, _ = tree.root.Insert([]byte(path), decision)
 		}
 
 		f(tree)
 	}
 }
 
-func tokensAt(prefix string, brightness float64) tokenizer.Tokens {
-	tokens := tokenizer.NewTokens()
+func tokensAt(prefix string, brightness float64) runtime.Tokens {
+	tokens := runtime.NewTokens()
 
 	for segment := range strings.SplitSeq(prefix, "/") {
-		tokens = tokens.Append(tokenizer.NewToken([]string{segment}, brightness))
+		tokens = tokens.Append(runtime.NewToken([]string{segment}, brightness))
 	}
 
 	return tokens
 }
 
 func TestPredict(t *testing.T) {
-	Convey("Setup", t, WithTree(func(tree *Tree) {
+	Convey("Setup", t, withTree(func(tree *Tree) {
 		Convey("When the cut is shorter than min path length", func() {
-			predicted, strength, disagreed := tree.Predict(
-				tokensAt("R06.R00", 1.0), FlatRegime(),
-			)
+			predicted, strength, disagreed := tree.Predict(tokensAt("R06.R00", 1.0))
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionNone)
 			So(strength, ShouldEqual, 0.0)
 		})
 
-		Convey("When the flat book asks for enter leaves", func() {
+		Convey("When enter leaves share a prefix", func() {
 			for _, prefix := range []string{
 				"R06.R00/R07.R01",
 				"R06.R00/R07.R01/R08.R02",
 			} {
 				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(
-						tokensAt(prefix, 1.0), FlatRegime(),
-					)
+					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 1.0))
 
 					So(disagreed, ShouldBeFalse)
 					So(predicted, ShouldEqual, ActionEnter)
@@ -88,9 +77,7 @@ func TestPredict(t *testing.T) {
 				})
 
 				Convey(fmt.Sprintf("And brightness for %s is not enough", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(
-						tokensAt(prefix, 0.5), FlatRegime(),
-					)
+					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 0.5))
 
 					So(disagreed, ShouldBeFalse)
 					So(predicted, ShouldEqual, ActionNone)
@@ -99,15 +86,13 @@ func TestPredict(t *testing.T) {
 			}
 		})
 
-		Convey("When an open lot asks for hold leaves", func() {
+		Convey("When hold leaves share a prefix", func() {
 			for _, prefix := range []string{
 				"R07.R01/R08.R02",
 				"R07.R01/R08.R02/R09.R03",
 			} {
 				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(
-						tokensAt(prefix, 1.0), OpenRegime(),
-					)
+					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 1.0))
 
 					So(disagreed, ShouldBeFalse)
 					So(predicted, ShouldEqual, ActionHold)
@@ -116,15 +101,13 @@ func TestPredict(t *testing.T) {
 			}
 		})
 
-		Convey("When an open lot asks for exit leaves", func() {
+		Convey("When exit leaves share a prefix", func() {
 			for _, prefix := range []string{
 				"R08.R01/R09.R02",
 				"R08.R01/R09.R02/R10.R03",
 			} {
 				Convey(fmt.Sprintf("And brightness for %s is enough", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(
-						tokensAt(prefix, 1.0), OpenRegime(),
-					)
+					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 1.0))
 
 					So(disagreed, ShouldBeFalse)
 					So(predicted, ShouldEqual, ActionExit)
@@ -133,84 +116,29 @@ func TestPredict(t *testing.T) {
 			}
 		})
 
-		Convey("When hold and exit share a prefix under an open lot", func() {
-			for prefix, action := range map[string]Action{
-				"R09.R01/R10.R02":         ActionNone,
-				"R09.R01/R10.R02/R11.R03": ActionExit,
-			} {
-				predicted, strength, disagreed := tree.Predict(
-					tokensAt(prefix, 1.0), OpenRegime(),
-				)
-
-				if action == ActionNone {
-					So(disagreed, ShouldBeTrue)
-					So(strength, ShouldEqual, 0.0)
-				} else {
-					So(disagreed, ShouldBeFalse)
-					So(strength, ShouldBeGreaterThan, 0.0)
-				}
-
-				So(predicted, ShouldEqual, action)
-			}
-		})
-
-		Convey("When the same mixed prefix is asked while flat", func() {
+		Convey("When hold and exit share a prefix", func() {
 			predicted, strength, disagreed := tree.Predict(
-				tokensAt("R09.R01/R10.R02", 1.0), FlatRegime(),
+				tokensAt("R09.R01/R10.R02", 1.0),
 			)
 
-			So(disagreed, ShouldBeFalse)
+			So(disagreed, ShouldBeTrue)
 			So(predicted, ShouldEqual, ActionNone)
 			So(strength, ShouldEqual, 0.0)
 		})
 	}))
 }
 
-func TestPredictRegime(t *testing.T) {
-	Convey("Regime ignores out-of-band leaves under the same cut", t, func() {
-		tree := &Tree{root: iradix.New[*PathBook]()}
-		path := "R12.R00/R13.R01"
-
-		tree.root, _, _ = tree.root.Insert([]byte(path), MakeAction(ActionEnter))
-		tree.root, _, _ = tree.root.Insert(
-			[]byte(path+"/R14.R02"), MakeAction(ActionExit),
-		)
-
-		Convey("Flat book keeps enter despite a descendant exit", func() {
-			predicted, strength, disagreed := tree.Predict(
-				tokensAt(path, 1.0), FlatRegime(),
-			)
-
-			So(disagreed, ShouldBeFalse)
-			So(predicted, ShouldEqual, ActionEnter)
-			So(strength, ShouldBeGreaterThan, 0.0)
-		})
-
-		Convey("Open lot keeps exit despite an ancestor enter", func() {
-			predicted, strength, disagreed := tree.Predict(
-				tokensAt(path, 1.0), OpenRegime(),
-			)
-
-			So(disagreed, ShouldBeFalse)
-			So(predicted, ShouldEqual, ActionExit)
-			So(strength, ShouldBeGreaterThan, 0.0)
-		})
-	})
-}
-
 func TestPredictPrune(t *testing.T) {
 	Convey("Predict prunes high-resistance paths", t, func() {
 		Convey("When no leaf counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*PathBook]()}
+			tree := &Tree{root: iradix.New[*runtime.Decision]()}
 			path := "R06.R00/R07.R01"
 
 			tree.root, _, _ = tree.root.Insert(
-				[]byte(path), MakeActionResistance(ActionEnter, 0.85),
+				[]byte(path), leaf(ActionEnter, 0.85),
 			)
 
-			predicted, strength, disagreed := tree.Predict(
-				tokensAt(path, 1.0), FlatRegime(),
-			)
+			predicted, strength, disagreed := tree.Predict(tokensAt(path, 1.0))
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionNone)
@@ -220,18 +148,18 @@ func TestPredictPrune(t *testing.T) {
 		})
 
 		Convey("When a sibling still counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*PathBook]()}
+			tree := &Tree{root: iradix.New[*runtime.Decision]()}
 			heavy := "R06.R00/R07.R01"
 			light := "R06.R00/R07.R01/R08.R02"
 
 			tree.root, _, _ = tree.root.Insert(
-				[]byte(heavy), MakeActionResistance(ActionEnter, 0.85),
+				[]byte(heavy), leaf(ActionEnter, 0.85),
 			)
-			tree.root, _, _ = tree.root.Insert([]byte(light), MakeAction(ActionEnter))
+			tree.root, _, _ = tree.root.Insert(
+				[]byte(light), leaf(ActionEnter, 0.75),
+			)
 
-			predicted, strength, disagreed := tree.Predict(
-				tokensAt(heavy, 1.0), FlatRegime(),
-			)
+			predicted, strength, disagreed := tree.Predict(tokensAt(heavy, 1.0))
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionEnter)
@@ -246,53 +174,40 @@ func TestPredictPrune(t *testing.T) {
 
 func TestInsertMinPathLength(t *testing.T) {
 	Convey("Insert rejects cuts shorter than min path length", t, func() {
-		tree := &Tree{root: iradix.New[*PathBook]()}
+		tree := &Tree{root: iradix.New[*runtime.Decision]()}
 		min := system.Cfg.Learning.MinPathLength
 
 		So(min, ShouldBeGreaterThan, 0)
 
-		tree.Insert("R06.R00", MakeAction(ActionEnter))
+		tree.Insert("R06.R00", leaf(ActionEnter, 0.75))
 		_, ok := tree.root.Get([]byte("R06.R00"))
 		So(ok, ShouldBeFalse)
 
-		tree.Insert("R06.R00/R07.R01", MakeAction(ActionEnter))
+		tree.Insert("R06.R00/R07.R01", leaf(ActionEnter, 0.75))
 		_, ok = tree.root.Get([]byte("R06.R00/R07.R01"))
 		So(ok, ShouldBeTrue)
 	})
 }
 
 func TestEnsureSeedsResistanceWithoutWipe(t *testing.T) {
-	Convey("new leaves start at 0.5 and Ensure does not reset a scored book", t, func() {
-		tree := &Tree{root: iradix.New[*PathBook]()}
+	Convey("new leaves start at seedResistance and Ensure does not reset", t, func() {
+		tree := &Tree{root: iradix.New[*runtime.Decision]()}
 		path := "R06.R00/R07.R01"
 
 		tree.Ensure(path, ActionEnter)
-		book, ok := tree.root.Get([]byte(path))
+		decision, ok := tree.root.Get([]byte(path))
 		So(ok, ShouldBeTrue)
-		So(book.Resistance, ShouldAlmostEqual, InitialPathResistance, 0.001)
-		So(PaperEligible(book.Resistance), ShouldBeFalse)
+		So(decision.Resistance, ShouldAlmostEqual, seedResistance, 0.001)
+		So(decision.Resistance > system.Cfg.Learning.PaperEligibleResistance, ShouldBeTrue)
 
 		tree.Update(path, -0.05)
 		afterWin, ok := tree.root.Get([]byte(path))
 		So(ok, ShouldBeTrue)
 		So(afterWin.Resistance, ShouldAlmostEqual, 0.45, 0.001)
-		So(PaperEligible(afterWin.Resistance), ShouldBeFalse)
 
 		tree.Ensure(path, ActionEnter)
 		kept, ok := tree.root.Get([]byte(path))
 		So(ok, ShouldBeTrue)
 		So(kept.Resistance, ShouldAlmostEqual, 0.45, 0.001)
-	})
-}
-
-func TestPathFromStorageKey(t *testing.T) {
-	Convey("PathFromStorageKey strips store prefix and action leaf", t, func() {
-		So(
-			PathFromStorageKey("model/paths/R01/R02/enter.bin"),
-			ShouldEqual,
-			"R01/R02",
-		)
-		So(PathFromStorageKey("model/paths/enter.bin"), ShouldEqual, "")
-		So(PathFromStorageKey("other/R01/enter.bin"), ShouldEqual, "")
 	})
 }

@@ -22,6 +22,7 @@ type Resonance struct {
 
 func NewResonance() *Resonance {
 	viper.SetDefault("resonance.layers", 3)
+	viper.SetDefault("resonance.learning_rate", 0.01)
 
 	return &Resonance{
 		Gate:         viper.GetBool("resonance.gate"),
