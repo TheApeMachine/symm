@@ -8,7 +8,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -17,6 +16,51 @@ type Execution struct {
 	Type     string          `json:"type"`
 	Data     []ExecutionData `json:"data"`
 	Sequence int             `json:"sequence"`
+}
+
+func (execution *Execution) MarshalJSON() ([]byte, error) {
+	type alias Execution
+	return sonic.Marshal((*alias)(execution))
+}
+
+func (execution *Execution) UnmarshalJSON(data []byte) error {
+	type alias Execution
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*execution = Execution(decoded)
+	return nil
+}
+
+/*
+ExecutionSubscription requests authenticated order and fill updates.
+*/
+type ExecutionSubscription struct {
+	Token string
+}
+
+func NewExecutionSubscription(token string) ExecutionSubscription {
+	return ExecutionSubscription{Token: token}
+}
+
+func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
+	params := map[string]any{
+		"channel":     "executions",
+		"snap_orders": true,
+		"snap_trades": true,
+	}
+
+	if subscription.Token != "" {
+		params["token"] = subscription.Token
+	}
+
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": params,
+	})
 }
 
 type ExecutionData struct {
@@ -92,11 +136,6 @@ func floatField(value any) float64 {
 	}
 }
 
-func (execution *Execution) MarshalJSON() ([]byte, error) {
-	type alias Execution
-	return sonic.Marshal((*alias)(execution))
-}
-
 func (execution *Execution) Action() string {
 	return execution.Channel
 }
@@ -105,7 +144,7 @@ func (execution *Execution) IsSuccess() bool {
 	return len(execution.Data) > 0
 }
 
-func NewExecutionFromMap(model datura.Map[any]) *Execution {
+func NewExecutionFromMap(model map[string]any) json.Marshaler {
 	var execType string
 	var orderStatus string
 

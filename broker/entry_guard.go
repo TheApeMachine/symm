@@ -43,13 +43,13 @@ func openDragCapPct(price *Price, symbol string) float64 {
 		}
 	}
 
-	fee := price.Fee(symbol).InexactFloat64()
+	if fee := price.Fee(symbol); fee != nil {
+		if rate := fee.InexactFloat64(); rate > 0 {
+			floor := 2 * rate
 
-	if fee > 0 {
-		floor := 2 * fee
-
-		if cap < floor {
-			cap = floor
+			if cap < floor {
+				cap = floor
+			}
 		}
 	}
 

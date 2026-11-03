@@ -4,13 +4,11 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -74,8 +72,10 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			training.lightBroker(symbol, regions)
 
 			open := false
-			if position := training.desk.Position(symbol); position != nil {
-				open = position.ClosedAt == nil
+
+			for range training.desk.Positions(broker.TierTypePaper, symbol) {
+				open = true
+				break
 			}
 
 			training.grid.Emit(regions, open)
@@ -95,13 +95,12 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 	wg.Wait()
 
-	focus := types.Focus()
-	if regions, ok := envelope.Regions[focus]; ok {
-		ui.Focus("regions", focus, regions)
+	if payload := envelope.Publish("regions"); len(payload) > 0 {
+		ui.UI.Write(payload)
 	}
 
-	if path, ok := envelope.Paths[focus]; ok {
-		ui.Focus("paths", focus, path)
+	if payload := envelope.Publish("paths"); len(payload) > 0 {
+		ui.UI.Write(payload)
 	}
 
 	return envelope
@@ -126,31 +125,16 @@ func (training *Training) restoreSequencer(symbol string, state tokenizer.Sequen
 	training.sequencers.Store(symbol, seq)
 }
 
-func (training *Training) persistSequencer(symbol string, seq *tokenizer.Sequencer) {
-	if symbol == "" || seq == nil {
-		return
-	}
-
-	if err := training.catalog.Persist(
-		training.Context(), training.client, symbol, seq.State(),
-	); err != nil {
-		errnie.Error(err)
-	}
-}
-
 func (training *Training) ResetSequencer(symbol string) {
-	if symbol == "" {
-		return
-	}
-
 	loaded, ok := training.sequencers.Load(symbol)
+
 	if !ok {
 		return
 	}
 
 	seq := loaded.(*tokenizer.Sequencer)
 	seq.Reset()
-	training.persistSequencer(symbol, seq)
+	training.catalog.Persist(training.Context(), training.client, symbol, seq.State())
 }
 
 // lightBroker paints volume / day / spread / book oracle sides before Emit.
@@ -208,7 +192,7 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 
 	seq := training.Sequencer(symbol)
 	cut := seq.Step(token, brightness)
-	training.persistSequencer(symbol, seq)
+	training.catalog.Persist(training.Context(), training.client, symbol, seq.State())
 
 	return &cut
 }

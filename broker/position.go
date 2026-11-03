@@ -13,13 +13,14 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type Position struct {
 	*runtime.System
 	mu              sync.Mutex
-	transport       Transport
+	transport       network.Client
 	price           *Price
 	tierKey         string
 	onSettled       func(*Position)
@@ -54,7 +55,7 @@ func NewPosition(
 	tierKey string,
 	path string,
 	price *Price,
-	transport Transport,
+	transport network.Client,
 	onSettled func(*Position),
 ) *Position {
 	return &Position{
@@ -79,6 +80,11 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
+	// Settled lots keep their exit mark — live ticks must not rewrite them.
+	if position.ClosedAt != nil {
+		return
+	}
+
 	if mark != nil {
 		position.Mark = mark
 	}
@@ -86,6 +92,16 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	if position.price != nil {
 		now := time.Now().UTC()
 		position.UpdatedAt = &now
+
+		// Virtual lots have no venue fills — seed a book-derived entry for mark.
+		// Paper/real wait for the venue execution frame.
+		if position.transport == nil && len(position.Fills) == 0 &&
+			position.EntryOrder != nil && position.EntryOrder.Volume != "" {
+			if parsed, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil &&
+				parsed.Sign() > 0 {
+				position.seedEntry(&parsed, position.OpenedAt)
+			}
+		}
 
 		var qty *decimal.Decimal
 
@@ -147,6 +163,10 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		}
 
 		fee := position.price.Fee(position.Symbol)
+		if fee == nil {
+			zero := decimal.Zero
+			fee = &zero
+		}
 
 		position.ExitVWAP = position.price.ExitVWAP(position.Symbol, qty)
 		position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
@@ -162,6 +182,9 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		if newPnL != nil {
 			position.PnL = newPnL
 			position.PnLPct = newPnLPct
+		} else {
+			// Bid walk can fail on thin books; chart still needs a Y from mark.
+			position.markPnL(entry, qty)
 		}
 
 		if position.PnLPct != nil && position.Stoploss == nil && position.ClosedAt == nil {
@@ -173,6 +196,8 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	if position.ClosedAt != nil || position.Stoploss == nil || position.PnLPct == nil {
 		return
 	}
+
+	position.Stoploss.rewire()
 
 	pnlPct, _ := position.PnLPct.Float64()
 	position.Stoploss.Update(pnlPct)
@@ -215,13 +240,13 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 	}
 
 	if qty == nil || qty.Sign() <= 0 {
-		var why string
-		qty, why = position.price.Allocate(position.Symbol, wallet)
+		var err error
+		qty, err = position.price.Allocate(position.Symbol, wallet)
 
-		if qty == nil || qty.Sign() <= 0 {
-			reason := why
-			if reason == "" {
-				reason = "cannot size " + position.Symbol
+		if err != nil || qty == nil || qty.Sign() <= 0 {
+			reason := "cannot size " + position.Symbol
+			if err != nil {
+				reason = err.Error()
 			}
 
 			// Thin books / venue floors that do not fit budget or exit depth
@@ -252,26 +277,101 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 	position.EntryTick = data.Tick.Load()
 	position.EntryPath = path
 
+	if position.transport == nil && len(position.Fills) == 0 {
+		position.seedEntry(qty, now)
+	}
+
 	return nil
+}
+
+/*
+Owns reports whether this execution belongs to the lot's entry or exit order.
+*/
+func (position *Position) Owns(execution kraken.ExecutionData) bool {
+	if execution.ClientOrderID == "" {
+		return false
+	}
+
+	if position.EntryOrder != nil &&
+		position.EntryOrder.ClOrdId == execution.ClientOrderID {
+		return true
+	}
+
+	if position.ExitOrder != nil &&
+		position.ExitOrder.ClOrdId == execution.ClientOrderID {
+		return true
+	}
+
+	return false
+}
+
+// markPnL sets close-now style PnL from mark/exit VWAP when the bid walk fails.
+func (position *Position) markPnL(entry, qty *decimal.Decimal) {
+	if entry == nil || entry.Sign() <= 0 {
+		return
+	}
+
+	mark := position.Mark
+	if mark == nil || mark.Sign() <= 0 {
+		mark = position.ExitVWAP
+	}
+
+	if mark == nil || mark.Sign() <= 0 {
+		return
+	}
+
+	diff := mark.Sub(*entry)
+	pct := diff.Div(*entry).Mul(decimal.NewFromInt(100))
+	position.PnLPct = &pct
+
+	if qty != nil && qty.Sign() > 0 {
+		pnl := diff.Mul(*qty)
+		position.PnL = &pnl
+	}
+}
+
+// seedEntry records a synthetic buy fill from EntryCost or the touch ask.
+func (position *Position) seedEntry(qty *decimal.Decimal, at time.Time) {
+	if position.price == nil || qty == nil || qty.Sign() <= 0 {
+		return
+	}
+
+	var entry *decimal.Decimal
+
+	if fill, err := position.price.EntryCost(position.Symbol, qty); err == nil &&
+		fill != nil && fill.EntryPrice != nil && fill.EntryPrice.Sign() > 0 {
+		entry = fill.EntryPrice
+	}
+
+	if entry == nil {
+		entry = position.price.TouchAsk(position.Symbol)
+	}
+
+	if entry == nil || entry.Sign() <= 0 {
+		return
+	}
+
+	position.Fills = append(position.Fills, &kraken.ExecutionData{
+		Symbol:      position.Symbol,
+		Side:        "buy",
+		LastQty:     qty,
+		CumQty:      qty,
+		AvgPrice:    entry,
+		LastPrice:   entry,
+		ExecType:    "trade",
+		OrderStatus: "filled",
+		Timestamp:   at,
+	})
 }
 
 /*
 Exit records the sell and reprices from the bid book.
 */
-func (position *Position) Exit(path string) error {
+func (position *Position) Exit() error {
 	position.mu.Lock()
 
-	if path == "" && position.ExitTrigger == "" {
-		position.mu.Unlock()
-		return errnie.Err(
-			errnie.NotFound,
-			"[position.Exit] missing path for "+position.Symbol,
-			nil,
-		)
-	}
-
 	if position.ExitTrigger == "" {
-		position.ExitTrigger = "policy exit match " + path
+		position.ExitTrigger = "policy exit match " + position.ExitPath
 		position.OutcomeTriggers = []string{position.ExitTrigger}
 	}
 
@@ -282,10 +382,6 @@ func (position *Position) Exit(path string) error {
 
 	now := time.Now().UTC()
 	position.ClosedAt = &now
-
-	if path != "" && path != position.EntryPath {
-		position.ExitPath = path
-	}
 
 	position.ExitTick = data.Tick.Load()
 	mark := position.Mark

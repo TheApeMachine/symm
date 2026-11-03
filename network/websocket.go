@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -223,6 +224,52 @@ func (client *WebsocketClient) Write(message []byte) error {
 	}
 
 	return nil
+}
+
+func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
+	resp, err := NewREST().Post(url, body)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if resp == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] empty post response", nil,
+		))
+	}
+
+	return resp.Body(), nil
+}
+
+func (client *WebsocketClient) Watch(
+	url string,
+	body any,
+	callback func(json.Unmarshaler),
+) {
+	go func() {
+		for {
+			select {
+			case <-client.Context().Done():
+				return
+			default:
+			}
+
+			response, err := client.Post(url, body)
+
+			if err != nil {
+				continue
+			}
+
+			var data json.Unmarshaler
+
+			if err := json.Unmarshal(response, &data); err != nil {
+				continue
+			}
+
+			callback(data)
+		}
+	}()
 }
 
 func (client *WebsocketClient) writePing() error {

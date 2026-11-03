@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
@@ -50,8 +50,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
+			price := data.Price.InexactFloat64()
+			qty := data.Qty.InexactFloat64()
 
 			if price <= 0 || qty <= 0 {
 				return
@@ -59,13 +59,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			var mid float64
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				midDec := book.Midpoint()
 				if midDec == nil {
 					return
 				}
 
-				mid = midDec.Float64()
+				mid = midDec.InexactFloat64()
 			})
 
 			if mid <= 0 {

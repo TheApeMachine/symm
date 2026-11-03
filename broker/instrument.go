@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 )
@@ -29,7 +29,7 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public    Transport
+	public    network.Client
 	snapshot  *kraken.Instrument
 	Level3    *sync.Map
 	cache     *sync.Map
@@ -50,7 +50,7 @@ NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	ctx context.Context, public Transport,
+	ctx context.Context, public network.Client,
 ) *Instrument {
 	instrument := &Instrument{
 		public:    public,

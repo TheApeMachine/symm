@@ -5,7 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestAddOrderRequestJSONRoundTrip(t *testing.T) {

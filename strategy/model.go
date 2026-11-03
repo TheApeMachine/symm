@@ -51,7 +51,13 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		return nil
 	}
 
-	model.flushSettled(envelope)
+	for _, tier := range []broker.TierType{
+		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
+	} {
+		for position := range model.desk.Pending(tier) {
+			model.Exit(position, model.exitCut(envelope, position.Symbol, position))
+		}
+	}
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -65,11 +71,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			return
 		}
 
-		if ui.UI != nil && ui.UI.Active() {
-			ui.UI.WriteJSON(map[string]any{
-				"decisions": map[string]any{decision.Symbol: decision},
-			})
-		}
+		ui.UI.WriteJSON(map[string]any{
+			"decisions": map[string]any{decision.Symbol: decision},
+		})
 	}
 
 	for symbol, cut := range envelope.Paths {
@@ -84,6 +88,16 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			defer wg.Done()
 
 			path := cut.String()
+			var open []*broker.Position
+
+			for _, tt := range []broker.TierType{
+				broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
+			} {
+				for position := range model.desk.Positions(tt, symbol) {
+					open = append(open, position)
+				}
+			}
+
 			rez := envelope.Resonance[symbol]
 			learn := system.Cfg.Learning
 			bypass := learn.ResonanceBypass
@@ -150,7 +164,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
 			}
 
-			open := model.openLots(symbol)
 			action, resistance, disagreed := model.tree.Load().Predict(*cut)
 			minEnter := learn.MinEnterZ
 
@@ -241,19 +254,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 	wg.Wait()
 	return envelope
-}
-
-func (model *Model) openLots(symbol string) []*broker.Position {
-	lots := model.desk.Positions(symbol)
-	open := make([]*broker.Position, 0, len(lots))
-
-	for _, lot := range lots {
-		if lot != nil && lot.ClosedAt == nil {
-			open = append(open, lot)
-		}
-	}
-
-	return open
 }
 
 func (model *Model) applyAction(
@@ -450,44 +450,6 @@ func (model *Model) bypassReading(learn *system.Learning) map[string]float64 {
 	return rez
 }
 
-func (model *Model) flushSettled(envelope *runtime.Envelope) {
-	seen := map[string]struct{}{}
-
-	settle := func(position *broker.Position) {
-		if position == nil {
-			return
-		}
-
-		if _, ok := seen[position.Symbol]; ok {
-			return
-		}
-
-		if position.ExitPath != "" {
-			model.desk.ClearPending(position.Symbol)
-			seen[position.Symbol] = struct{}{}
-			return
-		}
-
-		path := model.exitCut(envelope, position.Symbol, position)
-		if path == "" {
-			return
-		}
-
-		model.Exit(position, path)
-		model.desk.ClearPending(position.Symbol)
-		model.resetPath(position.Symbol)
-		seen[position.Symbol] = struct{}{}
-	}
-
-	for position := range model.desk.Pending() {
-		settle(position)
-	}
-
-	for _, position := range model.desk.ClosedVirtuals() {
-		settle(position)
-	}
-}
-
 func (model *Model) exitCut(
 	envelope *runtime.Envelope,
 	symbol string,
@@ -549,4 +511,21 @@ func (model *Model) Exit(position *broker.Position, path string) {
 
 	tree.Update(position.EntryPath, delta)
 	tree.Update(position.ExitPath, delta)
+
+	if position.ClosedAt != nil || model.desk == nil {
+		return
+	}
+
+	var tt broker.TierType
+
+	switch position.Book {
+	case broker.TierTypePaper.String():
+		tt = broker.TierTypePaper
+	case broker.TierTypeReal.String():
+		tt = broker.TierTypeReal
+	default:
+		tt = broker.TierTypeVirtual
+	}
+
+	model.desk.Exit(tt, position)
 }

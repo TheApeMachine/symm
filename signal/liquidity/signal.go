@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
@@ -47,7 +47,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				ok                       bool
 			)
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				bestBid := book.BestBid()
 				bestAsk := book.BestAsk()
 
@@ -57,10 +57,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					return
 				}
 
-				bid = bestBid.Price.Float64()
-				ask = bestAsk.Price.Float64()
-				bidQty = bestBid.Quantity.Float64()
-				askQty = bestAsk.Quantity.Float64()
+				bid = bestBid.Price.InexactFloat64()
+				ask = bestAsk.Price.InexactFloat64()
+				bidQty = bestBid.Quantity.InexactFloat64()
+				askQty = bestAsk.Quantity.InexactFloat64()
 				ok = true
 			})
 

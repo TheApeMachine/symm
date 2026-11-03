@@ -3,19 +3,19 @@ package broker
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type Direction string
@@ -34,9 +34,6 @@ var (
 	decimalTwo         = decimal.NewFromInt(2)
 	decimalThree       = decimal.NewFromInt(3)
 )
-
-// defaultTakerFeePercent is used when the account schedule has no fee for a pair.
-const defaultTakerFeePercent = 0.8
 
 const tickerRefresh = time.Minute
 
@@ -152,12 +149,84 @@ func (price *Price) pollTicker() {
 	}()
 }
 
+/*
+primeNormalizer loads public Assets + AssetPairs (legacy and assetVersion=1)
+so TradeVolume keys like XXRPZUSD resolve to websocket symbols like XRP/USD.
+*/
+func (price *Price) primeNormalizer() bool {
+	if err := price.normalizer.Use(spot.NewREST()); err != nil {
+		price.Error(errnie.Err(
+			errnie.IO,
+			"[price] tradable asset pairs required before trade volume fees",
+			err,
+		))
+		return false
+	}
+
+	return true
+}
+
+/*
+feeSymbol maps a TradeVolume fee key (internal, altname, or ws name) onto the
+instrument's websocket symbol. Matching starts from the desk universe so Kraken
+concat keys like GALAUSD are not mis-split as GAL/AUSD by alias search.
+*/
+func (price *Price) feeSymbol(pair string) string {
+	if pair == "" {
+		return ""
+	}
+
+	if price.Instrument.Has(pair) {
+		return pair
+	}
+
+	compact := strings.ToUpper(strings.ReplaceAll(pair, "/", ""))
+
+	for _, symbol := range price.Instrument.Symbols() {
+		if strings.EqualFold(symbol, pair) ||
+			strings.ToUpper(strings.ReplaceAll(symbol, "/", "")) == compact {
+			return symbol
+		}
+
+		inst := price.Instrument.Pair(symbol)
+		if inst.Base != "" && strings.EqualFold(inst.Base+inst.Quote, pair) {
+			return symbol
+		}
+
+		info, err := price.normalizer.PairInfo(symbol)
+		if err != nil {
+			continue
+		}
+
+		if strings.EqualFold(info.WSName, pair) || strings.EqualFold(info.AltName, pair) {
+			return symbol
+		}
+	}
+
+	// Internal keys (XXRPZUSD) resolve through the primed AssetPairs aliases.
+	if named := price.normalizer.Name(pair); price.Instrument.Has(named) {
+		return named
+	}
+
+	for _, symbol := range price.Instrument.Symbols() {
+		if price.normalizer.Name(symbol) == price.normalizer.Name(pair) {
+			return symbol
+		}
+	}
+
+	return ""
+}
+
 func (price *Price) loadFees() bool {
 	symbols := price.Instrument.Symbols()
 	if len(symbols) == 0 {
 		price.Error(errnie.Err(
 			errnie.Internal, "trade volume fees need a non-empty symbol list", nil,
 		))
+		return false
+	}
+
+	if !price.primeNormalizer() {
 		return false
 	}
 
@@ -182,7 +251,12 @@ func (price *Price) loadFees() bool {
 			continue
 		}
 
-		price.Instrument.RememberFee(price.normalizer.Name(pair), fee.Fee)
+		symbol := price.feeSymbol(pair)
+		if symbol == "" {
+			continue
+		}
+
+		price.Instrument.RememberFee(symbol, fee.Fee)
 		n++
 	}
 
@@ -193,11 +267,30 @@ func (price *Price) loadFees() bool {
 		return false
 	}
 
+	missing := 0
+	for _, symbol := range symbols {
+		if price.Fee(symbol) == nil {
+			missing++
+		}
+	}
+
+	if missing > 0 {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[price] trade volume fees incomplete for instrument universe",
+			nil,
+		).With("mapped", n, "missing", missing, "universe", len(symbols)))
+	}
+
 	return true
 }
 
 // Fee is the taker fee in percent (0.40 means 0.40%). Nil means unknown.
 func (price *Price) Fee(symbol string) *decimal.Decimal {
+	if fee := price.Instrument.TakerFee(symbol); fee != nil {
+		return fee
+	}
+
 	return price.Instrument.TakerFee(price.normalizer.Name(symbol))
 }
 
@@ -212,12 +305,12 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.
 
 	var depth *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if managed == nil || managed.BestBid() == nil {
 			return
 		}
 
-		depth = toSymm(managed.BestBid().Quantity)
+		depth = managed.BestBid().Quantity
 	})
 
 	if depth == nil || depth.Sign() <= 0 {
@@ -238,7 +331,7 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 
 	var cash *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if managed == nil || managed.BestBid() == nil {
 			return
 		}
@@ -246,7 +339,7 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 		total := decimalZero
 
 		for n, level := 0, managed.BestBid(); n < 3 && level != nil; n, level = n+1, level.Lower {
-			px, qty := toSymm(level.Price), toSymm(level.Quantity)
+			px, qty := level.Price, level.Quantity
 			if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
 				continue
 			}
@@ -271,12 +364,12 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 	var spread *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			return
 		}
 
-		spread = toSymm(managed.Spread())
+		spread = managed.Spread()
 	})
 
 	if spread == nil || spread.Sign() <= 0 {
@@ -296,6 +389,15 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 	}
 
 	fee := price.Fee(symbol)
+
+	if fee == nil {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[price] friction failed",
+			nil,
+		).With("symbol", symbol, "why", "taker fee unknown"))
+		return nil, false
+	}
 
 	if fee.Sign() < 0 {
 		return nil, false
@@ -338,12 +440,27 @@ func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) 
 	fill, err := price.EntryCost(symbol, qty)
 
 	if err != nil || fill == nil || fill.EntryPrice == nil || fill.EntryPrice.Sign() <= 0 {
+		why := "entry cost unavailable"
+		if err != nil {
+			why = err.Error()
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] entry close-now failed",
+			err,
+		).With("symbol", symbol, "why", why))
 		return nil, false
 	}
 
 	pct := price.PnLPct(symbol, qty, fill.EntryPrice, price.Fee(symbol))
 
 	if pct == nil {
+		errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] entry close-now failed",
+			nil,
+		).With("symbol", symbol, "why", "pnl percent unavailable"))
 		return nil, false
 	}
 
@@ -369,7 +486,7 @@ func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.
 
 	var vwap *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			return
 		}
@@ -385,6 +502,21 @@ func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.
 	})
 
 	return vwap
+}
+
+// TouchAsk is the best ask when the book is crossed-ready.
+func (price *Price) TouchAsk(symbol string) *decimal.Decimal {
+	var ask *decimal.Decimal
+
+	price.Books.Book(symbol, func(managed *market.Book) {
+		if !bookReady(managed) {
+			return
+		}
+
+		ask = managed.BestAsk().Price
+	})
+
+	return ask
 }
 
 // EntryCost walks the asks for quantity and returns fill VWAP plus entry fee.
@@ -403,7 +535,7 @@ func (price *Price) EntryCost(
 	var fill *EntryFill
 	var err error
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
 			return
@@ -454,13 +586,24 @@ cash after fees. Below QtyMin/CostMin it fails — those mins cannot be met by
 func (price *Price) Allocate(
 	symbol string,
 	wallet *market.Balance,
-) (*decimal.Decimal, string) {
+) (*decimal.Decimal, error) {
+	// A nil wallet argument means virtual/learning size: use desk cash but do
+	// not enforce venue QtyMin/CostMin. A concrete wallet enforces both.
+	enforceMins := wallet != nil
+
 	if wallet == nil {
 		wallet = price.balance
 	}
 
 	if wallet == nil {
-		return nil, "balance is not wired"
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"why", "balance is not wired",
+		))
 	}
 
 	pair := price.Instrument.Pair(symbol)
@@ -471,34 +614,75 @@ func (price *Price) Allocate(
 	}
 
 	if raw == nil {
-		return nil, fmt.Sprintf(
-			"quote cash unknown (pair quote %q, desk quote %q)",
-			pair.Quote,
-			wallet.Quote,
-		)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"quote", pair.Quote,
+		))
 	}
 
 	cash, err := decimal.NewFromString(raw.String())
+
 	if err != nil {
-		return nil, "quote cash is not a decimal"
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"quote", pair.Quote,
+			"why", "quote cash is not a decimal",
+		))
 	}
 
 	if pair.QtyMin == nil || pair.CostMin == nil {
-		return nil, "instrument limits missing (QtyMin or CostMin unset)"
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"quote", pair.Quote,
+			"why", "instrument limits missing (QtyMin or CostMin unset)",
+		))
 	}
 
 	fee := price.Fee(symbol)
+
+	if fee == nil {
+		why := "taker fee unknown"
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"quote", pair.Quote,
+			"why", why,
+		))
+	}
 
 	budget := cash.Mul(
 		decimal.NewFromFloat(system.Cfg.Risk.MaxFraction),
 	)
 
 	if budget.Sign() <= 0 {
-		return nil, fmt.Sprintf(
-			"risk budget is zero (cash=%s max_fraction=%v)",
-			cash.String(),
-			system.Cfg.Risk.MaxFraction,
-		)
+		return nil, errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"quote", pair.Quote,
+			"why", fmt.Sprintf(
+				"risk budget is zero (cash=%s max_fraction=%v)",
+				cash.String(),
+				system.Cfg.Risk.MaxFraction,
+			),
+		))
 	}
 
 	feeRate := fee.Mul(decimalPercent)
@@ -510,13 +694,13 @@ func (price *Price) Allocate(
 		reason   string
 	)
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			reason = "level3 book not ready (missing bid/ask or book crossed)"
 			return
 		}
 
-		touchBid := toSymm(managed.BestBid().Quantity)
+		touchBid := managed.BestBid().Quantity
 		if touchBid == nil || touchBid.Sign() <= 0 {
 			reason = "best bid quantity missing or zero"
 			return
@@ -539,7 +723,7 @@ func (price *Price) Allocate(
 		cost := avgPx.Mul(*filled)
 		underMin := filled.Cmp(*pair.QtyMin) < 0 || cost.Cmp(*pair.CostMin) < 0
 
-		if underMin && wallet != nil {
+		if underMin && enforceMins {
 			reason = fmt.Sprintf(
 				"size %s below venue minimum (qty_min=%s cost_min=%s touch_cap=%s)",
 				filled.String(),
@@ -554,7 +738,7 @@ func (price *Price) Allocate(
 	})
 
 	if quantity != nil {
-		return quantity, ""
+		return quantity, nil
 	}
 
 	if reason == "" {
@@ -565,12 +749,20 @@ func (price *Price) Allocate(
 		}
 	}
 
-	return nil, reason
+	return nil, errnie.Error(errnie.Err(
+		errnie.UnprocessableContent,
+		"[price] allocate failed",
+		nil,
+	).With(
+		"symbol", symbol,
+		"quote", pair.Quote,
+		"why", reason,
+	))
 }
 
 // sizeBuy lifts asks under touchCap and grossBudget, then trims until fees fit budget.
 func (price *Price) sizeBuy(
-	managed *book.Book,
+	managed *market.Book,
 	symbol string,
 	pair kraken.InstrumentPair,
 	fee, budget, grossBudget, touchCap *decimal.Decimal,
@@ -592,7 +784,7 @@ func (price *Price) sizeBuy(
 		)
 	}
 
-	askPx := toSymm(managed.BestAsk().Price)
+	askPx := managed.BestAsk().Price
 	fail := fmt.Sprintf(
 		"cannot trim fill to fee-inclusive budget %s (filled=%s)",
 		budget.String(), filled.String(),
@@ -652,7 +844,7 @@ func (price *Price) roundTrip(
 
 	var grossExit *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			return
 		}
@@ -695,7 +887,7 @@ func (price *Price) roundTripPct(
 
 // consume fills maxQty from the book; maxGross (if set) also caps quote spent.
 func (price *Price) consume(
-	managed *book.Book,
+	managed *market.Book,
 	maxQty, maxGross *decimal.Decimal,
 	side Direction,
 ) (*decimal.Decimal, *decimal.Decimal, error) {
@@ -722,7 +914,7 @@ func (price *Price) consume(
 	var filled, gross decimal.Decimal
 
 	for level != nil && need.Sign() > 0 && (!capped || cash.Sign() > 0) {
-		px, qty := toSymm(level.Price), toSymm(level.Quantity)
+		px, qty := level.Price, level.Quantity
 
 		if side == BUY {
 			level = level.Higher
@@ -789,12 +981,12 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 
 	band := system.Cfg.Risk.BackingBandFrac
 
-	price.Books.Book(symbol, func(managed *book.Book) {
+	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
 			return
 		}
 
-		mid := toSymm(managed.Midpoint())
+		mid := managed.Midpoint()
 		if mid == nil || mid.Sign() <= 0 {
 			return
 		}
@@ -816,14 +1008,14 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 
 // sideCash sums quote notional along one book side inside [lo, hi].
 func sideCash(
-	start *book.Level,
+	start *market.Level,
 	bids bool,
 	lo, hi *decimal.Decimal,
 ) float64 {
 	var total float64
 
 	for level := start; level != nil; {
-		px, qty := toSymm(level.Price), toSymm(level.Quantity)
+		px, qty := level.Price, level.Quantity
 
 		if bids {
 			level = level.Lower
@@ -849,7 +1041,7 @@ func sideCash(
 	return total
 }
 
-func bookReady(managed *book.Book) bool {
+func bookReady(managed *market.Book) bool {
 	if managed == nil {
 		return false
 	}
@@ -859,7 +1051,7 @@ func bookReady(managed *book.Book) bool {
 		return false
 	}
 
-	return bid.Price.Cmp(ask.Price) < 0
+	return bid.Price.Cmp(*ask.Price) < 0
 }
 
 func toSymm(raw *sdkdecimal.Decimal) *decimal.Decimal {

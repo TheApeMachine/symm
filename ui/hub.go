@@ -76,7 +76,7 @@ func NewHub(ctx context.Context) *Hub {
 		ctx:        ctx,
 		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
-			JSONEncoder:     sonic.Marshal,
+			JSONEncoder:     Sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
@@ -296,7 +296,7 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 		return
 	}
 
-	buf, err := sonic.Marshal(frame)
+	buf, err := Sonic.Marshal(frame)
 
 	if err != nil {
 		errnie.Error(errnie.Err(

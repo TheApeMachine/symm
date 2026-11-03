@@ -4,12 +4,12 @@ import (
 	"context"
 	"iter"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -23,7 +23,7 @@ type Desk struct {
 
 func NewDesk(
 	ctx context.Context,
-	transports map[string]Transport,
+	transports map[string]network.Client,
 	price *Price,
 ) *Desk {
 	desk := &Desk{
@@ -68,23 +68,26 @@ func (desk *Desk) Refresh(symbols []string) {
 			continue
 		}
 
-		desk.price.Books.Book(symbol, func(managed *book.Book) {
+		// Read the bid under Book's RLock, then mark outside — mark→Update
+		// re-enters Book and recursive RLock deadlocks against L3 writers.
+		var price *decimal.Decimal
+
+		desk.price.Books.Book(symbol, func(managed *market.Book) {
 			if managed == nil {
 				return
 			}
 
-			mid := managed.Midpoint()
-			if mid == nil {
+			bid := managed.BestBid()
+			if bid == nil || bid.Price == nil {
 				return
 			}
 
-			price, err := decimal.NewFromString(mid.String())
-			if err != nil {
-				return
-			}
-
-			desk.mark(symbol, &price)
+			price = bid.Price
 		})
+
+		if price != nil {
+			desk.mark(symbol, price)
+		}
 	}
 }
 
@@ -107,10 +110,30 @@ func (desk *Desk) Apply(executions *kraken.Execution) {
 
 	for _, execution := range executions.Data {
 		for _, tier := range desk.tiers {
+			matched := false
+
 			for _, position := range tier.positions.Open(execution.Symbol) {
-				if position != nil {
-					position.Apply(execution)
+				if position == nil || !position.Owns(execution) {
+					continue
 				}
+
+				position.Apply(execution)
+				matched = true
+			}
+
+			// Exit fills can land after the lot has already moved to closed.
+			// TODO: That should not happen, and this is the whole reason you
+			// need to learn god damn encapsulation for once.
+			if matched {
+				continue
+			}
+
+			for _, position := range tier.positions.Closed(execution.Symbol) {
+				if position == nil || !position.Owns(execution) {
+					continue
+				}
+
+				position.Apply(execution)
 			}
 		}
 	}
@@ -133,22 +156,10 @@ func (desk *Desk) Enter(
 	return tier.Enter(symbol, path, pathFound)
 }
 
-func (desk *Desk) Exit(position *Position, tt TierType) error {
-	if tier := desk.tiers[tt]; tier != nil {
-		return tier.Exit(position)
-	}
-
-	for _, tier := range desk.tiers {
-		if tier.positions.Has(position.Symbol) {
-			return tier.Exit(position)
-		}
-	}
-
-	return errnie.Err(
-		errnie.NotFound,
-		"[desk.Exit] position not found",
-		nil,
-	)
+func (desk *Desk) Exit(
+	tier TierType, position *Position,
+) error {
+	return desk.tiers[tier].Exit(position)
 }
 
 func (desk *Desk) Has(symbol string) bool {
@@ -161,95 +172,38 @@ func (desk *Desk) Has(symbol string) bool {
 	return false
 }
 
-func (desk *Desk) Positions(symbol string) []*Position {
-	out := make([]*Position, 0, 3)
+func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
+	return func(yield func(*Position) bool) {
+		tier := desk.tiers[tier]
 
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open(symbol)...)
-	}
+		if tier == nil {
+			return
+		}
 
-	return out
-}
-
-func (desk *Desk) Position(symbol string) *Position {
-	for _, tt := range []TierType{TierTypePaper, TierTypeReal, TierTypeVirtual} {
-		if position := desk.PositionOn(symbol, tt); position != nil {
-			return position
+		for _, position := range tier.positions.Open(symbol) {
+			if !yield(position) {
+				return
+			}
 		}
 	}
-
-	return nil
-}
-
-func (desk *Desk) PositionOn(symbol string, tt TierType) *Position {
-	tier := desk.tiers[tt]
-
-	if tier == nil {
-		return nil
-	}
-
-	for _, position := range tier.positions.Open(symbol) {
-		if position != nil {
-			return position
-		}
-	}
-
-	return nil
-}
-
-func (desk *Desk) OpenPositions() []*Position {
-	out := make([]*Position, 0)
-
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open()...)
-	}
-
-	return out
-}
-
-func (desk *Desk) Virtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.All()
-}
-
-func (desk *Desk) ClosedVirtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.Closed()
 }
 
 /*
 Pending yields stoploss-settled lots waiting for the model to record an exit path.
 */
-func (desk *Desk) Pending() iter.Seq[*Position] {
+func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
-		for _, tt := range []TierType{TierTypeVirtual, TierTypePaper, TierTypeReal} {
-			tier := desk.tiers[tt]
-			if tier == nil {
-				continue
-			}
+		tier := desk.tiers[tier]
 
-			for position := range tier.Pending() {
-				if !yield(position) {
-					return
-				}
+		if tier == nil {
+			return
+		}
+
+		for position := range tier.Pending() {
+			if !yield(position) {
+				return
 			}
 		}
-	}
-}
-
-func (desk *Desk) ClearPending(symbol string) {
-	for _, tier := range desk.tiers {
-		tier.ClearPending(symbol)
 	}
 }
 

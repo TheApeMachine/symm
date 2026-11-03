@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 	"github.com/theapemachine/symm/network"
 )
 

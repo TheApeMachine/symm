@@ -1,10 +1,10 @@
 package kraken
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/datura"
 )
 
 /*
@@ -36,6 +36,18 @@ func (order *OrderResponse) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal((*alias)(order))
 }
 
+func (order *OrderResponse) UnmarshalJSON(data []byte) error {
+	type alias OrderResponse
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*order = OrderResponse(decoded)
+	return nil
+}
+
 /*
 Action returns the transport method used to route this acknowledgement.
 */
@@ -53,7 +65,7 @@ func (order *OrderResponse) IsSuccess() bool {
 /*
 NewOrderResponseFromMap adapts a paper fill acknowledgement to Kraken's model.
 */
-func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse {
+func NewOrderResponseFromMap(model map[string]any) json.Marshaler {
 	orderID, _ := model["order_id"].(string)
 	success := false
 
@@ -71,7 +83,6 @@ func NewOrderResponseFromMap(model datura.Map[any], reqID int64) *OrderResponse 
 			OrderID: orderID,
 		},
 		Success: success,
-		ReqID:   reqID,
 	}
 }
 
@@ -111,5 +122,31 @@ func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
 
 func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {
 	type alias AddOrderMessage
+	return sonic.Marshal((*alias)(&msg))
+}
+
+/*
+CancelOrderRequest is the WS v2 cancel_order params body.
+*/
+type CancelOrderRequest struct {
+	Token   string   `json:"token,omitempty"`
+	OrderID []string `json:"order_id,omitempty"`
+	ClOrdID []string `json:"cl_ord_id,omitempty"`
+}
+
+type CancelOrderMessage struct {
+	Method string             `json:"method"`
+	Params CancelOrderRequest `json:"params"`
+}
+
+func NewCancelOrderMessage(clOrdID string) CancelOrderMessage {
+	return CancelOrderMessage{
+		Method: "cancel_order",
+		Params: CancelOrderRequest{ClOrdID: []string{clOrdID}},
+	}
+}
+
+func (msg CancelOrderMessage) MarshalJSON() ([]byte, error) {
+	type alias CancelOrderMessage
 	return sonic.Marshal((*alias)(&msg))
 }

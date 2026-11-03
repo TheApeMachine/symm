@@ -3,7 +3,7 @@ package strategy
 import (
 	"context"
 	"strings"
-	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
@@ -48,8 +48,7 @@ Tree is a path → Decision radix. Leaves are decisions, not a separate book typ
 type Tree struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	mu     sync.RWMutex
-	root   *iradix.Tree[*runtime.Decision]
+	root   atomic.Pointer[iradix.Tree[*runtime.Decision]]
 	store  *store.Client
 }
 
@@ -59,9 +58,11 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 	tree := &Tree{
 		ctx:    ctx,
 		cancel: cancel,
-		root:   iradix.New[*runtime.Decision](),
+		root:   atomic.Pointer[iradix.Tree[*runtime.Decision]]{},
 		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
+
+	tree.root.Store(iradix.New[*runtime.Decision]())
 
 	for page := range tree.store.List(seedPrefix) {
 		for _, object := range page.Contents {
@@ -76,6 +77,7 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 				errnie.Error(errnie.Err(
 					errnie.IO, "[tree] error unmarshalling decision", err,
 				))
+
 				continue
 			}
 
@@ -86,7 +88,9 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 				continue
 			}
 
-			tree.root, _, _ = tree.root.Insert([]byte(path), decision)
+			root := tree.root.Load()
+			root, _, _ = root.Insert([]byte(path), decision)
+			tree.root.Store(root)
 		}
 	}
 
@@ -104,9 +108,6 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 		return ActionNone, 0, false
 	}
 
-	tree.mu.Lock()
-	defer tree.mu.Unlock()
-
 	var (
 		current    = ActionNone
 		disagreed  bool
@@ -115,7 +116,7 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 		prunes     []string
 	)
 
-	tree.root.Root().WalkPrefix([]byte(tokens.String()), func(key []byte, decision *runtime.Decision) bool {
+	tree.root.Load().Root().WalkPrefix([]byte(tokens.String()), func(key []byte, decision *runtime.Decision) bool {
 		if decision == nil {
 			return false
 		}
@@ -144,7 +145,9 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	})
 
 	for _, prune := range prunes {
-		tree.root, _, _ = tree.root.Delete([]byte(prune))
+		root := tree.root.Load()
+		root, _, _ = root.Delete([]byte(prune))
+		tree.root.Store(root)
 
 		if tree.store != nil {
 			tree.store.DeletePrefix("model/paths/" + prune)
@@ -172,24 +175,21 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 Update applies a settled ±delta to every decision under path.
 */
 func (tree *Tree) Update(path string, delta float64) {
-	if path == "" {
+	if path == "" || strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
 		return
 	}
 
-	if strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
-		return
-	}
-
-	tree.mu.Lock()
-	defer tree.mu.Unlock()
-
-	tree.root.Root().WalkPrefix([]byte(path), func(key []byte, decision *runtime.Decision) bool {
+	tree.root.Load().Root().WalkPrefix([]byte(path), func(key []byte, decision *runtime.Decision) bool {
 		if decision == nil {
 			return false
 		}
 
 		decision.Resistance += delta
+		root := tree.root.Load()
+		root, _, _ = root.Insert(key, decision)
+		tree.root.Store(root)
 		tree.persist(string(key), decision)
+
 		return false
 	})
 }
@@ -206,10 +206,9 @@ func (tree *Tree) Insert(path string, decision *runtime.Decision) {
 		return
 	}
 
-	tree.mu.Lock()
-	defer tree.mu.Unlock()
-
-	tree.root, _, _ = tree.root.Insert([]byte(path), decision)
+	root := tree.root.Load()
+	root, _, _ = root.Insert([]byte(path), decision)
+	tree.root.Store(root)
 	tree.persist(path, decision)
 }
 
@@ -225,11 +224,7 @@ func (tree *Tree) Ensure(path string, action Action) {
 		return
 	}
 
-	tree.mu.Lock()
-	_, exists := tree.root.Get([]byte(path))
-	tree.mu.Unlock()
-
-	if exists {
+	if _, exists := tree.root.Load().Get([]byte(path)); exists {
 		return
 	}
 
@@ -241,22 +236,33 @@ func (tree *Tree) Ensure(path string, action Action) {
 }
 
 func (tree *Tree) Delete(path string) {
-	tree.mu.Lock()
-	defer tree.mu.Unlock()
+	if path == "" {
+		return
+	}
 
-	tree.root, _, _ = tree.root.Delete([]byte(path))
-	tree.store.DeletePrefix("model/paths/" + path)
+	root := tree.root.Load()
+	root, _, _ = root.Delete([]byte(path))
+	tree.root.Store(root)
+
+	if tree.store != nil {
+		tree.store.DeletePrefix("model/paths/" + path)
+	}
 }
 
 func (tree *Tree) persist(path string, decision *runtime.Decision) {
-	if tree.store == nil || decision == nil {
+	if tree.store == nil || decision == nil || path == "" {
 		return
 	}
 
 	raw, err := sonic.Marshal(decision)
+
 	if err != nil || len(raw) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[tree] error marshalling decision", err,
+		))
+
 		return
 	}
 
-	tree.store.WriteAtPrefix("model/paths/"+path+".json", raw)
+	tree.store.WriteAtPrefix("model/paths/"+path+".bin", raw)
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestBalanceJSONRoundTrip(t *testing.T) {

@@ -12,15 +12,13 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/callback"
-	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type Book struct {
@@ -29,7 +27,7 @@ type Book struct {
 	system        *runtime.System
 	pending       atomic.Pointer[map[string]struct{}]
 	seeded        chan struct{}
-	manager       *spot.BookManager
+	manager       *market.Books
 	normalizer    *spot.Normalizer
 	notify        atomic.Pointer[func(string, time.Time)]
 	touch         atomic.Pointer[func([]kraken.Level3Touch)]
@@ -55,30 +53,22 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		cancel:     cancel,
 		system:     runtime.NewSystem(ctx, "book"),
 		seeded:     make(chan struct{}, 1),
-		manager:    spot.NewBookManager(),
+		manager:    market.NewBooks(),
 		normalizer: normalizer,
 	}
 
-	book.manager.OnCreateBook.Recurring(func(
-		event *callback.Event[*spotbook.Book],
-	) {
-		managed := event.Data
-
-		if managed == nil {
-			return
-		}
-
-		// Depth belongs to a complete venue frame. Per-order truncation can
-		// remove a level that a later order in the same frame still references.
-		managed.EnableMaxDepth = false
-		// Kraken's checksum is the authority for Level 3 state. Applying the
-		// SDK's per-order crossing heuristic inside one multi-order venue frame
-		// can delete a newly added order before the later orders in that same
-		// frame resolve the transient cross.
-		managed.NoBookCrossing = false
-	})
-
 	return book
+}
+
+func (book *Book) create(symbol string, depth int) *market.Book {
+	managed := book.manager.Create(symbol, depth)
+	// Depth belongs to a complete venue frame. Per-order truncation can
+	// remove a level that a later order in the same frame still references.
+	managed.EnableMaxDepth = false
+	// Crossing heuristics inside one multi-order venue frame can delete a
+	// newly added order before later orders resolve a transient cross.
+	managed.NoBookCrossing = false
+	return managed
 }
 
 /*
@@ -145,7 +135,7 @@ func (book *Book) Pending() []string {
 	return pending
 }
 
-func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
+func (book *Book) Book(symbol string, read func(*market.Book)) {
 	// Readers (pricing, JSON layers) must not observe a half-applied frame.
 	book.mu.RLock()
 	defer book.mu.RUnlock()
@@ -164,7 +154,7 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 		return
 	}
 
-	managed := book.manager.GetBook(symbol)
+	managed := book.manager.Get(symbol)
 
 	if managed != nil {
 		read(managed)
@@ -203,7 +193,7 @@ func (book *Book) BlockReason(symbol string) string {
 		)
 	}
 
-	if book.manager.GetBook(symbol) == nil {
+	if book.manager.Get(symbol) == nil {
 		return "symbol not in book manager"
 	}
 
@@ -217,7 +207,7 @@ func (book *Book) Create(symbol string, depth int) error {
 		))
 	}
 
-	book.manager.CreateBook(symbol, depth)
+	book.create(symbol, depth)
 	return nil
 }
 
@@ -304,7 +294,7 @@ func (book *Book) StaleSymbol(symbol string) bool {
 		return true
 	}
 
-	return book.manager.GetBook(symbol) == nil
+	return book.manager.Get(symbol) == nil
 }
 
 func (book *Book) SetNotify(notify func(string, time.Time)) {
@@ -418,7 +408,7 @@ func (book *Book) apply(
 	touches = make([]kraken.Level3Touch, 0)
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
-	var symbolBook *spotbook.Book
+	var symbolBook *market.Book
 
 	for index, data := range payload.Data {
 		err := func() error {
@@ -447,7 +437,7 @@ func (book *Book) apply(
 				return errSkipInvalid
 			}
 
-			symbolBook = book.manager.GetBook(data.Symbol)
+			symbolBook = book.manager.Get(data.Symbol)
 
 			depth, err := level3Depth()
 
@@ -469,20 +459,20 @@ func (book *Book) apply(
 					errnie.Info(fmt.Sprintf("[book] %s valid again: resubscribe snapshot replaced the stale book", data.Symbol))
 				}
 
-				symbolBook = book.manager.CreateBook(data.Symbol, depth)
+				symbolBook = book.create(data.Symbol, depth)
 			} else if symbolBook == nil {
-				symbolBook = book.manager.CreateBook(data.Symbol, depth)
+				symbolBook = book.create(data.Symbol, depth)
 			}
 
 			for sideIndex, level3data := range []*[]kraken.Level3Order{
 				&data.Bids, &data.Asks,
 			} {
 				symbolSide := symbolBook.Bids
-				direction := spotbook.BookDirection(spotbook.Bid)
+				direction := market.SideBid
 
 				if sideIndex == 1 {
 					symbolSide = symbolBook.Asks
-					direction = spotbook.BookDirection(spotbook.Ask)
+					direction = market.SideAsk
 				}
 
 				filtered := make([]kraken.Level3Order, 0, len(*level3data))
@@ -526,28 +516,22 @@ func (book *Book) apply(
 						continue
 					}
 
-					price, err := sdkdecimal.NewFromString(order.LimitPrice.String())
-
-					if err != nil {
-						return err
-					}
-
-					price = price.SetScale(int64(pair.PairDecimals))
+					price := order.LimitPrice.Truncate(int32(pair.PairDecimals))
 
 					if order.OrderID != "" {
 						for _, level := range symbolSide.Levels {
-							if level == nil || level.Price == nil || price == nil || level.Price.Cmp(price) == 0 {
+							if level == nil || level.Price == nil || level.Price.Cmp(price) == 0 {
 								continue
 							}
 
 							for _, queued := range level.Queue() {
 								if queued.ID == order.OrderID {
-									symbolBook.Update(&spotbook.UpdateOptions{
+									zero := decimal.Zero
+									symbolBook.Update(&market.Delta{
 										Direction: direction,
 										ID:        order.OrderID,
 										Price:     level.Price,
-										Quantity:  sdkdecimal.NewFromInt64(0).SetScale(int64(pair.LotDecimals)),
-										Silent:    true,
+										Quantity:  &zero,
 									})
 									break
 								}
@@ -558,24 +542,13 @@ func (book *Book) apply(
 					quantity := order.OrderQty
 
 					if order.Event == "delete" || quantity == nil {
-						zero := decimal.NewFromInt(0)
+						zero := decimal.Zero
 						quantity = &zero
 					}
 
-					qty, err := sdkdecimal.NewFromString(quantity.String())
+					qty := quantity.Truncate(int32(pair.LotDecimals))
 
-					if err != nil {
-						return err
-					}
-
-					qty = qty.SetScale(int64(pair.LotDecimals))
-
-					// The SDK dereferences an absent level on zero-quantity updates.
-					// Absence is a lost-book precondition, not an empty order to insert.
-					levelKey := ""
-					if price != nil {
-						levelKey = price.String()
-					}
+					levelKey := price.String()
 
 					if quantity.Sign() <= 0 && symbolSide.Levels[levelKey] == nil {
 						return book.invalidate(
@@ -586,13 +559,12 @@ func (book *Book) apply(
 						)
 					}
 
-					symbolBook.Update(&spotbook.UpdateOptions{
+					symbolBook.Update(&market.Delta{
 						Direction: direction,
 						ID:        order.OrderID,
-						Price:     price,
-						Quantity:  qty,
+						Price:     &price,
+						Quantity:  &qty,
 						Timestamp: order.Timestamp,
-						Silent:    true,
 					})
 
 					filtered = append(filtered, order)
@@ -706,7 +678,7 @@ are the venue's own. A crossed or one-sided book is not a touch: there is no
 price at which both sides could trade, and reporting one would put a number
 into the price series that the market never offered.
 */
-func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
+func (book *Book) recordTouch(symbolBook *market.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
 	if symbolBook == nil {
 		return
 	}
@@ -717,7 +689,7 @@ func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data,
 		return
 	}
 
-	if bid.Price.Cmp(ask.Price) >= 0 {
+	if bid.Price.Cmp(*ask.Price) >= 0 {
 		return
 	}
 
@@ -764,8 +736,8 @@ func (book *Book) SnapshotInto(out *sync.Map) {
 		return
 	}
 
-	for _, symbol := range book.manager.GetBooks() {
-		out.Store(symbol, book.manager.GetBook(symbol))
+	for _, symbol := range book.manager.Symbols() {
+		out.Store(symbol, book.manager.Get(symbol))
 	}
 }
 
@@ -775,7 +747,7 @@ JSON returns the serialized JSON representation of the resident book for symbol.
 func (book *Book) JSON(symbol string) []byte {
 	var raw []byte
 
-	book.Book(symbol, func(b *spotbook.Book) {
+	book.Book(symbol, func(b *market.Book) {
 		var err error
 
 		if raw, err = sonic.Marshal(b); err != nil {

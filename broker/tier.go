@@ -4,13 +4,12 @@ import (
 	"context"
 	"iter"
 	"sync"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	symmdecimal "github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -47,7 +46,7 @@ type Tier struct {
 	Type      TierType
 	WinRate   float64
 	Edge      float64
-	transport Transport
+	transport network.Client
 	price     *Price
 	balance   *market.Balance
 	positions *Cache
@@ -58,25 +57,21 @@ type Tier struct {
 func NewTier(
 	ctx context.Context,
 	tt TierType,
-	transport Transport,
+	transport network.Client,
 	price *Price,
 ) *Tier {
-	balance := market.NewBalance(system.Cfg.Market.QuoteCurrency)
-
-	// Real only carries venue cash once a live transport is wired. Seeding it
-	// from the paper bankroll makes the real tab mirror paper while REAL OFF.
-	if tt != TierTypeReal || transport != nil {
-		balance.Seed(decimal.NewFromInt(int64(system.Cfg.Market.Balance)))
-	}
-
-	switch feed := transport.(type) {
-	case *Paper:
-		balance.Watch(ctx, time.Second/time.Duration(system.Cfg.WebSocket.CallsPerSecond), feed)
-	default:
-		if transport != nil {
-			balance.Watch(ctx, time.Second/time.Duration(system.Cfg.WebSocket.CallsPerUpdate), NewLiveBalances())
-		}
-	}
+	balance := market.NewBalance(map[string]any{
+		"quote": system.Cfg.Market.QuoteCurrency,
+		"assets": []*market.Asset{
+			market.NewAsset(
+				nil,
+				system.Cfg.Market.QuoteCurrency,
+				decimal.NewFromInt(int64(system.Cfg.Market.Balance)),
+				decimal.Zero,
+				decimal.Zero,
+			),
+		},
+	})
 
 	tier := &Tier{
 		ctx:       ctx,
@@ -84,29 +79,14 @@ func NewTier(
 		transport: transport,
 		price:     price,
 		balance:   balance,
-		positions: NewCache(ctx, tt.String(), transport),
 		pending:   &sync.Map{},
 	}
 
+	tier.positions = NewCache(
+		ctx, tt.String(), transport, price, tier.settle,
+	)
+
 	tier.unlocked = tier.Unlocked(nil)
-
-	balance.OnChange(func(book *market.Balance) {
-		if ui.UI == nil {
-			return
-		}
-
-		reading := book.Reading()
-
-		if reading == nil {
-			return
-		}
-
-		ui.UI.WriteJSON(map[string]any{
-			"balances": map[string]any{
-				tier.Type.String(): reading,
-			},
-		})
-	})
 
 	return tier
 }
@@ -119,32 +99,37 @@ func (tier *Tier) Hello() {
 			continue
 		}
 
+		// Closed lots are frozen snapshots — do not re-mark them.
+		if position.ClosedAt == nil {
+			position.Update(nil)
+		}
+
 		positions[position.ID] = position
 	}
 
-	frame := map[string]any{
-		"positions": positions,
-	}
-
-	if reading := tier.balance.Reading(); reading != nil {
-		frame["balances"] = map[string]any{
-			tier.Type.String(): reading,
-		}
-	}
-
-	ui.UI.WriteJSON(frame)
+	ui.UI.WriteJSON(map[string]any{
+		tier.Type.String(): map[string]any{
+			"positions": positions,
+			"balance":   tier.balance,
+		},
+	})
 }
 
 func (tier *Tier) Update(data *market.Update) {
-	var mark *symmdecimal.Decimal
+	var mark *decimal.Decimal
 
 	if data.Price != nil {
-		parsed, _ := symmdecimal.NewFromString(data.Price.String())
+		parsed, _ := decimal.NewFromString(data.Price.String())
 		mark = &parsed
 	}
 
-	for _, position := range tier.positions.All(data.Symbol) {
+	for _, position := range tier.positions.Open(data.Symbol) {
 		position.Update(mark)
+		ui.UI.WriteJSON(map[string]any{
+			tier.Type.String(): map[string]any{
+				"positions": map[string]any{position.ID: position},
+			},
+		})
 	}
 }
 
@@ -186,6 +171,14 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
+	if tier.Type == TierTypeReal && tier.transport == nil {
+		return errnie.Err(
+			errnie.Forbidden,
+			"[broker.Tier.Enter] real transport not armed",
+			nil,
+		)
+	}
+
 	if !tier.unlocked {
 		return errnie.Err(
 			errnie.Forbidden,
@@ -210,22 +203,23 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	// Virtual learning lots skip venue qty/cost mins (AllocateVirtual). Paper
-	// and real keep full Allocate — the desk rewrite had dropped this split.
-	var (
-		qty    *symmdecimal.Decimal
-		why    string
-		wallet *market.Balance
-	)
+	// Virtual learning lots skip venue qty/cost mins (nil wallet). Paper and
+	// real pass the tier balance so Allocate enforces QtyMin/CostMin.
+	var wallet *market.Balance
 
-	qty, why = tier.price.Allocate(symbol, wallet)
+	if tier.Type != TierTypeVirtual {
+		wallet = tier.balance
+	}
 
-	if qty == nil || qty.Sign() <= 0 {
-		if why == "" {
-			why = "cannot size " + symbol
+	qty, err := tier.price.Allocate(symbol, wallet)
+
+	if err != nil || qty == nil || qty.Sign() <= 0 {
+		reason := "cannot size " + symbol
+		if err != nil {
+			reason = err.Error()
 		}
 
-		return &EntryDenial{Gate: "size", Reason: why}
+		return &EntryDenial{Gate: "size", Reason: reason}
 	}
 
 	pos := NewPosition(
@@ -235,11 +229,7 @@ func (tier *Tier) Enter(
 		path,
 		tier.price,
 		tier.transport,
-		func(position *Position) {
-			tier.positions.Remove(position.Symbol)
-			tier.Recalculate()
-			tier.pending.Store(position.Symbol, position)
-		},
+		tier.settle,
 	)
 
 	if err := pos.Enter(path, qty, wallet); err != nil {
@@ -252,6 +242,13 @@ func (tier *Tier) Enter(
 
 	// 2. Add to active cache
 	tier.positions.Add(symbol, pos, true)
+	pos.Update(nil)
+
+	ui.UI.WriteJSON(map[string]any{
+		tier.Type.String(): map[string]any{
+			"positions": map[string]any{pos.ID: pos},
+		},
+	})
 
 	if err := tier.Send(pos, "enter"); err != nil {
 		return errnie.Error(err)
@@ -265,10 +262,17 @@ func (tier *Tier) Exit(
 ) error {
 	tier.positions.Remove(position.Symbol)
 
+	ui.UI.WriteJSON(map[string]any{
+		tier.Type.String(): map[string]any{
+			"positions": map[string]any{position.ID: position},
+		},
+	})
+
 	if err := tier.Send(position, "exit"); err != nil {
 		return errnie.Error(err)
 	}
 
+	tier.pending.Delete(position.Symbol)
 	return nil
 }
 
@@ -310,6 +314,21 @@ func (tier *Tier) Send(position *Position, action string) error {
 	}
 
 	return nil
+}
+
+func (tier *Tier) settle(position *Position) {
+	if position == nil {
+		return
+	}
+
+	// Paper/real must place the venue sell; virtual has no transport.
+	if err := tier.Send(position, "exit"); err != nil {
+		errnie.Error(err)
+	}
+
+	tier.positions.Remove(position.Symbol)
+	tier.Recalculate()
+	tier.pending.Store(position.Symbol, position)
 }
 
 func (tier *Tier) Recalculate() {

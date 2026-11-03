@@ -7,7 +7,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestCheckEntryPhysicalRejectsNilPrice(t *testing.T) {

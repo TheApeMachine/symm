@@ -1,13 +1,26 @@
 package network
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
 )
+
+/*
+PrivateSigner builds API-Key / API-Sign and a nonce-bearing body for one
+private spot REST call. Wired at boot to the venue signer.
+*/
+type PrivateSigner func(requestURI string, body any) (key, signature string, signed []byte, err error)
+
+var privateSigner atomic.Pointer[PrivateSigner]
+
+func SetPrivateSigner(signer PrivateSigner) {
+	privateSigner.Store(&signer)
+}
 
 type REST struct {
 	conn *client.Client
@@ -40,19 +53,29 @@ func (rest *REST) Get(rawURL string, params map[string]string) (*client.Response
 	})
 }
 
-func (rest *REST) Post(rawURL string, body any) (*client.Response, error) {
+func (rest *REST) Post(url string, body any) (*client.Response, error) {
 	header := map[string]string{
 		"Content-Type": "application/json",
 	}
 
-	requestURI, private, err := privateSpot(rawURL)
+	requestURI, private, err := privateSpot(url)
 
 	if err != nil {
 		return nil, err
 	}
 
 	if private {
-		key, signature, signed, err := kraken.SignPrivate(requestURI, body)
+		signerPtr := privateSigner.Load()
+
+		if signerPtr == nil || *signerPtr == nil {
+			return nil, errnie.Err(
+				errnie.Validation,
+				"[network.rest] private signer is not configured",
+				nil,
+			)
+		}
+
+		key, signature, signed, err := (*signerPtr)(requestURI, body)
 
 		if err != nil {
 			return nil, err
@@ -63,10 +86,34 @@ func (rest *REST) Post(rawURL string, body any) (*client.Response, error) {
 		body = signed
 	}
 
-	return rest.conn.Post(rawURL, client.Config{
+	return rest.conn.Post(url, client.Config{
 		Header: header,
 		Body:   body,
 	})
+}
+
+func (rest *REST) Watch(
+	url string,
+	body any,
+	callback func(json.Unmarshaler),
+) {
+	go func() {
+		for {
+			response, err := rest.Post(url, body)
+
+			if err != nil {
+				continue
+			}
+
+			var data json.Unmarshaler
+
+			if err := json.Unmarshal(response.Body(), &data); err != nil {
+				continue
+			}
+
+			callback(data)
+		}
+	}()
 }
 
 /*

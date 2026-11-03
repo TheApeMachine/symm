@@ -5,14 +5,12 @@ import (
 	"sync"
 	"testing"
 
-	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
-	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	shop "github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestAllocateCapsAtTouchDivisor(t *testing.T) {
@@ -30,8 +28,8 @@ func TestAllocateCapsAtTouchDivisor(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(why, ShouldEqual, "")
+		qty, err := fixture.price.Allocate(fixture.symbol, fixture.wallet)
+		So(err, ShouldBeNil)
 		So(qty, ShouldNotBeNil)
 
 		// touchCap = 300 / 3 = 100. Cash is not the binding constraint.
@@ -54,8 +52,8 @@ func TestAllocateRespectsCashBudget(t *testing.T) {
 			feePct:     0.8,
 		})
 
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(why, ShouldEqual, "")
+		qty, err := fixture.price.Allocate(fixture.symbol, fixture.wallet)
+		So(err, ShouldBeNil)
 		So(qty, ShouldNotBeNil)
 
 		fill, err := fixture.price.EntryCost(fixture.symbol, qty)
@@ -90,10 +88,95 @@ func TestAllocateFailsBelowVenueMin(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
+		qty, err := fixture.price.Allocate(fixture.symbol, fixture.wallet)
 		So(qty, ShouldBeNil)
-		So(why, ShouldContainSubstring, "below venue minimum")
-		So(why, ShouldContainSubstring, "touch_cap=10")
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "below venue minimum")
+		So(err.Error(), ShouldContainSubstring, "touch_cap=10")
+	})
+}
+
+func TestAllocateFailsWithoutFee(t *testing.T) {
+	Convey("Allocate refuses when the taker fee is unknown", t, func() {
+		fixture := newPriceFixture(t, priceFixture{
+			symbol:     "NOFEE/USD",
+			cash:       1_000_000,
+			qtyMinRaw:  "0.01",
+			costMinRaw: "1",
+			step:       "0.01",
+			bidPx:      99,
+			bidQty:     300,
+			askPx:      100,
+			askQty:     10_000,
+			feePct:     0.4,
+		})
+
+		fixture.price.Instrument.takerFees = &sync.Map{}
+
+		qty, err := fixture.price.Allocate(fixture.symbol, fixture.wallet)
+		So(qty, ShouldBeNil)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "taker fee unknown")
+	})
+}
+
+func TestFeeSymbolMapsTradeVolumeKey(t *testing.T) {
+	Convey("TradeVolume fee keys map onto websocket symbols without alias mis-splits", t, func() {
+		xrp := "XRP/USD"
+		gala := "GALA/USD"
+
+		instrument := &Instrument{
+			cache:     &sync.Map{},
+			takerFees: &sync.Map{},
+			symbols:   []string{xrp, gala},
+		}
+		instrument.cache.Store(xrp, kraken.InstrumentPair{
+			Symbol: xrp, Base: "XRP", Quote: "USD", Status: "online",
+		})
+		instrument.cache.Store(gala, kraken.InstrumentPair{
+			Symbol: gala, Base: "GALA", Quote: "USD", Status: "online",
+		})
+
+		normalizer := spot.NewNormalizer()
+		normalizer.Update(&spot.AssetsManagerUpdate{
+			NewAssets: map[string]spot.AssetInfo{
+				"XRP":  {AltName: "XRP"},
+				"GALA": {AltName: "GALA"},
+				"GAL":  {AltName: "GAL"},
+				"USD":  {AltName: "USD"},
+				"AUSD": {AltName: "AUSD"},
+			},
+			OldAssets: map[string]spot.AssetInfo{
+				"XXRP": {AltName: "XRP"},
+				"ZUSD": {AltName: "USD"},
+			},
+			NewPairs: map[string]spot.AssetPair{
+				"XRP/USD": {
+					AltName: "XRPUSD", WSName: "XRP/USD", Base: "XRP", Quote: "USD",
+				},
+				"GALA/USD": {
+					AltName: "GALAUSD", WSName: "GALA/USD", Base: "GALA", Quote: "USD",
+				},
+			},
+			OldPairs: map[string]spot.AssetPair{
+				"XXRPZUSD": {
+					AltName: "XRPUSD", WSName: "XRP/USD", Base: "XXRP", Quote: "ZUSD",
+				},
+			},
+		})
+
+		price := &Price{Instrument: instrument, normalizer: normalizer}
+
+		So(price.feeSymbol("XXRPZUSD"), ShouldEqual, xrp)
+		So(price.feeSymbol("XRPUSD"), ShouldEqual, xrp)
+		So(price.feeSymbol(xrp), ShouldEqual, xrp)
+		// Desk-first compact match wins even when alias search is ambiguous.
+		So(price.feeSymbol("GALAUSD"), ShouldEqual, gala)
+
+		fee := decimal.NewFromFloat(0.26)
+		price.Instrument.RememberFee(price.feeSymbol("XXRPZUSD"), &fee)
+		So(price.Fee(xrp), ShouldNotBeNil)
+		So(price.Fee(xrp).String(), ShouldEqual, "0.26")
 	})
 }
 
@@ -112,12 +195,12 @@ func TestAllocateVirtualAllowsUnderVenueMin(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		venue, venueWhy := fixture.price.Allocate(fixture.symbol, fixture.wallet)
+		venue, venueErr := fixture.price.Allocate(fixture.symbol, fixture.wallet)
 		So(venue, ShouldBeNil)
-		So(venueWhy, ShouldNotEqual, "")
+		So(venueErr, ShouldNotBeNil)
 
-		virtual, virtualWhy := fixture.price.Allocate(fixture.symbol, nil)
-		So(virtualWhy, ShouldEqual, "")
+		virtual, virtualErr := fixture.price.Allocate(fixture.symbol, nil)
+		So(virtualErr, ShouldBeNil)
 		So(virtual, ShouldNotBeNil)
 		So(virtual.String(), ShouldEqual, "10")
 		So(virtual.Cmp(*fixture.qtyMin), ShouldEqual, -1)
@@ -139,14 +222,19 @@ func TestAllocateUsesPassedWallet(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		small := market.NewBalance("USD")
-		small.Seed(shop.NewFromInt(500))
+		cash := shop.NewFromInt(500)
+		small := market.NewBalance(map[string]any{
+			"quote": "USD",
+			"assets": []*market.Asset{
+				market.NewAsset(nil, "USD", cash, shop.Zero, cash),
+			},
+		})
 
-		fromDesk, deskWhy := fixture.price.Allocate(fixture.symbol, nil)
-		fromSmall, smallWhy := fixture.price.Allocate(fixture.symbol, small)
+		fromDesk, deskErr := fixture.price.Allocate(fixture.symbol, nil)
+		fromSmall, smallErr := fixture.price.Allocate(fixture.symbol, small)
 
-		So(deskWhy, ShouldEqual, "")
-		So(smallWhy, ShouldEqual, "")
+		So(deskErr, ShouldBeNil)
+		So(smallErr, ShouldBeNil)
 		So(fromDesk, ShouldNotBeNil)
 		So(fromSmall, ShouldNotBeNil)
 		So(fromSmall.Cmp(*fromDesk), ShouldEqual, -1)
@@ -264,17 +352,13 @@ func TestTouchBidCashSumsTopThree(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		managed := fixture.books.manager.GetBook(fixture.symbol)
-		managed.Update(&sdkbook.UpdateOptions{
-			Direction: sdkbook.Bid,
-			Price:     sdkdecimal.NewFromInt64(9),
-			Quantity:  sdkdecimal.NewFromInt64(4),
-		})
-		managed.Update(&sdkbook.UpdateOptions{
-			Direction: sdkbook.Bid,
-			Price:     sdkdecimal.NewFromInt64(8),
-			Quantity:  sdkdecimal.NewFromInt64(3),
-		})
+		managed := fixture.books.manager.Get(fixture.symbol)
+		nine := decimal.NewFromInt(9)
+		four := decimal.NewFromInt(4)
+		eight := decimal.NewFromInt(8)
+		three := decimal.NewFromInt(3)
+		managed.Update(&market.Delta{Direction: market.SideBid, Price: &nine, Quantity: &four})
+		managed.Update(&market.Delta{Direction: market.SideBid, Price: &eight, Quantity: &three})
 
 		cash, ok := fixture.price.TouchBidCash(fixture.symbol)
 		So(ok, ShouldBeTrue)
@@ -319,8 +403,13 @@ func newPriceFixture(t *testing.T, cfg priceFixture) priceFixture {
 		t.Fatalf("step: %v", err)
 	}
 
-	wallet := market.NewBalance("USD")
-	wallet.Seed(shop.NewFromInt(cfg.cash))
+	cash := shop.NewFromInt(cfg.cash)
+	wallet := market.NewBalance(map[string]any{
+		"quote": "USD",
+		"assets": []*market.Asset{
+			market.NewAsset(nil, "USD", cash, shop.Zero, cash),
+		},
+	})
 
 	instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}}
 	instrument.cache.Store(cfg.symbol, kraken.InstrumentPair{
@@ -342,17 +431,13 @@ func newPriceFixture(t *testing.T, cfg priceFixture) priceFixture {
 		t.Fatalf("create book: %v", err)
 	}
 
-	managed := books.manager.GetBook(cfg.symbol)
-	managed.Update(&sdkbook.UpdateOptions{
-		Direction: sdkbook.Bid,
-		Price:     sdkdecimal.NewFromInt64(cfg.bidPx),
-		Quantity:  sdkdecimal.NewFromInt64(cfg.bidQty),
-	})
-	managed.Update(&sdkbook.UpdateOptions{
-		Direction: sdkbook.Ask,
-		Price:     sdkdecimal.NewFromInt64(cfg.askPx),
-		Quantity:  sdkdecimal.NewFromInt64(cfg.askQty),
-	})
+	managed := books.manager.Get(cfg.symbol)
+	bidPx := decimal.NewFromInt(cfg.bidPx)
+	bidQty := decimal.NewFromInt(cfg.bidQty)
+	askPx := decimal.NewFromInt(cfg.askPx)
+	askQty := decimal.NewFromInt(cfg.askQty)
+	managed.Update(&market.Delta{Direction: market.SideBid, Price: &bidPx, Quantity: &bidQty})
+	managed.Update(&market.Delta{Direction: market.SideAsk, Price: &askPx, Quantity: &askQty})
 
 	cfg.wallet = wallet
 	cfg.books = books

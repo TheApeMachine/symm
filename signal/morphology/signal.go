@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
@@ -49,20 +49,20 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				err   error
 			)
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
 				for _, level := range book.Bids.Levels {
 					bids = append(bids, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
+						Price:    level.Price.InexactFloat64(),
+						Quantity: level.Quantity.InexactFloat64(),
 					})
 				}
 
 				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
 				for _, level := range book.Asks.Levels {
 					asks = append(asks, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
+						Price:    level.Price.InexactFloat64(),
+						Quantity: level.Quantity.InexactFloat64(),
 					})
 				}
 

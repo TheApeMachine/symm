@@ -53,7 +53,7 @@ func NewStoploss(PnLPct float64) *Stoploss {
 	maxLoss := system.Cfg.Risk.MaxAllowedLossPct
 	now := time.Now()
 
-	return &Stoploss{
+	stoploss := &Stoploss{
 		State:           StoplossStateInit,
 		InitialPnLPct:   PnLPct,
 		MaxLossPct:      -maxLoss,
@@ -64,11 +64,22 @@ func NewStoploss(PnLPct float64) *Stoploss {
 		FloorPnLPct:     -maxLoss,
 		PreviousTime:    now,
 		CurrentTime:     now,
-		pace: adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
-			Halflife: system.Cfg.Risk.StopPaceHalflife,
-			Epsilon:  system.Cfg.Risk.StopPaceEpsilon,
-		}),
 	}
+	stoploss.rewire()
+
+	return stoploss
+}
+
+// rewire restores unexported pace after S3 decode (json skips it).
+func (stoploss *Stoploss) rewire() {
+	if stoploss == nil || stoploss.pace != nil {
+		return
+	}
+
+	stoploss.pace = adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
+		Halflife: system.Cfg.Risk.StopPaceHalflife,
+		Epsilon:  system.Cfg.Risk.StopPaceEpsilon,
+	})
 }
 
 func (stoploss *Stoploss) Update(PnLPct float64) {

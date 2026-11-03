@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -75,7 +75,7 @@ DiagnosticDir, and returns the error to raise, naming the dump.
 func (book *Book) invalidate(
 	kind, detail string, payload *kraken.Level3,
 	entry kraken.Level3Data, serverChecksum string,
-	checksum *spotbook.ChecksumResult,
+	checksum *market.ChecksumResult,
 ) error {
 	diagnostic := &BookDiagnostic{
 		Kind:           kind,

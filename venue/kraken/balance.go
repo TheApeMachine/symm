@@ -1,11 +1,11 @@
 package kraken
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -28,6 +28,33 @@ type PaperBalanceData struct {
 	Available *decimal.Decimal `json:"available"`
 	Reserved  *decimal.Decimal `json:"reserved"`
 	Total     *decimal.Decimal `json:"total"`
+}
+
+/*
+BalanceSubscription requests authenticated wallet snapshots.
+*/
+type BalanceSubscription struct {
+	Token string
+}
+
+func NewBalanceSubscription(token string) BalanceSubscription {
+	return BalanceSubscription{Token: token}
+}
+
+func (subscription BalanceSubscription) MarshalJSON() ([]byte, error) {
+	params := map[string]any{
+		"channel":  "balances",
+		"snapshot": true,
+	}
+
+	if subscription.Token != "" {
+		params["token"] = subscription.Token
+	}
+
+	return sonic.Marshal(map[string]any{
+		"method": "subscribe",
+		"params": params,
+	})
 }
 
 type Balance struct {
@@ -56,6 +83,18 @@ type Wallet struct {
 func (balance *Balance) MarshalJSON() ([]byte, error) {
 	type alias Balance
 	return sonic.Marshal((*alias)(balance))
+}
+
+func (balance *Balance) UnmarshalJSON(data []byte) error {
+	type alias Balance
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*balance = Balance(decoded)
+	return nil
 }
 
 func (balance *Balance) Action() string {
@@ -115,7 +154,17 @@ var zero = dFloat(0)
 NewBalanceFromMap reshapes the venue's asset-to-total map into the Balance
 observation consumed downstream, synthesizing one Data row per asset.
 */
-func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
+func NewBalanceFromMap(model map[string]any) json.Marshaler {
+	if _, ok := model["balances"]; ok {
+		raw, err := sonic.Marshal(model)
+
+		if err != nil {
+			return &Balance{Channel: "balances", Type: "snapshot", Timestamp: time.Now()}
+		}
+
+		return NewPaperBalance(raw)
+	}
+
 	out := Balance{
 		Channel:   "balances",
 		Data:      []BalanceData{},
@@ -125,17 +174,23 @@ func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
 	}
 
 	for asset, amount := range model {
+		parsed, ok := amount.(*decimal.Decimal)
+
+		if !ok {
+			continue
+		}
+
 		out.Data = append(out.Data, BalanceData{
 			Asset:      asset,
 			AssetClass: "currency",
-			Balance:    amount,
-			Available:  amount,
+			Balance:    parsed,
+			Available:  parsed,
 			Reserved:   zero,
 			Wallets: []Wallet{
 				{
 					Type:    "spot",
 					ID:      "main",
-					Balance: amount,
+					Balance: parsed,
 				},
 			},
 		})
@@ -144,9 +199,9 @@ func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
 	return &out
 }
 
-func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
-	currentValue := dFloat(model["current_value"].(float64))
-	unrealizedPnL := dFloat(model["unrealized_pnl"].(float64))
+func NewTradeBalanceFromMap(model map[string]any) TradeBalanceResult {
+	currentValue := dFloat(floatField(model["current_value"]))
+	unrealizedPnL := dFloat(floatField(model["unrealized_pnl"]))
 	tradeBalanceVal := currentValue.Sub(*unrealizedPnL)
 	tradeBalance := &tradeBalanceVal
 

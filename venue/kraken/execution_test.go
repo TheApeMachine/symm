@@ -6,17 +6,16 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestNewExecutionFromMap(t *testing.T) {
 	Convey("Given a paper execution carrying its client order identifier", t, func() {
-		execution := kraken.NewExecutionFromMap(datura.Map[any]{
+		execution := kraken.NewExecutionFromMap(map[string]any{
 			"cl_ord_id": "exit-order-id",
 			"pair":      "SLAY/USD",
 			"side":      "sell",
-		})
+		}).(*kraken.Execution)
 
 		Convey("The normalized execution should preserve order correlation", func() {
 			So(execution.Data, ShouldHaveLength, 1)

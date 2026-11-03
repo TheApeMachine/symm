@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
@@ -39,17 +39,17 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		task := func() {
 			defer wg.Done()
 
-			signal.books.Book(data.Symbol, func(book *book.Book) {
-				price, _ := data.Price.Float64()
-				qty, _ := data.Qty.Float64()
+			signal.books.Book(data.Symbol, func(book *market.Book) {
+				price := data.Price.InexactFloat64()
+				qty := data.Qty.InexactFloat64()
 
 				output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
 					At:     data.Timestamp,
 					Symbol: data.Symbol,
 					Last:   price,
 					Volume: qty,
-					Ask:    book.BestAsk().Price.Float64(),
-					Bid:    book.BestBid().Price.Float64(),
+					Ask:    book.BestAsk().Price.InexactFloat64(),
+					Bid:    book.BestBid().Price.InexactFloat64(),
 				})
 
 				if err != nil {

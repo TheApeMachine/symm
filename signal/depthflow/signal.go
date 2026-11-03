@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
@@ -71,8 +71,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
+			price := data.Price.InexactFloat64()
+			qty := data.Qty.InexactFloat64()
 
 			if price <= 0 || qty <= 0 {
 				return
@@ -84,14 +84,14 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				err   error
 			)
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				pair := signal.instrument.Pair(data.Symbol)
 
 				if pair.TickSize == nil {
 					return
 				}
 
-				tickSize, _ := pair.TickSize.Float64()
+				tickSize := pair.TickSize.InexactFloat64()
 
 				if tickSize <= 0 {
 					return
@@ -100,10 +100,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
 
 				for _, level := range book.Bids.Levels {
-					levelPrice := level.Price.Float64()
+					levelPrice := level.Price.InexactFloat64()
 					bids = append(bids, flow.BookLevel{
 						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
+						Quantity: level.Quantity.InexactFloat64(),
 						Ticks:    int64(levelPrice / tickSize),
 					})
 				}
@@ -111,10 +111,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
 
 				for _, level := range book.Asks.Levels {
-					levelPrice := level.Price.Float64()
+					levelPrice := level.Price.InexactFloat64()
 					asks = append(asks, flow.BookLevel{
 						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
+						Quantity: level.Quantity.InexactFloat64(),
 						Ticks:    int64(levelPrice / tickSize),
 					})
 				}

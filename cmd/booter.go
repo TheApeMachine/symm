@@ -6,6 +6,7 @@ import (
 	sysruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -21,7 +22,6 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/internal/disconnect"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -37,6 +37,8 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -47,8 +49,8 @@ type Booter struct {
 	*nmruntime.System
 	epoch            int64
 	public           *network.WebsocketClient
-	privateTransport broker.Transport
-	liveTransport    broker.Transport
+	privateTransport network.Client
+	liveTransport    network.Client
 	instrument       *broker.Instrument
 	book             *broker.Book
 	price            *broker.Price
@@ -58,6 +60,7 @@ type Booter struct {
 	training         *strategy.Training
 	model            *strategy.Model
 	workspace        *nmruntime.Workspace
+	persist          *tickPersist
 	store            *store.Client
 	replies          sync.Map
 }
@@ -79,6 +82,8 @@ func NewBooter(ctx context.Context, name string) *Booter {
 			errnie.Validation, "[booter] kraken credentials unavailable", err,
 		))
 	}
+
+	network.SetPrivateSigner(kraken.SignPrivate)
 
 	_, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: "symm." + name + ".theapemachine.app",
@@ -134,6 +139,7 @@ func (booter *Booter) Run() error {
 	}
 
 	booter.Transition(nmruntime.READY)
+	booter.persist.Arm()
 
 	errnie.Info(fmt.Sprintf(
 		"[booter] trade firehose open %s after boot",
@@ -160,7 +166,7 @@ func (booter *Booter) initTransports() error {
 
 	// Paper transport is always present so the paper book can refine while
 	// real is armed or halted.
-	booter.privateTransport = broker.NewPaper(ctx)
+	booter.privateTransport = kraken.NewPaper(ctx, venue.NewSimulator())
 
 	switch system.Cfg.Market.Model {
 	case "paper":
@@ -174,7 +180,7 @@ func (booter *Booter) initTransports() error {
 			)
 		}
 
-		booter.liveTransport = privateWS
+		booter.liveTransport = kraken.NewLive(ctx, privateWS, nil)
 	default:
 		return errnie.Err(
 			errnie.Validation,
@@ -219,9 +225,10 @@ func (booter *Booter) initMarket() error {
 
 	booter.desk = broker.NewDesk(
 		ctx,
-		map[string]broker.Transport{
-			"paper": booter.privateTransport,
-			"real":  booter.liveTransport,
+		map[string]network.Client{
+			"virtual": network.NewVirtual(ctx),
+			"paper":   booter.privateTransport,
+			"real":    booter.liveTransport,
 		},
 		booter.price,
 	)
@@ -232,22 +239,39 @@ func (booter *Booter) initMarket() error {
 
 	booter.startPrivateIngress()
 
-	if err := broker.SubscribeExecutions(ctx, booter.privateTransport, booter.instrument); err != nil {
-		return err
+	for _, channel := range []string{"executions", "balances"} {
+		buf, err := sonic.Marshal(map[string]any{
+			"method": "subscribe",
+			"params": map[string]any{"channel": channel},
+		})
+
+		if err != nil {
+			return errnie.Err(errnie.IO, "[booter] paper "+channel+" subscribe marshal failed", err)
+		}
+
+		if err := booter.privateTransport.Write(buf); err != nil {
+			return errnie.Err(errnie.IO, "[booter] paper "+channel+" subscribe write failed", err)
+		}
 	}
 
-	if booter.liveTransport != nil {
+	if live, ok := booter.liveTransport.(*kraken.Live); ok {
 		booter.startLiveIngress()
 
-		if err := broker.SubscribeExecutions(ctx, booter.liveTransport, booter.instrument); err != nil {
+		if err := live.SubscribeExecutions(); err != nil {
 			return err
 		}
 
-		if ws, ok := booter.liveTransport.(*network.WebsocketClient); ok {
-			ws.OnReconnect(func() error {
-				return broker.SubscribeExecutions(booter.Context(), ws, booter.instrument)
-			})
+		if err := live.SubscribeBalances(); err != nil {
+			return err
 		}
+
+		live.OnReconnect(func() error {
+			if err := live.SubscribeExecutions(); err != nil {
+				return err
+			}
+
+			return live.SubscribeBalances()
+		})
 	}
 
 	return nil
@@ -259,6 +283,7 @@ func (booter *Booter) initPipeline() error {
 	training := strategy.NewTraining(ctx, booter.price, booter.desk)
 	model := strategy.NewModel(ctx, booter.desk, booter.price, training.ResetSequencer)
 	booter.model = model
+	booter.persist = newTickPersist(ctx, booter.store)
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
@@ -282,6 +307,9 @@ func (booter *Booter) initPipeline() error {
 			}},
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
+			}},
+			{Group: "persist", Nodes: []nmruntime.Node{
+				booter.persist,
 			}},
 		},
 	)
@@ -371,7 +399,7 @@ func (booter *Booter) startLiveIngress() {
 	booter.pumpPrivate(booter.liveTransport, "real")
 }
 
-func (booter *Booter) pumpPrivate(transport broker.Transport, label string) {
+func (booter *Booter) pumpPrivate(transport network.Client, label string) {
 	if transport == nil {
 		return
 	}
@@ -445,7 +473,7 @@ func (booter *Booter) openFirehose() error {
 }
 
 func (booter *Booter) startIngress(
-	client broker.Transport, name string,
+	client network.Client, name string,
 ) {
 	go func() {
 		errnie.Info(fmt.Sprintf("[booter] starting %s ingress", name))
@@ -491,9 +519,9 @@ func (booter *Booter) startIngress(
 					errnie.Error(err)
 				}
 
-				// Reprice open positions whose book just changed so the stoploss
-				// sees the new exit VWAP and depth without waiting for a trade.
-				if booter.desk != nil {
+				// Reprice open lots after books are live. Doing this during
+				// seed stalls the L3 reader (unread snapshots → venue rejects).
+				if booter.desk != nil && booter.Status() == nmruntime.READY {
 					symbols := make([]string, 0, len(level3.Data))
 
 					for _, d := range level3.Data {
@@ -567,41 +595,22 @@ func (booter *Booter) startIngress(
 					trade.Type,
 					dat,
 				))
+				tick.N = tickN
 
+				// Step returns immediately; the disruptor mutates this
+				// envelope. Persist runs in the last ring — never marshal here.
 				booter.workspace.Step(tick)
 
-				// Persist only after boot READY so seed Read loops stay free.
 				if booter.Status() != nmruntime.READY {
 					continue
 				}
 
-				go func() {
-					ui.UI.WriteJSON(map[string]any{
-						"tick": map[string]any{
-							"epoch": data.Epoch.Load(),
-							"n":     tickN,
-						},
-					})
-
-					payload, err := sonic.Marshal(tick)
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.IO,
-							"[booter] error marshalling tick",
-							err,
-						))
-						return
-					}
-
-					booter.store.WriteAtPrefix(
-						fmt.Sprintf(
-							"workspace/tick/aggregate/%019d",
-							tickN,
-						),
-						payload,
-					)
-				}()
+				ui.UI.WriteJSON(map[string]any{
+					"tick": map[string]any{
+						"epoch": data.Epoch.Load(),
+						"n":     tickN,
+					},
+				})
 			case "heartbeat", "status":
 			default:
 				// Request acknowledgements (subscribe, unsubscribe, ...). A
@@ -638,4 +647,59 @@ func (booter *Booter) startIngress(
 			}
 		}
 	}()
+}
+
+/*
+tickPersist writes the finished envelope after the model ring. Ingress must not
+marshal that envelope — Step hands it to the disruptor asynchronously.
+*/
+type tickPersist struct {
+	*nmruntime.System
+	store *store.Client
+	armed atomic.Bool
+}
+
+func newTickPersist(ctx context.Context, client *store.Client) *tickPersist {
+	persist := &tickPersist{store: client}
+	persist.System = nmruntime.NewSystem(ctx, "tick-persist", persist)
+	persist.Transition(nmruntime.READY)
+	return persist
+}
+
+func (persist *tickPersist) Arm() {
+	persist.armed.Store(true)
+}
+
+func (persist *tickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelope {
+	if envelope == nil || persist.store == nil || !persist.armed.Load() {
+		return envelope
+	}
+
+	// Pipeline rings are done with this envelope. Marshal off-thread so JSON/S3
+	// never stalls the disruptor (that freeze left impulse/kernels on last paint).
+	go persist.write(envelope)
+	return envelope
+}
+
+func (persist *tickPersist) write(envelope *nmruntime.Envelope) {
+	payload, err := nmruntime.Sonic.Marshal(envelope)
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"[tick-persist] marshal failed",
+			err,
+		).With("n", envelope.N))
+		return
+	}
+
+	if _, err := persist.store.WriteAtPrefix(
+		fmt.Sprintf("workspace/tick/aggregate/%019d", envelope.N),
+		payload,
+	); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"[tick-persist] write failed",
+			err,
+		).With("n", envelope.N))
+	}
 }

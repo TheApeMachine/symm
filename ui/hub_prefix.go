@@ -292,7 +292,7 @@ func chunkClosedEntries(entries []closedEntry, budget int) [][]closedEntry {
 	}
 
 	for i, entry := range entries {
-		raw, err := sonic.Marshal(entry)
+		raw, err := Sonic.Marshal(entry)
 		cost := 64
 
 		if err == nil {

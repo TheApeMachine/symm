@@ -11,7 +11,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestRESTPublicPostIsUnsigned(t *testing.T) {
@@ -51,6 +51,8 @@ func TestRESTPrivateSignatureMatchesBody(t *testing.T) {
 	if err := kraken.UseCredentials(kraken.RoleMain); err != nil {
 		t.Fatalf("credentials: %v", err)
 	}
+
+	SetPrivateSigner(kraken.SignPrivate)
 
 	key, signature, signed, err := kraken.SignPrivate("/0/private/AddOrder", map[string]string{
 		"pair":      "XBTUSD",
