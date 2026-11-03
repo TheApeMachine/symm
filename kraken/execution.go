@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/decimal"
 )
 
 type Execution struct {

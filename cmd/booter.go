@@ -205,7 +205,6 @@ func (booter *Booter) initMarket() error {
 	booter.price = broker.NewPrice(
 		ctx,
 		booter.book,
-		booter.privateTransport,
 		booter.instrument,
 		booter.normalizer,
 	)
@@ -277,10 +276,8 @@ func (booter *Booter) initPipeline() error {
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
 			}},
-			{Group: "resonance", Nodes: []nmruntime.Node{
+			{Group: "observe", Nodes: []nmruntime.Node{
 				resonance.NewSolver(ctx),
-			}},
-			{Group: "training", Nodes: []nmruntime.Node{
 				training,
 			}},
 			{Group: "model", Nodes: []nmruntime.Node{
@@ -508,17 +505,20 @@ func (booter *Booter) startIngress(
 					booter.desk.Refresh(symbols)
 				}
 
-				booter.store.WriteAtPrefix(
-					fmt.Sprintf(
-						"workspace/tick/level3/%019d/%019d",
-						data.Tick.Load(),
-						data.SeqIdx.Add(1),
-					),
-
-					buf,
-				)
+				// // Never block L3 Read on S3 while books are still seeding —
+				// // unread snapshots make the venue reject later subscribes.
+				// if booter.Status() == nmruntime.READY {
+				// 	booter.store.WriteAtPrefix(
+				// 		fmt.Sprintf(
+				// 			"workspace/tick/level3/%019d/%019d",
+				// 			data.Tick.Load(),
+				// 			data.SeqIdx.Add(1),
+				// 		),
+				// 		buf,
+				// 	)
+				// }
 			case "trade":
-				data.Tick.Add(1)
+				tickN := data.Tick.Add(1)
 
 				if booter.workspace == nil {
 					continue
@@ -562,29 +562,46 @@ func (booter *Booter) startIngress(
 					})
 				}
 
-				tick := booter.workspace.Step(runtime.NewEnvelope(market.NewTrade(
+				tick := runtime.NewEnvelope(market.NewTrade(
 					trade.Channel,
 					trade.Type,
 					dat,
-				)))
+				))
 
-				json, err := sonic.Marshal(tick)
+				booter.workspace.Step(tick)
 
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"[booter] error marshalling tick",
-						err,
-					))
+				// Persist only after boot READY so seed Read loops stay free.
+				if booter.Status() != nmruntime.READY {
+					continue
 				}
 
-				booter.store.WriteAtPrefix(
-					fmt.Sprintf(
-						"workspace/workspace/tick/aggregate/%019d",
-						data.Tick.Load(),
-					),
-					json,
-				)
+				go func() {
+					ui.UI.WriteJSON(map[string]any{
+						"tick": map[string]any{
+							"epoch": data.Epoch.Load(),
+							"n":     tickN,
+						},
+					})
+
+					payload, err := sonic.Marshal(tick)
+
+					if err != nil {
+						errnie.Error(errnie.Err(
+							errnie.IO,
+							"[booter] error marshalling tick",
+							err,
+						))
+						return
+					}
+
+					booter.store.WriteAtPrefix(
+						fmt.Sprintf(
+							"workspace/tick/aggregate/%019d",
+							tickN,
+						),
+						payload,
+					)
+				}()
 			case "heartbeat", "status":
 			default:
 				// Request acknowledgements (subscribe, unsubscribe, ...). A

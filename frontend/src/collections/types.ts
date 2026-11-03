@@ -69,8 +69,8 @@ export type PositionFill = {
 /*
 Position mirrors broker.Position JSON. Qty / entry price / fees come from
 entry_order, exit_order, and fills — not duplicated scalars on the lot.
-`book` is stamped by the frontend from the S3 tier prefix (paper|virtual|real);
-the Go struct does not carry it.
+`book` is the desk ledger (virtual|paper|real), set by the broker on the wire
+and stamped from the S3 tier prefix for closed-history listings.
 */
 export type Position = {
 	id: string;

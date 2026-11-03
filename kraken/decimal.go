@@ -1,11 +1,13 @@
 package kraken
 
-import "github.com/theapemachine/symm/decimal"
+import "github.com/shopspring/decimal"
 
 func dFloat(value float64) *decimal.Decimal {
-	return decimal.NewFromFloat64(value)
+	d := decimal.NewFromFloat(value)
+	return &d
 }
 
 func dInt(value int64) *decimal.Decimal {
-	return decimal.NewFromInt64(value)
+	d := decimal.NewFromInt(value)
+	return &d
 }

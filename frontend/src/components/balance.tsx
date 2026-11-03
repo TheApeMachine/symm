@@ -1,7 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { atoms } from "#/collections/app";
-import { bookAtom } from "#/collections/book";
+import { type Book, bookAtom } from "#/collections/book";
+import { confidenceAtom } from "#/collections/confidence";
 import type { Balance as BalanceReading } from "#/collections/types";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
@@ -28,6 +29,39 @@ const field = (balance: BalanceReading | null, key: keyof BalanceReading) =>
 const inProfit = (balance: BalanceReading | null) => {
 	const unrealized = Number(field(balance, "unrealized"));
 	return Number.isFinite(unrealized) && unrealized > 0;
+};
+
+const cashLabel = (book: Book): string => {
+	switch (book) {
+		case "virtual":
+			return "Virtual cash";
+		case "real":
+			return "Live cash";
+		default:
+			return "Paper cash";
+	}
+};
+
+const walletFor = (
+	book: Book,
+	wallets: {
+		virtual?: BalanceReading | null;
+		paper?: BalanceReading | null;
+		real?: BalanceReading | null;
+	},
+	legacy: BalanceReading | null,
+	realLive: boolean,
+): BalanceReading | null => {
+	switch (book) {
+		case "virtual":
+			return wallets.virtual ?? null;
+		case "real":
+			// REAL OFF / no live transport → never fall back to paper's bankroll.
+			if (!realLive) return null;
+			return wallets.real ?? null;
+		default:
+			return wallets.paper ?? legacy;
+	}
 };
 
 const Lambo = () => (
@@ -78,18 +112,19 @@ const Reading = ({
 );
 
 /*
-Wallet readout follows the selected ledger tab: paper wallet on paper/virtual,
-live wallet on real.
+Wallet readout follows the selected ledger tab: virtual, paper, or live.
 */
 export const Balance = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const legacy = useSelector(atoms.balance, (state) => state);
 	const wallets = useSelector(atoms.balances, (state) => state);
-	const balance =
-		book === "real"
-			? (wallets.real ?? null)
-			: (wallets.paper ?? legacy);
-	const label = book === "real" ? "Live cash" : "Paper cash";
+	const realLive = useSelector(
+		confidenceAtom,
+		(state) => state.real_ceiling === true,
+	);
+	const balance = walletFor(book, wallets, legacy, realLive);
+	const label =
+		book === "real" && !realLive ? "Live cash (off)" : cashLabel(book);
 
 	return (
 		<Flex.Row align="center" gap={6} data-wallet="account" data-book={book}>

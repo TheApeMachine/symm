@@ -14,11 +14,11 @@ import (
 	"github.com/bytedance/sonic"
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/system"
 )
@@ -442,7 +442,8 @@ func (paper *Paper) TradeBalance() (*kraken.TradeBalanceResult, error) {
 		))
 	}
 
-	result.AvailableCash = decimal.NewFromInt64(0)
+	zero := decimal.NewFromInt(0)
+	result.AvailableCash = &zero
 
 	if row, found := balance.Balances[quote]; found {
 		result.AvailableCash = row.Available
@@ -481,7 +482,8 @@ func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, er
 		))
 	}
 
-	feePercent := decimal.NewFromFloat64(feeRate).Mul(decimal.NewFromInt64(100))
+	feePercentVal := decimal.NewFromFloat(feeRate).Mul(decimal.NewFromInt(100))
+	feePercent := &feePercentVal
 	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
 	feesMaker := make(map[string]kraken.TradeVolumeFee, len(symbols))
 

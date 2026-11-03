@@ -3,7 +3,7 @@ package types
 import (
 	"time"
 
-	"github.com/theapemachine/symm/decimal"
+	"github.com/shopspring/decimal"
 )
 
 /*

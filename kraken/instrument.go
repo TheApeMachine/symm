@@ -2,8 +2,8 @@ package kraken
 
 import (
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/decimal"
 )
 
 type Instrument struct {

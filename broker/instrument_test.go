@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -39,18 +39,18 @@ func TestInstrumentPairMeasurementRoundTrip(t *testing.T) {
 			Quote:              "USD",
 			Status:             "online",
 			QtyPrecision:       5,
-			QtyIncrement:       qtyInc,
+			QtyIncrement:       &qtyInc,
 			PricePrecision:     1,
 			CostPrecision:      2,
 			Marginable:         true,
 			HasIndex:           true,
-			CostMin:            costMin,
-			MarginInitial:      marginInit,
+			CostMin:            &costMin,
+			MarginInitial:      &marginInit,
 			PositionLimitLong:  100,
 			PositionLimitShort: 50,
-			TickSize:           tickSize,
-			PriceIncrement:     priceInc,
-			QtyMin:             qtyMin,
+			TickSize:           &tickSize,
+			PriceIncrement:     &priceInc,
+			QtyMin:             &qtyMin,
 		}
 
 		Convey("sonic.Marshal round-trips the pair", func() {
@@ -83,14 +83,14 @@ func TestInstrumentSnapshotWithPeers(t *testing.T) {
 			Base:    "BTC",
 			Quote:   "USD",
 			Status:  "online",
-			CostMin: costMin,
+			CostMin: &costMin,
 		}
 		pair2 := kraken.InstrumentPair{
 			Symbol:  "ETH/USD",
 			Base:    "ETH",
 			Quote:   "USD",
 			Status:  "online",
-			CostMin: costMin,
+			CostMin: &costMin,
 		}
 
 		snapshot := &kraken.Instrument{

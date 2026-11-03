@@ -84,6 +84,11 @@ func (cache *Cache) Restore(raw []byte) *Position {
 
 	position.System = runtime.NewSystem(cache.Context(), "position")
 	position.transport = cache.transport
+	position.tierKey = cache.tierKey
+
+	if position.Book == "" {
+		position.Book = cache.tierKey
+	}
 
 	return position
 }

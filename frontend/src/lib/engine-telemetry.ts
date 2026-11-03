@@ -1,15 +1,17 @@
 import { batch } from "@tanstack/store";
 import { atoms, signals } from "#/collections/app";
+import { bookAtom, decisionBook } from "#/collections/book";
 import { cognitionStore } from "#/collections/cognition";
 import type { Decision } from "#/collections/envelope";
 
 /*
 syncEngineTelemetry keeps the dashboard engine readout aligned with the
-live decision and market tick streams.
+live decision and market tick streams for the selected ledger.
 */
 export const syncEngineTelemetry = () => {
 	const { matches, tree } = cognitionStore.state;
 	const live = signals.decisions.state as Record<string, Decision>;
+	const book = bookAtom.get();
 
 	let candidates = 0;
 	for (const match of Object.values(matches)) {
@@ -18,9 +20,9 @@ export const syncEngineTelemetry = () => {
 		}
 	}
 	for (const decision of Object.values(live)) {
-		if (decision?.action && decision.action !== "skip") {
-			candidates++;
-		}
+		if (!decision?.action || decision.action === "skip") continue;
+		if (decisionBook(decision) !== book) continue;
+		candidates++;
 	}
 
 	let phase = atoms.phase.get();

@@ -7,10 +7,10 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/signal/frame"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -31,10 +31,17 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var mu sync.Mutex
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 
-	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
-		for _, data := range trades {
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
+
+		task := func() {
+			defer wg.Done()
+
 			var (
 				bid, ask, bidQty, askQty float64
 				ok                       bool
@@ -58,7 +65,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			})
 
 			if !ok {
-				continue
+				return
 			}
 
 			input, ready, err := signal.sample.Measure(algorithm.DepthSampleInput{
@@ -72,25 +79,35 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			if err != nil {
 				signal.Error(err)
-				continue
+				return
 			}
 
 			if !ready {
-				continue
+				return
 			}
 
 			outcome, err := signal.process.Measure(input)
 			if err != nil {
 				signal.Error(err)
-				continue
+				return
 			}
 
 			mu.Lock()
 			envelope.Liquidity[data.Symbol] = &outcome
 			mu.Unlock()
 		}
-	})
 
-	ui.UI.Write(envelope.Publish("liquidity"))
+		if system.Q.Submit(task) != nil {
+			task()
+		}
+	}
+
+	wg.Wait()
+
+	focus := types.Focus()
+	if reading, ok := envelope.Liquidity[focus]; ok {
+		ui.Focus("liquidity", focus, reading)
+	}
+
 	return envelope
 }

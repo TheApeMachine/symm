@@ -59,7 +59,11 @@ export const atoms: Record<string, Atom<any>> = {
 	error: createAtom<Record<string, unknown> | null>(null),
 	tickCount: createAtom<number>(0),
 	balance: createAtom<Balance | null>(null),
-	balances: createAtom<{ paper?: Balance | null; real?: Balance | null }>({}),
+	balances: createAtom<{
+		virtual?: Balance | null;
+		paper?: Balance | null;
+		real?: Balance | null;
+	}>({}),
 	phase: createAtom<string>("—"),
 	candidates: createAtom<number>(0),
 	positionCount: createAtom<number>(0),

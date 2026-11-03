@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/decimal"
 )
 
 type Level3 struct {
@@ -111,7 +111,7 @@ func exactDecimal(raw json.RawMessage) (*decimal.Decimal, string, error) {
 		return nil, "", err
 	}
 
-	return parsed, plain, nil
+	return &parsed, plain, nil
 }
 
 /*

@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -15,24 +15,28 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 		equity, _ := decimal.NewFromString("199.68")
 		cash, _ := decimal.NewFromString("160.14")
 		zamaAmount, _ := decimal.NewFromString("517.71")
+		unrealizedPtr := &unrealized
+		equityPtr := &equity
+		cashPtr := &cash
+		zamaPtr := &zamaAmount
 
 		tb := &kraken.TradeBalanceResult{
-			UnrealizedPnL: unrealized,
-			Equity:        equity,
-			AvailableCash: cash,
+			UnrealizedPnL: unrealizedPtr,
+			Equity:        equityPtr,
+			AvailableCash: cashPtr,
 		}
 
 		wallet := &kraken.Balance{
 			Data: []kraken.BalanceData{
 				{
 					Asset:     "USD",
-					Balance:   cash,
-					Available: cash,
+					Balance:   cashPtr,
+					Available: cashPtr,
 				},
 				{
 					Asset:     "ZAMA",
-					Balance:   zamaAmount,
-					Available: zamaAmount,
+					Balance:   zamaPtr,
+					Available: zamaPtr,
 				},
 			},
 		}

@@ -6,9 +6,9 @@ import (
 
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/frame"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -27,17 +27,24 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var mu sync.Mutex
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 
-	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
-		for _, data := range trades {
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
+
+		task := func() {
+			defer wg.Done()
+
 			if data.Price.IsZero() {
-				continue
+				return
 			}
 
 			price, _ := data.Price.Float64()
 			if price <= 0 {
-				continue
+				return
 			}
 
 			input, ok, err := signal.sample.Measure(algorithm.ConvictionSampleInput{
@@ -48,25 +55,35 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			if err != nil {
 				signal.Error(err)
-				continue
+				return
 			}
 
 			if !ok {
-				continue
+				return
 			}
 
 			outcome, err := signal.process.Measure(input)
 			if err != nil {
 				signal.Error(err)
-				continue
+				return
 			}
 
 			mu.Lock()
 			envelope.Sentiment[data.Symbol] = &outcome
 			mu.Unlock()
 		}
-	})
 
-	ui.UI.Write(envelope.Publish("sentiment"))
+		if system.Q.Submit(task) != nil {
+			task()
+		}
+	}
+
+	wg.Wait()
+
+	focus := types.Focus()
+	if reading, ok := envelope.Sentiment[focus]; ok {
+		ui.Focus("sentiment", focus, reading)
+	}
+
 	return envelope
 }

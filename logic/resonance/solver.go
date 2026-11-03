@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/nomagique/learning"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -89,11 +88,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Resonance[symbol] = reading
 			mu.Unlock()
 
-			if types.Allows(symbol) && ui.UI != nil && ui.UI.Active() {
-				ui.UI.WriteJSON(map[string]any{
-					"resonance": map[string]any{symbol: reading},
-				})
-			}
+			ui.Focus("resonance", symbol, reading)
 		}
 
 		if system.Q.Submit(task) != nil {
@@ -179,15 +174,22 @@ func (solver *Solver) state(symbol string) *symbolState {
 }
 
 /*
-featureScorer standardizes each feature against its own prior moments.
+featureScorer standardizes each feature against its own prior moments and
+holds the last raw reading per Feature. A single trade tick almost never
+carries every signal source at once; holding lets the manifold settle once
+the full set has been seen across ticks.
 */
 type featureScorer struct {
 	standardizers []*adaptive.Standardizer
+	held          []float64
+	seen          []bool
 }
 
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{
 		standardizers: make([]*adaptive.Standardizer, len(Features)),
+		held:          make([]float64, len(Features)),
+		seen:          make([]bool, len(Features)),
 	}
 
 	for i := range scorer.standardizers {
@@ -198,9 +200,10 @@ func newFeatureScorer() *featureScorer {
 }
 
 /*
-Observe returns a standardized vector only when every Feature is present and
-at least one standardizer is ready. Missing labels skip the tick — no held
-fills, no synthetic zeros.
+Observe folds whatever labels arrived this tick into the held vector. It
+returns a standardized input only when every Feature has been seen at least
+once, at least one label updated this tick, and at least one standardizer
+is ready.
 */
 func (scorer *featureScorer) Observe(
 	sources map[string]map[string]float64,
@@ -209,26 +212,38 @@ func (scorer *featureScorer) Observe(
 		return nil, false
 	}
 
-	raw := make([]float64, len(Features))
+	updated := false
 
 	for i, feature := range Features {
 		labels := sources[feature.Source]
 		if labels == nil {
-			return nil, false
+			continue
 		}
 
 		value, ok := labels[feature.Label]
 		if !ok {
-			return nil, false
+			continue
 		}
 
-		raw[i] = value
+		scorer.held[i] = value
+		scorer.seen[i] = true
+		updated = true
+	}
+
+	if !updated {
+		return nil, false
+	}
+
+	for _, ok := range scorer.seen {
+		if !ok {
+			return nil, false
+		}
 	}
 
 	input := make([]float64, len(Features))
 	ready := false
 
-	for i, reading := range raw {
+	for i, reading := range scorer.held {
 		output, err := scorer.standardizers[i].Measure(reading)
 		if err != nil {
 			return nil, false

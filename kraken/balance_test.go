@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -13,6 +13,8 @@ func TestBalanceJSONRoundTrip(t *testing.T) {
 	Convey("Given a kraken.Balance with asset rows", t, func() {
 		btcBal, _ := decimal.NewFromString("1.5")
 		usdBal, _ := decimal.NewFromString("1000.50")
+		btcPtr := &btcBal
+		usdPtr := &usdBal
 
 		original := &kraken.Balance{
 			Channel: "balances",
@@ -20,13 +22,13 @@ func TestBalanceJSONRoundTrip(t *testing.T) {
 			Data: []kraken.BalanceData{
 				{
 					Asset:     "BTC",
-					Balance:   btcBal,
-					Available: btcBal,
+					Balance:   btcPtr,
+					Available: btcPtr,
 				},
 				{
 					Asset:     "USD",
-					Balance:   usdBal,
-					Available: usdBal,
+					Balance:   usdPtr,
+					Available: usdPtr,
 				},
 			},
 		}

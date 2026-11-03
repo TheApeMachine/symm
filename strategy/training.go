@@ -10,6 +10,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -94,12 +95,13 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 	wg.Wait()
 
-	if payload := envelope.Publish("regions"); len(payload) > 0 {
-		ui.UI.Write(payload)
+	focus := types.Focus()
+	if regions, ok := envelope.Regions[focus]; ok {
+		ui.Focus("regions", focus, regions)
 	}
 
-	if payload := envelope.Publish("paths"); len(payload) > 0 {
-		ui.UI.Write(payload)
+	if path, ok := envelope.Paths[focus]; ok {
+		ui.Focus("paths", focus, path)
 	}
 
 	return envelope
@@ -163,9 +165,12 @@ func (training *Training) lightBroker(symbol string, regions []*runtime.Region) 
 	training.shine(regions, 9, 10, price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD)
 	training.shine(regions, 11, 12, price.ChangePct(symbol) >= risk.MinMoverChangePct)
 
-	spreadOK := false
-	if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
-		spreadOK = spread.MustFloat64() <= risk.MaxEntrySpreadPct
+	// MaxEntrySpreadPct <= 0 disables the spread oracle (lab zero = no limit).
+	spreadOK := risk.MaxEntrySpreadPct <= 0
+	if !spreadOK {
+		if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
+			spreadOK = spread.InexactFloat64() <= risk.MaxEntrySpreadPct
+		}
 	}
 
 	training.shine(regions, 13, 14, spreadOK)

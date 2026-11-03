@@ -1,6 +1,12 @@
 import { useSelector } from "@tanstack/react-store";
 import { useMemo } from "react";
 import { signals } from "#/collections/app";
+import {
+	type Book,
+	bookAtom,
+	decisionBook,
+	decisionStoreKey,
+} from "#/collections/book";
 import type { Decision, Region } from "#/collections/envelope";
 import {
 	gateLabStore,
@@ -29,31 +35,39 @@ type DecisionRow = {
 	reason: string;
 	gate?: string;
 	path?: string;
+	tier: Book;
 };
 
 const decisionReason = (decision: Decision): string => {
 	const reason = formatBlockedReason(decision.reason || "");
 	const gate = decision.gate ? `${decision.gate}: ` : "";
 	const path = decision.path ? ` · ${decision.path}` : "";
-	const virtual = decision.virtual ? " · virtual" : "";
+	const tier = decision.tier ? ` · ${decision.tier}` : "";
 
-	return `${gate}${reason}${path}${virtual}`;
+	return `${gate}${reason}${path}${tier}`;
 };
 
-const decisionsFromLive = (live: Record<string, Decision>): DecisionRow[] => {
+const decisionsFromLive = (
+	live: Record<string, Decision>,
+	book: Book,
+): DecisionRow[] => {
 	const rows: DecisionRow[] = [];
 
 	for (const decision of Object.values(live)) {
 		if (!decision?.symbol || !decision.action) continue;
+		if (decisionBook(decision) !== book) continue;
+
+		const tier = decisionBook(decision);
 
 		rows.push({
-			id: `${decision.symbol}-${decision.action}-${decision.reason}`,
+			id: decisionStoreKey(decision),
 			symbol: decision.symbol,
 			action: decision.action,
 			confidence: decision.confidence ?? 0,
-			reason: decisionReason(decision),
+			reason: decisionReason({ ...decision, tier }),
 			gate: decision.gate,
 			path: decision.path,
+			tier,
 		});
 	}
 
@@ -173,10 +187,14 @@ const GateLamps = ({
 };
 
 export const Decisions = () => {
+	const book = useSelector(bookAtom, (state) => state);
 	const live = useSelector(signals.decisions, (state) => state);
 	const regions = useSelector(signals.regions, (state) => state);
 	const overrides = useSelector(gateLabStore, (state) => state.overrides);
-	const decisions = useMemo(() => decisionsFromLive(live), [live]);
+	const decisions = useMemo(
+		() => decisionsFromLive(live, book),
+		[live, book],
+	);
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);

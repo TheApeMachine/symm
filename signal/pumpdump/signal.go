@@ -6,10 +6,10 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/equation"
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/signal/frame"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -28,10 +28,17 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var mu sync.Mutex
+	var (
+		wg sync.WaitGroup
+		mu sync.Mutex
+	)
 
-	frame.NewSymbols(envelope.Trade.Data).Each(func(trades []*market.TradeData) {
-		for _, data := range trades {
+	for _, data := range envelope.Trade.Data {
+		wg.Add(1)
+
+		task := func() {
+			defer wg.Done()
+
 			signal.books.Book(data.Symbol, func(book *book.Book) {
 				price, _ := data.Price.Float64()
 				qty, _ := data.Qty.Float64()
@@ -59,8 +66,18 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				mu.Unlock()
 			})
 		}
-	})
 
-	ui.UI.Write(envelope.Publish("pumpdump"))
+		if system.Q.Submit(task) != nil {
+			task()
+		}
+	}
+
+	wg.Wait()
+
+	focus := types.Focus()
+	if reading, ok := envelope.Pumpdump[focus]; ok {
+		ui.Focus("pumpdump", focus, reading)
+	}
+
 	return envelope
 }

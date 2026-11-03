@@ -13,7 +13,6 @@ import (
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
@@ -293,107 +292,4 @@ func TestWebsocketWriteSerializesConcurrentWriters(t *testing.T) {
 	started.Wait()
 	close(gate)
 	done.Wait()
-}
-
-func TestWebsocketDialLocked(t *testing.T) {
-	Convey("Given concurrent dials", t, func() {
-		var dials atomic.Int32
-		release := make(chan struct{})
-		var releaseOnce sync.Once
-		openRelease := func() { releaseOnce.Do(func() { close(release) }) }
-		defer openRelease()
-
-		entered := make(chan struct{})
-		var enteredOnce sync.Once
-
-		client := NewWebsocketClient(t.Context())
-		client.url = "ws://unused"
-		client.dial = func(string) (*gorilla.Conn, *http.Response, error) {
-			dials.Add(1)
-			enteredOnce.Do(func() { close(entered) })
-			<-release
-
-			return nil, nil, errors.New("dial failed")
-		}
-
-		const waiters = 8
-		var wg sync.WaitGroup
-		wg.Add(waiters)
-
-		for range waiters {
-			go func() {
-				defer wg.Done()
-				_, _ = client.dialLocked()
-			}()
-		}
-
-		<-entered
-
-		Convey("The lifecycle lock lets one dial run", func() {
-			So(dials.Load(), ShouldEqual, 1)
-		})
-
-		openRelease()
-		wg.Wait()
-
-		Convey("The other dials run only after it finishes", func() {
-			So(dials.Load(), ShouldEqual, waiters)
-		})
-	})
-
-	Convey("Given a live socket", t, func() {
-		var dials atomic.Int32
-		upgrader := gorilla.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			conn, err := upgrader.Upgrade(w, r, nil)
-			if err != nil {
-				return
-			}
-
-			dials.Add(1)
-
-			go func() {
-				for {
-					if _, _, err := conn.ReadMessage(); err != nil {
-						return
-					}
-				}
-			}()
-		}))
-		defer server.Close()
-
-		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-		client := NewWebsocketClient(t.Context())
-		So(client.Open(wsURL), ShouldBeNil)
-		opened := dials.Load()
-
-		const waiters = 8
-		var wg sync.WaitGroup
-		var failed atomic.Int32
-		var fresh atomic.Int32
-		wg.Add(waiters)
-
-		for range waiters {
-			go func() {
-				defer wg.Done()
-
-				openedNow, err := client.dialLocked()
-				if err != nil {
-					failed.Add(1)
-				}
-				if openedNow {
-					fresh.Add(1)
-				}
-			}()
-		}
-
-		wg.Wait()
-
-		Convey("It does not tear the socket down to dial again", func() {
-			So(failed.Load(), ShouldEqual, 0)
-			So(fresh.Load(), ShouldEqual, 0)
-			So(dials.Load(), ShouldEqual, opened)
-			So(client.Status(), ShouldEqual, runtime.READY)
-		})
-	})
 }

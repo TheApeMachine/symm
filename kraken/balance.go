@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/decimal"
 )
 
 /*
@@ -147,7 +147,8 @@ func NewBalanceFromMap(model map[string]*decimal.Decimal) *Balance {
 func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 	currentValue := dFloat(model["current_value"].(float64))
 	unrealizedPnL := dFloat(model["unrealized_pnl"].(float64))
-	tradeBalance := currentValue.Sub(unrealizedPnL)
+	tradeBalanceVal := currentValue.Sub(*unrealizedPnL)
+	tradeBalance := &tradeBalanceVal
 
 	zero := dInt(0)
 	var funding *decimal.Decimal

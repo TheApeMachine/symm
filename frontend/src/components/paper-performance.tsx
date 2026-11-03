@@ -19,19 +19,15 @@ const pick = (
 });
 
 /*
-Top-bar win rate and edge prefer the backend confidence frame (paper/real
-settles that arm live trading). Lifecycle stats fill gaps until the first
-hub frame arrives.
+Top-bar win rate and edge follow the selected ledger's confidence frame.
+Lifecycle stats fill gaps until the first hub frame arrives.
 */
 export const PaperPerformance = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const confidence = useSelector(confidenceAtom, (state) => state);
 	const { report } = useLifecycles();
 	const lifecycle = selectBook(report, book).performance;
-	const backend = confidenceFor(
-		confidence,
-		book === "virtual" ? "paper" : book,
-	);
+	const backend = confidenceFor(confidence, book);
 	const stats = pick(backend, lifecycle);
 	const name = bookLabel(book).toLowerCase();
 	const title =

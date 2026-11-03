@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
 type Model struct {
@@ -59,6 +60,16 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu.Lock()
 		envelope.Decide(decision)
 		mu.Unlock()
+
+		if decision == nil || decision.Symbol == "" {
+			return
+		}
+
+		if ui.UI != nil && ui.UI.Active() {
+			ui.UI.WriteJSON(map[string]any{
+				"decisions": map[string]any{decision.Symbol: decision},
+			})
+		}
 	}
 
 	for symbol, cut := range envelope.Paths {
@@ -162,7 +173,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			wantEnter := action == ActionEnter ||
 				(action == ActionNone && bullish && cut.Len() > 0)
 
-			if wantEnter && !Board(envelope.Regions[symbol]).Tradable() {
+			// Resonance bypass is the lab "open the floodgates" switch: skip
+			// the emit-board oracle too. Lab oracle lamps stay local-only.
+			if wantEnter && !bypass && !Board(envelope.Regions[symbol]).Tradable() {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -205,7 +218,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if cut.Len() < minPath {
+			if !bypass && cut.Len() < minPath {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -348,11 +361,22 @@ func (model *Model) tryEnter(
 	reason string,
 ) {
 	if err := model.desk.Enter(symbol, path, tt, pathFound); err != nil {
+		action, gate, reason := "blocked", "tier", err.Error()
+
+		if denial, ok := err.(*broker.EntryDenial); ok {
+			gate = denial.Gate
+			reason = denial.Reason
+
+			if denial.Gate == "size" {
+				action = "skip"
+			}
+		}
+
 		decide(&runtime.Decision{
 			Symbol: symbol,
-			Action: "blocked",
-			Reason: err.Error(),
-			Gate:   "tier",
+			Action: action,
+			Reason: reason,
+			Gate:   gate,
 			Path:   path,
 			Tier:   tt.String(),
 		})

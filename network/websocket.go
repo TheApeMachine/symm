@@ -35,8 +35,6 @@ type WebsocketClient struct {
 	hookBackoff time.Duration
 	lastWarn    time.Time
 	dial        func(url string) (*gorilla.Conn, *http.Response, error)
-	// mu guards dial, reconnect, and backoff.
-	mu sync.Mutex
 	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
 	writeMu sync.Mutex
 }
@@ -65,9 +63,7 @@ and runs the hook again, so a resubscribe that fails for a while (a token the
 venue refuses until a nonce recovers) does not end the stream for good.
 */
 func (client *WebsocketClient) OnReconnect(hook func() error) {
-	client.mu.Lock()
 	client.onReconnect = hook
-	client.mu.Unlock()
 }
 
 /*
@@ -77,29 +73,17 @@ any redial). Consumers whose state is only valid while the stream is live
 the whole backoff window. Nil clears the hook.
 */
 func (client *WebsocketClient) OnDisconnect(hook func()) {
-	client.mu.Lock()
 	client.onDisconnect = hook
-	client.mu.Unlock()
 }
 
 func (client *WebsocketClient) Open(url string) error {
-	client.mu.Lock()
 	client.url = url
-	client.mu.Unlock()
-
-	fresh, err := client.dialLocked()
+	err := client.dialLocked()
+	hook := client.onReconnect
 
 	if err != nil {
 		return err
 	}
-
-	if !fresh {
-		return nil
-	}
-
-	client.mu.Lock()
-	hook := client.onReconnect
-	client.mu.Unlock()
 
 	return client.runHook(hook)
 }
@@ -117,9 +101,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 	hookErr := hook()
 
 	if hookErr == nil {
-		client.mu.Lock()
 		client.hookBackoff = 0
-		client.mu.Unlock()
 
 		return nil
 	}
@@ -132,35 +114,25 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	client.closeConnLocked()
 
-	client.mu.Lock()
 	switch client.Status() {
 	case runtime.READY, runtime.ERROR, runtime.BUSY:
 		client.Transition(runtime.WAITING)
 	}
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
-	client.mu.Unlock()
 
 	errnie.Error(cause)
 
 	return cause
 }
 
-// dialLocked holds mu and reports whether this call opened the socket.
-func (client *WebsocketClient) dialLocked() (bool, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
+func (client *WebsocketClient) dialLocked() error {
 	if client.url == "" {
-		return false, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[network.websocket] url is required",
 			nil,
 		))
-	}
-
-	if client.live() {
-		return false, nil
 	}
 
 	client.closeConnLocked()
@@ -169,21 +141,18 @@ func (client *WebsocketClient) dialLocked() (bool, error) {
 
 	if err != nil {
 		client.Transition(runtime.WAITING)
-		return false, errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"[network.websocket] error dialing url",
 			err,
 		))
 	}
 
-	client.writeMu.Lock()
 	client.conn = conn
-	client.writeMu.Unlock()
-
 	client.backoff = time.Second
 	client.Transition(runtime.READY)
 	client.pinger.Start()
-	return true, nil
+	return nil
 }
 
 /*
@@ -201,9 +170,7 @@ func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
 		return nil, err
 	}
 
-	client.writeMu.Lock()
 	conn := client.conn
-	client.writeMu.Unlock()
 
 	if conn == nil {
 		return nil, client.softDown(errnie.Error(errnie.Err(
@@ -259,10 +226,8 @@ func (client *WebsocketClient) Write(message []byte) error {
 }
 
 func (client *WebsocketClient) writePing() error {
-	client.writeMu.Lock()
 	conn := client.conn
 	ready := client.Status() == runtime.READY
-	client.writeMu.Unlock()
 
 	if !ready || conn == nil {
 		return errnie.Error(errnie.Err(
@@ -290,16 +255,11 @@ func (client *WebsocketClient) ensureReady() error {
 		return err
 	}
 
-	client.mu.Lock()
-
-	if client.live() {
-		client.mu.Unlock()
+	if client.Status() == runtime.READY && client.conn != nil {
 		return nil
 	}
 
 	if client.url == "" {
-		client.mu.Unlock()
-
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"[network.websocket] not open",
@@ -308,7 +268,6 @@ func (client *WebsocketClient) ensureReady() error {
 	}
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
-	client.mu.Unlock()
 
 	select {
 	case <-client.Context().Done():
@@ -316,19 +275,12 @@ func (client *WebsocketClient) ensureReady() error {
 	case <-time.After(wait):
 	}
 
-	client.mu.Lock()
-
-	if client.live() {
-		client.mu.Unlock()
+	if client.Status() == runtime.READY && client.conn != nil {
 		return nil
 	}
 
-	client.mu.Unlock()
 	client.warnOnce("reconnecting after disconnect")
-
-	fresh, err := client.dialLocked()
-
-	client.mu.Lock()
+	err := client.dialLocked()
 	hook := client.onReconnect
 
 	if err != nil {
@@ -338,16 +290,7 @@ func (client *WebsocketClient) ensureReady() error {
 				client.backoff = 30 * time.Second
 			}
 		}
-	}
-
-	client.mu.Unlock()
-
-	if err != nil {
 		return err
-	}
-
-	if !fresh {
-		return nil
 	}
 
 	return client.runHook(hook)
@@ -359,25 +302,17 @@ without canceling its context, so subsequent Read operations trigger redial
 with backoff. It invokes the OnDisconnect hook if the connection was live.
 */
 func (client *WebsocketClient) SoftDown(cause error) error {
-	client.writeMu.Lock()
 	wasLive := client.conn != nil
-	client.writeMu.Unlock()
-
-	client.mu.Lock()
 	hook := client.onDisconnect
-	client.mu.Unlock()
 
 	client.closeConnLocked()
 
-	client.mu.Lock()
 	switch client.Status() {
 	case runtime.READY, runtime.ERROR, runtime.BUSY:
 		client.Transition(runtime.WAITING)
 	}
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
-	client.mu.Unlock()
-
 	client.warnOnce("disconnected: " + cause.Error())
 
 	if wasLive && hook != nil {
@@ -414,24 +349,11 @@ func (client *WebsocketClient) closeConnLocked() {
 
 func (client *WebsocketClient) warnOnce(message string) {
 	now := time.Now()
-
-	client.mu.Lock()
-	defer client.mu.Unlock()
-
 	if now.Sub(client.lastWarn) < 5*time.Second {
 		return
 	}
-
 	client.lastWarn = now
 	errnie.Warn("[network.websocket] " + message)
-}
-
-func (client *WebsocketClient) live() bool {
-	client.writeMu.Lock()
-	ok := client.Status() == runtime.READY && client.conn != nil
-	client.writeMu.Unlock()
-
-	return ok
 }
 
 /*

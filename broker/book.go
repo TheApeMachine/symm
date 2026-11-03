@@ -16,10 +16,10 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/shopspring/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -38,7 +38,6 @@ type Book struct {
 	mu            sync.RWMutex
 	stale         sync.Map
 	invalid       sync.Map
-	snapshots     sync.Map
 	failures      atomic.Int64
 	lastTouch     sync.Map
 }
@@ -249,9 +248,9 @@ func canonical(value *decimal.Decimal, scale int, field, symbol string) (*decima
 		return nil, nil
 	}
 
-	scaled := value.SetScale(int64(scale))
+	scaled := value.Truncate(int32(scale))
 
-	if scaled.Cmp(value) != 0 {
+	if scaled.Cmp(*value) != 0 {
 		return nil, errnie.Err(
 			errnie.Validation,
 			fmt.Sprintf("[book] %s %s %s has more than the pair's %d decimals", symbol, field, value.String(), scale),
@@ -259,7 +258,7 @@ func canonical(value *decimal.Decimal, scale int, field, symbol string) (*decima
 		)
 	}
 
-	return scaled, nil
+	return &scaled, nil
 }
 
 /*
@@ -458,16 +457,10 @@ func (book *Book) apply(
 
 			var pair *spot.AssetPair
 
-			if symbolBook == nil {
-				symbolBook = book.manager.CreateBook(data.Symbol, depth)
-			}
-
 			if payload.Type == "snapshot" {
 				_, wasStale := book.stale.LoadAndDelete(data.Symbol)
 				was, wasInvalid := book.invalid.LoadAndDelete(data.Symbol)
-				book.snapshots.Store(data.Symbol, struct{}{})
 
-				// The way back to valid is a transition too, logged once.
 				switch {
 				case wasInvalid:
 					errnie.Info(fmt.Sprintf("[book] %s valid again: fresh snapshot replaced the %s book (%d deltas dropped while invalid)",
@@ -475,10 +468,10 @@ func (book *Book) apply(
 				case wasStale:
 					errnie.Info(fmt.Sprintf("[book] %s valid again: resubscribe snapshot replaced the stale book", data.Symbol))
 				}
-				symbolBook = book.manager.CreateBook(
-					data.Symbol,
-					depth,
-				)
+
+				symbolBook = book.manager.CreateBook(data.Symbol, depth)
+			} else if symbolBook == nil {
+				symbolBook = book.manager.CreateBook(data.Symbol, depth)
 			}
 
 			for sideIndex, level3data := range []*[]kraken.Level3Order{
@@ -517,7 +510,8 @@ func (book *Book) apply(
 
 							for _, queued := range level.Queue() {
 								if queued.ID == order.OrderID {
-									order.LimitPrice, _ = decimal.NewFromString(level.Price.String())
+									lp, _ := decimal.NewFromString(level.Price.String())
+									order.LimitPrice = &lp
 									break
 								}
 							}
@@ -564,7 +558,8 @@ func (book *Book) apply(
 					quantity := order.OrderQty
 
 					if order.Event == "delete" || quantity == nil {
-						quantity = decimal.NewFromInt64(0)
+						zero := decimal.NewFromInt(0)
+						quantity = &zero
 					}
 
 					qty, err := sdkdecimal.NewFromString(quantity.String())
@@ -616,8 +611,6 @@ func (book *Book) apply(
 
 			symbolBook.EnforceDepth()
 
-			payload.Data[index] = data
-
 			serverChecksum := strconv.FormatUint(uint64(data.Checksum), 10)
 			checksum := symbolBook.L3Checksum(serverChecksum)
 
@@ -630,6 +623,8 @@ func (book *Book) apply(
 					checksum = symbolBook.L3Checksum(serverChecksum)
 				}
 			}
+
+			payload.Data[index] = data
 
 			if !checksum.Match {
 				// The venue checksum is authority: local book maintenance
@@ -715,34 +710,45 @@ func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data,
 	if symbolBook == nil {
 		return
 	}
-	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
 
-	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
+	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil ||
+		bid.Quantity == nil || ask.Quantity == nil {
 		return
 	}
-	bidPrice, askPrice := bid.Price.Float64(), ask.Price.Float64()
 
-	if bidPrice <= 0 || askPrice <= 0 || bidPrice >= askPrice {
+	if bid.Price.Cmp(ask.Price) >= 0 {
 		return
+	}
+
+	key := [4]string{
+		bid.Price.String(),
+		bid.Quantity.String(),
+		ask.Price.String(),
+		ask.Quantity.String(),
 	}
 
 	if val, seen := book.lastTouch.Load(data.Symbol); seen {
-		previous := val.([2]float64)
-		if previous[0] == bidPrice && previous[1] == askPrice {
+		if previous := val.([4]string); previous == key {
 			return
 		}
 	}
-	book.lastTouch.Store(data.Symbol, [2]float64{bidPrice, askPrice})
 
-	bidPx, _ := decimal.NewFromString(bid.Price.String())
-	bidQty, _ := decimal.NewFromString(bid.Quantity.String())
-	askPx, _ := decimal.NewFromString(ask.Price.String())
-	askQty, _ := decimal.NewFromString(ask.Quantity.String())
+	book.lastTouch.Store(data.Symbol, key)
+
+	bidPx, _ := decimal.NewFromString(key[0])
+	bidQty, _ := decimal.NewFromString(key[1])
+	askPx, _ := decimal.NewFromString(key[2])
+	askQty, _ := decimal.NewFromString(key[3])
+
+	if bidPx.Sign() <= 0 || askPx.Sign() <= 0 {
+		return
+	}
 
 	*touches = append(*touches, kraken.Level3Touch{
 		Symbol: data.Symbol, Timestamp: data.Timestamp,
-		Bid: bidPx, BidQty: bidQty,
-		Ask: askPx, AskQty: askQty,
+		Bid: &bidPx, BidQty: &bidQty,
+		Ask: &askPx, AskQty: &askQty,
 	})
 }
 

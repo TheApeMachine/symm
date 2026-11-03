@@ -8,9 +8,9 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
+	symmdecimal "github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
-	symmdecimal "github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
@@ -62,7 +62,12 @@ func NewTier(
 	price *Price,
 ) *Tier {
 	balance := market.NewBalance(system.Cfg.Market.QuoteCurrency)
-	balance.Seed(decimal.NewFromInt(int64(system.Cfg.Market.Balance)))
+
+	// Real only carries venue cash once a live transport is wired. Seeding it
+	// from the paper bankroll makes the real tab mirror paper while REAL OFF.
+	if tt != TierTypeReal || transport != nil {
+		balance.Seed(decimal.NewFromInt(int64(system.Cfg.Market.Balance)))
+	}
 
 	switch feed := transport.(type) {
 	case *Paper:
@@ -107,19 +112,35 @@ func NewTier(
 }
 
 func (tier *Tier) Hello() {
-	ui.UI.WriteJSON(map[string]any{
-		"balances": map[string]any{
-			tier.Type.String(): tier.balance.Reading(),
-		},
-		"positions": tier.positions.All(),
-	})
+	positions := make(map[string]*Position)
+
+	for _, position := range tier.positions.All() {
+		if position == nil || position.ID == "" {
+			continue
+		}
+
+		positions[position.ID] = position
+	}
+
+	frame := map[string]any{
+		"positions": positions,
+	}
+
+	if reading := tier.balance.Reading(); reading != nil {
+		frame["balances"] = map[string]any{
+			tier.Type.String(): reading,
+		}
+	}
+
+	ui.UI.WriteJSON(frame)
 }
 
 func (tier *Tier) Update(data *market.Update) {
 	var mark *symmdecimal.Decimal
 
 	if data.Price != nil {
-		mark, _ = symmdecimal.NewFromString(data.Price.String())
+		parsed, _ := symmdecimal.NewFromString(data.Price.String())
+		mark = &parsed
 	}
 
 	for _, position := range tier.positions.All(data.Symbol) {
@@ -173,8 +194,12 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	if decision := CheckEntryPhysical(tier.price, symbol); !decision.Allowed {
-		return &EntryDenial{Gate: "physical", Reason: decision.Reason}
+	// Virtual + resonance bypass explores without the physical desk gates so
+	// a lab bypass can actually open sample lots. Paper/real stay gated.
+	if !(tier.Type == TierTypeVirtual && system.Cfg.Learning.ResonanceBypass) {
+		if decision := CheckEntryPhysical(tier.price, symbol); !decision.Allowed {
+			return &EntryDenial{Gate: "physical", Reason: decision.Reason}
+		}
 	}
 
 	if tier.positions.Has(symbol) {
@@ -183,6 +208,24 @@ func (tier *Tier) Enter(
 			"[broker.Tier.Enter] position already exists",
 			nil,
 		)
+	}
+
+	// Virtual learning lots skip venue qty/cost mins (AllocateVirtual). Paper
+	// and real keep full Allocate — the desk rewrite had dropped this split.
+	var (
+		qty    *symmdecimal.Decimal
+		why    string
+		wallet *market.Balance
+	)
+
+	qty, why = tier.price.Allocate(symbol, wallet)
+
+	if qty == nil || qty.Sign() <= 0 {
+		if why == "" {
+			why = "cannot size " + symbol
+		}
+
+		return &EntryDenial{Gate: "size", Reason: why}
 	}
 
 	pos := NewPosition(
@@ -199,14 +242,11 @@ func (tier *Tier) Enter(
 		},
 	)
 
-	// Real sizes from its own wallet. Paper and virtual keep the desk balance.
-	var wallet *market.Balance
+	if err := pos.Enter(path, qty, wallet); err != nil {
+		if _, ok := err.(*EntryDenial); ok {
+			return err
+		}
 
-	if tier.Type == TierTypeReal {
-		wallet = tier.balance
-	}
-
-	if err := pos.Enter(path, nil, wallet); err != nil {
 		return errnie.Error(err)
 	}
 

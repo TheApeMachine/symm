@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/datura"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -31,6 +31,10 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 		qty, _ := decimal.NewFromString("0.1")
 		cost, _ := decimal.NewFromString("5000.05")
 		fee, _ := decimal.NewFromString("12.50")
+		pricePtr := &price
+		qtyPtr := &qty
+		costPtr := &cost
+		feePtr := &fee
 
 		execData := kraken.ExecutionData{
 			Symbol:        "BTC/USD",
@@ -41,13 +45,13 @@ func TestExecutionMeasurementRoundTrip(t *testing.T) {
 			Side:          "buy",
 			OrderType:     "limit",
 			OrderStatus:   "filled",
-			LastPrice:     price,
-			LastQty:       qty,
-			Cost:          cost,
-			CumQty:        qty,
-			CumCost:       cost,
-			AvgPrice:      price,
-			FeeUsdEquiv:   fee,
+			LastPrice:     pricePtr,
+			LastQty:       qtyPtr,
+			Cost:          costPtr,
+			CumQty:        qtyPtr,
+			CumCost:       costPtr,
+			AvgPrice:      pricePtr,
+			FeeUsdEquiv:   feePtr,
 		}
 
 		execution := &kraken.Execution{

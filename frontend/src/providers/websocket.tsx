@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
+import {
+	decisionBook,
+	decisionStoreKey,
+	isBook,
+} from "#/collections/book";
 import { ingestConfidence } from "#/collections/confidence";
+import type { Decision } from "#/collections/envelope";
 import {
 	ensureLongtailRecorder,
 	requestLongtailSources,
@@ -21,6 +27,77 @@ import {
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
+const asPosition = (raw: unknown): Position | null => {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+		return null;
+	}
+
+	const row = raw as Position;
+	if (typeof row.id !== "string" || row.id === "") {
+		return null;
+	}
+
+	if (isBook(row.book)) {
+		return row;
+	}
+
+	return row;
+};
+
+/*
+positionsFromWire accepts either a lot map keyed by id or a bare array from
+tier Hello, and keeps each lot under its id so virtual/paper/real can coexist.
+*/
+const positionsFromWire = (value: unknown): Record<string, Position> => {
+	const lots: Record<string, Position> = {};
+
+	const put = (raw: unknown) => {
+		const position = asPosition(raw);
+		if (!position) return;
+		lots[position.id] = position;
+	};
+
+	if (Array.isArray(value)) {
+		for (const row of value) {
+			put(row);
+		}
+		return lots;
+	}
+
+	if (value && typeof value === "object") {
+		for (const row of Object.values(value as Record<string, unknown>)) {
+			put(row);
+		}
+	}
+
+	return lots;
+};
+
+const decisionsFromWire = (
+	value: unknown,
+): Record<string, Decision> => {
+	const next: Record<string, Decision> = {};
+
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return next;
+	}
+
+	for (const raw of Object.values(value as Record<string, unknown>)) {
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+
+		const decision = raw as Decision;
+		if (!decision.symbol || !decision.action) continue;
+
+		const book = decisionBook(decision);
+		next[decisionStoreKey(decision)] = {
+			...decision,
+			tier: book,
+		};
+	}
+
+	return next;
+};
+
 const ingestEnvelope = (payload: Record<string, unknown>) => {
 	const mode =
 		typeof payload.positions_mode === "string"
@@ -38,7 +115,11 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 		}
 
 		if (key === "balances" && value && typeof value === "object") {
-			const next = value as { paper?: Balance; real?: Balance };
+			const next = value as {
+				virtual?: Balance;
+				paper?: Balance;
+				real?: Balance;
+			};
 			atoms.balances.set({
 				...atoms.balances.get(),
 				...next,
@@ -65,25 +146,22 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 		if (!store) continue;
 
 		if (key === "tick") {
-			const light = value as {
-				n?: number;
-				decisions?: Record<string, unknown>;
-			} | null;
+			const light = value as { n?: number } | null;
 			store.setState(() => value);
 			if (typeof light?.n === "number" && light.n > 0) {
 				atoms.tickCount.set(light.n);
 			}
-			if (light?.decisions && typeof light.decisions === "object") {
-				signals.decisions.setState((prev) => ({
-					...prev,
-					...light.decisions,
-				}));
-			}
+			continue;
+		}
+
+		if (key === "decisions") {
+			const lots = decisionsFromWire(value);
+			store.setState((prev) => ({ ...prev, ...lots }));
 			continue;
 		}
 
 		if (key === "positions") {
-			const lots = (value ?? {}) as Record<string, Position>;
+			const lots = positionsFromWire(value);
 			if (mode === "snapshot") {
 				store.setState(() => lots);
 			} else {

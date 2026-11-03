@@ -8,11 +8,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/decimal"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -25,6 +25,7 @@ type Position struct {
 	onSettled       func(*Position)
 	Stoploss        *Stoploss               `json:"stoploss,omitempty"`
 	ID              string                  `json:"id"`
+	Book            string                  `json:"book,omitempty"`
 	EntryPath       string                  `json:"entry_path"`
 	HoldPaths       []string                `json:"hold_paths,omitempty"`
 	ExitPath        string                  `json:"exit_path"`
@@ -63,6 +64,7 @@ func NewPosition(
 		transport: transport,
 		onSettled: onSettled,
 		ID:        uuid.NewString(),
+		Book:      tierKey,
 		Fills:     make([]*kraken.ExecutionData, 0),
 		Symbol:    symbol,
 		EntryPath: path,
@@ -105,22 +107,25 @@ func (position *Position) Update(mark *decimal.Decimal) {
 					continue
 				}
 
-				qty = qty.Add(fill.LastQty)
+				sum := qty.Add(*fill.LastQty)
+				qty = &sum
 				continue
 			}
 
 			if side == "sell" && qty != nil {
-				qty = qty.Sub(fill.LastQty)
+				diff := qty.Sub(*fill.LastQty)
+				qty = &diff
 
 				if qty.Sign() <= 0 {
-					qty = decimal.NewFromInt64(0)
+					zero := decimal.NewFromInt(0)
+					qty = &zero
 				}
 			}
 		}
 
 		if qty == nil && position.EntryOrder != nil && position.EntryOrder.Volume != "" {
 			if parsed, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil && parsed.Sign() > 0 {
-				qty = parsed
+				qty = &parsed
 			}
 		}
 
@@ -141,7 +146,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 			}
 		}
 
-		fee := position.price.feeForTrade(position.Symbol)
+		fee := position.price.Fee(position.Symbol)
 
 		position.ExitVWAP = position.price.ExitVWAP(position.Symbol, qty)
 		position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
@@ -149,6 +154,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		newPnL, _ := position.price.roundTrip(
 			position.Symbol, qty, entry, fee, fee,
 		)
+
 		newPnLPct := position.price.roundTripPct(
 			position.Symbol, qty, entry, fee, fee,
 		)
@@ -213,12 +219,14 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 		qty, why = position.price.Allocate(position.Symbol, wallet)
 
 		if qty == nil || qty.Sign() <= 0 {
-			msg := "[position.Enter] cannot size " + position.Symbol
-			if why != "" {
-				msg += ": " + why
+			reason := why
+			if reason == "" {
+				reason = "cannot size " + position.Symbol
 			}
 
-			return errnie.Err(errnie.NotFound, msg, nil)
+			// Thin books / venue floors that do not fit budget or exit depth
+			// are routine skips — EntryDenial so the desk does not ERROR-log.
+			return &EntryDenial{Gate: "size", Reason: reason}
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
@@ -63,23 +64,27 @@ func (desk *Desk) Update(trades []kraken.TradeData) {
 
 func (desk *Desk) Refresh(symbols []string) {
 	for _, symbol := range symbols {
-		if symbol == "" || desk.price == nil {
+		if symbol == "" {
 			continue
 		}
 
-		mark := desk.price.CurrentMark(symbol)
+		desk.price.Books.Book(symbol, func(managed *book.Book) {
+			if managed == nil {
+				return
+			}
 
-		if mark == nil {
-			continue
-		}
+			mid := managed.Midpoint()
+			if mid == nil {
+				return
+			}
 
-		price, err := decimal.NewFromString(mark.String())
+			price, err := decimal.NewFromString(mid.String())
+			if err != nil {
+				return
+			}
 
-		if err != nil {
-			continue
-		}
-
-		desk.mark(symbol, &price)
+			desk.mark(symbol, &price)
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { signals } from "#/collections/app";
+import { bookAtom } from "#/collections/book";
 import { Decisions } from "./decisions";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -8,10 +9,13 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 describe("Decisions", () => {
-	it("renders one card per real decision, with no pre-allocated slots", () => {
+	beforeEach(() => {
+		bookAtom.set("virtual");
 		signals.decisions.setState(() => ({}));
 		signals.regions.setState(() => ({}));
+	});
 
+	it("renders one card per real decision, with no pre-allocated slots", () => {
 		const markup = renderToStaticMarkup(<Decisions />);
 
 		expect(markup).not.toContain("data-decision-id");
@@ -21,23 +25,30 @@ describe("Decisions", () => {
 		);
 	});
 
-	it("renders live decision frames including denials", () => {
-		signals.regions.setState(() => ({}));
+	it("renders live decision frames including denials for the selected book", () => {
 		signals.decisions.setState(() => ({
-			"BTC/USD": {
+			"virtual:BTC/USD": {
 				symbol: "BTC/USD",
 				action: "blocked",
 				reason: "blown-out spread: bid-ask spread exceeds 0.5%",
 				gate: "physical",
+				tier: "virtual",
 				confidence: 0.82,
 			},
-			"ETH/USD": {
+			"virtual:ETH/USD": {
 				symbol: "ETH/USD",
 				action: "enter",
 				reason: "tree enter · virtual sample",
 				path: "R01/R02",
-				virtual: true,
+				tier: "virtual",
 				confidence: 0.71,
+			},
+			"paper:ETH/USD": {
+				symbol: "ETH/USD",
+				action: "enter",
+				reason: "paper enter",
+				tier: "paper",
+				path: "R01/R02",
 			},
 		}));
 
@@ -49,18 +60,45 @@ describe("Decisions", () => {
 		expect(markup).toContain("blown-out spread");
 		expect(markup).toContain("ETH/USD");
 		expect(markup).toContain("enter");
+		expect(markup).toContain("virtual sample");
+		expect(markup).not.toContain("paper enter");
+	});
 
-		signals.decisions.setState(() => ({}));
+	it("hides other ledgers when the book tab changes", () => {
+		signals.decisions.setState(() => ({
+			"virtual:ETH/USD": {
+				symbol: "ETH/USD",
+				action: "enter",
+				reason: "virtual sample",
+				tier: "virtual",
+			},
+			"paper:ETH/USD": {
+				symbol: "ETH/USD",
+				action: "blocked",
+				reason: "paper edge gate",
+				tier: "paper",
+				gate: "tier",
+			},
+		}));
+
+		bookAtom.set("paper");
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toContain("ETH/USD");
+		expect(markup).toContain("blocked");
+		expect(markup).toContain("paper edge gate");
+		expect(markup).not.toContain("virtual sample");
 	});
 
 	it("paints oracle veto/approve lamps from region brightness", () => {
 		signals.decisions.setState(() => ({
-			"AAVE/USD": {
+			"virtual:AAVE/USD": {
 				symbol: "AAVE/USD",
 				action: "blocked",
 				reason: "resonance: no resonance reading",
 				path: "R12/R00",
 				gate: "resonance",
+				tier: "virtual",
 			},
 		}));
 
@@ -81,8 +119,5 @@ describe("Decisions", () => {
 		expect(markup).toMatch(
 			/data-oracle-gate="day"[^>]*data-oracle-side="approve"|data-oracle-side="approve"[^>]*data-oracle-gate="day"/,
 		);
-
-		signals.decisions.setState(() => ({}));
-		signals.regions.setState(() => ({}));
 	});
 });

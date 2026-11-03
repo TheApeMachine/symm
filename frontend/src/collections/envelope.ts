@@ -22,6 +22,10 @@ export type Decision = {
 	reason: string;
 	gate?: string;
 	path?: string;
+	/** Desk ledger this outcome belongs to (virtual|paper|real). */
+	tier?: string;
+	resistance?: number;
+	/** @deprecated prefer tier === "virtual" */
 	virtual?: boolean;
 	confidence?: number;
 };
@@ -29,9 +33,8 @@ export type Decision = {
 export type LightTick = {
 	epoch: number;
 	n: number;
-	symbols: string[];
-	paths: Record<string, string>;
-	decisions: Record<string, Decision>;
+	symbols?: string[];
+	paths?: Record<string, string>;
 };
 
 export type Trade = {

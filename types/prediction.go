@@ -1,6 +1,6 @@
 package types
 
-import "github.com/theapemachine/symm/decimal"
+import "github.com/shopspring/decimal"
 
 type Prediction struct {
 	Symbol    string          `json:"symbol"`

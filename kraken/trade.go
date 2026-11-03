@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/decimal"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 )
 

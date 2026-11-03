@@ -193,7 +193,7 @@ export const GateLab = () => {
 						>
 							Apply risk
 						</Button>
-						<Hint text="Push risk floors into the live desk (WS risk). Oracle force is local-only." />
+						<Hint text="Push risk floors into the live desk (WS risk). Max ceilings at 0 = unlimited. Oracle force lamps are local-only — use rez:bypass to skip the board." />
 					</span>
 					<span className="group relative inline-flex">
 						<Button
@@ -297,7 +297,7 @@ export const GateLab = () => {
 					>
 						rez:{resonance.bypass ? "bypass" : "gate"}
 					</Button>
-					<Hint text="Bypass auto-applies: skips missing readings, story floors, and cold-tree resistance; opens virtual explores." />
+					<Hint text="Bypass auto-applies: skips missing readings, story floors, oracle board, physical desk gates on virtual, and cold-tree resistance — opens virtual explores." />
 				</span>
 				{RESONANCE_FIELDS.map((field) => {
 					const inputId = `gate-lab-rez-${field.key}`;

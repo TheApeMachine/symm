@@ -38,12 +38,12 @@ func openDragCapPct(price *Price, symbol string) float64 {
 	cap := system.Cfg.Risk.MaxEntryOpenDragPct
 
 	if budget, ok := price.OpenDragBudgetPct(symbol); ok && budget != nil {
-		if b := budget.MustFloat64(); b > 0 && b < cap {
+		if b := budget.InexactFloat64(); b > 0 && b < cap {
 			cap = b
 		}
 	}
 
-	fee := price.feeForTrade(symbol).MustFloat64()
+	fee := price.Fee(symbol).InexactFloat64()
 
 	if fee > 0 {
 		floor := 2 * fee
@@ -64,16 +64,20 @@ func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 		}
 	}
 
+	// MaxEntrySpreadPct <= 0 means the spread ceiling is disabled (lab zero =
+	// no limit). A zero cap would otherwise veto every positive touch spread.
 	spreadCap := system.Cfg.Risk.MaxEntrySpreadPct
 
-	if spreadPct, ok := price.SpreadPct(symbol); ok && spreadPct != nil {
-		if spreadPct.MustFloat64() > spreadCap {
-			return EntryPhysicalDecision{
-				Allowed: false,
-				Reason: fmt.Sprintf(
-					"blown-out spread: bid-ask spread exceeds %.1f%%",
-					spreadCap,
-				),
+	if spreadCap > 0 {
+		if spreadPct, ok := price.SpreadPct(symbol); ok && spreadPct != nil {
+			if spreadPct.InexactFloat64() > spreadCap {
+				return EntryPhysicalDecision{
+					Allowed: false,
+					Reason: fmt.Sprintf(
+						"blown-out spread: bid-ask spread exceeds %.1f%%",
+						spreadCap,
+					),
+				}
 			}
 		}
 	}
@@ -89,7 +93,7 @@ func checkBookPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	minCash := system.Cfg.Risk.MinTouchBidCash
 	cash, ok := price.TouchBidCash(symbol)
 
-	if !ok || cash == nil || cash.MustFloat64() < minCash {
+	if !ok || cash == nil || cash.InexactFloat64() < minCash {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason: fmt.Sprintf(
@@ -123,7 +127,7 @@ func checkBookPhysical(price *Price, symbol string) EntryPhysicalDecision {
 
 	cap := openDragCapPct(price, symbol)
 
-	if closeNow.MustFloat64() < -cap {
+	if closeNow.InexactFloat64() < -cap {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason: fmt.Sprintf(
