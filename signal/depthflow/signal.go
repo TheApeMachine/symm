@@ -5,9 +5,9 @@ import (
 	"sync"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
@@ -155,10 +155,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if !outcome.Ready {
-				return
-			}
-
+			// Publish not-ready/zero readings too — resonance holds until every
+			// Map() label has been seen (thin_score / loaded_score).
 			mu.Lock()
 			envelope.DepthFlow[data.Symbol] = &outcome
 			mu.Unlock()

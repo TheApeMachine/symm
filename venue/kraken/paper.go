@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/venue"
 	"golang.design/x/lockfree/lf"
 )
 
@@ -23,10 +22,10 @@ var commandMap = map[string][]string{
 
 var typeMap = map[string]func(model map[string]any) json.Marshaler{
 	"balances":     NewBalanceFromMap,
-	"executions":   NewExecutionsFromHistoryMap,
-	"add_order":    NewOrderResponseFromMap,
+	"executions":   NewExecutionFromMap,
+	"add_order":    NewOrderFromMap,
 	"history":      NewTradesHistoryFromMap,
-	"tradebalance": NewTradeBalanceEnvelopeFromMap,
+	"tradebalance": NewTradeBalanceFromMap,
 }
 
 var restMap = map[string]string{
@@ -40,26 +39,18 @@ Paper is the simulated private spot websocket. It shells out to the native
 envelopes as Live — the private ingress cannot tell them apart.
 */
 type Paper struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	simulator *venue.Simulator
-	queue     *lf.Queue[[]byte]
-	notify    chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
+	queue  *lf.Queue[[]byte]
 }
 
-func NewPaper(ctx context.Context, simulator *venue.Simulator) *Paper {
-	if simulator == nil {
-		simulator = venue.NewSimulator()
-	}
-
+func NewPaper(ctx context.Context) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Paper{
-		ctx:       ctx,
-		cancel:    cancel,
-		simulator: simulator,
-		queue:     lf.NewQueue[[]byte](),
-		notify:    make(chan struct{}, 1),
+		ctx:    ctx,
+		cancel: cancel,
+		queue:  lf.NewQueue[[]byte](),
 	}
 }
 
@@ -72,7 +63,7 @@ func (paper *Paper) Read(keys ...string) ([]byte, error) {
 		select {
 		case <-paper.ctx.Done():
 			return nil, errnie.Error(paper.ctx.Err())
-		case <-paper.notify:
+		default:
 		}
 	}
 }
@@ -91,17 +82,38 @@ func (paper *Paper) Write(message []byte) error {
 	}
 
 	method, _ := request["method"].(string)
-	entity, command, err := paper.route(method, request)
+	entity := method
+	params, _ := request["params"].(map[string]any)
 
-	if err != nil {
-		return err
+	if method == "subscribe" {
+		entity, _ = params["channel"].(string)
 	}
 
-	var model map[string]any
+	command := commandMap[entity]
 
-	paper.simulator.Do(venue.WEBSOCKET, func() {
-		model, err = paper.execute(entity, command...)
-	})
+	if entity == "add_order" {
+		raw, err := sonic.Marshal(params)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		var req AddOrderRequest
+
+		if err := sonic.Unmarshal(raw, &req); err != nil {
+			return errnie.Error(err)
+		}
+
+		command = req.Command()
+	}
+
+	if command == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation, "[kraken.Paper.Write] no paper command", nil,
+		), "entity", entity)
+	}
+
+	model, err := paper.execute(entity, append([]string(nil), command...)...)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -126,26 +138,27 @@ func (paper *Paper) Write(message []byte) error {
 	}
 
 	paper.queue.Enqueue(buf)
-
-	select {
-	case paper.notify <- struct{}{}:
-	default:
-	}
-
 	return nil
 }
 
 func (paper *Paper) Watch(
 	url string,
 	body any,
-	callback func(json.Unmarshaler),
+	dest json.Unmarshaler,
 ) {
+	if dest == nil {
+		return
+	}
+
 	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-paper.ctx.Done():
 				return
-			default:
+			case <-ticker.C:
 			}
 
 			response, err := paper.Post(url, body)
@@ -154,62 +167,9 @@ func (paper *Paper) Watch(
 				continue
 			}
 
-			var data json.Unmarshaler
-
-			if err := json.Unmarshal(response, &data); err != nil {
-				continue
-			}
-
-			callback(data)
+			_ = json.Unmarshal(response, dest)
 		}
 	}()
-}
-
-func (paper *Paper) route(
-	method string, request map[string]any,
-) (entity string, command []string, err error) {
-	switch method {
-	case "subscribe":
-		params, _ := request["params"].(map[string]any)
-		channel, _ := params["channel"].(string)
-		command, ok := commandMap[channel]
-
-		if !ok {
-			return "", nil, errnie.Error(errnie.Err(
-				errnie.Validation, "[kraken.Paper.Write] invalid paper channel", nil,
-			), "channel", channel)
-		}
-
-		return channel, append([]string(nil), command...), nil
-
-	case "add_order":
-		params, _ := request["params"].(map[string]any)
-		return "add_order", orderCommand(params), nil
-
-	default:
-		return "", nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[kraken.Paper.Write] invalid paper method", nil,
-		), "method", method)
-	}
-}
-
-func orderCommand(params map[string]any) []string {
-	side, _ := params["side"].(string)
-	symbol, _ := params["symbol"].(string)
-	qty, _ := params["order_qty"].(string)
-	command := []string{side, symbol, qty}
-
-	if orderType, _ := params["order_type"].(string); orderType == "limit" {
-		if price, _ := params["limit_price"].(string); price != "" {
-			command = append(command, "--type", "limit", "--price", price)
-		}
-	}
-
-	if clOrdID, _ := params["cl_ord_id"].(string); clOrdID != "" {
-		command = append(command, "--cl-ord-id", clOrdID)
-	}
-
-	return command
 }
 
 func (paper *Paper) execute(entity string, command ...string) (map[string]any, error) {
@@ -218,10 +178,6 @@ func (paper *Paper) execute(entity string, command ...string) (map[string]any, e
 	input = append(input, "--output", "json")
 
 	cmd := exec.CommandContext(paper.ctx, "kraken", input...)
-
-	if errors.Is(cmd.Err, exec.ErrDot) {
-		cmd.Err = nil
-	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -271,6 +227,7 @@ func (paper *Paper) execute(entity string, command ...string) (map[string]any, e
 
 /*
 Post serves the same private REST paths as Live, via the paper CLI.
+Balance polls return the venue Balance observation for Client.Watch.
 */
 func (paper *Paper) Post(url string, body any) ([]byte, error) {
 	_ = body

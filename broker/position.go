@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type Position struct {
@@ -24,6 +23,8 @@ type Position struct {
 	price           *Price
 	tierKey         string
 	onSettled       func(*Position)
+	qty             *decimal.Decimal // folded in Apply; Update only reads
+	entry           *decimal.Decimal // folded in Apply; Update only reads
 	Stoploss        *Stoploss               `json:"stoploss,omitempty"`
 	ID              string                  `json:"id"`
 	Book            string                  `json:"book,omitempty"`
@@ -41,7 +42,7 @@ type Position struct {
 	ExitTick        uint64                  `json:"exit_tick,omitempty"`
 	EntryOrder      *spot.OrderRequest      `json:"entry_order,omitempty"`
 	ExitOrder       *spot.OrderRequest      `json:"exit_order,omitempty"`
-	Fills           []*kraken.ExecutionData `json:"fills,omitempty"`
+	Fills           []*market.ExecutionData `json:"fills,omitempty"`
 	Mark            *decimal.Decimal        `json:"mark,omitempty"`
 	ExitVWAP        *decimal.Decimal        `json:"exit_vwap,omitempty"`
 	ExitRoom        *decimal.Decimal        `json:"exit_room,omitempty"`
@@ -66,22 +67,25 @@ func NewPosition(
 		onSettled: onSettled,
 		ID:        uuid.NewString(),
 		Book:      tierKey,
-		Fills:     make([]*kraken.ExecutionData, 0),
+		Fills:     make([]*market.ExecutionData, 0),
 		Symbol:    symbol,
 		EntryPath: path,
 	}
 }
 
 /*
-Update refreshes the mark and reprices open PnL. Stoploss owns risk state;
-Position only feeds marks and exits when Triggered.
+Update is the mark path: set mark, reprice from folded qty/entry, eval stoploss.
+Fill accounting belongs in Apply.
 */
 func (position *Position) Update(mark *decimal.Decimal) {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	// Settled lots keep their exit mark — live ticks must not rewrite them.
-	if position.ClosedAt != nil {
+	settled := position.ClosedAt != nil
+
+	// Live ticks (nil mark) must not rewrite settled lots. Exit/Apply pass a
+	// mark so the one-time final PnL pass can still run after ClosedAt.
+	if settled && mark == nil {
 		return
 	}
 
@@ -89,108 +93,72 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		position.Mark = mark
 	}
 
-	if position.price != nil {
-		now := time.Now().UTC()
-		position.UpdatedAt = &now
+	// Persisted lots carry Fills but not the unexported fold.
+	if (position.qty == nil || position.entry == nil) && len(position.Fills) > 0 {
+		position.foldFills()
+	}
 
-		// Virtual lots have no venue fills — seed a book-derived entry for mark.
-		// Paper/real wait for the venue execution frame.
-		if position.transport == nil && len(position.Fills) == 0 &&
-			position.EntryOrder != nil && position.EntryOrder.Volume != "" {
-			if parsed, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil &&
-				parsed.Sign() > 0 {
-				position.seedEntry(&parsed, position.OpenedAt)
+	// Order-only S3 skeletons (saved before fills landed) need a book fill
+	// once before mark/PnL can run.
+	if (position.qty == nil || position.entry == nil) &&
+		len(position.Fills) == 0 &&
+		position.ClosedAt == nil &&
+		position.EntryOrder != nil &&
+		position.EntryOrder.Volume != "" {
+		if parsed, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil &&
+			parsed.Sign() > 0 {
+			at := position.OpenedAt
+			if at.IsZero() {
+				at = time.Now().UTC()
 			}
+			position.seedEntry(&parsed, at)
 		}
+	}
 
-		var qty *decimal.Decimal
+	qty, entry := position.qty, position.entry
 
-		for _, fill := range position.Fills {
-			if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
-				continue
-			}
+	if qty == nil || qty.Sign() <= 0 || entry == nil || entry.Sign() <= 0 {
+		return
+	}
 
-			side := strings.ToLower(fill.Side)
+	if position.price == nil {
+		return
+	}
 
-			if side == "buy" {
-				if fill.CumQty != nil && fill.CumQty.Sign() > 0 {
-					qty = fill.CumQty
-					continue
-				}
+	now := time.Now().UTC()
+	position.UpdatedAt = &now
 
-				if qty == nil {
-					qty = fill.LastQty
-					continue
-				}
+	fee := position.price.Fee(position.Symbol)
+	if fee == nil {
+		zero := decimal.Zero
+		fee = &zero
+	}
 
-				sum := qty.Add(*fill.LastQty)
-				qty = &sum
-				continue
-			}
+	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, qty)
+	position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
 
-			if side == "sell" && qty != nil {
-				diff := qty.Sub(*fill.LastQty)
-				qty = &diff
+	if position.Mark == nil && position.ExitVWAP != nil {
+		position.Mark = position.ExitVWAP
+	}
 
-				if qty.Sign() <= 0 {
-					zero := decimal.NewFromInt(0)
-					qty = &zero
-				}
-			}
-		}
+	newPnL, _ := position.price.roundTrip(
+		position.Symbol, qty, entry, fee, fee,
+	)
 
-		if qty == nil && position.EntryOrder != nil && position.EntryOrder.Volume != "" {
-			if parsed, err := decimal.NewFromString(position.EntryOrder.Volume); err == nil && parsed.Sign() > 0 {
-				qty = &parsed
-			}
-		}
+	newPnLPct := position.price.roundTripPct(
+		position.Symbol, qty, entry, fee, fee,
+	)
 
-		var entry *decimal.Decimal
+	if newPnL != nil {
+		position.PnL = newPnL
+		position.PnLPct = newPnLPct
+	} else {
+		position.markPnL(entry, qty)
+	}
 
-		for _, fill := range position.Fills {
-			if fill == nil || strings.ToLower(fill.Side) != "buy" {
-				continue
-			}
-
-			if fill.AvgPrice != nil && fill.AvgPrice.Sign() > 0 {
-				entry = fill.AvgPrice
-				continue
-			}
-
-			if fill.LastPrice != nil && fill.LastPrice.Sign() > 0 {
-				entry = fill.LastPrice
-			}
-		}
-
-		fee := position.price.Fee(position.Symbol)
-		if fee == nil {
-			zero := decimal.Zero
-			fee = &zero
-		}
-
-		position.ExitVWAP = position.price.ExitVWAP(position.Symbol, qty)
-		position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
-
-		newPnL, _ := position.price.roundTrip(
-			position.Symbol, qty, entry, fee, fee,
-		)
-
-		newPnLPct := position.price.roundTripPct(
-			position.Symbol, qty, entry, fee, fee,
-		)
-
-		if newPnL != nil {
-			position.PnL = newPnL
-			position.PnLPct = newPnLPct
-		} else {
-			// Bid walk can fail on thin books; chart still needs a Y from mark.
-			position.markPnL(entry, qty)
-		}
-
-		if position.PnLPct != nil && position.Stoploss == nil && position.ClosedAt == nil {
-			pnlPct, _ := position.PnLPct.Float64()
-			position.Stoploss = NewStoploss(pnlPct)
-		}
+	if position.PnLPct != nil && position.Stoploss == nil && position.ClosedAt == nil {
+		pnlPct, _ := position.PnLPct.Float64()
+		position.Stoploss = NewStoploss(pnlPct, position.price, position.Symbol)
 	}
 
 	if position.ClosedAt != nil || position.Stoploss == nil || position.PnLPct == nil {
@@ -198,6 +166,7 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	}
 
 	position.Stoploss.rewire()
+	position.Stoploss.Observe(position.price, position.Symbol)
 
 	pnlPct, _ := position.PnLPct.Float64()
 	position.Stoploss.Update(pnlPct)
@@ -209,8 +178,8 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	position.ExitTrigger = "stoploss"
 	position.OutcomeTriggers = []string{"stoploss"}
 
-	now := time.Now().UTC()
-	position.ClosedAt = &now
+	closed := time.Now().UTC()
+	position.ClosedAt = &closed
 	position.ExitTick = data.Tick.Load()
 	onSettled := position.onSettled
 	position.mu.Unlock()
@@ -287,7 +256,7 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 /*
 Owns reports whether this execution belongs to the lot's entry or exit order.
 */
-func (position *Position) Owns(execution kraken.ExecutionData) bool {
+func (position *Position) Owns(execution market.ExecutionData) bool {
 	if execution.ClientOrderID == "" {
 		return false
 	}
@@ -305,53 +274,68 @@ func (position *Position) Owns(execution kraken.ExecutionData) bool {
 	return false
 }
 
-// markPnL sets close-now style PnL from mark/exit VWAP when the bid walk fails.
+// markPnL sets fee-net close-now PnL from mark/exit VWAP when the bid walk fails.
 func (position *Position) markPnL(entry, qty *decimal.Decimal) {
-	if entry == nil || entry.Sign() <= 0 {
+	if entry == nil || entry.Sign() <= 0 || position.price == nil {
 		return
 	}
 
-	mark := position.Mark
-	if mark == nil || mark.Sign() <= 0 {
-		mark = position.ExitVWAP
-	}
-
-	if mark == nil || mark.Sign() <= 0 {
+	if qty == nil || qty.Sign() <= 0 {
 		return
 	}
 
-	diff := mark.Sub(*entry)
-	pct := diff.Div(*entry).Mul(decimal.NewFromInt(100))
+	fee := position.price.Fee(position.Symbol)
+	if fee == nil {
+		zero := decimal.Zero
+		fee = &zero
+	}
+
+	if pnl, _ := position.price.roundTrip(position.Symbol, qty, entry, fee, fee); pnl != nil {
+		position.PnL = pnl
+	}
+
+	if pct := position.price.roundTripPct(position.Symbol, qty, entry, fee, fee); pct != nil {
+		position.PnLPct = pct
+		return
+	}
+
+	exit := position.ExitVWAP
+	if exit == nil || exit.Sign() <= 0 {
+		exit = position.Mark
+	}
+
+	if exit == nil || exit.Sign() <= 0 {
+		return
+	}
+
+	entryCost := entry.Mul(*qty)
+	netEntry := position.price.afterFee(&entryCost, fee, BUY)
+	exitGross := exit.Mul(*qty)
+	netExit := position.price.afterFee(&exitGross, fee, SELL)
+
+	if netEntry == nil || netExit == nil || netEntry.Sign() <= 0 {
+		return
+	}
+
+	pnl := netExit.Sub(*netEntry)
+	position.PnL = &pnl
+	pct := pnl.Div(*netEntry).Mul(decimalHundred)
 	position.PnLPct = &pct
-
-	if qty != nil && qty.Sign() > 0 {
-		pnl := diff.Mul(*qty)
-		position.PnL = &pnl
-	}
 }
 
-// seedEntry records a synthetic buy fill from EntryCost or the touch ask.
+// seedEntry records a book-derived buy fill for no-transport test lots.
 func (position *Position) seedEntry(qty *decimal.Decimal, at time.Time) {
 	if position.price == nil || qty == nil || qty.Sign() <= 0 {
 		return
 	}
 
-	var entry *decimal.Decimal
-
-	if fill, err := position.price.EntryCost(position.Symbol, qty); err == nil &&
-		fill != nil && fill.EntryPrice != nil && fill.EntryPrice.Sign() > 0 {
-		entry = fill.EntryPrice
-	}
-
-	if entry == nil {
-		entry = position.price.TouchAsk(position.Symbol)
-	}
+	entry := position.price.FillAsk(position.Symbol, qty)
 
 	if entry == nil || entry.Sign() <= 0 {
 		return
 	}
 
-	position.Fills = append(position.Fills, &kraken.ExecutionData{
+	position.applyFill(market.ExecutionData{
 		Symbol:      position.Symbol,
 		Side:        "buy",
 		LastQty:     qty,
@@ -362,6 +346,54 @@ func (position *Position) seedEntry(qty *decimal.Decimal, at time.Time) {
 		OrderStatus: "filled",
 		Timestamp:   at,
 	})
+}
+
+/*
+foldFills rebuilds qty/entry from Fills. Call only when fills change.
+*/
+func (position *Position) foldFills() {
+	var qty *decimal.Decimal
+	var entry *decimal.Decimal
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		side := strings.ToLower(fill.Side)
+
+		if side == "buy" {
+			if fill.CumQty != nil && fill.CumQty.Sign() > 0 {
+				qty = fill.CumQty
+			} else if qty == nil {
+				qty = fill.LastQty
+			} else {
+				sum := qty.Add(*fill.LastQty)
+				qty = &sum
+			}
+
+			if fill.AvgPrice != nil && fill.AvgPrice.Sign() > 0 {
+				entry = fill.AvgPrice
+			} else if fill.LastPrice != nil && fill.LastPrice.Sign() > 0 {
+				entry = fill.LastPrice
+			}
+
+			continue
+		}
+
+		if side == "sell" && qty != nil {
+			diff := qty.Sub(*fill.LastQty)
+			qty = &diff
+
+			if qty.Sign() <= 0 {
+				zero := decimal.NewFromInt(0)
+				qty = &zero
+			}
+		}
+	}
+
+	position.qty = qty
+	position.entry = entry
 }
 
 /*
@@ -380,36 +412,57 @@ func (position *Position) Exit() error {
 		return nil
 	}
 
-	now := time.Now().UTC()
-	position.ClosedAt = &now
-
-	position.ExitTick = data.Tick.Load()
 	mark := position.Mark
-
 	position.mu.Unlock()
+
+	// Final PnL while still open — Update ignores nil-mark ticks after close.
 	position.Update(mark)
 
+	position.mu.Lock()
+
+	if position.ClosedAt == nil {
+		now := time.Now().UTC()
+		position.ClosedAt = &now
+		position.ExitTick = data.Tick.Load()
+	}
+
+	position.mu.Unlock()
 	return nil
 }
 
-func (position *Position) Apply(execution kraken.ExecutionData) {
+/*
+Apply records a venue fill, folds qty/entry, then marks through Update.
+*/
+func (position *Position) Apply(execution market.ExecutionData) {
 	position.mu.Lock()
+	mark := position.applyFill(execution)
+	position.mu.Unlock()
 
+	if mark == nil {
+		return
+	}
+
+	position.Update(mark)
+}
+
+/*
+applyFill appends a fill and folds size under an already-held lock.
+Returns the mark to feed Update, or nil when the fill carries no size.
+*/
+func (position *Position) applyFill(execution market.ExecutionData) *decimal.Decimal {
 	position.Fills = append(position.Fills, &execution)
+	position.foldFills()
 
 	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
-		position.mu.Unlock()
-		return
+		return nil
 	}
 
 	mark := position.Mark
 
-	if strings.ToLower(execution.Side) == "buy" && mark == nil {
-		if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
-			mark = execution.AvgPrice
-		} else if execution.LastPrice != nil && execution.LastPrice.Sign() > 0 {
-			mark = execution.LastPrice
-		}
+	if execution.LastPrice != nil && execution.LastPrice.Sign() > 0 {
+		mark = execution.LastPrice
+	} else if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
+		mark = execution.AvgPrice
 	}
 
 	if position.ClosedAt != nil && position.ClosedAt.IsZero() {
@@ -417,6 +470,5 @@ func (position *Position) Apply(execution kraken.ExecutionData) {
 		position.ClosedAt = &now
 	}
 
-	position.mu.Unlock()
-	position.Update(mark)
+	return mark
 }

@@ -4,20 +4,15 @@ import (
 	"context"
 	"fmt"
 	sysruntime "runtime"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/grafana/pyroscope-go"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
-	shopdecimal "github.com/shopspring/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/nomagique/runtime"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
@@ -37,7 +32,6 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -47,22 +41,23 @@ lifecycle for daemon processes (such as symm collect).
 */
 type Booter struct {
 	*nmruntime.System
-	epoch            int64
-	public           *network.WebsocketClient
-	privateTransport network.Client
-	liveTransport    network.Client
-	instrument       *broker.Instrument
-	book             *broker.Book
-	price            *broker.Price
-	desk             *broker.Desk
-	normalizer       *spot.Normalizer
-	signals          []nmruntime.Node
-	training         *strategy.Training
-	model            *strategy.Model
-	workspace        *nmruntime.Workspace
-	persist          *tickPersist
-	store            *store.Client
-	replies          sync.Map
+	epoch      int64
+	public     network.Client
+	private    network.Client
+	virtual    *network.Virtual
+	paper      network.Client
+	instrument *broker.Instrument
+	book       *broker.BookManager
+	price      *broker.Price
+	desk       *broker.Desk
+	normalizer *spot.Normalizer
+	signals    []nmruntime.Node
+	training   *strategy.Training
+	model      *strategy.Model
+	workspace  *nmruntime.Workspace
+	persist    *tickPersist
+	store      *store.Client
+	replies    sync.Map
 }
 
 func NewBooter(ctx context.Context, name string) *Booter {
@@ -73,6 +68,7 @@ func NewBooter(ctx context.Context, name string) *Booter {
 	// Paper signs with the collector key. Live orders use the main key so
 	// they do not share a nonce stream with a collector process.
 	role := kraken.RoleCollector
+
 	if viper.GetString("market.model") == "real" {
 		role = kraken.RoleMain
 	}
@@ -156,38 +152,10 @@ func (booter *Booter) Run() error {
 func (booter *Booter) initTransports() error {
 	ctx := booter.Context()
 
+	booter.virtual = network.NewVirtual(ctx)
+	booter.paper = kraken.NewPaper(ctx)
 	booter.public = network.NewWebsocketClient(ctx)
-
-	if err := booter.public.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
-		return errnie.Err(
-			errnie.IO, "booter: public websocket open failed", err,
-		)
-	}
-
-	// Paper transport is always present so the paper book can refine while
-	// real is armed or halted.
-	booter.privateTransport = kraken.NewPaper(ctx, venue.NewSimulator())
-
-	switch system.Cfg.Market.Model {
-	case "paper":
-		// Real ceiling closed — live transport stays nil.
-	case "real":
-		privateWS := network.NewWebsocketClient(ctx)
-
-		if err := privateWS.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
-			return errnie.Err(
-				errnie.IO, "booter: private websocket open failed", err,
-			)
-		}
-
-		booter.liveTransport = kraken.NewLive(ctx, privateWS, nil)
-	default:
-		return errnie.Err(
-			errnie.Validation,
-			"booter: market.model must be paper or real",
-			nil,
-		)
-	}
+	booter.private = network.NewWebsocketClient(ctx)
 
 	return nil
 }
@@ -206,7 +174,7 @@ func (booter *Booter) initMarket() error {
 	}
 
 	booter.normalizer = broker.NormalizerFor(booter.instrument)
-	booter.book = broker.NewBook(ctx, booter.normalizer)
+	booter.book = broker.NewBookManager()
 
 	booter.price = broker.NewPrice(
 		ctx,
@@ -223,12 +191,15 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
+	booter.virtual.UseFills(booter.price)
+
 	booter.desk = broker.NewDesk(
 		ctx,
 		map[string]network.Client{
-			"virtual": network.NewVirtual(ctx),
-			"paper":   booter.privateTransport,
-			"real":    booter.liveTransport,
+			"virtual": booter.virtual,
+			"paper":   booter.paper,
+			"public":  booter.public,
+			"private": booter.private,
 		},
 		booter.price,
 	)
@@ -236,43 +207,6 @@ func (booter *Booter) initMarket() error {
 	ui.UI.RegisterCallback(func() {
 		booter.desk.Hello()
 	})
-
-	booter.startPrivateIngress()
-
-	for _, channel := range []string{"executions", "balances"} {
-		buf, err := sonic.Marshal(map[string]any{
-			"method": "subscribe",
-			"params": map[string]any{"channel": channel},
-		})
-
-		if err != nil {
-			return errnie.Err(errnie.IO, "[booter] paper "+channel+" subscribe marshal failed", err)
-		}
-
-		if err := booter.privateTransport.Write(buf); err != nil {
-			return errnie.Err(errnie.IO, "[booter] paper "+channel+" subscribe write failed", err)
-		}
-	}
-
-	if live, ok := booter.liveTransport.(*kraken.Live); ok {
-		booter.startLiveIngress()
-
-		if err := live.SubscribeExecutions(); err != nil {
-			return err
-		}
-
-		if err := live.SubscribeBalances(); err != nil {
-			return err
-		}
-
-		live.OnReconnect(func() error {
-			if err := live.SubscribeExecutions(); err != nil {
-				return err
-			}
-
-			return live.SubscribeBalances()
-		})
-	}
 
 	return nil
 }
@@ -315,151 +249,91 @@ func (booter *Booter) initPipeline() error {
 	)
 
 	booter.workspace.Transition(nmruntime.READY)
+
+	booter.desk.OnTrade(func(trade *market.Trade) {
+		if booter.workspace == nil || trade == nil {
+			return
+		}
+
+		tick := nmruntime.NewEnvelope(trade)
+		tick.N = data.Tick.Add(1)
+
+		ui.UI.WriteJSON(map[string]any{
+			"tick": map[string]any{
+				"epoch": data.Epoch.Load(),
+				"n":     tick.N,
+			},
+		})
+
+		booter.workspace.Step(tick)
+	})
+
+	booter.desk.Start()
 	return nil
 }
 
 /*
-seedBooks is the level3 phase: every subscribed symbol's snapshot must be
-applied (book READY) before any trade reaches the workspace. A symbol that does
-not seed within market.l3_snapshot_timeout of the last subscribe fails the boot
-with the venue's reply for it; the universe is never silently reduced.
+seedBooks opens level3, waits until every symbol has a book, then continues.
 */
 func (booter *Booter) seedBooks() error {
-	timeout := viper.GetDuration("market.l3_snapshot_timeout")
-
-	if timeout <= 0 {
-		return errnie.Err(
-			errnie.Validation,
-			"[booter] market.l3_snapshot_timeout is not configured",
-			nil,
-		)
-	}
-
-	// The public socket carries acknowledgements now and trades only once
-	// the firehose is opened.
-	booter.startIngress(booter.public, "public")
-
-	// Every socket is read while it subscribes: Kraken rejects Level3
-	// snapshot requests on a socket whose earlier snapshots sit unread.
-	booter.book.Expect(booter.instrument.Symbols())
-
-	booter.book.SetResubscribe(func(symbol string) {
-		if err := booter.instrument.ResubscribeLevel3(symbol); err != nil {
-			errnie.Error(err)
-		}
-	})
+	symbols := booter.instrument.Symbols()
+	booter.book.Expect(symbols)
 
 	if err := booter.instrument.SubscribeBooks(broker.Level3{
 		Stale: booter.book.Stale,
 		Reader: func(client *network.WebsocketClient) {
-			booter.startIngress(client, "level3")
+			go booter.readLevel3(client)
 		},
 	}); err != nil {
-		return errnie.Err(
-			errnie.Internal,
-			"[booter] level3 subscribe to instrument universe",
-			err,
-		)
+		return errnie.Err(errnie.IO, "[booter] level3 subscribe failed", err)
 	}
 
+	timeout := 2 * time.Minute
+
 	if err := booter.book.Wait(timeout); err != nil {
-		replies := make([]string, 0)
-
-		for _, symbol := range booter.book.Pending() {
-			reply := "no venue reply"
-
-			if raw, ok := booter.replies.Load(symbol); ok {
-				reply = raw.(string)
-			}
-
-			replies = append(replies, symbol+": "+reply)
-		}
-
-		return errnie.Err(
-			errnie.NotFound,
-			"[booter] level3 seeding failed; venue replies: "+strings.Join(replies, "; "),
-			err,
-		)
+		return errnie.Err(errnie.IO, "[booter] level3 seed timed out", err)
 	}
 
 	return nil
 }
 
-/*
-startPrivateIngress reads the paper desk's private frames: executions are
-applied to the desk and accounted by training; a rejected order is an
-error. The paper transport blocks until each frame is read, so this runs
-for as long as orders can be placed.
-*/
-func (booter *Booter) startPrivateIngress() {
-	booter.pumpPrivate(booter.privateTransport, "paper")
-}
-
-func (booter *Booter) startLiveIngress() {
-	booter.pumpPrivate(booter.liveTransport, "real")
-}
-
-func (booter *Booter) pumpPrivate(transport network.Client, label string) {
-	if transport == nil {
-		return
-	}
-
-	go func() {
-		for {
-			buf, err := transport.Read()
-
-			if err != nil {
-				if nmruntime.ShuttingDown(booter.Context(), err) || booter.Context().Err() != nil {
-					return
-				}
-
-				if disconnect.Expected(err) {
-					errnie.Warn("[booter] " + label + " ingress disconnected, retrying read")
-				} else {
-					errnie.Error(errnie.Err(
-						errnie.IO, "[booter] "+label+" ingress read failed", err,
-					))
-				}
-
-				continue
-			}
-
-			switch {
-			case data.Attribute[string](buf, "channel") == "executions":
-				execution, err := kraken.NewExecution(buf)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"[booter] "+label+" executions frame: "+string(buf),
-						err,
-					))
-
-					continue
-				}
-
-				booter.desk.Apply(execution)
-			case data.Attribute[string](buf, "method") == "add_order":
-				if success, err := data.AttributeOk[bool](buf, "success"); err != nil || !success {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						"[booter] "+label+" desk rejected an order: "+string(buf),
-						err,
-					))
-				}
-			}
+func (booter *Booter) readLevel3(client *network.WebsocketClient) {
+	for {
+		select {
+		case <-booter.Context().Done():
+			return
+		default:
 		}
-	}()
+
+		buf, err := client.Read()
+
+		if err != nil {
+			if nmruntime.ShuttingDown(booter.Context(), err) || booter.Context().Err() != nil {
+				return
+			}
+
+			if disconnect.Expected(err) {
+				errnie.Warn("[booter] level3 disconnected, retrying read")
+			} else {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[booter] level3 ingress read failed", err,
+				))
+			}
+
+			continue
+		}
+
+		booter.desk.Feed(buf)
+	}
 }
 
 /*
-openFirehose is the last phase: the workspace and every book are READY, so the
-first trade tick already carries a seeded book for each symbol it touches.
+openFirehose is last: books and workspace are READY, then trades may flow.
 */
 func (booter *Booter) openFirehose() error {
 	if err := booter.instrument.SubscribeTrades(); err != nil {
 		return errnie.Err(
-			errnie.Internal, "[booter] trade subscribe to instrument universe", err,
+			errnie.Internal, "[booter] trade subscribe failed", err,
 		)
 	}
 
@@ -470,236 +344,4 @@ func (booter *Booter) openFirehose() error {
 	}
 
 	return nil
-}
-
-func (booter *Booter) startIngress(
-	client network.Client, name string,
-) {
-	go func() {
-		errnie.Info(fmt.Sprintf("[booter] starting %s ingress", name))
-
-		for {
-			select {
-			case <-booter.Context().Done():
-				return
-			default:
-			}
-
-			buf, err := client.Read()
-
-			if err != nil {
-				if disconnect.Expected(err) {
-					errnie.Warn("[booter] ingress disconnected, retrying read")
-				} else {
-					booter.Error(errnie.Err(
-						errnie.IO,
-						"[booter] ingress read failed",
-						err,
-					))
-				}
-
-				continue
-			}
-
-			channel := data.Attribute[string](buf, "channel")
-
-			switch channel {
-			case "level3":
-				level3 := kraken.NewLevel3(buf)
-
-				if level3 == nil {
-					continue
-				}
-
-				if err := booter.book.Update(
-					level3,
-				); err != nil && !nmruntime.ShuttingDown(
-					booter.Context(), err,
-				) {
-					errnie.Error(err)
-				}
-
-				// Reprice open lots after books are live. Doing this during
-				// seed stalls the L3 reader (unread snapshots → venue rejects).
-				if booter.desk != nil && booter.Status() == nmruntime.READY {
-					symbols := make([]string, 0, len(level3.Data))
-
-					for _, d := range level3.Data {
-						if d.Symbol != "" {
-							symbols = append(symbols, d.Symbol)
-						}
-					}
-
-					booter.desk.Refresh(symbols)
-				}
-
-				// // Never block L3 Read on S3 while books are still seeding —
-				// // unread snapshots make the venue reject later subscribes.
-				// if booter.Status() == nmruntime.READY {
-				// 	booter.store.WriteAtPrefix(
-				// 		fmt.Sprintf(
-				// 			"workspace/tick/level3/%019d/%019d",
-				// 			data.Tick.Load(),
-				// 			data.SeqIdx.Add(1),
-				// 		),
-				// 		buf,
-				// 	)
-				// }
-			case "trade":
-				tickN := data.Tick.Add(1)
-
-				if booter.workspace == nil {
-					continue
-				}
-
-				trade, err := kraken.NewTrade(buf)
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.UnprocessableContent,
-						"[booter] trade frame does not decode",
-						err,
-					))
-
-					continue
-				}
-
-				if booter.desk != nil {
-					booter.desk.Update(trade.Data)
-				}
-
-				dat := make([]*market.TradeData, 0, len(trade.Data))
-
-				for _, d := range trade.Data {
-					price, err := shopdecimal.NewFromString(d.Price.String())
-
-					if err != nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"[booter] trade frame: "+string(buf),
-							err,
-						))
-					}
-
-					dat = append(dat, &market.TradeData{
-						Symbol:    d.Symbol,
-						Side:      market.Side(d.Side),
-						Price:     price,
-						Qty:       shopdecimal.NewFromFloat(d.Qty),
-						Timestamp: d.Timestamp,
-					})
-				}
-
-				tick := runtime.NewEnvelope(market.NewTrade(
-					trade.Channel,
-					trade.Type,
-					dat,
-				))
-				tick.N = tickN
-
-				// Step returns immediately; the disruptor mutates this
-				// envelope. Persist runs in the last ring — never marshal here.
-				booter.workspace.Step(tick)
-
-				if booter.Status() != nmruntime.READY {
-					continue
-				}
-
-				ui.UI.WriteJSON(map[string]any{
-					"tick": map[string]any{
-						"epoch": data.Epoch.Load(),
-						"n":     tickN,
-					},
-				})
-			case "heartbeat", "status":
-			default:
-				// Request acknowledgements (subscribe, unsubscribe, ...). A
-				// rejection is an error; it is never dropped.
-				if success, err := data.AttributeOk[bool](buf, "success"); err == nil && !success {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						fmt.Sprintf("[booter] %s venue rejected %s %s: %s",
-							name,
-							data.Attribute[string](buf, "method"),
-							data.Attribute[string](buf, "symbol"),
-							data.Attribute[string](buf, "error"),
-						),
-						nil,
-					))
-
-					if name == "level3" {
-						booter.replies.Store(
-							data.Attribute[string](buf, "symbol"),
-							"rejected: "+string(buf),
-						)
-					}
-
-					continue
-				}
-
-				// Level3 replies are kept per symbol: a symbol that fails to
-				// seed is reported with the venue's answer for it.
-				if data.Attribute[string](buf, "result", "channel") == "level3" {
-					booter.replies.Store(data.Attribute[string](
-						buf, "result", "symbol",
-					), "accepted: "+string(buf))
-				}
-			}
-		}
-	}()
-}
-
-/*
-tickPersist writes the finished envelope after the model ring. Ingress must not
-marshal that envelope — Step hands it to the disruptor asynchronously.
-*/
-type tickPersist struct {
-	*nmruntime.System
-	store *store.Client
-	armed atomic.Bool
-}
-
-func newTickPersist(ctx context.Context, client *store.Client) *tickPersist {
-	persist := &tickPersist{store: client}
-	persist.System = nmruntime.NewSystem(ctx, "tick-persist", persist)
-	persist.Transition(nmruntime.READY)
-	return persist
-}
-
-func (persist *tickPersist) Arm() {
-	persist.armed.Store(true)
-}
-
-func (persist *tickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelope {
-	if envelope == nil || persist.store == nil || !persist.armed.Load() {
-		return envelope
-	}
-
-	// Pipeline rings are done with this envelope. Marshal off-thread so JSON/S3
-	// never stalls the disruptor (that freeze left impulse/kernels on last paint).
-	go persist.write(envelope)
-	return envelope
-}
-
-func (persist *tickPersist) write(envelope *nmruntime.Envelope) {
-	payload, err := nmruntime.Sonic.Marshal(envelope)
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"[tick-persist] marshal failed",
-			err,
-		).With("n", envelope.N))
-		return
-	}
-
-	if _, err := persist.store.WriteAtPrefix(
-		fmt.Sprintf("workspace/tick/aggregate/%019d", envelope.N),
-		payload,
-	); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"[tick-persist] write failed",
-			err,
-		).With("n", envelope.N))
-	}
 }

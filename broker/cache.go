@@ -3,44 +3,20 @@ package broker
 import (
 	"context"
 	"fmt"
-	"iter"
 	"sync"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/data"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/system"
 )
-
-/*
-lotBlob is the S3 surface Cache uses for open/closed lot records.
-*/
-type lotBlob interface {
-	WriteAtPrefix(key string, value []byte) (int, error)
-	DeletePrefix(prefix string) error
-	Stream(ctx context.Context, prefix string) iter.Seq[[]byte]
-}
-
-/*
-lotRecord is one stored lot: clock fields plus the position object.
-Hub ListPrefix and workbench views read this shape.
-*/
-type lotRecord struct {
-	Epoch     uint64    `json:"epoch"`
-	Tick      uint64    `json:"tick"`
-	Timestamp uint64    `json:"timestamp"`
-	Position  *Position `json:"position"`
-}
 
 type Cache struct {
 	*runtime.System
 	mu        sync.RWMutex
 	tierKey   string
-	store     lotBlob
+	store     *store.Client
 	transport network.Client
 	price     *Price
 	onSettled func(*Position)
@@ -54,44 +30,27 @@ func NewCache(
 	price *Price,
 	onSettled func(*Position),
 ) *Cache {
-	return newCache(
-		ctx, tierKey, transport, price, onSettled,
-		store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-	)
-}
-
-func newCache(
-	ctx context.Context,
-	tierKey string,
-	transport network.Client,
-	price *Price,
-	onSettled func(*Position),
-	blob lotBlob,
-) *Cache {
 	cache := &Cache{
 		System:    runtime.NewSystem(ctx, "cache"),
 		tierKey:   tierKey,
-		store:     blob,
+		store:     store.NewClient(ctx, "symm"),
 		transport: transport,
 		price:     price,
 		onSettled: onSettled,
-		positions: make(map[string]map[string]*Position),
+		positions: map[string]map[string]*Position{
+			"open":   {},
+			"closed": {},
+		},
 	}
 
-	for _, state := range []string{"open", "closed"} {
-		cache.positions[state] = make(map[string]*Position)
+	for buf := range cache.store.Stream(cache.Context(), fmt.Sprintf("%s/open/", cache.tierKey)) {
+		position := cache.Restore(buf)
 
-		for raw := range cache.store.Stream(
-			cache.Context(), fmt.Sprintf("%s/%s", cache.tierKey, state),
-		) {
-			position := cache.Restore(raw)
-
-			if position == nil {
-				continue
-			}
-
-			cache.positions[state][position.Symbol] = position
+		if position == nil {
+			continue
 		}
+
+		cache.positions["open"][position.Symbol] = position
 	}
 
 	return cache
@@ -114,17 +73,15 @@ func (cache *Cache) Restore(raw []byte) *Position {
 		return nil
 	}
 
-	var record lotRecord
+	var position *Position
 
-	if err := sonic.Unmarshal(raw, &record); err != nil {
+	if err := sonic.Unmarshal(raw, &position); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
 		))
 
 		return nil
 	}
-
-	position := record.Position
 
 	if position == nil || position.Symbol == "" {
 		return nil
@@ -142,17 +99,38 @@ func (cache *Cache) Restore(raw []byte) *Position {
 
 	if position.Stoploss != nil {
 		position.Stoploss.rewire()
+		position.Stoploss.Observe(cache.price, position.Symbol)
+	} else {
+		pnlPct, _ := position.PnLPct.Float64()
+		position.Stoploss = NewStoploss(pnlPct, cache.price, position.Symbol)
+	}
+
+	if len(position.Fills) > 0 {
+		position.foldFills()
 	}
 
 	return position
 }
 
 func (cache *Cache) Has(symbol string) bool {
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
 
-	_, ok := cache.positions["open"][symbol]
-	return ok
+	position := cache.positions["open"][symbol]
+
+	if position == nil {
+		return false
+	}
+
+	// ClosedAt set but still parked under open (settle/Exit race) must not
+	// block Enter — reclaim into closed.
+	if position.ClosedAt != nil {
+		delete(cache.positions["open"], symbol)
+		cache.positions["closed"][symbol] = position
+		return false
+	}
+
+	return true
 }
 
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
@@ -168,19 +146,37 @@ func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 
 	cache.mu.Lock()
 
-	if _, loaded := cache.positions[state][symbol]; loaded {
-		cache.mu.Unlock()
-		return true
+	if existing, loaded := cache.positions[state][symbol]; loaded {
+		if !(open && existing != nil && existing.ClosedAt != nil) {
+			cache.mu.Unlock()
+			return true
+		}
 	}
 
 	cache.positions[state][symbol] = position
 	cache.mu.Unlock()
 
-	if err := cache.write(state, position); err != nil {
+	return false
+}
+
+/*
+Save writes the full lot (orders, fills, mark, pnl, stoploss) to S3.
+force bypasses the open-lot throttle used on mark ticks.
+*/
+func (cache *Cache) Save(position *Position) {
+	body, err := sonic.Marshal(position)
+
+	if err != nil {
 		errnie.Error(err)
+		return
 	}
 
-	return false
+	if _, err := cache.store.WriteAtPrefix(fmt.Sprintf(
+		"%s/open/%s/%s", cache.tierKey, position.Symbol, position.ID,
+	), body); err != nil {
+		errnie.Error(err)
+		return
+	}
 }
 
 func (cache *Cache) Remove(symbol string) bool {
@@ -205,30 +201,19 @@ func (cache *Cache) Remove(symbol string) bool {
 }
 
 func (cache *Cache) Drop(symbol string) {
-	cache.mu.Lock()
+	if symbol == "" {
+		return
+	}
 
-	open := cache.positions["open"][symbol]
-	closed := cache.positions["closed"][symbol]
+	cache.mu.Lock()
 	delete(cache.positions["open"], symbol)
 	delete(cache.positions["closed"], symbol)
 	cache.mu.Unlock()
 
-	for _, position := range []*Position{open, closed} {
-		if position == nil || position.ID == "" {
-			continue
-		}
-
-		_ = cache.store.DeletePrefix(cache.lotKey("open", position.Symbol, position.ID))
-		_ = cache.store.DeletePrefix(cache.lotKey("closed", position.Symbol, position.ID))
-	}
-}
-
-func (cache *Cache) write(state string, position *Position) error {
-	if position == nil || position.ID == "" {
-		return nil
-	}
-
-	return cache.writeKey(cache.lotKey(state, position.Symbol, position.ID), position)
+	// Symbol-scoped prefixes clear every orphan ID under the pair, not only
+	// the lot currently held in memory.
+	_ = cache.store.DeletePrefix(fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol))
+	_ = cache.store.DeletePrefix(fmt.Sprintf("%s/closed/%s/", cache.tierKey, symbol))
 }
 
 func (cache *Cache) move(position *Position) error {
@@ -236,10 +221,16 @@ func (cache *Cache) move(position *Position) error {
 		return nil
 	}
 
-	closed := cache.lotKey("closed", position.Symbol, position.ID)
-	open := cache.lotKey("open", position.Symbol, position.ID)
+	body, err := sonic.Marshal(position)
 
-	if err := cache.writeKey(closed, position); err != nil {
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, position.Symbol, position.ID)
+	open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, position.Symbol, position.ID)
+
+	if _, err := cache.store.WriteAtPrefix(closed, body); err != nil {
 		return err
 	}
 
@@ -254,39 +245,6 @@ func (cache *Cache) move(position *Position) error {
 	return nil
 }
 
-func (cache *Cache) writeKey(key string, position *Position) error {
-	record := lotRecord{
-		Epoch:     data.Epoch.Load(),
-		Tick:      data.Tick.Load(),
-		Timestamp: uint64(time.Now().UnixNano()),
-		Position:  position,
-	}
-
-	body, err := sonic.Marshal(record)
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[broker.Cache.write] failed to encode lot",
-			err,
-		))
-	}
-
-	if _, err = cache.store.WriteAtPrefix(key, body); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[broker.Cache.write] failed to store lot",
-			err,
-		))
-	}
-
-	return nil
-}
-
-func (cache *Cache) lotKey(state, symbol, id string) string {
-	return fmt.Sprintf("%s/%s/%s/%s", cache.tierKey, state, symbol, id)
-}
-
 func (cache *Cache) list(state string, symbols ...string) []*Position {
 	positions := make([]*Position, 0)
 
@@ -295,18 +253,32 @@ func (cache *Cache) list(state string, symbols ...string) []*Position {
 
 	if len(symbols) == 0 {
 		for _, position := range cache.positions[state] {
-			if position != nil {
-				positions = append(positions, position)
+			if position == nil {
+				continue
 			}
+
+			if state == "open" && position.ClosedAt != nil {
+				continue
+			}
+
+			positions = append(positions, position)
 		}
 
 		return positions
 	}
 
 	for _, symbol := range symbols {
-		if position := cache.positions[state][symbol]; position != nil {
-			positions = append(positions, position)
+		position := cache.positions[state][symbol]
+
+		if position == nil {
+			continue
 		}
+
+		if state == "open" && position.ClosedAt != nil {
+			continue
+		}
+
+		positions = append(positions, position)
 	}
 
 	return positions

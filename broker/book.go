@@ -1,106 +1,66 @@
 package broker
 
 import (
-	"context"
-	"errors"
 	"fmt"
+	"iter"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/shopspring/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/venue/kraken"
 )
 
-type Book struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	system        *runtime.System
-	pending       atomic.Pointer[map[string]struct{}]
-	seeded        chan struct{}
-	manager       *market.Books
-	normalizer    *spot.Normalizer
-	notify        atomic.Pointer[func(string, time.Time)]
-	touch         atomic.Pointer[func([]kraken.Level3Touch)]
-	resubscribe   atomic.Pointer[func(string)]
-	resubInflight sync.Map
-	mu            sync.RWMutex
-	stale         sync.Map
-	invalid       sync.Map
-	failures      atomic.Int64
-	lastTouch     sync.Map
-}
-
-func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
-	if normalizer == nil {
-		panic("websocket: level3 book normalizer required")
-	}
-
-	errnie.Info("websocket: initializing book manager")
-	ctx, cancel := context.WithCancel(ctx)
-
-	book := &Book{
-		ctx:        ctx,
-		cancel:     cancel,
-		system:     runtime.NewSystem(ctx, "book"),
-		seeded:     make(chan struct{}, 1),
-		manager:    market.NewBooks(),
-		normalizer: normalizer,
-	}
-
-	return book
-}
-
-func (book *Book) create(symbol string, depth int) *market.Book {
-	managed := book.manager.Create(symbol, depth)
-	// Depth belongs to a complete venue frame. Per-order truncation can
-	// remove a level that a later order in the same frame still references.
-	managed.EnableMaxDepth = false
-	// Crossing heuristics inside one multi-order venue frame can delete a
-	// newly added order before later orders resolve a transient cross.
-	managed.NoBookCrossing = false
-	return managed
-}
+// Book is the historical name signals/boot still use for BookManager.
+type Book = BookManager
 
 /*
-Expect keeps the book owner BUSY until every requested snapshot has
-been applied and its observation consumers have been seeded.
+BookManager holds per-symbol market books. Venue frames arrive as market.Level3
+(converted at the edge); this type never imports a venue package.
 */
-func (book *Book) Expect(symbols []string) {
-	newPending := make(map[string]struct{}, len(symbols))
+type BookManager struct {
+	mu      sync.RWMutex
+	books   map[string]*market.Book
+	pending map[string]struct{}
+	stale   map[string]struct{}
+	seeded  chan struct{}
+}
+
+func NewBookManager() *BookManager {
+	return &BookManager{
+		books:   make(map[string]*market.Book),
+		pending: make(map[string]struct{}),
+		stale:   make(map[string]struct{}),
+		seeded:  make(chan struct{}, 1),
+	}
+}
+
+func (manager *BookManager) Expect(symbols []string) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.pending = make(map[string]struct{}, len(symbols))
 
 	for _, symbol := range symbols {
-		newPending[symbol] = struct{}{}
+		if symbol != "" {
+			manager.pending[symbol] = struct{}{}
+		}
 	}
-
-	book.pending.Store(&newPending)
-	book.system.Transition(runtime.BUSY)
 }
 
-/*
-Wait blocks boot until every expected snapshot is applied (READY). Seeding is
-bounded: a symbol still pending after timeout is a broken subscription, and
-that is an error naming every such symbol, never a silent partial universe.
-*/
-func (book *Book) Wait(timeout time.Duration) error {
+func (manager *BookManager) Wait(timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 
-	for book.system.Status() != runtime.READY {
+	for {
+		if len(manager.Pending()) == 0 {
+			return nil
+		}
+
 		select {
-		case <-book.ctx.Done():
-			return errnie.Err(errnie.IO, "book: seed interrupted", book.ctx.Err())
 		case <-deadline.C:
-			pending := book.Pending()
+			pending := manager.Pending()
 
 			return errnie.Err(
 				errnie.NotFound,
@@ -108,653 +68,158 @@ func (book *Book) Wait(timeout time.Duration) error {
 					len(pending), timeout, strings.Join(pending, ",")),
 				nil,
 			)
-		case <-book.seeded:
+		case <-manager.seeded:
 		}
 	}
-
-	return nil
 }
 
-/*
-Pending returns the expected symbols whose snapshot has not been applied.
-*/
-func (book *Book) Pending() []string {
-	pendingPtr := book.pending.Load()
+func (manager *BookManager) Pending() []string {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
 
-	if pendingPtr == nil {
-		return nil
+	out := make([]string, 0, len(manager.pending))
+
+	for symbol := range manager.pending {
+		out = append(out, symbol)
 	}
 
-	pending := make([]string, 0, len(*pendingPtr))
-
-	for symbol := range *pendingPtr {
-		pending = append(pending, symbol)
-	}
-
-	slices.Sort(pending)
-	return pending
+	slices.Sort(out)
+	return out
 }
 
-func (book *Book) Book(symbol string, read func(*market.Book)) {
-	// Readers (pricing, JSON layers) must not observe a half-applied frame.
-	book.mu.RLock()
-	defer book.mu.RUnlock()
-
-	if pendingPtr := book.pending.Load(); pendingPtr != nil {
-		if _, pending := (*pendingPtr)[symbol]; pending {
-			return
-		}
-	}
-
-	if _, stale := book.stale.Load(symbol); stale {
+func (manager *BookManager) Update(level3 *market.Level3) {
+	if level3 == nil {
 		return
 	}
 
-	if _, invalid := book.invalid.Load(symbol); invalid {
-		return
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	for _, data := range level3.Data {
+		if data == nil || data.Symbol == "" {
+			continue
+		}
+
+		book := manager.books[data.Symbol]
+
+		if book == nil {
+			book = market.NewBook()
+			book.Name = data.Symbol
+			manager.books[data.Symbol] = book
+		}
+
+		for _, order := range data.Bids {
+			applyOrder(book, market.SideBid, order)
+		}
+
+		for _, order := range data.Asks {
+			applyOrder(book, market.SideAsk, order)
+		}
+
+		delete(manager.pending, data.Symbol)
+		delete(manager.stale, data.Symbol)
 	}
 
-	managed := book.manager.Get(symbol)
-
-	if managed != nil {
-		read(managed)
+	if len(manager.pending) == 0 {
+		select {
+		case manager.seeded <- struct{}{}:
+		default:
+		}
 	}
 }
 
-/*
-BlockReason names why a symbol cannot be read for sizing. Empty means the
-book is present and not pending, stale, or invalid.
-*/
-func (book *Book) BlockReason(symbol string) string {
+func applyOrder(book *market.Book, side market.SideKind, order *market.Level3Order) {
+	if order == nil || order.LimitPrice == nil || order.OrderQty == nil {
+		return
+	}
+
+	book.Update(&market.Delta{
+		Direction: side,
+		ID:        order.OrderID,
+		Price:     order.LimitPrice,
+		Quantity:  order.OrderQty,
+		Timestamp: order.Timestamp,
+	})
+}
+
+func (manager *BookManager) Get(symbol string) *market.Book {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	return manager.books[symbol]
+}
+
+func (manager *BookManager) Book(symbol string, read func(*market.Book)) {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	if _, pending := manager.pending[symbol]; pending {
+		return
+	}
+
+	if _, stale := manager.stale[symbol]; stale {
+		return
+	}
+
+	if book := manager.books[symbol]; book != nil {
+		read(book)
+	}
+}
+
+func (manager *BookManager) BlockReason(symbol string) string {
 	if symbol == "" {
 		return "symbol is empty"
 	}
 
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
 
-	if pendingPtr := book.pending.Load(); pendingPtr != nil {
-		if _, pending := (*pendingPtr)[symbol]; pending {
-			return "level3 book still pending snapshot"
-		}
+	if _, pending := manager.pending[symbol]; pending {
+		return "level3 book still pending snapshot"
 	}
 
-	if _, stale := book.stale.Load(symbol); stale {
-		return "level3 book stale until resubscribe snapshot"
+	if _, stale := manager.stale[symbol]; stale {
+		return "level3 book is stale"
 	}
 
-	if value, invalid := book.invalid.Load(symbol); invalid {
-		entry := value.(*invalidBook)
-
-		return fmt.Sprintf(
-			"level3 book invalid (%s): %s",
-			entry.diagnostic.Kind,
-			entry.diagnostic.Detail,
-		)
-	}
-
-	if book.manager.Get(symbol) == nil {
-		return "symbol not in book manager"
+	if manager.books[symbol] == nil {
+		return "level3 book not seeded"
 	}
 
 	return ""
 }
 
-func (book *Book) Create(symbol string, depth int) error {
-	if depth <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, fmt.Sprintf("[book] %s depth %d is not a book depth", symbol, depth), nil,
-		))
-	}
+func (manager *BookManager) StaleSymbol(symbol string) bool {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
 
-	book.create(symbol, depth)
-	return nil
+	_, stale := manager.stale[symbol]
+	return stale || manager.books[symbol] == nil
 }
 
-/*
-level3Depth is the subscribed level3 depth, market.l3_depth. A book is only
-maintained at the depth the venue sends, so a missing setting is an error.
-*/
-func level3Depth() (int, error) {
-	depth := viper.GetInt("market.l3_depth")
+func (manager *BookManager) Stale(symbols []string) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
 
-	if depth <= 0 {
-		return 0, errnie.Err(errnie.Validation, "[book] market.l3_depth is not configured", nil)
-	}
-
-	return depth, nil
-}
-
-/*
-canonical rescales a venue decimal to the pair's precision (pair_decimals for
-prices, lot_decimals for quantities). The SDK keys a side's levels by the
-price's text, so 0.564 and 0.5640 must be one key; Kraken's checksum strings
-are the same precision-formatted text ("44928.0", "0.00100000" in its L3
-checksum example). A value with more significant decimals than the pair
-allows is an error, never rounded.
-*/
-func canonical(value *decimal.Decimal, scale int, field, symbol string) (*decimal.Decimal, error) {
-	if value == nil {
-		return nil, nil
-	}
-
-	scaled := value.Truncate(int32(scale))
-
-	if scaled.Cmp(*value) != 0 {
-		return nil, errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[book] %s %s %s has more than the pair's %d decimals", symbol, field, value.String(), scale),
-			nil,
-		)
-	}
-
-	return &scaled, nil
-}
-
-/*
-Stale marks the books of symbols whose Level3 socket dropped. Their depth is
-frozen, so it is an error: readers do not see them until the reconnect
-resubscribe delivers a fresh snapshot.
-*/
-func (book *Book) Stale(symbols []string) {
 	for _, symbol := range symbols {
-		book.stale.Store(symbol, struct{}{})
-	}
-
-	errnie.Error(errnie.Err(
-		errnie.IO,
-		fmt.Sprintf("level3 socket down, %d books stale until resubscribe snapshot: %s",
-			len(symbols), strings.Join(symbols, ",")),
-		nil,
-	))
-}
-
-/*
-StaleSymbol reports whether a symbol's book is stale, invalid, pending, or absent.
-*/
-func (book *Book) StaleSymbol(symbol string) bool {
-	if symbol == "" {
-		return true
-	}
-
-	book.mu.RLock()
-	defer book.mu.RUnlock()
-
-	if pendingPtr := book.pending.Load(); pendingPtr != nil {
-		if _, pending := (*pendingPtr)[symbol]; pending {
-			return true
-		}
-	}
-
-	if _, stale := book.stale.Load(symbol); stale {
-		return true
-	}
-
-	if _, invalid := book.invalid.Load(symbol); invalid {
-		return true
-	}
-
-	return book.manager.Get(symbol) == nil
-}
-
-func (book *Book) SetNotify(notify func(string, time.Time)) {
-	book.notify.Store(&notify)
-}
-
-func (book *Book) Update(
-	payload *kraken.Level3,
-) (err error) {
-	if payload == nil {
-		return nil
-	}
-
-	if payload.Data == nil {
-		payload.Data = []kraken.Level3Data{}
-	}
-
-	book.mu.Lock()
-	accepted, applyErr, touches := book.apply(payload)
-	book.mu.Unlock()
-
-	var notify func(string, time.Time)
-
-	if notifyPtr := book.notify.Load(); notifyPtr != nil {
-		notify = *notifyPtr
-	}
-
-	var touch func([]kraken.Level3Touch)
-
-	if touchPtr := book.touch.Load(); touchPtr != nil {
-		touch = *touchPtr
-	}
-
-	if touch != nil && len(touches) > 0 {
-		touch(touches)
-	}
-
-	if applyErr != nil {
-		return applyErr
-	}
-
-	for _, data := range accepted {
-		if payload.Type == "snapshot" {
-			for {
-				oldPendingPtr := book.pending.Load()
-
-				if oldPendingPtr == nil {
-					break
-				}
-
-				newPending := make(map[string]struct{}, len(*oldPendingPtr))
-
-				for key, val := range *oldPendingPtr {
-					if key != data.Symbol {
-						newPending[key] = val
-					}
-				}
-
-				if book.pending.CompareAndSwap(oldPendingPtr, &newPending) {
-					break
-				}
-			}
-		}
-
-		if notify != nil {
-			notify(data.Symbol, data.Timestamp)
-		}
-
-		if payload.Type == "snapshot" {
-			pendingCount := 0
-
-			if pendingPtr := book.pending.Load(); pendingPtr != nil {
-				pendingCount = len(*pendingPtr)
-			}
-
-			staleEmpty := true
-
-			book.stale.Range(func(_, _ any) bool {
-				staleEmpty = false
-				return false
-			})
-
-			if pendingCount == 0 && staleEmpty {
-				book.system.Transition(runtime.READY)
-
-				select {
-				case book.seeded <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-/*
-apply mutates one complete venue frame while the caller owns the book lock.
-Transport publication happens only after this method returns and the lock is
-released, so downstream backpressure cannot prevent pricing readers from
-observing the accepted frame.
-
-A venue checksum mismatch, or a delete that references a level the local book
-does not hold, is a bug in local book maintenance. It is raised as an error
-carrying the offending entry and the local top of book; the state is neither
-wiped nor hidden, so the failure can be reproduced and fixed.
-*/
-func (book *Book) apply(
-	payload *kraken.Level3,
-) (accepted []kraken.Level3Data, err error, touches []kraken.Level3Touch) {
-	touches = make([]kraken.Level3Touch, 0)
-	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
-
-	var symbolBook *market.Book
-
-	for index, data := range payload.Data {
-		err := func() error {
-			select {
-			case <-book.ctx.Done():
-				// Shutdown: the caller decides; cancellation is not a failure.
-				return book.ctx.Err()
-			default:
-			}
-
-			data.Type = payload.Type
-			original := data
-
-			// An invalid book is known wrong: its deltas are counted (and
-			// surfaced on every tick's book_error layer), not applied, until
-			// a fresh snapshot replaces it. Hot symbols keep producing
-			// deltas; every hundredth one retries unsubscribe+subscribe in
-			// case the first recovery write did not land a snapshot.
-			if value, invalid := book.invalid.Load(data.Symbol); invalid && payload.Type != "snapshot" {
-				dropped := value.(*invalidBook).dropped.Add(1)
-
-				if dropped%100 == 0 {
-					book.requestLevel3Resubscribe(data.Symbol)
-				}
-
-				return errSkipInvalid
-			}
-
-			symbolBook = book.manager.Get(data.Symbol)
-
-			depth, err := level3Depth()
-
-			if err != nil {
-				return err
-			}
-
-			var pair *spot.AssetPair
-
-			if payload.Type == "snapshot" {
-				_, wasStale := book.stale.LoadAndDelete(data.Symbol)
-				was, wasInvalid := book.invalid.LoadAndDelete(data.Symbol)
-
-				switch {
-				case wasInvalid:
-					errnie.Info(fmt.Sprintf("[book] %s valid again: fresh snapshot replaced the %s book (%d deltas dropped while invalid)",
-						data.Symbol, was.(*invalidBook).diagnostic.Kind, was.(*invalidBook).dropped.Load()))
-				case wasStale:
-					errnie.Info(fmt.Sprintf("[book] %s valid again: resubscribe snapshot replaced the stale book", data.Symbol))
-				}
-
-				symbolBook = book.create(data.Symbol, depth)
-			} else if symbolBook == nil {
-				symbolBook = book.create(data.Symbol, depth)
-			}
-
-			for sideIndex, level3data := range []*[]kraken.Level3Order{
-				&data.Bids, &data.Asks,
-			} {
-				symbolSide := symbolBook.Bids
-				direction := market.SideBid
-
-				if sideIndex == 1 {
-					symbolSide = symbolBook.Asks
-					direction = market.SideAsk
-				}
-
-				filtered := make([]kraken.Level3Order, 0, len(*level3data))
-
-				for _, order := range *level3data {
-					if pair == nil {
-						if pair, err = book.normalizer.PairInfo(data.Symbol); err != nil {
-							return errnie.Err(errnie.NotFound, "[book] no pair precision for "+data.Symbol, err)
-						}
-					}
-
-					if order.LimitPrice, err = canonical(order.LimitPrice, pair.PairDecimals, "limit_price", data.Symbol); err != nil {
-						return err
-					}
-
-					if order.OrderQty, err = canonical(order.OrderQty, pair.LotDecimals, "order_qty", data.Symbol); err != nil {
-						return err
-					}
-
-					if order.Event == "delete" && order.LimitPrice == nil {
-						for _, level := range symbolSide.Levels {
-							if level == nil {
-								continue
-							}
-
-							for _, queued := range level.Queue() {
-								if queued.ID == order.OrderID {
-									lp, _ := decimal.NewFromString(level.Price.String())
-									order.LimitPrice = &lp
-									break
-								}
-							}
-
-							if order.LimitPrice != nil {
-								break
-							}
-						}
-					}
-
-					if order.LimitPrice == nil {
-						continue
-					}
-
-					price := order.LimitPrice.Truncate(int32(pair.PairDecimals))
-
-					if order.OrderID != "" {
-						for _, level := range symbolSide.Levels {
-							if level == nil || level.Price == nil || level.Price.Cmp(price) == 0 {
-								continue
-							}
-
-							for _, queued := range level.Queue() {
-								if queued.ID == order.OrderID {
-									zero := decimal.Zero
-									symbolBook.Update(&market.Delta{
-										Direction: direction,
-										ID:        order.OrderID,
-										Price:     level.Price,
-										Quantity:  &zero,
-									})
-									break
-								}
-							}
-						}
-					}
-
-					quantity := order.OrderQty
-
-					if order.Event == "delete" || quantity == nil {
-						zero := decimal.Zero
-						quantity = &zero
-					}
-
-					qty := quantity.Truncate(int32(pair.LotDecimals))
-
-					levelKey := price.String()
-
-					if quantity.Sign() <= 0 && symbolSide.Levels[levelKey] == nil {
-						return book.invalidate(
-							"absent_level",
-							fmt.Sprintf("%s order %s references absent level %s",
-								order.Event, order.OrderID, order.LimitPrice.String()),
-							payload, original, strconv.FormatUint(uint64(data.Checksum), 10), nil,
-						)
-					}
-
-					symbolBook.Update(&market.Delta{
-						Direction: direction,
-						ID:        order.OrderID,
-						Price:     &price,
-						Quantity:  &qty,
-						Timestamp: order.Timestamp,
-					})
-
-					filtered = append(filtered, order)
-				}
-
-				*level3data = filtered
-			}
-
-			if data.Bids == nil {
-				data.Bids = []kraken.Level3Order{}
-			}
-
-			if data.Asks == nil {
-				data.Asks = []kraken.Level3Order{}
-			}
-
-			symbolBook.EnforceDepth()
-
-			serverChecksum := strconv.FormatUint(uint64(data.Checksum), 10)
-			checksum := symbolBook.L3Checksum(serverChecksum)
-
-			// Frames with checksum 0 are treated as missing: stamp from local state
-			// so paper/test ingress can apply updates without a venue CRC32 field.
-			if !checksum.Match && data.Checksum == 0 {
-				if local, err := strconv.ParseUint(checksum.LocalChecksum, 10, 32); err == nil {
-					data.Checksum = uint32(local)
-					serverChecksum = checksum.LocalChecksum
-					checksum = symbolBook.L3Checksum(serverChecksum)
-				}
-			}
-
-			payload.Data[index] = data
-
-			if !checksum.Match {
-				// The venue checksum is authority: local book maintenance
-				// diverged from the venue. Raise it with what is needed to
-				// reproduce it; never paper over it.
-				return book.invalidate(
-					"checksum_mismatch",
-					"local book diverged from the venue checksum after applying the entry",
-					payload, original, checksum.ServerChecksum, checksum,
-				)
-			}
-
-			return nil
-		}()
-
-		if err == errSkipInvalid {
+		if symbol == "" {
 			continue
 		}
 
-		if err != nil {
-			return accepted, err, touches
-		}
-
-		accepted = append(accepted, data)
-		book.recordTouch(symbolBook, data, &touches)
+		manager.stale[symbol] = struct{}{}
+		delete(manager.books, symbol)
 	}
-
-	return accepted, nil, touches
 }
 
-/*
-errSkipInvalid marks an entry for an invalid book: counted, not applied.
-*/
-var errSkipInvalid = errors.New("level3 entry for an invalid book")
+func (manager *BookManager) All() iter.Seq[*market.Book] {
+	return func(yield func(*market.Book) bool) {
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
 
-/*
-SetTouch connects verified top-of-book reporting to the owning transport.
-*/
-func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
-	book.touch.Store(&touch)
-}
-
-/*
-SetResubscribe wires level3 snapshot recovery. Kraken does not push a snapshot
-after a local checksum failure; the client must unsubscribe then subscribe.
-The hook runs on invalidation and again every hundred dropped deltas while
-the book stays invalid, until a fresh snapshot clears that state.
-*/
-func (book *Book) SetResubscribe(resubscribe func(string)) {
-	book.resubscribe.Store(&resubscribe)
-}
-
-func (book *Book) requestLevel3Resubscribe(symbol string) {
-	if symbol == "" {
-		return
-	}
-
-	if _, inflight := book.resubInflight.LoadOrStore(symbol, struct{}{}); inflight {
-		return
-	}
-
-	resubPtr := book.resubscribe.Load()
-	if resubPtr == nil || *resubPtr == nil {
-		book.resubInflight.Delete(symbol)
-		return
-	}
-
-	go func(fn func(string), sym string) {
-		defer book.resubInflight.Delete(sym)
-		fn(sym)
-	}(*resubPtr, symbol)
-}
-
-/*
-recordTouch stages this symbol's executable top of book if it moved.
-
-The frame reaching here has already matched the venue's checksum, so the levels
-are the venue's own. A crossed or one-sided book is not a touch: there is no
-price at which both sides could trade, and reporting one would put a number
-into the price series that the market never offered.
-*/
-func (book *Book) recordTouch(symbolBook *market.Book, data kraken.Level3Data, touches *[]kraken.Level3Touch) {
-	if symbolBook == nil {
-		return
-	}
-
-	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
-	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil ||
-		bid.Quantity == nil || ask.Quantity == nil {
-		return
-	}
-
-	if bid.Price.Cmp(*ask.Price) >= 0 {
-		return
-	}
-
-	key := [4]string{
-		bid.Price.String(),
-		bid.Quantity.String(),
-		ask.Price.String(),
-		ask.Quantity.String(),
-	}
-
-	if val, seen := book.lastTouch.Load(data.Symbol); seen {
-		if previous := val.([4]string); previous == key {
-			return
+		for _, book := range manager.books {
+			if !yield(book) {
+				return
+			}
 		}
 	}
-
-	book.lastTouch.Store(data.Symbol, key)
-
-	bidPx, _ := decimal.NewFromString(key[0])
-	bidQty, _ := decimal.NewFromString(key[1])
-	askPx, _ := decimal.NewFromString(key[2])
-	askQty, _ := decimal.NewFromString(key[3])
-
-	if bidPx.Sign() <= 0 || askPx.Sign() <= 0 {
-		return
-	}
-
-	*touches = append(*touches, kraken.Level3Touch{
-		Symbol: data.Symbol, Timestamp: data.Timestamp,
-		Bid: &bidPx, BidQty: &bidQty,
-		Ask: &askPx, AskQty: &askQty,
-	})
-}
-
-func (book *Book) All() *sync.Map {
-	out := &sync.Map{}
-	book.SnapshotInto(out)
-
-	return out
-}
-
-func (book *Book) SnapshotInto(out *sync.Map) {
-	if out == nil {
-		return
-	}
-
-	for _, symbol := range book.manager.Symbols() {
-		out.Store(symbol, book.manager.Get(symbol))
-	}
-}
-
-/*
-JSON returns the serialized JSON representation of the resident book for symbol.
-*/
-func (book *Book) JSON(symbol string) []byte {
-	var raw []byte
-
-	book.Book(symbol, func(b *market.Book) {
-		var err error
-
-		if raw, err = sonic.Marshal(b); err != nil {
-			errnie.Error(errnie.Err(errnie.UnprocessableContent, "[book] "+symbol+" marshal failed", err))
-			raw = nil
-		}
-	})
-
-	return raw
 }

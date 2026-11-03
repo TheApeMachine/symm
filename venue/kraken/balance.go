@@ -2,82 +2,61 @@ package kraken
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
-/*
-	PaperBalance is the native payload returned by `kraken paper balance --output json`.
-
-It keeps the full paper wallet rows while exposing a direct Kraken-style decimal
-map for callers that only need per-asset totals.
-*/
-type PaperBalance struct {
-	Balances map[string]PaperBalanceData `json:"balances"`
-	Mode     string                      `json:"mode"`
-}
-
-/*
-PaperBalanceData stores the native paper wallet row so available, reserved, and
-total amounts survive the CLI decode without float-to-string guesswork later.
-*/
-type PaperBalanceData struct {
-	Available *decimal.Decimal `json:"available"`
-	Reserved  *decimal.Decimal `json:"reserved"`
-	Total     *decimal.Decimal `json:"total"`
-}
-
-/*
-BalanceSubscription requests authenticated wallet snapshots.
-*/
-type BalanceSubscription struct {
-	Token string
-}
-
-func NewBalanceSubscription(token string) BalanceSubscription {
-	return BalanceSubscription{Token: token}
-}
-
-func (subscription BalanceSubscription) MarshalJSON() ([]byte, error) {
-	params := map[string]any{
-		"channel":  "balances",
-		"snapshot": true,
-	}
-
-	if subscription.Token != "" {
-		params["token"] = subscription.Token
-	}
-
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": params,
-	})
-}
-
 type Balance struct {
-	Channel   string        `json:"channel"`
-	Data      []BalanceData `json:"data"`
-	Type      string        `json:"type"`
-	Sequence  int64         `json:"sequence"`
-	Timestamp time.Time     `json:"timestamp"`
+	Channel  string                      `json:"channel,omitempty"`
+	Error    []any                       `json:"error"`
+	Result   map[string]*decimal.Decimal `json:"result"`
+	onChange func(market.MarketType)
 }
 
-type BalanceData struct {
-	Asset      string           `json:"asset"`
-	AssetClass string           `json:"asset_class"`
-	Balance    *decimal.Decimal `json:"balance"`
-	Available  *decimal.Decimal `json:"available,omitempty"`
-	Reserved   *decimal.Decimal `json:"reserved,omitempty"`
-	Wallets    []Wallet         `json:"wallets"`
+func NewBalance() *Balance {
+	return &Balance{
+		Result: make(map[string]*decimal.Decimal),
+	}
 }
 
-type Wallet struct {
-	Type    string           `json:"type"`
-	ID      string           `json:"id"`
-	Balance *decimal.Decimal `json:"balance"`
+/*
+NewBalanceFromMap builds a REST Balance from the paper CLI balance model.
+*/
+func NewBalanceFromMap(model map[string]any) json.Marshaler {
+	out := NewBalance()
+	rows, _ := model["balances"].(map[string]any)
+
+	for asset, raw := range rows {
+		row, _ := raw.(map[string]any)
+		amount := decimal.Zero
+
+		if value, ok := row["available"].(float64); ok {
+			amount = decimal.NewFromFloat(value)
+		} else if value, ok := row["total"].(float64); ok {
+			amount = decimal.NewFromFloat(value)
+		}
+
+		if amount.IsZero() {
+			continue
+		}
+
+		capital := amount
+		out.Result[asset] = &capital
+	}
+
+	return out
+}
+
+func (balance *Balance) Request() map[string]any {
+	return map[string]any{
+		"nonce": 0,
+	}
+}
+
+func (balance *Balance) OnChange(fn func(market.MarketType)) {
+	balance.onChange = fn
 }
 
 func (balance *Balance) MarshalJSON() ([]byte, error) {
@@ -93,145 +72,67 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	onChange := balance.onChange
 	*balance = Balance(decoded)
+	balance.onChange = onChange
+
+	if balance.Result == nil {
+		balance.Result = make(map[string]*decimal.Decimal)
+	}
+
+	if balance.onChange != nil {
+		balance.onChange(balance)
+	}
+
 	return nil
 }
 
-func (balance *Balance) Action() string {
-	return "balance"
-}
+func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Balance)
 
-func (balance *Balance) IsSuccess() bool {
-	return len(balance.Data) > 0
-}
-
-/*
-NewPaperBalance decodes the native paper wallet payload into the same Balance
-observation shape as the real REST endpoint, keeping each row's available,
-reserved, and total amounts as separate Data fields.
-*/
-func NewPaperBalance(buf []byte) *Balance {
-	var paper PaperBalance
-
-	if err := sonic.Unmarshal(buf, &paper); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid paper balance",
-			err,
-		))
+	if !ok || book == nil || balance == nil {
+		return other
 	}
 
-	out := Balance{
-		Channel:   "balances",
-		Data:      []BalanceData{},
-		Type:      "snapshot",
-		Timestamp: time.Now(),
-	}
+	assets := make([]*market.Asset, 0, len(balance.Result))
 
-	for asset, row := range paper.Balances {
-		out.Data = append(out.Data, BalanceData{
-			Asset:      asset,
-			AssetClass: "currency",
-			Balance:    row.Total,
-			Available:  row.Available,
-			Reserved:   row.Reserved,
-			Wallets: []Wallet{
-				{
-					Type:    "spot",
-					ID:      "main",
-					Balance: row.Total,
-				},
-			},
-		})
-	}
-
-	return &out
-}
-
-var zero = dFloat(0)
-
-/*
-NewBalanceFromMap reshapes the venue's asset-to-total map into the Balance
-observation consumed downstream, synthesizing one Data row per asset.
-*/
-func NewBalanceFromMap(model map[string]any) json.Marshaler {
-	if _, ok := model["balances"]; ok {
-		raw, err := sonic.Marshal(model)
-
-		if err != nil {
-			return &Balance{Channel: "balances", Type: "snapshot", Timestamp: time.Now()}
-		}
-
-		return NewPaperBalance(raw)
-	}
-
-	out := Balance{
-		Channel:   "balances",
-		Data:      []BalanceData{},
-		Type:      "snapshot",
-		Sequence:  0,
-		Timestamp: time.Now(),
-	}
-
-	for asset, amount := range model {
-		parsed, ok := amount.(*decimal.Decimal)
-
-		if !ok {
+	for asset, amount := range balance.Result {
+		if amount == nil {
 			continue
 		}
 
-		out.Data = append(out.Data, BalanceData{
-			Asset:      asset,
-			AssetClass: "currency",
-			Balance:    parsed,
-			Available:  parsed,
-			Reserved:   zero,
-			Wallets: []Wallet{
-				{
-					Type:    "spot",
-					ID:      "main",
-					Balance: parsed,
-				},
-			},
-		})
+		assets = append(assets, market.NewAsset(
+			nil, asset, *amount, decimal.Zero, *amount,
+		))
 	}
 
-	return &out
+	return market.NewBalance(map[string]any{
+		"quote":  book.Quote,
+		"assets": assets,
+	}).ToMarket(book)
 }
 
-func NewTradeBalanceFromMap(model map[string]any) TradeBalanceResult {
-	currentValue := dFloat(floatField(model["current_value"]))
-	unrealizedPnL := dFloat(floatField(model["unrealized_pnl"]))
-	tradeBalanceVal := currentValue.Sub(*unrealizedPnL)
-	tradeBalance := &tradeBalanceVal
+func (balance *Balance) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Balance)
 
-	zero := dInt(0)
-	var funding *decimal.Decimal
-
-	if amount, found := model["starting_balance"].(float64); found {
-		funding = dFloat(amount)
+	if !ok || book == nil || balance == nil {
+		return balance
 	}
 
-	complete, known := model["valuation_complete"].(bool)
-
-	var valuation *bool
-
-	if known {
-		valuation = &complete
+	if balance.Result == nil {
+		balance.Result = make(map[string]*decimal.Decimal)
 	}
 
-	return TradeBalanceResult{
-		NetFunding:        funding,
-		ValuationComplete: valuation,
-		EquivalentBalance: currentValue,
-		TradeBalance:      tradeBalance,
-		MarginAmount:      zero,
-		UnrealizedPnL:     unrealizedPnL,
-		CostBasis:         zero,
-		Valuation:         zero,
-		Equity:            currentValue,
-		FreeMargin:        currentValue,
-		MarginFreeOrders:  currentValue,
-		UnexecutedValue:   zero,
+	clear(balance.Result)
+
+	for _, asset := range book.Assets {
+		if asset == nil {
+			continue
+		}
+
+		capital := asset.Capital
+		balance.Result[asset.Symbol] = &capital
 	}
+
+	return balance
 }

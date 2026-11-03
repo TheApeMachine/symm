@@ -1,11 +1,9 @@
 package broker
 
 import (
-	"context"
 	"sync"
 	"testing"
 
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/venue/kraken"
 )
@@ -33,11 +31,10 @@ func TestCheckEntryPhysicalRejectsThinBids(t *testing.T) {
 
 		price := &Price{
 			Instrument: instrument,
-			Books:      NewBook(context.Background(), spot.NewNormalizer()),
+			Books:      NewBookManager(),
 		}
 		decision := CheckEntryPhysical(price, symbol)
 		So(decision.Allowed, ShouldBeFalse)
 		So(decision.Reason, ShouldContainSubstring, "book too thin")
 	})
 }
-

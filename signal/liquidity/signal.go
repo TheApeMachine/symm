@@ -4,9 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"

@@ -29,6 +29,10 @@ export type DynamicStoploss = {
 	has_floor: boolean;
 	room_pct: number;
 	proximity: number;
+	/** Peak near-floor proximity [0,1] from broker.Stoploss.Damage. */
+	damage?: number;
+	/** Last book/tape upward probability [0,1]. */
+	up_prob?: number;
 	downside_pressure: number;
 	downside_magnitude_ratio: number;
 	consecutive_down: number;

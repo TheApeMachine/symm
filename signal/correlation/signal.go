@@ -74,10 +74,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if !outcome.Eligible {
-				return
-			}
-
+			// Publish ineligible/zero readings too — resonance holds until every
+			// Map() label has been seen (herd_score / peak_score).
 			mu.Lock()
 			envelope.Correlation[data.Symbol] = &outcome
 			mu.Unlock()

@@ -22,6 +22,7 @@ type Endpoints struct {
 	TradeBalance string
 	TradeVolume  string
 	Ticker       string
+	Balance      string
 }
 
 func NewWebSocket() *WebSocket {
@@ -29,6 +30,7 @@ func NewWebSocket() *WebSocket {
 	viper.SetDefault("system.websocket.endpoints.private", "wss://ws-auth.kraken.com/v2")
 	viper.SetDefault("system.websocket.endpoints.level3", "wss://ws-l3.kraken.com/v2")
 	viper.SetDefault("system.websocket.endpoints.futures", "wss://futures.kraken.com/ws/v1")
+	viper.SetDefault("system.websocket.endpoints.balance", "/0/private/Balance")
 	viper.SetDefault("system.websocket.endpoints.tradebalance", "/0/private/TradeBalance")
 	viper.SetDefault("system.websocket.endpoints.tradevolume", "/0/private/TradeVolume")
 	viper.SetDefault("system.websocket.endpoints.ticker", "/0/public/Ticker")
@@ -46,6 +48,7 @@ func NewWebSocket() *WebSocket {
 			TradeBalance: viper.GetString("system.websocket.endpoints.tradebalance"),
 			TradeVolume:  viper.GetString("system.websocket.endpoints.tradevolume"),
 			Ticker:       viper.GetString("system.websocket.endpoints.ticker"),
+			Balance:      viper.GetString("system.websocket.endpoints.balance"),
 		},
 		PingInterval:   viper.GetDuration("system.websocket.ping_interval"),
 		DecayRate:      viper.GetFloat64("system.websocket.decay_rate"),

@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -352,7 +351,7 @@ func TestTouchBidCashSumsTopThree(t *testing.T) {
 			feePct:     0.4,
 		})
 
-		managed := fixture.books.manager.Get(fixture.symbol)
+		managed := fixture.books.Get(fixture.symbol)
 		nine := decimal.NewFromInt(9)
 		four := decimal.NewFromInt(4)
 		eight := decimal.NewFromInt(8)
@@ -426,18 +425,24 @@ func newPriceFixture(t *testing.T, cfg priceFixture) priceFixture {
 	fee := decimal.NewFromFloat(cfg.feePct)
 	instrument.takerFees.Store(cfg.symbol, &fee)
 
-	books := NewBook(context.Background(), spot.NewNormalizer())
-	if err := books.Create(cfg.symbol, 10); err != nil {
-		t.Fatalf("create book: %v", err)
-	}
-
-	managed := books.manager.Get(cfg.symbol)
+	books := NewBookManager()
 	bidPx := decimal.NewFromInt(cfg.bidPx)
 	bidQty := decimal.NewFromInt(cfg.bidQty)
 	askPx := decimal.NewFromInt(cfg.askPx)
 	askQty := decimal.NewFromInt(cfg.askQty)
-	managed.Update(&market.Delta{Direction: market.SideBid, Price: &bidPx, Quantity: &bidQty})
-	managed.Update(&market.Delta{Direction: market.SideAsk, Price: &askPx, Quantity: &askQty})
+	books.Update(&market.Level3{
+		Data: []*market.Level3Data{{
+			Symbol: cfg.symbol,
+			Bids: []*market.Level3Order{{
+				LimitPrice: &bidPx,
+				OrderQty:   &bidQty,
+			}},
+			Asks: []*market.Level3Order{{
+				LimitPrice: &askPx,
+				OrderQty:   &askQty,
+			}},
+		}},
+	})
 
 	cfg.wallet = wallet
 	cfg.books = books

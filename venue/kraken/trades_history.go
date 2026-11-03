@@ -10,14 +10,14 @@ import (
 )
 
 type HistoryTrade struct {
-	OrderID   string           `json:"ordertxid"`
-	Pair      string           `json:"pair"`
-	Type      string           `json:"type"`
-	Price     *decimal.Decimal `json:"price"`
-	Cost      *decimal.Decimal `json:"cost"`
-	Fee       *decimal.Decimal `json:"fee"`
-	Volume    *decimal.Decimal `json:"vol"`
-	Time      time.Time        `json:"time"`
+	OrderID string           `json:"ordertxid"`
+	Pair    string           `json:"pair"`
+	Type    string           `json:"type"`
+	Price   *decimal.Decimal `json:"price"`
+	Cost    *decimal.Decimal `json:"cost"`
+	Fee     *decimal.Decimal `json:"fee"`
+	Volume  *decimal.Decimal `json:"vol"`
+	Time    time.Time        `json:"time"`
 }
 
 type TradesHistoryResult struct {
@@ -57,10 +57,27 @@ func NewTradesHistoryFromMap(model map[string]any) json.Marshaler {
 		orderID, _ := trade["order_id"].(string)
 		pair, _ := trade["pair"].(string)
 		side, _ := trade["side"].(string)
-		price := dFloat(floatField(trade["price"]))
-		cost := dFloat(floatField(trade["cost"]))
-		fee := dFloat(floatField(trade["fee"]))
-		volume := dFloat(floatField(trade["volume"]))
+		price := decimal.Zero
+		cost := decimal.Zero
+		fee := decimal.Zero
+		volume := decimal.Zero
+
+		if value, ok := trade["price"].(float64); ok {
+			price = decimal.NewFromFloat(value)
+		}
+
+		if value, ok := trade["cost"].(float64); ok {
+			cost = decimal.NewFromFloat(value)
+		}
+
+		if value, ok := trade["fee"].(float64); ok {
+			fee = decimal.NewFromFloat(value)
+		}
+
+		if value, ok := trade["volume"].(float64); ok {
+			volume = decimal.NewFromFloat(value)
+		}
+
 		timestamp := time.Now()
 
 		if timeRaw, ok := trade["time"].(string); ok {
@@ -73,10 +90,10 @@ func NewTradesHistoryFromMap(model map[string]any) json.Marshaler {
 			OrderID: orderID,
 			Pair:    pair,
 			Type:    side,
-			Price:   price,
-			Cost:    cost,
-			Fee:     fee,
-			Volume:  volume,
+			Price:   &price,
+			Cost:    &cost,
+			Fee:     &fee,
+			Volume:  &volume,
 			Time:    timestamp,
 		}
 	}
@@ -84,37 +101,5 @@ func NewTradesHistoryFromMap(model map[string]any) json.Marshaler {
 	return &TradesHistoryResult{
 		Count:  json.Number(fmt.Sprintf("%d", len(trades))),
 		Trades: trades,
-	}
-}
-
-func NewExecutionsFromHistoryMap(model map[string]any) json.Marshaler {
-	history, _ := NewTradesHistoryFromMap(model).(*TradesHistoryResult)
-	data := make([]ExecutionData, 0)
-
-	if history != nil {
-		for id, trade := range history.Trades {
-			data = append(data, ExecutionData{
-				OrderID:       trade.OrderID,
-				ExecID:        id,
-				ExecType:      "trade",
-				Symbol:        trade.Pair,
-				Side:          trade.Type,
-				LastQty:       trade.Volume,
-				LastPrice:     trade.Price,
-				Cost:          trade.Cost,
-				Timestamp:     trade.Time,
-				OrderStatus:   "filled",
-				CumQty:        trade.Volume,
-				CumCost:       trade.Cost,
-				AvgPrice:      trade.Price,
-				FeeUsdEquiv:   trade.Fee,
-			})
-		}
-	}
-
-	return &Execution{
-		Channel: "executions",
-		Type:    "snapshot",
-		Data:    data,
 	}
 }

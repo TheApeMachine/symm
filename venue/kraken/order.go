@@ -5,85 +5,129 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/theapemachine/nomagique/market"
 )
 
 /*
-OrderResponseResult identifies the venue order created by Kraken.
+OrderResult identifies the venue order created by Kraken.
 */
-type OrderResponseResult struct {
+type OrderResult struct {
 	OrderID      string `json:"order_id"`
 	OrderUserref int    `json:"order_userref"`
 }
 
 /*
-OrderResponse is Kraken's acknowledgement of an order request.
+Order is Kraken's acknowledgement of an order request.
 */
-type OrderResponse struct {
-	Method  string              `json:"method"`
-	Result  OrderResponseResult `json:"result"`
-	Error   string              `json:"error"`
-	Success bool                `json:"success"`
-	ReqID   int64               `json:"req_id"`
-	TimeIn  time.Time           `json:"time_in"`
-	TimeOut time.Time           `json:"time_out"`
+type Order struct {
+	Method   string      `json:"method"`
+	Result   OrderResult `json:"result"`
+	Error    string      `json:"error"`
+	Success  bool        `json:"success"`
+	ReqID    int64       `json:"req_id"`
+	TimeIn   time.Time   `json:"time_in"`
+	TimeOut  time.Time   `json:"time_out"`
+	onChange func(market.MarketType)
 }
 
-/*
-MarshalJSON encodes an order acknowledgement for paper and test transports.
-*/
-func (order *OrderResponse) MarshalJSON() ([]byte, error) {
-	type alias OrderResponse
-	return sonic.Marshal((*alias)(order))
-}
-
-func (order *OrderResponse) UnmarshalJSON(data []byte) error {
-	type alias OrderResponse
-	var decoded alias
-
-	if err := sonic.Unmarshal(data, &decoded); err != nil {
-		return err
+func NewOrder() *Order {
+	return &Order{
+		Method: "add_order",
 	}
-
-	*order = OrderResponse(decoded)
-	return nil
 }
 
 /*
-Action returns the transport method used to route this acknowledgement.
+NewOrderFromMap builds a wire Order from a paper CLI acknowledgement.
 */
-func (order *OrderResponse) Action() string {
-	return order.Method
-}
-
-/*
-IsSuccess reports whether Kraken accepted the order request.
-*/
-func (order *OrderResponse) IsSuccess() bool {
-	return order.Success
-}
-
-/*
-NewOrderResponseFromMap adapts a paper fill acknowledgement to Kraken's model.
-*/
-func NewOrderResponseFromMap(model map[string]any) json.Marshaler {
+func NewOrderFromMap(model map[string]any) json.Marshaler {
+	out := NewOrder()
 	orderID, _ := model["order_id"].(string)
 	success := false
 
-	if s, ok := model["success"].(bool); ok {
-		success = s
+	if value, ok := model["success"].(bool); ok {
+		success = value
 	}
 
 	if !success && orderID != "" {
 		success = true
 	}
 
-	return &OrderResponse{
-		Method: "add_order",
-		Result: OrderResponseResult{
-			OrderID: orderID,
-		},
-		Success: success,
+	out.Result.OrderID = orderID
+	out.Success = success
+
+	return out
+}
+
+func (order *Order) Request() map[string]any {
+	return map[string]any{
+		"method": "add_order",
 	}
+}
+
+func (order *Order) OnChange(fn func(market.MarketType)) {
+	order.onChange = fn
+}
+
+func (order *Order) MarshalJSON() ([]byte, error) {
+	type alias Order
+	return sonic.Marshal((*alias)(order))
+}
+
+func (order *Order) UnmarshalJSON(data []byte) error {
+	type alias Order
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	onChange := order.onChange
+	*order = Order(decoded)
+	order.onChange = onChange
+
+	if order.onChange != nil {
+		order.onChange(order)
+	}
+
+	return nil
+}
+
+func (order *Order) ToMarket(other market.MarketType) market.MarketType {
+	ack, ok := other.(*market.OrderAck)
+
+	if !ok || ack == nil || order == nil {
+		return other
+	}
+
+	out := market.NewOrderAck(map[string]any{
+		"method":   order.Method,
+		"order_id": order.Result.OrderID,
+		"success":  order.Success,
+		"error":    order.Error,
+		"req_id":   order.ReqID,
+	})
+	out.TimeIn = order.TimeIn
+	out.TimeOut = order.TimeOut
+
+	return out.ToMarket(ack)
+}
+
+func (order *Order) FromMarket(other market.MarketType) market.MarketType {
+	ack, ok := other.(*market.OrderAck)
+
+	if !ok || ack == nil || order == nil {
+		return order
+	}
+
+	order.Method = ack.Method
+	order.Result.OrderID = ack.OrderID
+	order.Success = ack.Success
+	order.Error = ack.Error
+	order.ReqID = ack.ReqID
+	order.TimeIn = ack.TimeIn
+	order.TimeOut = ack.TimeOut
+
+	return order
 }
 
 type AddOrderRequest struct {
@@ -118,6 +162,23 @@ func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
 		Method: "add_order",
 		Params: *req,
 	}
+}
+
+/*
+Command is the paper CLI argv for this add_order.
+*/
+func (req *AddOrderRequest) Command() []string {
+	command := []string{req.Type, req.Pair, req.Volume}
+
+	if req.OrdType == "limit" && req.Price != "" {
+		command = append(command, "--type", "limit", "--price", req.Price)
+	}
+
+	if req.ClOrdId != "" {
+		command = append(command, "--cl-ord-id", req.ClOrdId)
+	}
+
+	return command
 }
 
 func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {

@@ -234,15 +234,15 @@ market:
       - USDS
       - RLUSD
       - UST
-      # Large-cap pairs: short holds rarely clear ~1.6% round-trip taker friction.
-      - BTC
-      - ETH
-      - SOL
-      - LTC
-      - ADA
-      - DOT
-      - LINK
-      - PEPE
+      # # Large-cap pairs: short holds rarely clear ~1.6% round-trip taker friction.
+      # - BTC
+      # - ETH
+      # - SOL
+      # - LTC
+      # - ADA
+      # - DOT
+      # - LINK
+      # - PEPE
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true
@@ -328,7 +328,7 @@ trading:
 risk:
   max_fraction: 0.20
   # 24h quote-volume floor for the mover pre-filter (USD).
-  min_mover_volume_usd: 100000
+  min_mover_volume_usd: 50000
   # Open-to-last day move floor (%) — liquid-but-flat names stay out.
   min_mover_change_pct: 0.5
   # Touch spread cap for mover pre-filter and desk entry (% of mid).

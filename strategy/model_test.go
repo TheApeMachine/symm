@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/shopspring/decimal"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 )

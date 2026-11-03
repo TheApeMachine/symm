@@ -24,6 +24,7 @@ import {
 	requestClosedPositionHistory,
 	resetClosedHistoryRequest,
 } from "#/lib/lifecycle";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
@@ -167,6 +168,7 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 			} else {
 				store.setState((prev) => ({ ...prev, ...lots }));
 			}
+			syncOpenPositionCount();
 			continue;
 		}
 

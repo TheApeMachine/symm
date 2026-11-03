@@ -27,17 +27,10 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 		}
 
 		wallet := &kraken.Balance{
-			Data: []kraken.BalanceData{
-				{
-					Asset:     "USD",
-					Balance:   cashPtr,
-					Available: cashPtr,
-				},
-				{
-					Asset:     "ZAMA",
-					Balance:   zamaPtr,
-					Available: zamaPtr,
-				},
+			Error: []any{},
+			Result: map[string]*decimal.Decimal{
+				"USD":  cashPtr,
+				"ZAMA": zamaPtr,
 			},
 		}
 
@@ -56,10 +49,8 @@ func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 
 			var decodedWallet kraken.Balance
 			So(sonic.Unmarshal(walletRaw, &decodedWallet), ShouldBeNil)
-			So(decodedWallet.Data, ShouldHaveLength, 2)
-			So(decodedWallet.Data[0].Asset, ShouldEqual, "USD")
-			So(decodedWallet.Data[1].Asset, ShouldEqual, "ZAMA")
-			So(decodedWallet.Data[1].Balance.String(), ShouldEqual, zamaAmount.String())
+			So(decodedWallet.Result["USD"].String(), ShouldEqual, cash.String())
+			So(decodedWallet.Result["ZAMA"].String(), ShouldEqual, zamaAmount.String())
 		})
 	})
 }

@@ -245,29 +245,31 @@ func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
 func (client *WebsocketClient) Watch(
 	url string,
 	body any,
-	callback func(json.Unmarshaler),
+	dest json.Unmarshaler,
 ) {
+	if dest == nil {
+		return
+	}
+
 	go func() {
+		rest := NewREST()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case <-client.Context().Done():
 				return
-			default:
+			case <-ticker.C:
 			}
 
-			response, err := client.Post(url, body)
+			resp, err := rest.Post(url, body)
 
-			if err != nil {
+			if err != nil || resp == nil {
 				continue
 			}
 
-			var data json.Unmarshaler
-
-			if err := json.Unmarshal(response, &data); err != nil {
-				continue
-			}
-
-			callback(data)
+			_ = json.Unmarshal(resp.Body(), dest)
 		}
 	}()
 }

@@ -1,206 +1,47 @@
 package kraken
 
 import (
-	"encoding/json"
-	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
-type Level3 struct {
-	Channel string       `json:"channel"`
-	Type    string       `json:"type"`
-	Data    []Level3Data `json:"data"`
-	// Raw is the frame exactly as received, kept for failure diagnostics.
-	Raw []byte `json:"-"`
-}
-
-type Level3Data struct {
-	Symbol    string        `json:"symbol"`
-	Type      string        `json:"type"`
-	Timestamp time.Time     `json:"timestamp"`
-	Checksum  uint32        `json:"checksum"`
-	Bids      []Level3Order `json:"bids"`
-	Asks      []Level3Order `json:"asks"`
-	// Sequence is the first ingress sequence number of this entry's orders,
-	// bids then asks, taken by the book once the entry is applied. Zero means
-	// the book did not accept the entry.
-	Sequence int64 `json:"-"`
-}
-
-type Level3Order struct {
-	Event      string           `json:"event,omitempty"`
+type Level struct {
 	OrderID    string           `json:"order_id"`
 	LimitPrice *decimal.Decimal `json:"limit_price"`
 	OrderQty   *decimal.Decimal `json:"order_qty"`
 	Timestamp  time.Time        `json:"timestamp"`
-	// Wire text for checksum hashing; shopspring String strips trailing zeros.
-	priceText string
-	qtyText   string
 }
 
-/*
-UnmarshalJSON decodes limit_price and order_qty from the exact number text
-Kraken sent. The level3 checksum hashes those digits, so they are never
-routed through a float: plain decimals keep every digit (trailing zeros
-included), and scientific notation (Kraken sends e.g. 1e-05 for a minimum
-lot) is expanded digit for digit to its plain decimal form.
-*/
-func (order *Level3Order) UnmarshalJSON(buf []byte) error {
-	var wire struct {
-		Event      string          `json:"event,omitempty"`
-		OrderID    string          `json:"order_id"`
-		LimitPrice json.RawMessage `json:"limit_price"`
-		OrderQty   json.RawMessage `json:"order_qty"`
-		Timestamp  time.Time       `json:"timestamp"`
-	}
-
-	if err := sonic.Unmarshal(buf, &wire); err != nil {
-		return err
-	}
-
-	price, priceText, err := exactDecimal(wire.LimitPrice)
-
-	if err != nil {
-		return fmt.Errorf("level3 order %s limit_price: %w", wire.OrderID, err)
-	}
-
-	quantity, qtyText, err := exactDecimal(wire.OrderQty)
-
-	if err != nil {
-		return fmt.Errorf("level3 order %s order_qty: %w", wire.OrderID, err)
-	}
-
-	*order = Level3Order{
-		Event:      wire.Event,
-		OrderID:    wire.OrderID,
-		LimitPrice: price,
-		OrderQty:   quantity,
-		Timestamp:  wire.Timestamp,
-		priceText:  priceText,
-		qtyText:    qtyText,
-	}
-
-	return nil
+type Level3Data struct {
+	Symbol   string  `json:"symbol"`
+	Checksum int     `json:"checksum"`
+	Bids     []Level `json:"bids"`
+	Asks     []Level `json:"asks"`
 }
 
-/*
-exactDecimal parses one JSON number (or numeric string) without losing a
-digit. An absent or null field is nil: a delete may omit its price.
-*/
-func exactDecimal(raw json.RawMessage) (*decimal.Decimal, string, error) {
-	text := strings.Trim(strings.TrimSpace(string(raw)), `"`)
-
-	if text == "" || text == "null" {
-		return nil, "", nil
-	}
-
-	plain, err := plainDecimal(text)
-
-	if err != nil {
-		return nil, "", err
-	}
-
-	parsed, err := decimal.NewFromString(plain)
-	if err != nil {
-		return nil, "", err
-	}
-
-	return &parsed, plain, nil
+type Level3 struct {
+	Channel  string       `json:"channel"`
+	Type     string       `json:"type"`
+	Data     []Level3Data `json:"data"`
+	onChange func(market.MarketType)
 }
 
-/*
-plainDecimal rewrites scientific notation (1.50e-05) as a plain decimal
-(0.0000150) by moving the decimal point over the mantissa's own digits.
-*/
-func plainDecimal(text string) (string, error) {
-	mantissa, exponentText, scientific := strings.Cut(strings.ToLower(text), "e")
-
-	if !scientific {
-		return text, nil
-	}
-
-	exponent, err := strconv.Atoi(exponentText)
-
-	if err != nil {
-		return "", fmt.Errorf("invalid exponent in %q: %w", text, err)
-	}
-
-	sign := ""
-
-	if strings.HasPrefix(mantissa, "-") || strings.HasPrefix(mantissa, "+") {
-		if mantissa[0] == '-' {
-			sign = "-"
-		}
-
-		mantissa = mantissa[1:]
-	}
-
-	integer, fraction, _ := strings.Cut(mantissa, ".")
-	digits := integer + fraction
-
-	if digits == "" || strings.Trim(digits, "0123456789") != "" {
-		return "", fmt.Errorf("invalid mantissa in %q", text)
-	}
-
-	point := len(integer) + exponent
-
-	switch {
-	case point <= 0:
-		return sign + "0." + strings.Repeat("0", -point) + digits, nil
-	case point >= len(digits):
-		return sign + digits + strings.Repeat("0", point-len(digits)), nil
-	default:
-		return sign + digits[:point] + "." + digits[point:], nil
+func NewLevel3() *Level3 {
+	return &Level3{
+		Channel: "level3",
+		Type:    "update",
+		Data:    make([]Level3Data, 0),
 	}
 }
 
-/*
-Resting reports whether this order describes liquidity that is still displayed
-on the book after the message carrying it.
+func DecodeLevel3(buf []byte) *Level3 {
+	level3 := NewLevel3()
 
-A "delete" event reports the order being REMOVED, so its limit_price and
-order_qty describe liquidity that is gone: counting it as displayed size reads
-withdrawn size as resting size, and because a delete can be priced anywhere —
-including through the opposite side's last known touch — it can also
-manufacture a crossed book out of a healthy one.
-*/
-func (order Level3Order) Resting() bool {
-	if order.Event == "delete" || order.LimitPrice == nil || order.OrderQty == nil {
-		return false
-	}
-
-	return order.LimitPrice.Sign() > 0 && order.OrderQty.Sign() > 0
-}
-
-/*
-ChecksumLimitPrice returns the fixed-point limit_price received from Kraken.
-*/
-func (order Level3Order) ChecksumLimitPrice() string {
-	return order.priceText
-}
-
-/*
-ChecksumOrderQty returns the fixed-point order_qty received from Kraken.
-*/
-func (order Level3Order) ChecksumOrderQty() string {
-	return order.qtyText
-}
-
-/*
-NewLevel3 decodes one venue level3 frame. A frame that cannot be decoded is an
-error, never a partial or empty frame: a lost delta leaves the local book
-silently wrong, so the caller must halt rather than apply what was parsed.
-*/
-func NewLevel3(buf []byte) *Level3 {
-	var level3 Level3
-
-	if err := sonic.Unmarshal(buf, &level3); err != nil {
+	if err := sonic.Unmarshal(buf, level3); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"invalid level3",
@@ -210,50 +51,154 @@ func NewLevel3(buf []byte) *Level3 {
 		return nil
 	}
 
-	level3.Raw = append([]byte(nil), buf...)
+	return level3
+}
 
-	for index := range level3.Data {
-		if level3.Data[index].Type == "" {
-			level3.Data[index].Type = level3.Type
-		}
+func (level3 *Level3) Request() map[string]any {
+	return map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "level3",
+			"snapshot": true,
+		},
+	}
+}
+
+func (level3 *Level3) OnChange(fn func(market.MarketType)) {
+	level3.onChange = fn
+}
+
+func (level3 *Level3) MarshalJSON() ([]byte, error) {
+	type alias Level3
+	return sonic.Marshal((*alias)(level3))
+}
+
+func (level3 *Level3) UnmarshalJSON(data []byte) error {
+	type alias Level3
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
 	}
 
-	return &level3
+	onChange := level3.onChange
+	*level3 = Level3(decoded)
+	level3.onChange = onChange
+
+	if level3.Data == nil {
+		level3.Data = make([]Level3Data, 0)
+	}
+
+	if level3.onChange != nil {
+		level3.onChange(level3)
+	}
+
+	return nil
 }
 
-func (level3 *Level3) Action() string {
-	return "level3"
+func (level3 *Level3) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Level3)
+
+	if !ok || book == nil || level3 == nil {
+		return other
+	}
+
+	rows := make([]*market.Level3Data, 0, len(level3.Data))
+
+	for _, data := range level3.Data {
+		bids := make([]*market.Level3Order, len(data.Bids))
+
+		for i, bid := range data.Bids {
+			bids[i] = &market.Level3Order{
+				OrderID:    bid.OrderID,
+				LimitPrice: bid.LimitPrice,
+				OrderQty:   bid.OrderQty,
+				Timestamp:  bid.Timestamp,
+			}
+		}
+
+		asks := make([]*market.Level3Order, len(data.Asks))
+
+		for i, ask := range data.Asks {
+			asks[i] = &market.Level3Order{
+				OrderID:    ask.OrderID,
+				LimitPrice: ask.LimitPrice,
+				OrderQty:   ask.OrderQty,
+				Timestamp:  ask.Timestamp,
+			}
+		}
+
+		rows = append(rows, &market.Level3Data{
+			Symbol:   data.Symbol,
+			Checksum: data.Checksum,
+			Bids:     bids,
+			Asks:     asks,
+		})
+	}
+
+	out := market.NewLevel3()
+	out.Channel = level3.Channel
+	out.Type = level3.Type
+	out.Data = rows
+
+	return out.ToMarket(book)
 }
 
-/*
-Level3Touch is the executable top of book at the moment a Level 3 frame was
-accepted, recorded as its own observation.
+func (level3 *Level3) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Level3)
 
-It exists because the venue's ticker stream cannot serve as a price series for
-most of the universe. Kraken publishes spot ticker on change, which for an
-illiquid pair is a handful of frames across an entire session — far under what
-any estimator needs before it will look at a symbol at all. The Level 3 book
-carries the same price continuously, and it is the price the desk would
-actually trade at rather than a summary of it.
+	if !ok || book == nil || level3 == nil {
+		return level3
+	}
 
-The touch is only meaningful once the local book has matched the venue's own
-checksum for that frame. Before that the state is unverified, and a price taken
-from unverified depth is not a reading of the market.
-*/
-type Level3Touch struct {
-	Symbol    string           `json:"symbol"`
-	Timestamp time.Time        `json:"timestamp"`
-	Bid       *decimal.Decimal `json:"bid"`
-	BidQty    *decimal.Decimal `json:"bid_qty"`
-	Ask       *decimal.Decimal `json:"ask"`
-	AskQty    *decimal.Decimal `json:"ask_qty"`
-}
+	level3.Channel = book.Channel
+	level3.Type = book.Type
+	level3.Data = level3.Data[:0]
 
-/* Level3TouchFrame is one batch of touches carried by a single accepted frame. */
-type Level3TouchFrame struct {
-	Channel string        `json:"channel"`
-	Type    string        `json:"type"`
-	Data    []Level3Touch `json:"data"`
+	for _, data := range book.Data {
+		if data == nil {
+			continue
+		}
+
+		bids := make([]Level, len(data.Bids))
+
+		for i, bid := range data.Bids {
+			if bid == nil {
+				continue
+			}
+
+			bids[i] = Level{
+				OrderID:    bid.OrderID,
+				LimitPrice: bid.LimitPrice,
+				OrderQty:   bid.OrderQty,
+				Timestamp:  bid.Timestamp,
+			}
+		}
+
+		asks := make([]Level, len(data.Asks))
+
+		for i, ask := range data.Asks {
+			if ask == nil {
+				continue
+			}
+
+			asks[i] = Level{
+				OrderID:    ask.OrderID,
+				LimitPrice: ask.LimitPrice,
+				OrderQty:   ask.OrderQty,
+				Timestamp:  ask.Timestamp,
+			}
+		}
+
+		level3.Data = append(level3.Data, Level3Data{
+			Symbol:   data.Symbol,
+			Checksum: data.Checksum,
+			Bids:     bids,
+			Asks:     asks,
+		})
+	}
+
+	return level3
 }
 
 type Level3Subscription struct {
@@ -269,12 +214,6 @@ type Level3SubscriptionParams struct {
 	Token    string   `json:"token,omitempty"`
 }
 
-/*
-NewLevel3Subscription builds a Level3 subscribe frame. depth is sent
-explicitly so the venue's per-symbol snapshot cost matches the budget the
-caller paced for. Snapshot is always requested: after an unsubscribe the
-venue only rebuilds the book when a fresh subscribe asks for one.
-*/
 func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subscription {
 	return Level3Subscription{
 		Method: "subscribe",
@@ -288,11 +227,6 @@ func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subs
 	}
 }
 
-/*
-NewLevel3Unsubscription builds a Level3 unsubscribe frame. Checksum recovery
-on a live socket must drop the channel before re-subscribing; a second
-subscribe alone does not force a snapshot.
-*/
 func NewLevel3Unsubscription(symbols []string, token string) Level3Subscription {
 	return Level3Subscription{
 		Method: "unsubscribe",
@@ -302,9 +236,4 @@ func NewLevel3Unsubscription(symbols []string, token string) Level3Subscription 
 			Token:   token,
 		},
 	}
-}
-
-func (subscription Level3Subscription) MarshalJSON() ([]byte, error) {
-	type alias Level3Subscription
-	return sonic.Marshal((*alias)(&subscription))
 }

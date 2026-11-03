@@ -51,7 +51,7 @@ Price answers book questions with fills. A last trade is not a price.
 type Price struct {
 	*runtime.System
 	Instrument *Instrument
-	Books      *Book
+	Books      *BookManager
 	ticker     sync.Map
 	balance    *market.Balance
 	normalizer *spot.Normalizer
@@ -64,7 +64,7 @@ type tickerSnap struct {
 
 func NewPrice(
 	ctx context.Context,
-	books *Book,
+	books *BookManager,
 	instrument *Instrument,
 	normalizer *spot.Normalizer,
 ) *Price {
@@ -513,10 +513,54 @@ func (price *Price) TouchAsk(symbol string) *decimal.Decimal {
 			return
 		}
 
-		ask = managed.BestAsk().Price
+		best := managed.BestAsk()
+		if best == nil || best.Price == nil || best.Price.Sign() <= 0 {
+			return
+		}
+
+		ask = best.Price
 	})
 
 	return ask
+}
+
+// TouchBid is the best bid when the book is crossed-ready.
+func (price *Price) TouchBid(symbol string) *decimal.Decimal {
+	var bid *decimal.Decimal
+
+	price.Books.Book(symbol, func(managed *market.Book) {
+		if !bookReady(managed) {
+			return
+		}
+
+		best := managed.BestBid()
+		if best == nil || best.Price == nil || best.Price.Sign() <= 0 {
+			return
+		}
+
+		bid = best.Price
+	})
+
+	return bid
+}
+
+// FillAsk is the ask-side VWAP for qty, falling back to the touch ask.
+func (price *Price) FillAsk(symbol string, qty *decimal.Decimal) *decimal.Decimal {
+	if fill, err := price.EntryCost(symbol, qty); err == nil &&
+		fill != nil && fill.EntryPrice != nil && fill.EntryPrice.Sign() > 0 {
+		return fill.EntryPrice
+	}
+
+	return price.TouchAsk(symbol)
+}
+
+// FillBid is the bid-side VWAP for qty, falling back to the touch bid.
+func (price *Price) FillBid(symbol string, qty *decimal.Decimal) *decimal.Decimal {
+	if vwap := price.ExitVWAP(symbol, qty); vwap != nil && vwap.Sign() > 0 {
+		return vwap
+	}
+
+	return price.TouchBid(symbol)
 }
 
 // EntryCost walks the asks for quantity and returns fill VWAP plus entry fee.
@@ -587,8 +631,8 @@ func (price *Price) Allocate(
 	symbol string,
 	wallet *market.Balance,
 ) (*decimal.Decimal, error) {
-	// A nil wallet argument means virtual/learning size: use desk cash but do
-	// not enforce venue QtyMin/CostMin. A concrete wallet enforces both.
+	// A nil wallet falls back to the desk balance and skips venue mins.
+	// Tier Enter passes the venue wallet so virtual/paper/real all enforce.
 	enforceMins := wallet != nil
 
 	if wallet == nil {
@@ -749,15 +793,15 @@ func (price *Price) Allocate(
 		}
 	}
 
-	return nil, errnie.Error(errnie.Err(
+	// Size denials are expected on thin books; return without ERROR spam.
+	return nil, errnie.Err(
 		errnie.UnprocessableContent,
-		"[price] allocate failed",
+		fmt.Sprintf(
+			"[price] allocate failed symbol=%s quote=%s why=%s",
+			symbol, pair.Quote, reason,
+		),
 		nil,
-	).With(
-		"symbol", symbol,
-		"quote", pair.Quote,
-		"why", reason,
-	))
+	)
 }
 
 // sizeBuy lifts asks under touchCap and grossBudget, then trims until fees fit budget.
@@ -774,6 +818,14 @@ func (price *Price) sizeBuy(
 	qty := touchCap
 	if sized, err := price.formatSize(symbol, qty); err == nil {
 		qty = sized
+	}
+
+	// Venue step can round a dust touch-cap to zero; that book cannot be sized.
+	if qty == nil || qty.Sign() <= 0 {
+		return nil, nil, fmt.Sprintf(
+			"touch cap below size step (gross_budget=%s touch_cap=%s)",
+			grossBudget.String(), touchCap.String(),
+		)
 	}
 
 	filled, gross, _ = price.consume(managed, qty, grossBudget, BUY)

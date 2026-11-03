@@ -2,13 +2,14 @@ package kraken
 
 import (
 	"encoding/json"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
 type Execution struct {
@@ -16,51 +17,7 @@ type Execution struct {
 	Type     string          `json:"type"`
 	Data     []ExecutionData `json:"data"`
 	Sequence int             `json:"sequence"`
-}
-
-func (execution *Execution) MarshalJSON() ([]byte, error) {
-	type alias Execution
-	return sonic.Marshal((*alias)(execution))
-}
-
-func (execution *Execution) UnmarshalJSON(data []byte) error {
-	type alias Execution
-	var decoded alias
-
-	if err := sonic.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-
-	*execution = Execution(decoded)
-	return nil
-}
-
-/*
-ExecutionSubscription requests authenticated order and fill updates.
-*/
-type ExecutionSubscription struct {
-	Token string
-}
-
-func NewExecutionSubscription(token string) ExecutionSubscription {
-	return ExecutionSubscription{Token: token}
-}
-
-func (subscription ExecutionSubscription) MarshalJSON() ([]byte, error) {
-	params := map[string]any{
-		"channel":     "executions",
-		"snap_orders": true,
-		"snap_trades": true,
-	}
-
-	if subscription.Token != "" {
-		params["token"] = subscription.Token
-	}
-
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": params,
-	})
+	onChange func(market.MarketType)
 }
 
 type ExecutionData struct {
@@ -91,60 +48,74 @@ type ExecutionFee struct {
 	Qty   float64 `json:"qty"`
 }
 
+func NewExecution() *Execution {
+	return &Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data:    make([]ExecutionData, 0),
+	}
+}
+
 /*
-NewExecution decodes an executions frame. An undecodable frame is an error:
-applying a partially decoded fill would silently diverge the desk's positions.
+NewExecutionFromMap builds a wire Execution from a paper CLI model.
 */
-func NewExecution(buf []byte) (*Execution, error) {
-	frame := &Execution{}
-
-	if err := sonic.Unmarshal(buf, frame); err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[kraken.execution] invalid executions frame",
-			err,
-		)
-	}
-
-	return frame, nil
-}
-
-func floatField(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case float32:
-		return float64(typed)
-	case int:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	case json.Number:
-		parsed, err := typed.Float64()
-		if err != nil {
-			return 0
-		}
-		return parsed
-	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		if err != nil {
-			return 0
-		}
-		return parsed
-	default:
-		return 0
-	}
-}
-
-func (execution *Execution) Action() string {
-	return execution.Channel
-}
-
-func (execution *Execution) IsSuccess() bool {
-	return len(execution.Data) > 0
-}
-
 func NewExecutionFromMap(model map[string]any) json.Marshaler {
+	if _, ok := model["trades"]; ok {
+		return executionFromHistory(model)
+	}
+
+	return executionFromEvent(model)
+}
+
+func executionFromHistory(model map[string]any) *Execution {
+	history, _ := NewTradesHistoryFromMap(model).(*TradesHistoryResult)
+	data := make([]ExecutionData, 0)
+
+	if history != nil {
+		for id, trade := range history.Trades {
+			data = append(data, ExecutionData{
+				OrderID:     trade.OrderID,
+				ExecID:      id,
+				ExecType:    "trade",
+				Symbol:      trade.Pair,
+				Side:        trade.Type,
+				LastQty:     trade.Volume,
+				LastPrice:   trade.Price,
+				Cost:        trade.Cost,
+				Timestamp:   trade.Time,
+				OrderStatus: "filled",
+				CumQty:      trade.Volume,
+				CumCost:     trade.Cost,
+				AvgPrice:    trade.Price,
+				FeeUsdEquiv: trade.Fee,
+			})
+		}
+	}
+
+	slices.SortFunc(data, func(a, b ExecutionData) int {
+		if c := a.Timestamp.Compare(b.Timestamp); c != 0 {
+			return c
+		}
+
+		if a.ExecID < b.ExecID {
+			return -1
+		}
+
+		if a.ExecID > b.ExecID {
+			return 1
+		}
+
+		return 0
+	})
+
+	return &Execution{
+		Channel: "executions",
+		Type:    "snapshot",
+		Data:    data,
+	}
+}
+
+func executionFromEvent(model map[string]any) *Execution {
 	var execType string
 	var orderStatus string
 
@@ -199,10 +170,26 @@ func NewExecutionFromMap(model map[string]any) json.Marshaler {
 
 	pair, _ := model["pair"].(string)
 	side, _ := model["side"].(string)
-	volume := floatField(model["volume"])
-	price := floatField(model["price"])
-	cost := floatField(model["cost"])
-	fee := floatField(model["fee"])
+	volume := decimal.Zero
+	price := decimal.Zero
+	cost := decimal.Zero
+	fee := decimal.Zero
+
+	if value, ok := model["volume"].(float64); ok {
+		volume = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["price"].(float64); ok {
+		price = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["cost"].(float64); ok {
+		cost = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["fee"].(float64); ok {
+		fee = decimal.NewFromFloat(value)
+	}
 
 	var timestamp time.Time
 
@@ -234,15 +221,159 @@ func NewExecutionFromMap(model map[string]any) json.Marshaler {
 			ExecType:      execType,
 			Symbol:        pair,
 			Side:          strings.ToLower(side),
-			LastQty:       dFloat(volume),
-			LastPrice:     dFloat(price),
-			Cost:          dFloat(cost),
+			LastQty:       &volume,
+			LastPrice:     &price,
+			Cost:          &cost,
 			OrderStatus:   orderStatus,
-			CumQty:        dFloat(volume),
-			CumCost:       dFloat(cost),
-			AvgPrice:      dFloat(price),
-			FeeUsdEquiv:   dFloat(fee),
+			CumQty:        &volume,
+			CumCost:       &cost,
+			AvgPrice:      &price,
+			FeeUsdEquiv:   &fee,
 			Timestamp:     timestamp,
 		}},
 	}
+}
+
+func (execution *Execution) Request() map[string]any {
+	return map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":     "executions",
+			"snap_orders": true,
+			"snap_trades": true,
+		},
+	}
+}
+
+func (execution *Execution) OnChange(fn func(market.MarketType)) {
+	execution.onChange = fn
+}
+
+func (execution *Execution) MarshalJSON() ([]byte, error) {
+	type alias Execution
+	return sonic.Marshal((*alias)(execution))
+}
+
+func (execution *Execution) UnmarshalJSON(data []byte) error {
+	type alias Execution
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	onChange := execution.onChange
+	*execution = Execution(decoded)
+	execution.onChange = onChange
+
+	if execution.Data == nil {
+		execution.Data = make([]ExecutionData, 0)
+	}
+
+	if execution.onChange != nil {
+		execution.onChange(execution)
+	}
+
+	return nil
+}
+
+func (execution *Execution) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Execution)
+
+	if !ok || book == nil || execution == nil {
+		return other
+	}
+
+	rows := make([]*market.ExecutionData, 0, len(execution.Data))
+
+	for _, row := range execution.Data {
+		rows = append(rows, &market.ExecutionData{
+			OrderID:       row.OrderID,
+			ClientOrderID: row.ClientOrderID,
+			OrderUserref:  row.OrderUserref,
+			ExecID:        row.ExecID,
+			ExecType:      row.ExecType,
+			TradeID:       row.TradeID,
+			Symbol:        row.Symbol,
+			Side:          row.Side,
+			LastQty:       row.LastQty,
+			LastPrice:     row.LastPrice,
+			LiquidityInd:  row.LiquidityInd,
+			Cost:          row.Cost,
+			OrderType:     row.OrderType,
+			Timestamp:     row.Timestamp,
+			OrderStatus:   row.OrderStatus,
+			CumQty:        row.CumQty,
+			CumCost:       row.CumCost,
+			AvgPrice:      row.AvgPrice,
+			FeeUsdEquiv:   row.FeeUsdEquiv,
+		})
+	}
+
+	return market.NewExecution(map[string]any{
+		"channel": execution.Channel,
+		"type":    execution.Type,
+		"data":    rows,
+	}).ToMarket(book)
+}
+
+func (execution *Execution) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Execution)
+
+	if !ok || book == nil || execution == nil {
+		return execution
+	}
+
+	execution.Channel = book.Channel
+	execution.Type = book.Type
+	execution.Sequence = book.Sequence
+	execution.Data = execution.Data[:0]
+
+	for _, row := range book.Data {
+		if row == nil {
+			continue
+		}
+
+		execution.Data = append(execution.Data, ExecutionData{
+			OrderID:       row.OrderID,
+			ClientOrderID: row.ClientOrderID,
+			OrderUserref:  row.OrderUserref,
+			ExecID:        row.ExecID,
+			ExecType:      row.ExecType,
+			TradeID:       row.TradeID,
+			Symbol:        row.Symbol,
+			Side:          row.Side,
+			LastQty:       row.LastQty,
+			LastPrice:     row.LastPrice,
+			LiquidityInd:  row.LiquidityInd,
+			Cost:          row.Cost,
+			OrderType:     row.OrderType,
+			Timestamp:     row.Timestamp,
+			OrderStatus:   row.OrderStatus,
+			CumQty:        row.CumQty,
+			CumCost:       row.CumCost,
+			AvgPrice:      row.AvgPrice,
+			FeeUsdEquiv:   row.FeeUsdEquiv,
+		})
+	}
+
+	return execution
+}
+
+/*
+DecodeExecution decodes an executions frame. An undecodable frame is an error:
+applying a partially decoded fill would silently diverge the desk's positions.
+*/
+func DecodeExecution(buf []byte) (*Execution, error) {
+	frame := NewExecution()
+
+	if err := sonic.Unmarshal(buf, frame); err != nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[kraken.execution] invalid executions frame",
+			err,
+		)
+	}
+
+	return frame, nil
 }

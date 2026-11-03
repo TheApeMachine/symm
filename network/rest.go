@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
@@ -95,23 +96,26 @@ func (rest *REST) Post(url string, body any) (*client.Response, error) {
 func (rest *REST) Watch(
 	url string,
 	body any,
-	callback func(json.Unmarshaler),
+	dest json.Unmarshaler,
 ) {
+	if dest == nil {
+		return
+	}
+
 	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
 		for {
+			<-ticker.C
+
 			response, err := rest.Post(url, body)
 
-			if err != nil {
+			if err != nil || response == nil {
 				continue
 			}
 
-			var data json.Unmarshaler
-
-			if err := json.Unmarshal(response.Body(), &data); err != nil {
-				continue
-			}
-
-			callback(data)
+			_ = json.Unmarshal(response.Body(), dest)
 		}
 	}()
 }

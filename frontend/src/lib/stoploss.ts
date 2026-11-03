@@ -107,6 +107,12 @@ export const normalizeStoploss = (raw: unknown): DynamicStoploss | null => {
 		consecutive_down: num(pick(row, "consecutive_down")) ?? 0,
 	};
 
+	const damage = num(pick(row, "damage", "Damage"));
+	if (damage !== null) stop.damage = damage;
+
+	const upProb = num(pick(row, "up_prob", "UpProb"));
+	if (upProb !== null) stop.up_prob = upProb;
+
 	const reason = pick(row, "exit_reason");
 	if (typeof reason === "string" && reason !== "") {
 		stop.exit_reason = reason;

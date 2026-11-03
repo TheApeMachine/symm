@@ -187,7 +187,7 @@ func withUpdateLeaf(f func(*Tree, string)) func() {
 func TestUpdate(t *testing.T) {
 	Convey("Setup", t, withUpdateLeaf(func(tree *Tree, path string) {
 		cases := []struct {
-			name string
+			name  string
 			delta float64
 			want  float64
 		}{

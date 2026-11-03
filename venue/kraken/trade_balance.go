@@ -2,11 +2,10 @@ package kraken
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
 /*
@@ -31,25 +30,76 @@ type TradeBalanceResult struct {
 }
 
 type TradeBalance struct {
-	Error  []string           `json:"error"`
-	Result TradeBalanceResult `json:"result"`
+	Error    []string           `json:"error"`
+	Result   TradeBalanceResult `json:"result"`
+	onChange func(market.MarketType)
 }
 
-type TradeBalanceRequest struct {
-	Asset string `json:"asset,omitempty"`
+func NewTradeBalance() *TradeBalance {
+	return &TradeBalance{}
 }
 
-func NewTradeBalanceRequest(asset string) *TradeBalanceRequest {
-	return &TradeBalanceRequest{Asset: asset}
+func NewTradeBalanceFromMap(model map[string]any) json.Marshaler {
+	return &TradeBalance{Result: tradeBalanceFromMap(model)}
 }
 
-func (request *TradeBalanceRequest) MarshalJSON() ([]byte, error) {
-	type alias TradeBalanceRequest
-	return sonic.Marshal((*alias)(request))
+func tradeBalanceFromMap(model map[string]any) TradeBalanceResult {
+	equity := mapDecimal(model["current_value"])
+	unrealized := mapDecimal(model["unrealized_pnl"])
+	trade := equity.Sub(*unrealized)
+	zero := decimal.Zero
+
+	result := TradeBalanceResult{
+		EquivalentBalance: equity,
+		TradeBalance:      &trade,
+		MarginAmount:      &zero,
+		UnrealizedPnL:     unrealized,
+		CostBasis:         &zero,
+		Valuation:         &zero,
+		Equity:            equity,
+		FreeMargin:        equity,
+		MarginFreeOrders:  equity,
+		UnexecutedValue:   &zero,
+	}
+
+	if amount, ok := model["starting_balance"].(float64); ok {
+		funding := decimal.NewFromFloat(amount)
+		result.NetFunding = &funding
+	}
+
+	if complete, ok := model["valuation_complete"].(bool); ok {
+		result.ValuationComplete = &complete
+	}
+
+	return result
 }
 
-func NewTradeBalanceEnvelopeFromMap(model map[string]any) json.Marshaler {
-	return &TradeBalance{Result: NewTradeBalanceFromMap(model)}
+func mapDecimal(raw any) *decimal.Decimal {
+	switch value := raw.(type) {
+	case float64:
+		out := decimal.NewFromFloat(value)
+		return &out
+	case string:
+		out, err := decimal.NewFromString(value)
+		if err != nil {
+			zero := decimal.Zero
+			return &zero
+		}
+		return &out
+	default:
+		zero := decimal.Zero
+		return &zero
+	}
+}
+
+func (balance *TradeBalance) Request() map[string]any {
+	return map[string]any{
+		"nonce": 0,
+	}
+}
+
+func (balance *TradeBalance) OnChange(fn func(market.MarketType)) {
+	balance.onChange = fn
 }
 
 func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
@@ -57,26 +107,53 @@ func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal((*alias)(balance))
 }
 
-func NewTradeBalance(buf []byte) TradeBalanceResult {
-	balance := TradeBalance{}
+func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
+	type alias TradeBalance
+	var decoded alias
 
-	if err := sonic.Unmarshal(buf, &balance); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent, "invalid trade balance", err,
-		))
-		return TradeBalanceResult{}
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
 	}
 
-	if len(balance.Error) > 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"trade balance response contains errors: "+strings.Join(balance.Error, "; "),
-			nil,
-		))
-		return TradeBalanceResult{}
+	onChange := balance.onChange
+	*balance = TradeBalance(decoded)
+	balance.onChange = onChange
+
+	if balance.onChange != nil {
+		balance.onChange(balance)
 	}
 
-	return balance.Result
+	return nil
+}
+
+func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.TradeBalance)
+
+	if !ok || book == nil || balance == nil {
+		return other
+	}
+
+	return market.NewTradeBalance(map[string]any{
+		"equity":         balance.Result.Equity,
+		"unrealized_pnl": balance.Result.UnrealizedPnL,
+		"available_cash": balance.Result.AvailableCash,
+		"free_margin":    balance.Result.FreeMargin,
+	}).ToMarket(book)
+}
+
+func (balance *TradeBalance) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.TradeBalance)
+
+	if !ok || book == nil || balance == nil {
+		return balance
+	}
+
+	balance.Result.Equity = book.Equity
+	balance.Result.UnrealizedPnL = book.UnrealizedPnL
+	balance.Result.AvailableCash = book.AvailableCash
+	balance.Result.FreeMargin = book.FreeMargin
+
+	return balance
 }
 
 /*

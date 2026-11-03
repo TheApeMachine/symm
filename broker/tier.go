@@ -2,11 +2,12 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"iter"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/symm/network"
@@ -46,9 +47,10 @@ type Tier struct {
 	Type      TierType
 	WinRate   float64
 	Edge      float64
-	transport network.Client
+	public    network.Client
+	private   network.Client
 	price     *Price
-	balance   *market.Balance
+	venue     market.Venue
 	positions *Cache
 	pending   *sync.Map
 	unlocked  bool
@@ -57,38 +59,187 @@ type Tier struct {
 func NewTier(
 	ctx context.Context,
 	tt TierType,
-	transport network.Client,
+	public network.Client,
+	private network.Client,
 	price *Price,
+	host market.Venue,
 ) *Tier {
-	balance := market.NewBalance(map[string]any{
-		"quote": system.Cfg.Market.QuoteCurrency,
-		"assets": []*market.Asset{
-			market.NewAsset(
-				nil,
-				system.Cfg.Market.QuoteCurrency,
-				decimal.NewFromInt(int64(system.Cfg.Market.Balance)),
-				decimal.Zero,
-				decimal.Zero,
-			),
-		},
-	})
-
 	tier := &Tier{
-		ctx:       ctx,
-		Type:      tt,
-		transport: transport,
-		price:     price,
-		balance:   balance,
-		pending:   &sync.Map{},
+		ctx:     ctx,
+		Type:    tt,
+		public:  public,
+		private: private,
+		price:   price,
+		venue:   host,
+		pending: &sync.Map{},
 	}
 
 	tier.positions = NewCache(
-		ctx, tt.String(), transport, price, tier.settle,
+		ctx, tt.String(), private, price, tier.settle,
 	)
 
 	tier.unlocked = tier.Unlocked(nil)
 
+	if host != nil {
+		host.Balance().OnChange(func(frame market.MarketType) {
+			if tier.Type == TierTypePaper && tier.price != nil && tier.price.balance != nil {
+				frame.ToMarket(tier.price.balance)
+			}
+
+			tier.Hello()
+		})
+
+		host.Execution().OnChange(func(frame market.MarketType) {
+			book := &market.Execution{}
+			frame.ToMarket(book)
+			tier.apply(book)
+		})
+	}
+
+	if private != nil && tier.Type == TierTypeReal {
+		if err := OpenWS(private, system.Cfg.WebSocket.Endpoints.Private); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[broker.Tier] private websocket open failed", err,
+			))
+		}
+	}
+
+	// Virtual/paper expose private REST themselves. Live WS has no path-only
+	// REST signer here — balances arrive on the private socket instead.
+	if host != nil && private != nil &&
+		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper) {
+		private.Watch(
+			system.Cfg.WebSocket.Endpoints.Balance,
+			host.Balance().Request(),
+			host.Balance(),
+		)
+
+		// Prime once so Allocate sees cash before the first Watch tick.
+		if raw, err := private.Post(
+			system.Cfg.WebSocket.Endpoints.Balance,
+			host.Balance().Request(),
+		); err == nil {
+			_ = json.Unmarshal(raw, host.Balance())
+		}
+	}
+
 	return tier
+}
+
+func (tier *Tier) apply(executions *market.Execution) {
+	if executions == nil {
+		return
+	}
+
+	touched := make(map[string]*Position)
+
+	for _, execution := range executions.Data {
+		if execution == nil {
+			continue
+		}
+
+		matched := false
+
+		for _, position := range tier.positions.Open(execution.Symbol) {
+			if position == nil || !position.Owns(*execution) {
+				continue
+			}
+
+			position.Apply(*execution)
+			touched[position.ID] = position
+			matched = true
+		}
+
+		if matched {
+			continue
+		}
+
+		for _, position := range tier.positions.Closed(execution.Symbol) {
+			if position == nil || !position.Owns(*execution) {
+				continue
+			}
+
+			position.Apply(*execution)
+			touched[position.ID] = position
+		}
+	}
+
+	if len(touched) == 0 {
+		return
+	}
+
+	for _, position := range touched {
+		tier.positions.Save(position)
+	}
+
+	tier.publishLedger(touched)
+}
+
+/*
+walletReading projects venue cash plus open mark PnL into the dashboard
+{cash, unrealized, equity} shape keyed under balances.<tier>.
+*/
+func (tier *Tier) walletReading() map[string]float64 {
+	quote := system.Cfg.Market.QuoteCurrency
+	cash := 0.0
+	unrealized := 0.0
+
+	book := market.NewBalance(map[string]any{
+		"quote":  quote,
+		"assets": []*market.Asset{},
+	})
+
+	if tier.venue != nil {
+		tier.venue.Balance().ToMarket(book)
+	}
+
+	if c := book.Cash(quote); c != nil {
+		cash, _ = c.Float64()
+	} else if c := book.Cash(book.Quote); c != nil {
+		cash, _ = c.Float64()
+	} else {
+		for _, asset := range book.Assets {
+			if asset == nil {
+				continue
+			}
+
+			if asset.Symbol == quote || asset.Symbol == "Z"+quote {
+				cash, _ = asset.Capital.Float64()
+				break
+			}
+		}
+	}
+
+	if cash == 0 && tier.Type == TierTypeVirtual {
+		cash = float64(system.Cfg.Market.Balance)
+	}
+
+	for _, position := range tier.positions.Open() {
+		if position == nil || position.PnL == nil {
+			continue
+		}
+
+		u, _ := position.PnL.Float64()
+		unrealized += u
+	}
+
+	return map[string]float64{
+		"cash":       cash,
+		"unrealized": unrealized,
+		"equity":     cash + unrealized,
+	}
+}
+
+/*
+publishLedger fans positions and this tier's wallet reading to the hub.
+*/
+func (tier *Tier) publishLedger(positions map[string]*Position) {
+	ui.UI.WriteJSON(map[string]any{
+		"positions": positions,
+		"balances": map[string]any{
+			tier.Type.String(): tier.walletReading(),
+		},
+	})
 }
 
 func (tier *Tier) Hello() {
@@ -107,29 +258,21 @@ func (tier *Tier) Hello() {
 		positions[position.ID] = position
 	}
 
-	ui.UI.WriteJSON(map[string]any{
-		tier.Type.String(): map[string]any{
-			"positions": positions,
-			"balance":   tier.balance,
-		},
-	})
+	tier.publishLedger(positions)
 }
 
 func (tier *Tier) Update(data *market.Update) {
-	var mark *decimal.Decimal
-
-	if data.Price != nil {
-		parsed, _ := decimal.NewFromString(data.Price.String())
-		mark = &parsed
-	}
-
 	for _, position := range tier.positions.Open(data.Symbol) {
-		position.Update(mark)
-		ui.UI.WriteJSON(map[string]any{
-			tier.Type.String(): map[string]any{
-				"positions": map[string]any{position.ID: position},
-			},
-		})
+		position.Update(data.Price)
+
+		now := time.Now()
+
+		if position.UpdatedAt != nil && time.Since(*position.UpdatedAt) > 30*time.Second {
+			tier.positions.Save(position)
+			position.UpdatedAt = &now
+		}
+
+		tier.publishLedger(map[string]*Position{position.ID: position})
 	}
 }
 
@@ -171,7 +314,7 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
-	if tier.Type == TierTypeReal && tier.transport == nil {
+	if tier.Type == TierTypeReal && tier.private == nil {
 		return errnie.Err(
 			errnie.Forbidden,
 			"[broker.Tier.Enter] real transport not armed",
@@ -203,12 +346,15 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	// Virtual learning lots skip venue qty/cost mins (nil wallet). Paper and
-	// real pass the tier balance so Allocate enforces QtyMin/CostMin.
+	// Size from this tier's venue wallet (virtual/paper/real all keep one).
 	var wallet *market.Balance
 
-	if tier.Type != TierTypeVirtual {
-		wallet = tier.balance
+	if tier.venue != nil {
+		wallet = market.NewBalance(map[string]any{
+			"quote":  system.Cfg.Market.QuoteCurrency,
+			"assets": []*market.Asset{},
+		})
+		tier.venue.Balance().ToMarket(wallet)
 	}
 
 	qty, err := tier.price.Allocate(symbol, wallet)
@@ -228,7 +374,7 @@ func (tier *Tier) Enter(
 		tier.Type.String(),
 		path,
 		tier.price,
-		tier.transport,
+		tier.private,
 		tier.settle,
 	)
 
@@ -240,18 +386,23 @@ func (tier *Tier) Enter(
 		return errnie.Error(err)
 	}
 
-	// 2. Add to active cache
 	tier.positions.Add(symbol, pos, true)
-	pos.Update(nil)
-
-	ui.UI.WriteJSON(map[string]any{
-		tier.Type.String(): map[string]any{
-			"positions": map[string]any{pos.ID: pos},
-		},
-	})
 
 	if err := tier.Send(pos, "enter"); err != nil {
+		// Send already Drop'd the lot. Soft cash/base denials are routine.
+		if errnie.IsNotAcceptable(err) {
+			return &EntryDenial{Gate: "size", Reason: err.Error()}
+		}
+
 		return errnie.Error(err)
+	}
+
+	// Fill Apply (async on Run) owns the first Save/publish with fills+pnl.
+	// No-transport lots seed in Enter — persist and push them now.
+	if pos.transport == nil {
+		pos.Update(nil)
+		tier.positions.Save(pos)
+		tier.publishLedger(map[string]*Position{pos.ID: pos})
 	}
 
 	return nil
@@ -260,17 +411,12 @@ func (tier *Tier) Enter(
 func (tier *Tier) Exit(
 	position *Position,
 ) error {
-	tier.positions.Remove(position.Symbol)
-
-	ui.UI.WriteJSON(map[string]any{
-		tier.Type.String(): map[string]any{
-			"positions": map[string]any{position.ID: position},
-		},
-	})
-
 	if err := tier.Send(position, "exit"); err != nil {
 		return errnie.Error(err)
 	}
+
+	tier.positions.Remove(position.Symbol)
+	tier.publishLedger(map[string]*Position{position.ID: position})
 
 	tier.pending.Delete(position.Symbol)
 	return nil
@@ -283,7 +429,7 @@ func (tier *Tier) Send(position *Position, action string) error {
 		order = position.ExitOrder
 	}
 
-	if tier.transport != nil && order != nil {
+	if tier.private != nil && order != nil {
 		msg := map[string]any{
 			"method": "add_order",
 			"params": map[string]any{
@@ -298,17 +444,26 @@ func (tier *Tier) Send(position *Position, action string) error {
 		buf, err := sonic.Marshal(msg)
 
 		if err != nil {
-			tier.positions.Drop(position.Symbol)
+			if action == "enter" {
+				tier.positions.Drop(position.Symbol)
+			}
 
 			return errnie.Err(
 				errnie.Internal,
-				"[broker.Tier.Enter] failed to marshal message",
+				"[broker.Tier.Send] failed to marshal message",
 				err,
 			)
 		}
 
-		if err := tier.transport.Write(buf); err != nil {
-			tier.positions.Drop(position.Symbol)
+		if err := tier.private.Write(buf); err != nil {
+			if action == "enter" {
+				tier.positions.Drop(position.Symbol)
+			}
+
+			if errnie.IsNotAcceptable(err) {
+				return err
+			}
+
 			return errnie.Error(err)
 		}
 	}
@@ -321,9 +476,9 @@ func (tier *Tier) settle(position *Position) {
 		return
 	}
 
-	// Paper/real must place the venue sell; virtual has no transport.
 	if err := tier.Send(position, "exit"); err != nil {
 		errnie.Error(err)
+		return
 	}
 
 	tier.positions.Remove(position.Symbol)
@@ -370,5 +525,34 @@ func (tier *Tier) Recalculate() {
 
 	if tier.Type == TierTypeReal && !tier.ok() {
 		tier.unlocked = false
+	}
+}
+
+/*
+Run owns the private ingress for this tier. Public frames are read once on Desk.
+*/
+func (tier *Tier) Run() {
+	if tier.private == nil || tier.venue == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-tier.ctx.Done():
+			return
+		default:
+		}
+
+		buf, err := tier.private.Read()
+
+		if err != nil {
+			if tier.ctx.Err() != nil {
+				return
+			}
+
+			continue
+		}
+
+		tier.venue.Read(buf)
 	}
 }

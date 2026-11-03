@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/venue/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -67,6 +67,16 @@ func NewInstrument(
 	)
 
 	instrument.Transition(runtime.BUSY)
+
+	if err := OpenWS(public, system.Cfg.WebSocket.Endpoints.Public); err != nil {
+		instrument.Error(errnie.Err(
+			errnie.IO,
+			"[instrument] public websocket open failed",
+			err,
+		))
+
+		return instrument
+	}
 
 	message, err := kraken.NewInstrumentSubscription().MarshalJSON()
 
@@ -667,4 +677,14 @@ func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decim
 	}
 
 	return val.(*decimal.Decimal)
+}
+
+func level3Depth() (int, error) {
+	depth := viper.GetInt("market.l3_depth")
+
+	if depth <= 0 {
+		return 0, errnie.Err(errnie.Validation, "[instrument] market.l3_depth is not configured", nil)
+	}
+
+	return depth, nil
 }

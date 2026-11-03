@@ -6,7 +6,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -14,7 +13,7 @@ func withPaper(f func(*kraken.Paper)) func() {
 	return func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		f(kraken.NewPaper(ctx, venue.NewSimulator()))
+		f(kraken.NewPaper(ctx))
 	}
 }
 
@@ -61,7 +60,7 @@ func TestPaperPost(t *testing.T) {
 
 		Convey("When the context is cancelled before Balance Post", func() {
 			ctx, cancel := context.WithCancel(context.Background())
-			paper = kraken.NewPaper(ctx, venue.NewSimulator())
+			paper = kraken.NewPaper(ctx)
 			cancel()
 
 			raw, err := paper.Post("/0/private/Balance", nil)
@@ -75,7 +74,7 @@ func TestPaperRead(t *testing.T) {
 	Convey("Setup", t, withPaper(func(paper *kraken.Paper) {
 		Convey("When the context is cancelled with an empty queue", func() {
 			ctx, cancel := context.WithCancel(context.Background())
-			paper = kraken.NewPaper(ctx, nil)
+			paper = kraken.NewPaper(ctx)
 			cancel()
 
 			_, err := paper.Read()

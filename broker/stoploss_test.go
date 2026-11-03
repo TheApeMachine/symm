@@ -12,7 +12,7 @@ func TestStoplossAbsoluteHardFloor(t *testing.T) {
 	Convey("A mark at or below MaxLossPct triggers without ever clearing profit", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
+		stop := NewStoploss(-1.6, nil, "")
 		So(stop.MaxLossPct, ShouldEqual, -2.5)
 		So(stop.ProfitTargetPct, ShouldEqual, 2.5)
 		So(stop.FloorPnLPct, ShouldEqual, -2.5)
@@ -26,10 +26,10 @@ func TestStoplossAbsoluteHardFloor(t *testing.T) {
 }
 
 func TestStoplossGreenBelowProfitStaysAlive(t *testing.T) {
-	Convey("Marks that stay under ProfitTargetPct and above the floor do not trigger", t, func() {
+	Convey("Marks under ProfitTargetPct and above the floor do not trigger", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
+		stop := NewStoploss(-1.6, nil, "")
 		path := []float64{-1.4, -1.0, -0.5, 0.2, 1.0, 1.5, 2.0, 1.2, 0.8, 1.8}
 
 		fed := feedStoploss(stop, path)
@@ -41,39 +41,74 @@ func TestStoplossGreenBelowProfitStaysAlive(t *testing.T) {
 	})
 }
 
-func TestStoplossProfitProtectionFloor(t *testing.T) {
-	Convey("Clearing ProfitTargetPct locks a non-negative floor; falling through it triggers", t, func() {
+func TestStoplossProfitTrailLocksGiveback(t *testing.T) {
+	Convey("Clearing ProfitTarget trails floor by at most MaxLoss below peak", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
+		stop := NewStoploss(-1.6, nil, "")
 		feedStoploss(stop, []float64{-1.0, 1.0, 2.5})
 		So(stop.Triggered(), ShouldBeFalse)
 		So(stop.State, ShouldEqual, StoplossProtected)
 		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, 0.0)
 
-		feedStoploss(stop, []float64{-0.1})
+		feedStoploss(stop, []float64{5.0})
+		So(stop.Triggered(), ShouldBeFalse)
+		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, 2.5)
+		So(stop.FloorPnLPct, ShouldBeLessThanOrEqualTo, 5.0)
+
+		feedStoploss(stop, []float64{2.4})
 		So(stop.Triggered(), ShouldBeTrue)
 		assertInvariant(stop)
 	})
 }
 
-func TestStoplossTightensOnDownWidensOnUp(t *testing.T) {
-	Convey("A down-move lifts Floor above MaxLoss; a following up-move lowers it again", t, func() {
+func TestStoplossPatientDipWhenNeutralBook(t *testing.T) {
+	Convey("A deep but above-MaxLoss dip stays alive without inventing a tight floor", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
-		feedStoploss(stop, []float64{-2.0})
-		So(stop.Triggered(), ShouldBeFalse)
+		stop := NewStoploss(-1.6, nil, "")
 
-		tight := stop.FloorPnLPct
-		So(tight, ShouldBeGreaterThan, stop.MaxLossPct)
-		// Tightening cannot jump through the mark that caused it.
-		So(tight, ShouldBeLessThan, -2.0)
-
-		feedStoploss(stop, []float64{-1.2})
+		feedStoploss(stop, []float64{-1.7, -2.0, -2.2, -1.5, -0.5, 0.5})
 		So(stop.Triggered(), ShouldBeFalse)
-		So(stop.FloorPnLPct, ShouldBeLessThan, tight)
 		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, stop.MaxLossPct)
+		assertInvariant(stop)
+	})
+}
+
+func TestStoplossDamageLocksAfterRecovery(t *testing.T) {
+	Convey("Near-floor damage that later clears ProfitTarget raises the floor", t, func() {
+		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+
+		stop := NewStoploss(-1.6, nil, "")
+		// Drive close to the hard floor to score damage.
+		feedStoploss(stop, []float64{-2.4})
+		So(stop.Triggered(), ShouldBeFalse)
+		So(stop.Damage, ShouldBeGreaterThan, 0.5)
+
+		feedStoploss(stop, []float64{-1.0, 1.0, 2.5})
+		So(stop.Triggered(), ShouldBeFalse)
+		So(stop.State, ShouldEqual, StoplossProtected)
+		So(stop.FloorPnLPct, ShouldBeGreaterThan, 0)
+
+		// After damage lock / trail, a collapse through the raised floor dies.
+		feedStoploss(stop, []float64{0.1})
+		So(stop.Triggered(), ShouldBeTrue)
+		assertInvariant(stop)
+	})
+}
+
+func TestStoplossRatchetAtDoubleTarget(t *testing.T) {
+	Convey("Peak at 2× ProfitTarget ratchets so a down-tick stops out", t, func() {
+		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+
+		stop := NewStoploss(-1.6, nil, "")
+		feedStoploss(stop, []float64{1.0, 2.5, 5.0})
+		So(stop.Triggered(), ShouldBeFalse)
+		So(stop.ratchet(), ShouldBeTrue)
+
+		prev := stop.CurrentPnLPct
+		feedStoploss(stop, []float64{prev - 0.05})
+		So(stop.Triggered(), ShouldBeTrue)
 		assertInvariant(stop)
 	})
 }
@@ -137,10 +172,9 @@ feedStoploss pushes every mark through Update. After Triggered, Update is a
 no-op; we still walk the full path so regime-length claims are honest.
 */
 func feedStoploss(stop *Stoploss, path []float64) int {
-	for i, pnl := range path {
+	for _, pnl := range path {
 		stop.Update(pnl)
 		assertInvariant(stop)
-		_ = i
 	}
 	return len(path)
 }
@@ -150,12 +184,17 @@ assertInvariant is the live rail check after every Update:
   - floor never below MaxLossPct
   - if triggered, mark is at or below floor
   - if not triggered, mark is strictly above floor
+  - Protected implies non-negative floor once peak cleared target
 */
 func assertInvariant(stop *Stoploss) {
 	So(math.IsNaN(stop.FloorPnLPct), ShouldBeFalse)
 	So(math.IsInf(stop.FloorPnLPct, 0), ShouldBeFalse)
 	So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, stop.MaxLossPct)
 	So(stop.PeakPnLPct, ShouldBeGreaterThanOrEqualTo, stop.InitialPnLPct)
+	So(stop.Damage, ShouldBeGreaterThanOrEqualTo, 0)
+	So(stop.Damage, ShouldBeLessThanOrEqualTo, 1)
+	So(stop.UpProb, ShouldBeGreaterThanOrEqualTo, 0)
+	So(stop.UpProb, ShouldBeLessThanOrEqualTo, 1)
 
 	if stop.Triggered() {
 		So(stop.State, ShouldEqual, StoplossTriggered)
@@ -207,7 +246,7 @@ func TestStoplossTapeChaosLevels(t *testing.T) {
 					tape := newPnlTape(seed+uint64(len(tc.name)), entry, tc.chaos, tc.drift, tc.step)
 					path := tape.take(400)
 
-					stop := NewStoploss(entry)
+					stop := NewStoploss(entry, nil, "")
 					fed := feedStoploss(stop, path)
 					So(fed, ShouldEqual, len(path))
 
@@ -224,7 +263,7 @@ func TestStoplossTapeMustStopOnCrash(t *testing.T) {
 	Convey("A gradual crash triggers against the active floor before or at MaxLoss", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
+		stop := NewStoploss(-1.6, nil, "")
 		path := []float64{-1.7, -2.0, -2.4, -2.5, -5.0, -10.0}
 		fed := feedStoploss(stop, path)
 
@@ -239,7 +278,7 @@ func TestStoplossTapeGapPastHardFloor(t *testing.T) {
 	Convey("A sudden gap past MaxLossPct triggers at or below MaxLoss", t, func() {
 		system.Cfg.Risk.MaxAllowedLossPct = 2.5
 
-		stop := NewStoploss(-1.6)
+		stop := NewStoploss(-1.6, nil, "")
 		path := []float64{-2.6, -5.0, -10.0}
 		fed := feedStoploss(stop, path)
 
@@ -277,7 +316,7 @@ func TestStoplossTapeRegimeCycle(t *testing.T) {
 		}
 		So(len(path), ShouldEqual, 590)
 
-		stop := NewStoploss(entry)
+		stop := NewStoploss(entry, nil, "")
 		fed := feedStoploss(stop, path)
 		So(fed, ShouldEqual, 590)
 

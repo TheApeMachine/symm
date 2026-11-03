@@ -4,10 +4,10 @@ import (
 	"context"
 	"sync"
 
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/algorithm/book/quality"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
@@ -115,10 +115,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if outcome.Category == 0 {
-				return
-			}
-
+			// Publish neutrals too — resonance holds until every Map() label
+			// has been seen, and Category 0 still carries vacuum_score.
 			mu.Lock()
 			envelope.Toxicity[data.Symbol] = &outcome
 			mu.Unlock()

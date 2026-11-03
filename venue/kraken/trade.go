@@ -8,12 +8,14 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
 type Trade struct {
-	Channel string      `json:"channel"`
-	Type    string      `json:"type"`
-	Data    []TradeData `json:"data"`
+	Channel  string      `json:"channel"`
+	Type     string      `json:"type"`
+	Data     []TradeData `json:"data"`
+	onChange func(market.MarketType)
 }
 
 type TradeData struct {
@@ -26,14 +28,22 @@ type TradeData struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
+func NewTrade() *Trade {
+	return &Trade{
+		Channel: "trade",
+		Type:    "update",
+		Data:    make([]TradeData, 0),
+	}
+}
+
 /*
-NewTrade decodes a trade frame. An undecodable frame is an error, never a
+DecodeTrade decodes a trade frame. An undecodable frame is an error, never a
 partially filled Trade: ingress halts instead of stepping a half-decoded print.
 */
-func NewTrade(buf []byte) (*Trade, error) {
-	var trade Trade
+func DecodeTrade(buf []byte) (*Trade, error) {
+	trade := NewTrade()
 
-	if err := sonic.Unmarshal(buf, &trade); err != nil {
+	if err := sonic.Unmarshal(buf, trade); err != nil {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"[kraken.trade] invalid trade frame",
@@ -41,15 +51,103 @@ func NewTrade(buf []byte) (*Trade, error) {
 		)
 	}
 
-	return &trade, nil
+	return trade, nil
 }
 
-func (trade *Trade) IsSuccess() bool {
-	return len(trade.Data) > 0
+func (trade *Trade) Request() map[string]any {
+	return map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel": "trade",
+		},
+	}
 }
 
-func (trade *Trade) Action() string {
-	return "trade"
+func (trade *Trade) OnChange(fn func(market.MarketType)) {
+	trade.onChange = fn
+}
+
+func (trade *Trade) MarshalJSON() ([]byte, error) {
+	type alias Trade
+	return sonic.Marshal((*alias)(trade))
+}
+
+func (trade *Trade) UnmarshalJSON(data []byte) error {
+	type alias Trade
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	onChange := trade.onChange
+	*trade = Trade(decoded)
+	trade.onChange = onChange
+
+	if trade.Data == nil {
+		trade.Data = make([]TradeData, 0)
+	}
+
+	if trade.onChange != nil {
+		trade.onChange(trade)
+	}
+
+	return nil
+}
+
+func (trade *Trade) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Trade)
+
+	if !ok || book == nil || trade == nil {
+		return other
+	}
+
+	rows := make([]*market.TradeData, 0, len(trade.Data))
+
+	for _, row := range trade.Data {
+		rows = append(rows, &market.TradeData{
+			Symbol:    row.Symbol,
+			Side:      market.Side(row.Side),
+			Price:     row.Price,
+			Qty:       decimal.NewFromFloat(row.Qty),
+			OrderType: market.OrderType(row.OrderType),
+			TradeID:   row.TradeID,
+			Timestamp: row.Timestamp,
+		})
+	}
+
+	return market.NewTrade(trade.Channel, trade.Type, rows).ToMarket(book)
+}
+
+func (trade *Trade) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Trade)
+
+	if !ok || book == nil || trade == nil {
+		return trade
+	}
+
+	trade.Channel = book.Channel
+	trade.Type = book.Type
+	trade.Data = trade.Data[:0]
+
+	for _, row := range book.Data {
+		if row == nil {
+			continue
+		}
+
+		qty, _ := row.Qty.Float64()
+		trade.Data = append(trade.Data, TradeData{
+			Symbol:    row.Symbol,
+			Side:      string(row.Side),
+			Price:     row.Price,
+			Qty:       qty,
+			OrderType: string(row.OrderType),
+			TradeID:   row.TradeID,
+			Timestamp: row.Timestamp,
+		})
+	}
+
+	return trade
 }
 
 type TradeVolumeInput struct {
@@ -109,7 +207,7 @@ func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
 		)
 	}
 
-	if !tradeVolume.IsSuccess() {
+	if len(tradeVolume.Error) > 0 {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"kraken trade volume rejected",
@@ -126,14 +224,6 @@ func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
 	}
 
 	return &tradeVolume.Result, nil
-}
-
-func (tradeVolume *TradeVolume) Action() string {
-	return "trade_volume"
-}
-
-func (tradeVolume *TradeVolume) IsSuccess() bool {
-	return len(tradeVolume.Error) == 0
 }
 
 type TradeVolumeRequest struct {
