@@ -277,6 +277,48 @@ func (virtual *Virtual) applyFill(
 	return nil
 }
 
+/*
+Restock credits base for an S3-restored open lot and debits quote by cost so
+Allocate does not treat starting cash as still fully free.
+*/
+func (virtual *Virtual) Restock(symbol string, qty, cost decimal.Decimal) {
+	if qty.Sign() <= 0 {
+		return
+	}
+
+	virtual.mu.Lock()
+	defer virtual.mu.Unlock()
+
+	base := symbol
+
+	if i := strings.IndexByte(symbol, '/'); i > 0 {
+		base = symbol[:i]
+	}
+
+	lot := virtual.asset(base)
+	lot.Capital = lot.Capital.Add(qty)
+	lot.Equity = lot.Capital
+
+	if cost.Sign() <= 0 {
+		return
+	}
+
+	quote, _ := virtual.wallet["quote"].(string)
+
+	if quote == "" {
+		return
+	}
+
+	cash := virtual.asset(quote)
+
+	if cash.Capital.Cmp(cost) < 0 {
+		cost = cash.Capital
+	}
+
+	cash.Capital = cash.Capital.Sub(cost)
+	cash.Equity = cash.Capital
+}
+
 func (virtual *Virtual) asset(symbol string) *market.Asset {
 	assets, _ := virtual.wallet["assets"].([]*market.Asset)
 

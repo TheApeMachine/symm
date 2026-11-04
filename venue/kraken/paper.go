@@ -84,6 +84,7 @@ func (paper *Paper) Write(message []byte) error {
 	method, _ := request["method"].(string)
 	entity := method
 	params, _ := request["params"].(map[string]any)
+	var clOrdID string
 
 	if method == "subscribe" {
 		entity, _ = params["channel"].(string)
@@ -104,6 +105,7 @@ func (paper *Paper) Write(message []byte) error {
 			return errnie.Error(err)
 		}
 
+		clOrdID = req.ClOrdId
 		command = req.Command()
 	}
 
@@ -138,7 +140,37 @@ func (paper *Paper) Write(message []byte) error {
 	}
 
 	paper.queue.Enqueue(buf)
+
+	if entity == "add_order" {
+		paper.enqueueFill(model, clOrdID)
+	}
+
 	return nil
+}
+
+/*
+enqueueFill queues the trade report behind the order ack so ingress can fold it.
+*/
+func (paper *Paper) enqueueFill(model map[string]any, clOrdID string) {
+	exec, ok := NewExecutionFromMap(model).(*Execution)
+
+	if !ok || !exec.Tradable() {
+		return
+	}
+
+	for i := range exec.Data {
+		if exec.Data[i].ClientOrderID == "" {
+			exec.Data[i].ClientOrderID = clOrdID
+		}
+	}
+
+	raw, err := exec.MarshalJSON()
+
+	if err != nil {
+		return
+	}
+
+	paper.queue.Enqueue(raw)
 }
 
 func (paper *Paper) Watch(

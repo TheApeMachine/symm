@@ -280,18 +280,7 @@ func (model *Model) applyAction(
 		model.enterTiers(decide, symbol, path, resistance, true, bypass)
 
 	case ActionExit:
-		if !bullish && len(open) > 0 {
-			for _, lot := range open {
-				model.Exit(lot, path)
-			}
-
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "exit",
-				Reason: "tree exit · story no longer bullish",
-				Path:   path,
-			})
-		} else {
+		if bullish || len(open) == 0 {
 			decide(&runtime.Decision{
 				Symbol: symbol,
 				Action: "skip",
@@ -299,8 +288,45 @@ func (model *Model) applyAction(
 				Gate:   "story",
 				Path:   path,
 			})
+			model.resetPath(symbol)
+			return
 		}
 
+		// Policy match takes profit; underwater lots stay open for the
+		// hard stop. Seeding exit leaves from losses already poisoned
+		// early trees into giving up mid-drag.
+		exited := 0
+
+		for _, lot := range open {
+			if lot == nil || lot.PnL == nil || lot.PnL.Sign() <= 0 {
+				continue
+			}
+
+			model.Exit(lot, path)
+			exited++
+		}
+
+		if exited == 0 {
+			for _, lot := range open {
+				model.Hold(lot, path)
+			}
+
+			decide(&runtime.Decision{
+				Symbol: symbol,
+				Action: "hold",
+				Reason: "exit leaf ignored — lot still in loss",
+				Gate:   "pnl",
+				Path:   path,
+			})
+			return
+		}
+
+		decide(&runtime.Decision{
+			Symbol: symbol,
+			Action: "exit",
+			Reason: "tree exit · story no longer bullish",
+			Path:   path,
+		})
 		model.resetPath(symbol)
 
 	case ActionHold:

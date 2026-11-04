@@ -63,6 +63,8 @@ const REGION_INFO: Record<
 	R20: { name: "Contagion approve", tone: "up" },
 	R21: { name: "Capacity veto", tone: "warn" },
 	R22: { name: "Capacity approve", tone: "up" },
+	R23: { name: "24h peak veto", tone: "warn" },
+	R24: { name: "24h peak approve", tone: "up" },
 };
 
 const TONE_STYLES = {

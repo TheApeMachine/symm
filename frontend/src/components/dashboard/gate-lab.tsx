@@ -43,6 +43,12 @@ const RISK_FIELDS: Array<{
 		hint: "Maximum touch spread (%) allowed at entry. Wider than this → Spread veto.",
 	},
 	{
+		key: "max_entry_peak_frac",
+		label: "peak",
+		step: "0.05",
+		hint: "Max last position in the 24h high–low range (0–1). At/above → 24h peak veto. 0.90 = top 10% blocked. ≤0 or ≥1 disables.",
+	},
+	{
 		key: "min_touch_bid_cash",
 		label: "cash",
 		step: "10",
@@ -55,10 +61,10 @@ const RISK_FIELDS: Array<{
 		hint: "How much bid/ask support must sit inside the mid band (0–1). Low backing = fake wall.",
 	},
 	{
-		key: "min_tape_trades",
-		label: "tape",
-		step: "1",
-		hint: "Minimum prints in the tape window. Dead tape fails Book integrity.",
+		key: "min_tape_notional_usd",
+		label: "tape$",
+		step: "10",
+		hint: "Quote dollars in the last tape window must beat the prior window and clear this floor. A fading tape fails Book integrity.",
 	},
 	{
 		key: "max_entry_open_drag_pct",

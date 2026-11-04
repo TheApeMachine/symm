@@ -5,20 +5,26 @@ const PATH_ACTIONS = new Set(["enter", "hold", "exit"]);
 
 /*
 pathBookPolicyKey maps an S3 object key to the trie key RadixTreeViz expects.
-Hub ListPrefix already normalizes to …/enter|hold|exit.bin; this keeps a
-light fallback for bare path keys.
+Tree.persist writes model/paths/<tokens>.bin with action in JSON; rewrite to
+…/enter|hold|exit.bin. Canonical action-suffixed keys pass through.
 */
 export const pathBookPolicyKey = (
 	storageKey: string,
 	action?: string,
 ): string => {
-	const tail = storageKey.split("/").pop() ?? "";
-	if (tail.endsWith(".bin")) {
+	if (
+		storageKey.endsWith("/enter.bin") ||
+		storageKey.endsWith("/hold.bin") ||
+		storageKey.endsWith("/exit.bin")
+	) {
 		return storageKey;
 	}
 
 	if (action && PATH_ACTIONS.has(action)) {
-		return `${storageKey}/${action}.bin`;
+		const base = storageKey.endsWith(".bin")
+			? storageKey.slice(0, -".bin".length)
+			: storageKey;
+		return `${base}/${action}.bin`;
 	}
 
 	return storageKey;

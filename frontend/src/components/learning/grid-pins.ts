@@ -1,7 +1,7 @@
 import type { ImpulseNode } from "./types";
 
-/** Mirrors nomagique/store/grid_pins.go and SIGNALS.md (23 regions). */
-export const REGION_COUNT = 23;
+/** Mirrors nomagique/store/grid_pins.go and SIGNALS.md (25 regions). */
+export const REGION_COUNT = 25;
 
 export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	cvd: {
@@ -122,9 +122,9 @@ export const sympathyAnchor = (
 		};
 	}
 
-	const slot = Math.min(Math.max(regionKey - 9, 0), 13);
+	const slot = Math.min(Math.max(regionKey - 9, 0), 15);
 	return {
-		x: width * (0.08 + (slot / 13) * 0.84),
+		x: width * (0.08 + (slot / 15) * 0.84),
 		y: height * 0.82,
 	};
 };

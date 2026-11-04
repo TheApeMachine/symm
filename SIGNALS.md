@@ -133,7 +133,7 @@ Desk-lot physics: cash, backing, tape, open drag.
 |---------|---------------------------|------------------------------------------------------------------|
 | Veto    | top-bid cash below floor  | `broker.Price/TouchBidCash` vs `risk.min_touch_bid_cash`         |
 | Veto    | backing ratio below floor | `broker.Price/BackingRatio` vs `risk.min_backing_ratio`          |
-| Veto    | tape not alive            | `broker.Tape/Alive` (`risk.tape_window`, `risk.min_tape_trades`) |
+| Veto    | tape not picking up       | `broker.Tape/Uptake` (`risk.tape_window`, `risk.min_tape_notional_usd`) |
 | Veto    | close-now drag beyond cap | `broker.Price/EntryCloseNowPnLPct` vs open-drag budget           |
 | Approve | backing ratio firm        | `broker.Price/BackingRatio`                                      |
 | Approve | `toxicity/SupportScore`   | `envelope.Toxicity`                                              |

@@ -40,6 +40,10 @@ func (venue *Kraken) Execution() market.MarketType {
 	return venue.execution
 }
 
+func (venue *Kraken) Order() market.MarketType {
+	return venue.order
+}
+
 func (venue *Kraken) Book() market.MarketType {
 	return nil
 }

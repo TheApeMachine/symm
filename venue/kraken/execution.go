@@ -361,6 +361,27 @@ func (execution *Execution) FromMarket(other market.MarketType) market.MarketTyp
 }
 
 /*
+Tradable reports a fill the desk can fold into a lot.
+*/
+func (execution *Execution) Tradable() bool {
+	if execution == nil {
+		return false
+	}
+
+	for _, row := range execution.Data {
+		if row.LastQty == nil || row.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		if row.ExecType == "" || row.ExecType == "trade" {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
 DecodeExecution decodes an executions frame. An undecodable frame is an error:
 applying a partially decoded fill would silently diverge the desk's positions.
 */

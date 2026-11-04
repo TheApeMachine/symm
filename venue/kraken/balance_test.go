@@ -66,3 +66,57 @@ func TestBalanceToMarketViaVenue(t *testing.T) {
 		So(book.Cash("XXBT").String(), ShouldEqual, "0.5")
 	})
 }
+
+func TestBalanceWebsocketSnapshotUsesSpotMain(t *testing.T) {
+	Convey("A balances snapshot keeps spot main and ignores earn", t, func() {
+		host := venue.NewKraken("USD")
+		book := market.NewBalance(map[string]any{
+			"quote":  "USD",
+			"assets": []*market.Asset{},
+		})
+
+		host.Balance().OnChange(func(frame market.MarketType) {
+			frame.ToMarket(book)
+		})
+
+		raw := []byte(`{
+			"channel":"balances",
+			"type":"snapshot",
+			"data":[
+				{
+					"asset":"USD",
+					"balance":1000,
+					"wallets":[
+						{"type":"spot","id":"main","balance":200},
+						{"type":"earn","id":"flex","balance":800}
+					]
+				},
+				{
+					"asset":"BTC",
+					"balance":1.2,
+					"wallets":[{"type":"spot","id":"main","balance":1.2}]
+				}
+			]
+		}`)
+
+		So(sonic.Unmarshal(raw, host.Balance()), ShouldBeNil)
+		So(book.Cash("USD").String(), ShouldEqual, "200")
+		So(book.Cash("BTC").String(), ShouldEqual, "1.2")
+
+		update := []byte(`{
+			"channel":"balances",
+			"type":"update",
+			"data":[{
+				"asset":"USD",
+				"wallet_type":"spot",
+				"wallet_id":"main",
+				"amount":-50,
+				"balance":950
+			}]
+		}`)
+
+		So(sonic.Unmarshal(update, host.Balance()), ShouldBeNil)
+		So(book.Cash("USD").String(), ShouldEqual, "150")
+		So(book.Cash("BTC").String(), ShouldEqual, "1.2")
+	})
+}

@@ -73,24 +73,28 @@ export const normalizeStoploss = (raw: unknown): DynamicStoploss | null => {
 	const initial =
 		num(pick(row, "friction", "InitialPnLPct", "initial_pnl_pct")) ?? null;
 	const maxLoss = num(pick(row, "MaxLossPct", "max_loss_pct"));
-	const profitTarget = num(pick(row, "ProfitTargetPct", "profit_target_pct"));
 
 	if (current === null || peak === null || floor === null) return null;
 
-	const span =
-		profitTarget !== null && maxLoss !== null
-			? Math.max(1e-9, profitTarget - maxLoss)
+	// Soft floor is "armed" only once it lifts above the hard rail.
+	const armed =
+		row.has_floor === true ||
+		(maxLoss !== null && floor > maxLoss + 1e-9);
+
+	const span = armed
+		? Math.max(1e-9, peak - floor)
+		: maxLoss !== null
+			? Math.max(1e-9, current - maxLoss)
 			: Math.max(1e-9, peak - floor);
 
-	const room = num(pick(row, "room_pct")) ?? current - floor;
+	const room =
+		num(pick(row, "room_pct")) ??
+		(armed ? current - floor : maxLoss !== null ? current - maxLoss : current - floor);
 	const proximity =
 		num(pick(row, "proximity")) ??
 		Math.max(0, Math.min(1, 1 - room / span));
 	const friction = initial !== null ? Math.abs(initial) : 0;
-	const hasFloor =
-		row.has_floor === true ||
-		row.has_floor === undefined ||
-		Number.isFinite(floor);
+	const hasFloor = armed;
 
 	const stop: DynamicStoploss = {
 		state,

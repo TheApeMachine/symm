@@ -2,6 +2,7 @@ package broker
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/theapemachine/symm/system"
 )
@@ -20,7 +21,7 @@ func (denial *EntryDenial) Error() string {
 
 /*
 EntryPhysicalDecision is the book-integrity outcome at the desk lot size:
-spread, absolute bid cash, backing ratio, tape liveness, then close-now vs
+spread, absolute bid cash, backing ratio, tape uptake, then close-now vs
 open-drag cap. Gate and desk must both use CheckEntryPhysical so entry
 guards cannot drift.
 */
@@ -112,6 +113,19 @@ func checkBookPhysical(price *Price, symbol string) EntryPhysicalDecision {
 				"bid support thinner than asks within %.0f%% of mid (ratio %.2f)",
 				system.Cfg.Risk.BackingBandFrac*100,
 				ratio,
+			),
+		}
+	}
+
+	recent, prior := price.tape.Uptake(symbol, time.Now())
+	floor := system.Cfg.Risk.MinTapeNotionalUSD
+
+	if recent < floor || recent <= prior {
+		return EntryPhysicalDecision{
+			Allowed: false,
+			Reason: fmt.Sprintf(
+				"tape not picking up (last window $%.0f vs prior $%.0f, floor $%.0f)",
+				recent, prior, floor,
 			),
 		}
 	}

@@ -14,6 +14,8 @@ type Level struct {
 	LimitPrice *decimal.Decimal `json:"limit_price"`
 	OrderQty   *decimal.Decimal `json:"order_qty"`
 	Timestamp  time.Time        `json:"timestamp"`
+	// Event is add|modify|delete on updates; omitted on snapshots.
+	Event string `json:"event,omitempty"`
 }
 
 type Level3Data struct {
@@ -114,6 +116,7 @@ func (level3 *Level3) ToMarket(other market.MarketType) market.MarketType {
 				LimitPrice: bid.LimitPrice,
 				OrderQty:   bid.OrderQty,
 				Timestamp:  bid.Timestamp,
+				Event:      bid.Event,
 			}
 		}
 
@@ -125,6 +128,7 @@ func (level3 *Level3) ToMarket(other market.MarketType) market.MarketType {
 				LimitPrice: ask.LimitPrice,
 				OrderQty:   ask.OrderQty,
 				Timestamp:  ask.Timestamp,
+				Event:      ask.Event,
 			}
 		}
 
@@ -172,6 +176,7 @@ func (level3 *Level3) FromMarket(other market.MarketType) market.MarketType {
 				LimitPrice: bid.LimitPrice,
 				OrderQty:   bid.OrderQty,
 				Timestamp:  bid.Timestamp,
+				Event:      bid.Event,
 			}
 		}
 
@@ -187,6 +192,7 @@ func (level3 *Level3) FromMarket(other market.MarketType) market.MarketType {
 				LimitPrice: ask.LimitPrice,
 				OrderQty:   ask.OrderQty,
 				Timestamp:  ask.Timestamp,
+				Event:      ask.Event,
 			}
 		}
 

@@ -13,6 +13,8 @@ import (
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type TierType uint8
@@ -53,7 +55,21 @@ type Tier struct {
 	venue     market.Venue
 	positions *Cache
 	pending   *sync.Map
+	inflight  sync.Map
+	live      *Live
 	unlocked  bool
+	halted    bool
+	sawOK     bool
+	broke     bool
+	reprieve  bool
+}
+
+/*
+submission is one add_order waiting on a venue ack.
+*/
+type submission struct {
+	position *Position
+	action   string
 }
 
 func NewTier(
@@ -64,6 +80,11 @@ func NewTier(
 	price *Price,
 	host market.Venue,
 ) *Tier {
+	// Real orders leave the process only when market.model is real.
+	if tt == TierTypeReal && system.Cfg.Market.Model != "real" {
+		private = nil
+	}
+
 	tier := &Tier{
 		ctx:     ctx,
 		Type:    tt,
@@ -74,11 +95,28 @@ func NewTier(
 		pending: &sync.Map{},
 	}
 
+	if tt == TierTypeReal && private != nil {
+		tier.live = NewLive(ctx, private)
+
+		if tier.live == nil {
+			tier.private = nil
+			private = nil
+		}
+	}
+
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle,
 	)
 
-	tier.unlocked = tier.Unlocked(nil)
+	// Virtual wallet is process-local; reopen credits base for S3 open lots
+	// before the balance prime so settle can sell.
+	if tt == TierTypeVirtual {
+		if virtual, ok := private.(*network.Virtual); ok {
+			for _, position := range tier.positions.Open() {
+				position.Restock(virtual)
+			}
+		}
+	}
 
 	if host != nil {
 		host.Balance().OnChange(func(frame market.MarketType) {
@@ -94,34 +132,55 @@ func NewTier(
 			frame.ToMarket(book)
 			tier.apply(book)
 		})
+
+		if book, ok := host.(*venue.Kraken); ok && book.Order() != nil {
+			book.Order().OnChange(func(frame market.MarketType) {
+				order, ok := frame.(*kraken.Order)
+
+				if !ok || order == nil {
+					return
+				}
+
+				tier.ack(order)
+			})
+		}
 	}
 
-	if private != nil && tier.Type == TierTypeReal {
-		if err := OpenWS(private, system.Cfg.WebSocket.Endpoints.Private); err != nil {
+	if tier.live != nil {
+		if err := OpenWS(tier.private, system.Cfg.WebSocket.Endpoints.Private); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO, "[broker.Tier] private websocket open failed", err,
 			))
 		}
 	}
 
-	// Virtual/paper expose private REST themselves. Live WS has no path-only
-	// REST signer here — balances arrive on the private socket instead.
-	if host != nil && private != nil &&
-		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper) {
-		private.Watch(
-			system.Cfg.WebSocket.Endpoints.Balance,
+	// Virtual and paper serve the balance path themselves. Real signs the
+	// same REST call and also folds the private balances channel.
+	if host != nil && tier.private != nil &&
+		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper || tier.live != nil) {
+		balanceURL := system.Cfg.WebSocket.Endpoints.Balance
+
+		if tier.live != nil {
+			balanceURL = tier.live.BalanceURL()
+		}
+
+		tier.private.Watch(
+			balanceURL,
 			host.Balance().Request(),
 			host.Balance(),
 		)
 
 		// Prime once so Allocate sees cash before the first Watch tick.
-		if raw, err := private.Post(
-			system.Cfg.WebSocket.Endpoints.Balance,
+		if raw, err := tier.private.Post(
+			balanceURL,
 			host.Balance().Request(),
 		); err == nil {
 			_ = json.Unmarshal(raw, host.Balance())
 		}
 	}
+
+	tier.Recalculate()
+	tier.unlocked = tier.Unlocked(nil)
 
 	return tier
 }
@@ -134,8 +193,12 @@ func (tier *Tier) apply(executions *market.Execution) {
 	touched := make(map[string]*Position)
 
 	for _, execution := range executions.Data {
-		if execution == nil {
+		if execution == nil || !tier.fillReport(execution) {
 			continue
+		}
+
+		if execution.ClientOrderID != "" {
+			tier.inflight.Delete(execution.ClientOrderID)
 		}
 
 		matched := false
@@ -176,13 +239,17 @@ func (tier *Tier) apply(executions *market.Execution) {
 }
 
 /*
-walletReading projects venue cash plus open mark PnL into the dashboard
+walletReading projects venue free cash, open PnL, and NLV into the dashboard
 {cash, unrealized, equity} shape keyed under balances.<tier>.
+
+Cash is free quote after entry debits. Unrealized is Σ fee-net PnL. Equity is
+cash + Σ close-now proceeds (not cash+PnL — that double-subtracts cost).
 */
 func (tier *Tier) walletReading() map[string]float64 {
 	quote := system.Cfg.Market.QuoteCurrency
 	cash := 0.0
 	unrealized := 0.0
+	marketValue := 0.0
 
 	book := market.NewBalance(map[string]any{
 		"quote":  quote,
@@ -215,18 +282,25 @@ func (tier *Tier) walletReading() map[string]float64 {
 	}
 
 	for _, position := range tier.positions.Open() {
-		if position == nil || position.PnL == nil {
+		if position == nil {
 			continue
 		}
 
-		u, _ := position.PnL.Float64()
-		unrealized += u
+		if position.PnL != nil {
+			u, _ := position.PnL.Float64()
+			unrealized += u
+		}
+
+		if proceeds := position.CloseNowProceeds(); proceeds != nil {
+			v, _ := proceeds.Float64()
+			marketValue += v
+		}
 	}
 
 	return map[string]float64{
 		"cash":       cash,
 		"unrealized": unrealized,
-		"equity":     cash + unrealized,
+		"equity":     cash + marketValue,
 	}
 }
 
@@ -262,6 +336,8 @@ func (tier *Tier) Hello() {
 }
 
 func (tier *Tier) Update(data *market.Update) {
+	touched := make(map[string]*Position)
+
 	for _, position := range tier.positions.Open(data.Symbol) {
 		position.Update(data.Price)
 
@@ -272,7 +348,11 @@ func (tier *Tier) Update(data *market.Update) {
 			position.UpdatedAt = &now
 		}
 
-		tier.publishLedger(map[string]*Position{position.ID: position})
+		touched[position.ID] = position
+	}
+
+	if len(touched) > 0 {
+		tier.publishLedger(touched)
 	}
 }
 
@@ -292,13 +372,18 @@ func (tier *Tier) ClearPending(symbol string) {
 	tier.pending.Delete(symbol)
 }
 
+func (tier *Tier) virgin() bool {
+	return tier.WinRate == 0 && tier.Edge == 0
+}
+
 func (tier *Tier) ok() bool {
 	return tier.WinRate > 0.5 && tier.Edge > 0
 }
 
 /*
-Unlocked: virtual/paper always. Real needs paper ok; once real has closed
-history it must stay ok too (paper healthy does not keep a failing real open).
+Unlocked: virtual and paper always. Real needs paper win-rate above 50% and
+edge above 0. Once real has history it must stay there too; after it slips,
+paper has to lose that proof and earn it again before real entries resume.
 */
 func (tier *Tier) Unlocked(paper *Tier) bool {
 	if tier.Type != TierTypeReal {
@@ -306,15 +391,70 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 		return true
 	}
 
-	virgin := tier.WinRate == 0 && tier.Edge == 0
-	tier.unlocked = paper != nil && paper.ok() && (virgin || tier.ok())
-	return tier.unlocked
+	paperOK := paper != nil && paper.ok()
+
+	if tier.halted {
+		tier.noteHalt(paperOK)
+		return tier.unlocked
+	}
+
+	if !paperOK {
+		tier.unlocked = false
+		tier.reprieve = false
+		return false
+	}
+
+	if !tier.unlocked {
+		if !tier.virgin() && !tier.ok() && !tier.reprieve {
+			tier.halted = true
+			tier.noteHalt(paperOK)
+			return tier.unlocked
+		}
+
+		tier.unlocked = true
+		tier.reprieve = false
+		return true
+	}
+
+	if !tier.virgin() && !tier.ok() && !tier.reprieve {
+		tier.halted = true
+		tier.sawOK = paperOK
+		tier.broke = false
+		tier.reprieve = false
+		tier.unlocked = false
+		return false
+	}
+
+	tier.unlocked = true
+	return true
+}
+
+/*
+noteHalt keeps a failed real shut until paper goes cold and proves again.
+*/
+func (tier *Tier) noteHalt(paperOK bool) {
+	if paperOK && tier.broke {
+		tier.halted = false
+		tier.broke = false
+		tier.sawOK = false
+		tier.reprieve = !tier.virgin() && !tier.ok()
+		tier.unlocked = true
+		return
+	}
+
+	if paperOK {
+		tier.sawOK = true
+	} else if tier.sawOK {
+		tier.broke = true
+	}
+
+	tier.unlocked = false
 }
 
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
-	if tier.Type == TierTypeReal && tier.private == nil {
+	if tier.Type == TierTypeReal && tier.live == nil {
 		return errnie.Err(
 			errnie.Forbidden,
 			"[broker.Tier.Enter] real transport not armed",
@@ -411,11 +551,18 @@ func (tier *Tier) Enter(
 func (tier *Tier) Exit(
 	position *Position,
 ) error {
+	// Policy path must settle the lot (ClosedAt, ExitTrigger, final mark)
+	// before the order leaves — otherwise Forward shows a naked return.
+	if err := position.Exit(); err != nil {
+		return errnie.Error(err)
+	}
+
 	if err := tier.Send(position, "exit"); err != nil {
 		return errnie.Error(err)
 	}
 
 	tier.positions.Remove(position.Symbol)
+	tier.Recalculate()
 	tier.publishLedger(map[string]*Position{position.ID: position})
 
 	tier.pending.Delete(position.Symbol)
@@ -429,43 +576,64 @@ func (tier *Tier) Send(position *Position, action string) error {
 		order = position.ExitOrder
 	}
 
-	if tier.private != nil && order != nil {
-		msg := map[string]any{
-			"method": "add_order",
-			"params": map[string]any{
-				"symbol":     position.Symbol,
-				"side":       order.Type,
-				"order_type": order.OrderType,
-				"order_qty":  order.Volume,
-				"cl_ord_id":  order.ClOrdId,
-			},
+	if tier.private == nil || order == nil {
+		return nil
+	}
+
+	msg := map[string]any{
+		"method": "add_order",
+		"params": map[string]any{
+			"symbol":     position.Symbol,
+			"side":       order.Type,
+			"order_type": order.OrderType,
+			"order_qty":  order.Volume,
+			"cl_ord_id":  order.ClOrdId,
+		},
+	}
+
+	buf, err := sonic.Marshal(msg)
+
+	if err != nil {
+		if action == "enter" {
+			tier.positions.Drop(position.Symbol)
 		}
 
-		buf, err := sonic.Marshal(msg)
+		return errnie.Err(
+			errnie.Internal,
+			"[broker.Tier.Send] failed to marshal message",
+			err,
+		)
+	}
+
+	if tier.live != nil {
+		buf, err = tier.live.Seal(buf)
 
 		if err != nil {
 			if action == "enter" {
 				tier.positions.Drop(position.Symbol)
 			}
 
-			return errnie.Err(
-				errnie.Internal,
-				"[broker.Tier.Send] failed to marshal message",
-				err,
-			)
-		}
-
-		if err := tier.private.Write(buf); err != nil {
-			if action == "enter" {
-				tier.positions.Drop(position.Symbol)
-			}
-
-			if errnie.IsNotAcceptable(err) {
-				return err
-			}
-
 			return errnie.Error(err)
 		}
+
+		tier.inflight.Store(order.ClOrdId, &submission{
+			position: position,
+			action:   action,
+		})
+	}
+
+	if err := tier.private.Write(buf); err != nil {
+		tier.inflight.Delete(order.ClOrdId)
+
+		if action == "enter" {
+			tier.positions.Drop(position.Symbol)
+		}
+
+		if errnie.IsNotAcceptable(err) {
+			return err
+		}
+
+		return errnie.Error(err)
 	}
 
 	return nil
@@ -477,6 +645,21 @@ func (tier *Tier) settle(position *Position) {
 	}
 
 	if err := tier.Send(position, "exit"); err != nil {
+		// A missing book price is permanent — the symbol was evicted.
+		// Forcing the lot closed prevents an infinite retry loop.
+		if errnie.IsNotFound(err) {
+			tier.positions.Remove(position.Symbol)
+			tier.Recalculate()
+			tier.pending.Store(position.Symbol, position)
+			return
+		}
+
+		// Reopen so mark can retry; ClosedAt was claimed before Send.
+		position.mu.Lock()
+		position.ClosedAt = nil
+		position.ExitTick = 0
+		position.mu.Unlock()
+
 		errnie.Error(err)
 		return
 	}
@@ -522,10 +705,21 @@ func (tier *Tier) Recalculate() {
 
 	tier.WinRate = float64(wins) / float64(count)
 	tier.Edge = totalReturn / float64(count)
+	tier.reprieve = false
 
-	if tier.Type == TierTypeReal && !tier.ok() {
-		tier.unlocked = false
+	if tier.Type != TierTypeReal {
+		return
 	}
+
+	if tier.ok() {
+		tier.halted = false
+		return
+	}
+
+	tier.halted = true
+	tier.sawOK = false
+	tier.broke = false
+	tier.unlocked = false
 }
 
 /*
@@ -534,6 +728,14 @@ Run owns the private ingress for this tier. Public frames are read once on Desk.
 func (tier *Tier) Run() {
 	if tier.private == nil || tier.venue == nil {
 		return
+	}
+
+	if tier.live != nil {
+		if err := tier.live.Arm(); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[broker.Tier] private subscribe failed", err,
+			))
+		}
 	}
 
 	for {
@@ -554,5 +756,104 @@ func (tier *Tier) Run() {
 		}
 
 		tier.venue.Read(buf)
+		tier.notePrivate(buf)
 	}
+}
+
+/*
+fillReport keeps trade prints. Status-only execution events are not fills.
+*/
+func (tier *Tier) fillReport(execution *market.ExecutionData) bool {
+	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
+		return false
+	}
+
+	return execution.ExecType == "" || execution.ExecType == "trade"
+}
+
+func (tier *Tier) ack(order *kraken.Order) {
+	if order == nil {
+		return
+	}
+
+	if order.Success {
+		if order.Result.ClOrdID != "" {
+			tier.inflight.Delete(order.Result.ClOrdID)
+		}
+
+		return
+	}
+
+	tier.reject(order.Result.ClOrdID, order.Error)
+}
+
+func (tier *Tier) reject(clOrdID, reason string) {
+	if clOrdID != "" {
+		value, ok := tier.inflight.LoadAndDelete(clOrdID)
+
+		if !ok {
+			return
+		}
+
+		tier.dropRejected(value.(*submission), reason)
+		return
+	}
+
+	tier.inflight.Range(func(key, value any) bool {
+		tier.inflight.Delete(key)
+		tier.dropRejected(value.(*submission), reason)
+		return true
+	})
+}
+
+func (tier *Tier) dropRejected(sent *submission, reason string) {
+	if sent == nil || sent.position == nil {
+		return
+	}
+
+	position := sent.position
+
+	if sent.action == "exit" {
+		position.mu.Lock()
+		position.ClosedAt = nil
+		position.ExitTick = 0
+		position.mu.Unlock()
+
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable, "[broker.Tier] exit rejected", nil,
+		).With("symbol", position.Symbol, "reason", reason))
+
+		return
+	}
+
+	tier.positions.Drop(position.Symbol)
+
+	errnie.Error(errnie.Err(
+		errnie.NotAcceptable, "[broker.Tier] entry rejected", nil,
+	).With("symbol", position.Symbol, "reason", reason))
+
+	tier.Hello()
+}
+
+/*
+notePrivate logs a rejected private subscription. Order rejects take ack.
+*/
+func (tier *Tier) notePrivate(buf []byte) {
+	var head struct {
+		Method  string `json:"method"`
+		Success *bool  `json:"success"`
+		Error   string `json:"error"`
+	}
+
+	if err := sonic.Unmarshal(buf, &head); err != nil {
+		return
+	}
+
+	if head.Method != "subscribe" || head.Success == nil || *head.Success {
+		return
+	}
+
+	errnie.Error(errnie.Err(
+		errnie.IO, "[broker.Tier] private subscribe rejected", nil,
+	).With("error", head.Error))
 }

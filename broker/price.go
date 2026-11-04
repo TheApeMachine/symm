@@ -55,11 +55,15 @@ type Price struct {
 	ticker     sync.Map
 	balance    *market.Balance
 	normalizer *spot.Normalizer
+	tape       *Tape
 }
 
 type tickerSnap struct {
 	volumeUSD float64
 	changePct float64
+	high24    float64
+	low24     float64
+	last      float64
 }
 
 func NewPrice(
@@ -77,6 +81,7 @@ func NewPrice(
 		Instrument: instrument,
 		Books:      books,
 		normalizer: normalizer,
+		tape:       NewTape(),
 	}
 
 	if !price.loadFees() {
@@ -90,8 +95,17 @@ func NewPrice(
 	return price
 }
 
-func (price *Price) SetTicker(symbol string, volumeUSD, changePct float64) {
-	price.ticker.Store(symbol, tickerSnap{volumeUSD, changePct})
+func (price *Price) SetTicker(
+	symbol string,
+	volumeUSD, changePct, high24, low24, last float64,
+) {
+	price.ticker.Store(symbol, tickerSnap{
+		volumeUSD: volumeUSD,
+		changePct: changePct,
+		high24:    high24,
+		low24:     low24,
+		last:      last,
+	})
 }
 
 func (price *Price) tickerOf(symbol string) tickerSnap {
@@ -105,6 +119,40 @@ func (price *Price) tickerOf(symbol string) tickerSnap {
 
 func (price *Price) VolumeUSD(symbol string) float64 { return price.tickerOf(symbol).volumeUSD }
 func (price *Price) ChangePct(symbol string) float64 { return price.tickerOf(symbol).changePct }
+
+/*
+PeakFrac is last's position in the 24h high–low range (0 at low, 1 at high).
+*/
+func (price *Price) PeakFrac(symbol string) (float64, bool) {
+	snap := price.tickerOf(symbol)
+	span := snap.high24 - snap.low24
+
+	if span <= 0 || snap.last <= 0 {
+		return 0, false
+	}
+
+	return (snap.last - snap.low24) / span, true
+}
+
+/*
+BelowPeak is true when last sits under max_entry_peak_frac of the 24h range.
+Disabled when the cap is <=0 or >=1. Missing range data vetoes while enabled.
+*/
+func (price *Price) BelowPeak(symbol string) bool {
+	cap := system.Cfg.Risk.MaxEntryPeakFrac
+
+	if cap <= 0 || cap >= 1 {
+		return true
+	}
+
+	frac, ok := price.PeakFrac(symbol)
+
+	if !ok {
+		return false
+	}
+
+	return frac < cap
+}
 
 func (price *Price) refreshTicker() {
 	response, err := network.NewREST().Get(
@@ -129,7 +177,14 @@ func (price *Price) refreshTicker() {
 			symbol = name
 		}
 
-		price.SetTicker(symbol, row.QuoteVolume24h(), row.ChangePct())
+		price.SetTicker(
+			symbol,
+			row.QuoteVolume24h(),
+			row.ChangePct(),
+			row.High24h(),
+			row.Low24h(),
+			row.LastTrade(),
+		)
 	}
 }
 
@@ -480,28 +535,61 @@ func (price *Price) PnLPct(
 }
 
 func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
+	vwap, _, _, _ := price.closeNow(symbol, quantity, nil, nil)
+	return vwap
+}
+
+/*
+closeNow walks the bid book once for exit VWAP, room, and fee-net PnL.
+*/
+func (price *Price) closeNow(
+	symbol string,
+	quantity, entry, fee *decimal.Decimal,
+) (vwap, room, pnl, pnlPct *decimal.Decimal) {
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil
+		return
 	}
 
-	var vwap *decimal.Decimal
-
 	price.Books.Book(symbol, func(managed *market.Book) {
+		if managed == nil {
+			return
+		}
+
+		if bid := managed.BestBid(); bid != nil && bid.Quantity != nil && bid.Quantity.Sign() > 0 {
+			r := bid.Quantity.Div(*quantity)
+			room = &r
+		}
+
 		if !bookReady(managed) {
 			return
 		}
 
 		filled, gross, err := price.consume(managed, quantity, nil, SELL)
-
 		if err != nil || filled == nil || gross == nil || filled.Sign() <= 0 {
 			return
 		}
 
 		v := gross.Div(*filled)
 		vwap = &v
+
+		if entry == nil || entry.Sign() <= 0 || fee == nil {
+			return
+		}
+
+		entryCost := entry.Mul(*quantity)
+		cost := price.afterFee(&entryCost, fee, BUY)
+		netExit := price.afterFee(gross, fee, SELL)
+		if cost == nil || netExit == nil || cost.Sign() <= 0 {
+			return
+		}
+
+		p := netExit.Sub(*cost)
+		pnl = &p
+		pct := p.Div(*cost).Mul(decimalHundred)
+		pnlPct = &pct
 	})
 
-	return vwap
+	return
 }
 
 // TouchAsk is the best ask when the book is crossed-ready.
@@ -894,47 +982,28 @@ func (price *Price) roundTrip(
 		return nil, nil
 	}
 
-	var grossExit *decimal.Decimal
-
-	price.Books.Book(symbol, func(managed *market.Book) {
-		if !bookReady(managed) {
-			return
-		}
-
-		filled, gross, err := price.consume(managed, quantity, nil, SELL)
-		if err != nil || filled == nil || gross == nil {
-			return
-		}
-
-		grossExit = gross
-	})
-
-	if grossExit == nil {
+	_, _, profit, _ = price.closeNow(symbol, quantity, entry, entryFee)
+	if profit == nil {
 		return nil, nil
 	}
 
 	entryCost := entry.Mul(*quantity)
 	cost = price.afterFee(&entryCost, entryFee, BUY)
-	netExit := price.afterFee(grossExit, exitFee, SELL)
-	if cost == nil || netExit == nil {
-		return nil, nil
-	}
-
-	p := netExit.Sub(*cost)
-	return &p, cost
+	return profit, cost
 }
 
 func (price *Price) roundTripPct(
 	symbol string,
 	quantity, entry, entryFee, exitFee *decimal.Decimal,
 ) *decimal.Decimal {
-	profit, cost := price.roundTrip(symbol, quantity, entry, entryFee, exitFee)
-	if profit == nil || cost == nil || cost.Sign() <= 0 {
+	if quantity == nil || entry == nil ||
+		quantity.Sign() <= 0 || entry.Sign() <= 0 ||
+		entryFee == nil || exitFee == nil {
 		return nil
 	}
 
-	pct := profit.Div(*cost).Mul(decimalHundred)
-	return &pct
+	_, _, _, pct := price.closeNow(symbol, quantity, entry, entryFee)
+	return pct
 }
 
 // consume fills maxQty from the book; maxGross (if set) also caps quote spent.

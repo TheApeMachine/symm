@@ -3,7 +3,9 @@ package broker
 import (
 	"context"
 	"iter"
+	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
@@ -12,13 +14,11 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
-// Drop-oldest ring depths for Level3 / trade pumps (same shape as ui.Hub).
-const (
-	level3QueueFrames = 256
-	tradeQueueFrames  = 256
-)
+// Trade pump is drop-oldest; Level3 uses configured backpressure capacity.
+const tradeQueueFrames = 256
 
 /*
 Desk fans work across the virtual, paper, and real tiers.
@@ -55,7 +55,7 @@ func NewDesk(
 		price:    price,
 		public:   transports["public"],
 		venue:    host,
-		level3Ch: make(chan *market.Level3, level3QueueFrames),
+		level3Ch: make(chan *market.Level3, system.Cfg.Market.Level3.RingCapacity),
 		tradeCh:  make(chan *market.Trade, tradeQueueFrames),
 		tiers: map[TierType]*Tier{
 			TierTypeVirtual: NewTier(
@@ -88,12 +88,6 @@ func NewDesk(
 	go desk.pumpLevel3()
 	go desk.pumpTrade()
 
-	host.Level3().OnChange(func(frame market.MarketType) {
-		book := market.NewLevel3()
-		frame.ToMarket(book)
-		desk.enqueueLevel3(book)
-	})
-
 	host.Trade().OnChange(func(frame market.MarketType) {
 		trade := market.NewTrade("", "", nil)
 		frame.ToMarket(trade)
@@ -105,8 +99,8 @@ func NewDesk(
 }
 
 /*
-enqueueLevel3 pushes a book snapshot without blocking. A full ring drops the
-oldest frame so the newest always lands — same shape as ui.Hub.Write.
+enqueueLevel3 applies backpressure instead of dropping deltas. A dropped
+Level3 frame permanently diverges the book until the next snapshot.
 */
 func (desk *Desk) enqueueLevel3(book *market.Level3) {
 	if book == nil {
@@ -115,18 +109,7 @@ func (desk *Desk) enqueueLevel3(book *market.Level3) {
 
 	select {
 	case desk.level3Ch <- book:
-		return
-	default:
-	}
-
-	select {
-	case <-desk.level3Ch:
-	default:
-	}
-
-	select {
-	case desk.level3Ch <- book:
-	default:
+	case <-desk.Context().Done():
 	}
 }
 
@@ -207,14 +190,26 @@ func (desk *Desk) OnTrade(fn func(*market.Trade)) {
 }
 
 /*
-Feed pushes a raw venue frame through the desk venue (level3 sockets use this).
+Feed decodes one Level3 socket frame into a private book copy and enqueues it.
+Each L3 batch has its own reader; sharing a venue Level3 would race.
 */
 func (desk *Desk) Feed(buf []byte) {
-	if desk.venue == nil {
+	var head struct {
+		Channel string `json:"channel"`
+	}
+
+	if err := sonic.Unmarshal(buf, &head); err != nil || head.Channel != "level3" {
 		return
 	}
 
-	desk.venue.Read(buf)
+	raw := kraken.DecodeLevel3(buf)
+	if raw == nil || len(raw.Data) == 0 {
+		return
+	}
+
+	book := market.NewLevel3()
+	raw.ToMarket(book)
+	desk.enqueueLevel3(book)
 }
 
 /*
@@ -294,8 +289,37 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 			continue
 		}
 
-		price := trade.Price
-		desk.mark(trade.Symbol, &price)
+		if desk.price != nil {
+			at := trade.Timestamp
+
+			if at.IsZero() {
+				at = time.Now()
+			}
+
+			quote := trade.Price.Mul(trade.Qty).InexactFloat64()
+			desk.price.tape.Note(trade.Symbol, quote, at)
+		}
+
+		// Longs mark on the executable bid, never the print. Aggressive
+		// buys print the ask and would inflate Peak before an L3 bid mark.
+		var price *decimal.Decimal
+
+		if desk.price != nil && desk.price.Books != nil {
+			desk.price.Books.Book(trade.Symbol, func(managed *market.Book) {
+				if managed == nil || managed.BestBid() == nil || managed.BestBid().Price == nil {
+					return
+				}
+
+				price = managed.BestBid().Price
+			})
+		}
+
+		if price == nil {
+			p := trade.Price
+			price = &p
+		}
+
+		desk.mark(trade.Symbol, price)
 	}
 }
 

@@ -40,4 +40,20 @@ describe("normalizeStoploss", () => {
 		expect(stop?.state).toBe("Dangerous");
 		expect(stop?.proximity).toBe(0.8);
 	});
+
+	it("does not treat the hard rail as an armed soft floor", () => {
+		const stop = normalizeStoploss({
+			State: 1,
+			CurrentPnLPct: -0.22,
+			PeakPnLPct: -0.08,
+			FloorPnLPct: -2.5,
+			InitialPnLPct: -0.08,
+			MaxLossPct: -2.5,
+			ProfitTargetPct: 10,
+		});
+
+		expect(stop?.state).toBe("Healthy");
+		expect(stop?.has_floor).toBe(false);
+		expect(stop?.room_pct).toBeCloseTo(2.28, 5);
+	});
 });

@@ -13,22 +13,24 @@ func TestRisk_Apply(t *testing.T) {
 
 		Convey("It patches known floors from a gate-lab command", func() {
 			risk.Apply(map[string]any{
-				"type":                   "risk",
-				"min_mover_volume_usd":   50_000.0,
-				"min_mover_change_pct":   1.25,
-				"max_entry_spread_pct":   0.75,
-				"min_touch_bid_cash":     250.0,
-				"min_backing_ratio":      0.4,
-				"min_tape_trades":        3.0,
+				"type":                    "risk",
+				"min_mover_volume_usd":    50_000.0,
+				"min_mover_change_pct":    1.25,
+				"max_entry_spread_pct":    0.75,
+				"max_entry_peak_frac":     0.85,
+				"min_touch_bid_cash":      250.0,
+				"min_backing_ratio":       0.4,
+				"min_tape_notional_usd":   250.0,
 				"max_entry_open_drag_pct": 1.1,
 			})
 
 			So(risk.MinMoverVolumeUSD, ShouldEqual, 50_000.0)
 			So(risk.MinMoverChangePct, ShouldEqual, 1.25)
 			So(risk.MaxEntrySpreadPct, ShouldEqual, 0.75)
+			So(risk.MaxEntryPeakFrac, ShouldEqual, 0.85)
 			So(risk.MinTouchBidCash, ShouldEqual, 250.0)
 			So(risk.MinBackingRatio, ShouldEqual, 0.4)
-			So(risk.MinTapeTrades, ShouldEqual, 3)
+			So(risk.MinTapeNotionalUSD, ShouldEqual, 250.0)
 			So(risk.MaxEntryOpenDragPct, ShouldEqual, 1.1)
 		})
 	})

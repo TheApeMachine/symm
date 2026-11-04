@@ -40,6 +40,14 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			defer wg.Done()
 
 			signal.books.Book(data.Symbol, func(book *market.Book) {
+				bestBid := book.BestBid()
+				bestAsk := book.BestAsk()
+
+				if bestBid == nil || bestAsk == nil ||
+					bestBid.Price == nil || bestAsk.Price == nil {
+					return
+				}
+
 				price := data.Price.InexactFloat64()
 				qty := data.Qty.InexactFloat64()
 
@@ -48,8 +56,8 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					Symbol: data.Symbol,
 					Last:   price,
 					Volume: qty,
-					Ask:    book.BestAsk().Price.InexactFloat64(),
-					Bid:    book.BestBid().Price.InexactFloat64(),
+					Ask:    bestAsk.Price.InexactFloat64(),
+					Bid:    bestBid.Price.InexactFloat64(),
 				})
 
 				if err != nil {

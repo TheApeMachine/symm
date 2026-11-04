@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/symm/system"
 )
 
 // Book is the historical name signals/boot still use for BookManager.
@@ -102,9 +104,14 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 
 		book := manager.books[data.Symbol]
 
-		if book == nil {
+		// Snapshots are full state — replace so ghosts from a prior
+		// stream (or missed deletes) cannot stick around.
+		if book == nil || level3.Type == "snapshot" {
 			book = market.NewBook()
 			book.Name = data.Symbol
+			// Kraken does not delete levels that fall out of subscribed
+			// depth; EnforceDepth must match the subscription.
+			book.MaxDepth = system.Cfg.Market.Level3.Depth
 			manager.books[data.Symbol] = book
 		}
 
@@ -129,7 +136,19 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 }
 
 func applyOrder(book *market.Book, side market.SideKind, order *market.Level3Order) {
-	if order == nil || order.LimitPrice == nil || order.OrderQty == nil {
+	if order == nil || order.LimitPrice == nil {
+		return
+	}
+
+	// Kraken delete frames still carry the last positive order_qty; removal
+	// is signaled only by event=delete. Force qty 0 so the book drops it.
+	qty := order.OrderQty
+	if order.Event == "delete" {
+		zero := decimal.Zero
+		qty = &zero
+	}
+
+	if qty == nil {
 		return
 	}
 
@@ -137,7 +156,7 @@ func applyOrder(book *market.Book, side market.SideKind, order *market.Level3Ord
 		Direction: side,
 		ID:        order.OrderID,
 		Price:     order.LimitPrice,
-		Quantity:  order.OrderQty,
+		Quantity:  qty,
 		Timestamp: order.Timestamp,
 	})
 }

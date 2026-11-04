@@ -64,16 +64,48 @@ func (balance *Balance) MarshalJSON() ([]byte, error) {
 	return sonic.Marshal((*alias)(balance))
 }
 
+type balanceWallet struct {
+	Type    string          `json:"type"`
+	ID      string          `json:"id"`
+	Balance decimal.Decimal `json:"balance"`
+}
+
+type balanceRow struct {
+	Asset      string          `json:"asset"`
+	Balance    decimal.Decimal `json:"balance"`
+	Amount     decimal.Decimal `json:"amount"`
+	Wallets    []balanceWallet `json:"wallets"`
+	WalletType string          `json:"wallet_type"`
+	WalletID   string          `json:"wallet_id"`
+}
+
+type balanceFrame struct {
+	Channel string                      `json:"channel"`
+	Type    string                      `json:"type"`
+	Error   []any                       `json:"error"`
+	Result  map[string]*decimal.Decimal `json:"result"`
+	Data    []balanceRow                `json:"data"`
+}
+
 func (balance *Balance) UnmarshalJSON(data []byte) error {
-	type alias Balance
-	var decoded alias
+	var decoded balanceFrame
 
 	if err := sonic.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
 
 	onChange := balance.onChange
-	*balance = Balance(decoded)
+
+	if decoded.Channel == "balances" && len(decoded.Data) > 0 {
+		balance.fold(decoded)
+	} else {
+		*balance = Balance{
+			Channel: decoded.Channel,
+			Error:   decoded.Error,
+			Result:  decoded.Result,
+		}
+	}
+
 	balance.onChange = onChange
 
 	if balance.Result == nil {
@@ -85,6 +117,72 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+/*
+fold copies a private balances snapshot or update into Result.
+Spendable cash is the spot main wallet, not earn.
+*/
+func (balance *Balance) fold(frame balanceFrame) {
+	updating := frame.Type == "update" && balance.Result != nil
+
+	if !updating {
+		balance.Result = make(map[string]*decimal.Decimal)
+	}
+
+	balance.Channel = "balances"
+
+	for _, row := range frame.Data {
+		amount, ok := row.spendable()
+
+		if !ok {
+			continue
+		}
+
+		// Update `balance` is the account total. Keep the spot wallet by
+		// applying the spot delta when we already have one.
+		if updating && row.WalletType == "spot" {
+			if prev := balance.Result[row.Asset]; prev != nil {
+				amount = prev.Add(row.Amount)
+			}
+		}
+
+		next := amount
+		balance.Result[row.Asset] = &next
+	}
+}
+
+/*
+spendable is the spot main balance the desk can allocate.
+*/
+func (row balanceRow) spendable() (decimal.Decimal, bool) {
+	if row.Asset == "" {
+		return decimal.Zero, false
+	}
+
+	if row.WalletType != "" {
+		if row.WalletType != "spot" {
+			return decimal.Zero, false
+		}
+
+		if row.WalletID != "" && row.WalletID != "main" {
+			return decimal.Zero, false
+		}
+
+		return row.Balance, true
+	}
+
+	for _, wallet := range row.Wallets {
+		if wallet.Type == "spot" && (wallet.ID == "main" || wallet.ID == "") {
+			return wallet.Balance, true
+		}
+	}
+
+	if len(row.Wallets) == 0 {
+		return row.Balance, true
+	}
+
+	return decimal.Zero, false
 }
 
 func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {

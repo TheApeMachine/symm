@@ -137,7 +137,7 @@ func (training *Training) ResetSequencer(symbol string) {
 	training.catalog.Persist(training.Context(), training.client, symbol, seq.State())
 }
 
-// lightBroker paints volume / day / spread / book oracle sides before Emit.
+// lightBroker paints volume / day / spread / book / peak oracle sides before Emit.
 func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
 	if len(regions) < store.RegionCount {
 		return
@@ -159,6 +159,7 @@ func (training *Training) lightBroker(symbol string, regions []*runtime.Region) 
 
 	training.shine(regions, 13, 14, spreadOK)
 	training.shine(regions, 15, 16, price.BookIntact(symbol))
+	training.shine(regions, 23, 24, price.BelowPeak(symbol))
 }
 
 func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
@@ -209,7 +210,7 @@ func (board Board) Tradable() bool {
 		}
 
 		key := int(region.Key)
-		if key < 9 || key > 22 {
+		if key < 9 || key >= store.RegionCount {
 			continue
 		}
 

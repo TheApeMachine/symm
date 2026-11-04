@@ -234,15 +234,14 @@ market:
       - USDS
       - RLUSD
       - UST
-      # # Large-cap pairs: short holds rarely clear ~1.6% round-trip taker friction.
-      # - BTC
-      # - ETH
-      # - SOL
-      # - LTC
-      # - ADA
-      # - DOT
-      # - LINK
-      # - PEPE
+      # Large-cap pairs: short holds rarely clear ~1.6% round-trip taker friction.
+      - BTC
+      - ETH
+      - SOL
+      - LTC
+      - ADA
+      - DOT
+      - LINK
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true
@@ -331,22 +330,31 @@ risk:
   min_mover_volume_usd: 50000
   # Open-to-last day move floor (%) — liquid-but-flat names stay out.
   min_mover_change_pct: 0.5
+  # Max last position in the 24h high–low range (0–1). At/above → peak veto.
+  # 0.90 = top 10% of the day's range is off-limits. <=0 or >=1 disables.
+  max_entry_peak_frac: 0.90
   # Touch spread cap for mover pre-filter and desk entry (% of mid).
   max_entry_spread_pct: 2.0
   # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
-  max_entry_open_drag_pct: 2.5
+  max_entry_open_drag_pct: 2.0
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
-  # Prints inside this lookback count toward tape liveness at entry.
+  # Each half of the tape comparison. Last window must beat the one before it.
   tape_window: 10m
-  # Minimum in-window prints before a silent book can clear entry.
-  min_tape_trades: 8
+  # Quote dollars the last window must clear, on top of beating the prior window.
+  min_tape_notional_usd: 100
   # Hard maximum adverse PnL from entry for Stoploss (percentage points).
-  max_allowed_loss_pct: 2.5
+  max_allowed_loss_pct: 5
+  # Peak PnL% where the profit trail arms. Give-back is gone one target above this.
+  profit_target_pct: 10.0
   # TimeElastic memory for mark-arrival pace (faster marks pull the floor harder).
   stop_pace_halflife: 2s
   # Floor under the TimeElastic baseline denominator.
   stop_pace_epsilon: 0.000001
+  # Maximum duration in profit without a new peak before taking profit.
+  stop_flatline_timeout: 15m
+  # Profit threshold required to arm the flatline exit (percentage points).
+  stop_flatline_min_profit_pct: 1.0
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).

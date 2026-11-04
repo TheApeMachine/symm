@@ -11,6 +11,68 @@ import (
 	"github.com/theapemachine/symm/broker"
 )
 
+func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
+	Convey("Policy exit does not settle a lot still in loss", t, func() {
+		tree := emptyTree()
+		model := &Model{
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		loss := decimal.NewFromFloat(-0.07)
+		lot := &broker.Position{
+			Symbol:    "XLM/USD",
+			Book:      broker.TierTypeVirtual.String(),
+			EntryPath: "R00/R01",
+			PnL:       &loss,
+		}
+
+		var got *runtime.Decision
+		decide := func(d *runtime.Decision) { got = d }
+
+		model.applyAction(
+			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			[]*broker.Position{lot},
+		)
+
+		So(got, ShouldNotBeNil)
+		So(got.Action, ShouldEqual, "hold")
+		So(got.Gate, ShouldEqual, "pnl")
+		So(lot.ClosedAt, ShouldBeNil)
+		So(lot.ExitPath, ShouldEqual, "")
+	})
+
+	Convey("Policy exit settles a green lot when story is not bullish", t, func() {
+		tree := emptyTree()
+		model := &Model{
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		win := decimal.NewFromFloat(0.12)
+		lot := &broker.Position{
+			Symbol:    "XLM/USD",
+			Book:      broker.TierTypeVirtual.String(),
+			EntryPath: "R00/R01",
+			PnL:       &win,
+		}
+
+		var got *runtime.Decision
+		decide := func(d *runtime.Decision) { got = d }
+
+		model.applyAction(
+			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			[]*broker.Position{lot},
+		)
+
+		So(got, ShouldNotBeNil)
+		So(got.Action, ShouldEqual, "exit")
+		So(lot.ExitPath, ShouldEqual, "R00/M1")
+	})
+}
+
 func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 	Convey("stoploss pending → Exit Ensure-writes enter/exit leaves on an empty tree", t, func() {
 		tree := emptyTree()

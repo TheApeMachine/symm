@@ -169,7 +169,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		subtitle: "Cash / backing / tape",
 		role: "oracle_veto",
 		tone: "warn",
-		description: "Touch cash, backing, tape liveness, or open drag fails.",
+		description: "Touch cash, backing, tape uptake, or open drag fails.",
 	},
 	R16: {
 		id: "R16",
@@ -226,6 +226,24 @@ export const REGIONS: Record<string, RegionMeta> = {
 		role: "oracle_approve",
 		tone: "up",
 		description: "Depth and median liquidity can carry the desk lot.",
+	},
+	R23: {
+		id: "R23",
+		title: "24h peak veto",
+		subtitle: "Top of day range",
+		role: "oracle_veto",
+		tone: "warn",
+		description:
+			"Last sits at or above the peak fraction of the 24h high–low range — chasing the high.",
+	},
+	R24: {
+		id: "R24",
+		title: "24h peak approve",
+		subtitle: "Room in day range",
+		role: "oracle_approve",
+		tone: "up",
+		description:
+			"Last is still under the peak fraction of the 24h range — not buying the top.",
 	},
 };
 
@@ -776,7 +794,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<span className="text-[9.5px] text-(--f3) mt-0.5">{verdictText}</span>
 			</Flex.Column>
 
-			{/* 23-Region Live Confluence Strip */}
+			{/* 25-Region Live Confluence Strip */}
 			<Flex.Column gap={1}>
 				<Flex.Row align="center" justify="between" className="text-[10px]">
 					<span className="font-bold uppercase tracking-wider text-(--f4)">
@@ -790,7 +808,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<div
 					style={{
 						display: "grid",
-						gridTemplateColumns: "repeat(23, minmax(0, 1fr))",
+						gridTemplateColumns: "repeat(25, minmax(0, 1fr))",
 						gap: "0.25rem",
 					}}
 				>
@@ -946,7 +964,7 @@ export const TradeRegionScores = ({ life }: { life?: Lifecycle | null }) => {
 		return maxVal;
 	}, [regionMaps.brightness]);
 
-	// Stable R00-R22 order: never sort dynamically to prevent jumping rows during live streaming
+	// Stable R00-R24 order: never sort dynamically to prevent jumping rows during live streaming
 	const regionScores = useMemo(() => {
 		return REGION_KEYS.map((key) => {
 			const meta = REGIONS[key];

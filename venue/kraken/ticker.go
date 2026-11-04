@@ -78,7 +78,7 @@ ChangePct is percent move from today's open to last trade.
 */
 func (row TickerRow) ChangePct() float64 {
 	open := parseFloat(row.Open)
-	last := atIndex(row.Last, 0)
+	last := row.LastTrade()
 
 	if open <= 0 || last <= 0 {
 		return 0
@@ -86,6 +86,15 @@ func (row TickerRow) ChangePct() float64 {
 
 	return (last - open) / open * 100
 }
+
+// LastTrade is the most recent trade price.
+func (row TickerRow) LastTrade() float64 { return atIndex(row.Last, 0) }
+
+// High24h is the last-24h high.
+func (row TickerRow) High24h() float64 { return atIndex(row.High, 1) }
+
+// Low24h is the last-24h low.
+func (row TickerRow) Low24h() float64 { return atIndex(row.Low, 1) }
 
 func atIndex(vals []string, i int) float64 {
 	if i < 0 || i >= len(vals) {

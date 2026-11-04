@@ -217,6 +217,44 @@ func TestWrite(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(bare.Write(buf), ShouldNotBeNil)
 		})
+
+		Convey("When Restock credits base a sell can fill", func() {
+			fresh := NewVirtual(virtual.ctx)
+			fresh.UseFills(stubFills{
+				ask: decimal.NewFromInt(10),
+				bid: decimal.NewFromInt(9),
+			})
+
+			fresh.Restock("AAA/USD", decimal.NewFromInt(2), decimal.NewFromInt(20))
+
+			buf, err := sonic.Marshal(map[string]any{
+				"method": "add_order",
+				"params": map[string]any{
+					"side":      "sell",
+					"symbol":    "AAA/USD",
+					"order_qty": "2",
+					"cl_ord_id": "exit-1",
+				},
+			})
+			So(err, ShouldBeNil)
+			So(fresh.Write(buf), ShouldBeNil)
+
+			frame, err := fresh.Read()
+			So(err, ShouldBeNil)
+
+			exec := kraken.NewExecution()
+			So(sonic.Unmarshal(frame, exec), ShouldBeNil)
+			So(exec.Data[0].Side, ShouldEqual, "sell")
+			So(exec.Data[0].LastQty.String(), ShouldEqual, "2")
+
+			balances, err := fresh.Read()
+			So(err, ShouldBeNil)
+
+			venue := kraken.NewBalance()
+			So(sonic.Unmarshal(balances, venue), ShouldBeNil)
+			So(venue.Result["AAA"].String(), ShouldEqual, "0")
+			So(venue.Result["USD"].String(), ShouldEqual, "998")
+		})
 	}))
 }
 

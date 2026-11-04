@@ -23,8 +23,8 @@ type Position struct {
 	price           *Price
 	tierKey         string
 	onSettled       func(*Position)
-	qty             *decimal.Decimal // folded in Apply; Update only reads
-	entry           *decimal.Decimal // folded in Apply; Update only reads
+	qty             *decimal.Decimal        // folded in Apply; Update only reads
+	entry           *decimal.Decimal        // folded in Apply; Update only reads
 	Stoploss        *Stoploss               `json:"stoploss,omitempty"`
 	ID              string                  `json:"id"`
 	Book            string                  `json:"book,omitempty"`
@@ -134,26 +134,27 @@ func (position *Position) Update(mark *decimal.Decimal) {
 		fee = &zero
 	}
 
-	position.ExitVWAP = position.price.ExitVWAP(position.Symbol, qty)
-	position.ExitRoom = position.price.ExitRoom(position.Symbol, qty)
+	// Book walk is the executable close-now for stop + settle. Mark stays
+	// the last print/touch for display when the book is briefly stuck.
+	vwap, room, bookPnL, bookPnLPct := position.price.closeNow(
+		position.Symbol, qty, entry, fee,
+	)
+	position.ExitVWAP = vwap
+	position.ExitRoom = room
+
+	if bookPnL != nil {
+		position.PnL = bookPnL
+		position.PnLPct = bookPnLPct
+	} else {
+		exit := mark
+		if exit == nil {
+			exit = position.ExitVWAP
+		}
+		position.feeNetPnL(entry, qty, exit, fee)
+	}
 
 	if position.Mark == nil && position.ExitVWAP != nil {
 		position.Mark = position.ExitVWAP
-	}
-
-	newPnL, _ := position.price.roundTrip(
-		position.Symbol, qty, entry, fee, fee,
-	)
-
-	newPnLPct := position.price.roundTripPct(
-		position.Symbol, qty, entry, fee, fee,
-	)
-
-	if newPnL != nil {
-		position.PnL = newPnL
-		position.PnLPct = newPnLPct
-	} else {
-		position.markPnL(entry, qty)
 	}
 
 	if position.PnLPct != nil && position.Stoploss == nil && position.ClosedAt == nil {
@@ -164,9 +165,6 @@ func (position *Position) Update(mark *decimal.Decimal) {
 	if position.ClosedAt != nil || position.Stoploss == nil || position.PnLPct == nil {
 		return
 	}
-
-	position.Stoploss.rewire()
-	position.Stoploss.Observe(position.price, position.Symbol)
 
 	pnlPct, _ := position.PnLPct.Float64()
 	position.Stoploss.Update(pnlPct)
@@ -254,6 +252,44 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 }
 
 /*
+Restock credits a virtual wallet for a lot reopened from S3 (fresh process has
+quote cash only). Uses folded fills, else EntryOrder volume.
+*/
+func (position *Position) Restock(virtual *network.Virtual) {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if (position.qty == nil || position.entry == nil) && len(position.Fills) > 0 {
+		position.foldFills()
+	}
+
+	qty := position.qty
+	entry := position.entry
+
+	if qty == nil || qty.Sign() <= 0 {
+		if position.EntryOrder == nil || position.EntryOrder.Volume == "" {
+			return
+		}
+
+		parsed, err := decimal.NewFromString(position.EntryOrder.Volume)
+
+		if err != nil || parsed.Sign() <= 0 {
+			return
+		}
+
+		qty = &parsed
+	}
+
+	cost := decimal.Zero
+
+	if entry != nil && entry.Sign() > 0 {
+		cost = qty.Mul(*entry)
+	}
+
+	virtual.Restock(position.Symbol, *qty, cost)
+}
+
+/*
 Owns reports whether this execution belongs to the lot's entry or exit order.
 */
 func (position *Position) Owns(execution market.ExecutionData) bool {
@@ -274,38 +310,20 @@ func (position *Position) Owns(execution market.ExecutionData) bool {
 	return false
 }
 
-// markPnL sets fee-net close-now PnL from mark/exit VWAP when the bid walk fails.
-func (position *Position) markPnL(entry, qty *decimal.Decimal) {
-	if entry == nil || entry.Sign() <= 0 || position.price == nil {
+// feeNetPnL sets fee-net close-now PnL from an explicit exit price.
+func (position *Position) feeNetPnL(
+	entry, qty, exit, fee *decimal.Decimal,
+) {
+	if entry == nil || entry.Sign() <= 0 ||
+		qty == nil || qty.Sign() <= 0 ||
+		exit == nil || exit.Sign() <= 0 ||
+		position.price == nil {
 		return
 	}
 
-	if qty == nil || qty.Sign() <= 0 {
-		return
-	}
-
-	fee := position.price.Fee(position.Symbol)
 	if fee == nil {
 		zero := decimal.Zero
 		fee = &zero
-	}
-
-	if pnl, _ := position.price.roundTrip(position.Symbol, qty, entry, fee, fee); pnl != nil {
-		position.PnL = pnl
-	}
-
-	if pct := position.price.roundTripPct(position.Symbol, qty, entry, fee, fee); pct != nil {
-		position.PnLPct = pct
-		return
-	}
-
-	exit := position.ExitVWAP
-	if exit == nil || exit.Sign() <= 0 {
-		exit = position.Mark
-	}
-
-	if exit == nil || exit.Sign() <= 0 {
-		return
 	}
 
 	entryCost := entry.Mul(*qty)
@@ -321,6 +339,46 @@ func (position *Position) markPnL(entry, qty *decimal.Decimal) {
 	position.PnL = &pnl
 	pct := pnl.Div(*netEntry).Mul(decimalHundred)
 	position.PnLPct = &pct
+}
+
+/*
+CloseNowProceeds is fee-net quote received if the open lot sold now.
+PnL = proceeds − net entry, so proceeds = PnL + net entry.
+*/
+func (position *Position) CloseNowProceeds() *decimal.Decimal {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.price == nil || position.qty == nil || position.qty.Sign() <= 0 {
+		return nil
+	}
+
+	fee := position.price.Fee(position.Symbol)
+	if fee == nil {
+		zero := decimal.Zero
+		fee = &zero
+	}
+
+	if position.PnL != nil && position.entry != nil && position.entry.Sign() > 0 {
+		entryCost := position.entry.Mul(*position.qty)
+		netEntry := position.price.afterFee(&entryCost, fee, BUY)
+		if netEntry != nil {
+			proceeds := position.PnL.Add(*netEntry)
+			return &proceeds
+		}
+	}
+
+	exit := position.ExitVWAP
+	if exit == nil || exit.Sign() <= 0 {
+		exit = position.Mark
+	}
+
+	if exit == nil || exit.Sign() <= 0 {
+		return nil
+	}
+
+	gross := exit.Mul(*position.qty)
+	return position.price.afterFee(&gross, fee, SELL)
 }
 
 // seedEntry records a book-derived buy fill for no-transport test lots.
@@ -435,6 +493,12 @@ Apply records a venue fill, folds qty/entry, then marks through Update.
 */
 func (position *Position) Apply(execution market.ExecutionData) {
 	position.mu.Lock()
+
+	if position.seen(execution.ExecID) {
+		position.mu.Unlock()
+		return
+	}
+
 	mark := position.applyFill(execution)
 	position.mu.Unlock()
 
@@ -471,4 +535,21 @@ func (position *Position) applyFill(execution market.ExecutionData) *decimal.Dec
 	}
 
 	return mark
+}
+
+/*
+seen reports a fill the lot already folded. Empty ids are not identities.
+*/
+func (position *Position) seen(execID string) bool {
+	if execID == "" {
+		return false
+	}
+
+	for _, fill := range position.Fills {
+		if fill != nil && fill.ExecID == execID {
+			return true
+		}
+	}
+
+	return false
 }

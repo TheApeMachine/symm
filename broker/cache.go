@@ -53,6 +53,16 @@ func NewCache(
 		cache.positions["open"][position.Symbol] = position
 	}
 
+	for buf := range cache.store.Stream(cache.Context(), fmt.Sprintf("%s/closed/", cache.tierKey)) {
+		position := cache.restore(buf, false)
+
+		if position == nil {
+			continue
+		}
+
+		cache.keepClosed(position)
+	}
+
 	return cache
 }
 
@@ -69,21 +79,21 @@ func (cache *Cache) Closed(symbols ...string) []*Position {
 }
 
 func (cache *Cache) Restore(raw []byte) *Position {
+	return cache.restore(raw, true)
+}
+
+func (cache *Cache) restore(raw []byte, reopen bool) *Position {
 	if len(raw) == 0 {
 		return nil
 	}
 
-	var position *Position
+	position := decodeLot(raw)
 
-	if err := sonic.Unmarshal(raw, &position); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
-		))
-
+	if position == nil || position.Symbol == "" {
 		return nil
 	}
 
-	if position == nil || position.Symbol == "" {
+	if !reopen && position.ClosedAt == nil {
 		return nil
 	}
 
@@ -97,12 +107,17 @@ func (cache *Cache) Restore(raw []byte) *Position {
 		position.Book = cache.tierKey
 	}
 
-	if position.Stoploss != nil {
-		position.Stoploss.rewire()
-		position.Stoploss.Observe(cache.price, position.Symbol)
-	} else {
-		pnlPct, _ := position.PnLPct.Float64()
-		position.Stoploss = NewStoploss(pnlPct, cache.price, position.Symbol)
+	// Open-prefix lots were never Remove'd. A prior settle that set ClosedAt
+	// then failed must reopen so mark/settle can finish the exit.
+	if reopen {
+		position.ClosedAt = nil
+
+		if position.Stoploss != nil {
+			position.Stoploss.State = StoplossHealthy
+		} else {
+			pnlPct, _ := position.PnLPct.Float64()
+			position.Stoploss = NewStoploss(pnlPct, cache.price, position.Symbol)
+		}
 	}
 
 	if len(position.Fills) > 0 {
@@ -112,25 +127,64 @@ func (cache *Cache) Restore(raw []byte) *Position {
 	return position
 }
 
+/*
+keepClosed retains the latest settle when several closed ids share a symbol.
+*/
+func (cache *Cache) keepClosed(position *Position) {
+	if position == nil {
+		return
+	}
+
+	current := cache.positions["closed"][position.Symbol]
+
+	if current != nil && current.ClosedAt != nil && position.ClosedAt != nil &&
+		!position.ClosedAt.After(*current.ClosedAt) {
+		return
+	}
+
+	cache.positions["closed"][position.Symbol] = position
+}
+
+/*
+decodeLot accepts a bare Position or a blob that nests it under "position".
+*/
+func decodeLot(raw []byte) *Position {
+	var position *Position
+
+	if err := sonic.Unmarshal(raw, &position); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
+		))
+
+		return nil
+	}
+
+	if position != nil && position.Symbol != "" {
+		return position
+	}
+
+	var wrap struct {
+		Position *Position `json:"position"`
+	}
+
+	if err := sonic.Unmarshal(raw, &wrap); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
+		))
+
+		return nil
+	}
+
+	return wrap.Position
+}
+
 func (cache *Cache) Has(symbol string) bool {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 
-	position := cache.positions["open"][symbol]
-
-	if position == nil {
-		return false
-	}
-
-	// ClosedAt set but still parked under open (settle/Exit race) must not
-	// block Enter — reclaim into closed.
-	if position.ClosedAt != nil {
-		delete(cache.positions["open"], symbol)
-		cache.positions["closed"][symbol] = position
-		return false
-	}
-
-	return true
+	// Still under open (including ClosedAt claimed while settle Sends) occupies
+	// the symbol. Remove is the only path into closed.
+	return cache.positions["open"][symbol] != nil
 }
 
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {

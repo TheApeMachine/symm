@@ -131,7 +131,7 @@ export const cognitionStore = createStore<CognitionState>({
 });
 
 /** Mirrors nomagique RegionCount / grid-pins REGION_COUNT. */
-const REGION_COUNT = 23;
+const REGION_COUNT = 25;
 
 type RegionRing = { tick: number; row: Array<number | undefined> };
 
@@ -182,7 +182,7 @@ const noteRegions = (
 	const next =
 		last !== undefined && last.tick === tick
 			? prior.slice(0, -1)
-			: prior.slice(-23);
+			: prior.slice(-25);
 	next.push({ tick, row });
 	regionRings.set(symbol, next);
 

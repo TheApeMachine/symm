@@ -13,6 +13,7 @@ OrderResult identifies the venue order created by Kraken.
 */
 type OrderResult struct {
 	OrderID      string `json:"order_id"`
+	ClOrdID      string `json:"cl_ord_id,omitempty"`
 	OrderUserref int    `json:"order_userref"`
 }
 

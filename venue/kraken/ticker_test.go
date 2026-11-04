@@ -32,5 +32,8 @@ func TestParseTickerQuoteVolume(t *testing.T) {
 		row := rows["STRK/USD"]
 		So(row.QuoteVolume24h(), ShouldEqual, 100_000)
 		So(row.ChangePct(), ShouldAlmostEqual, (2.10-1.75)/1.75*100, 1e-9)
+		So(row.LastTrade(), ShouldEqual, 2.10)
+		So(row.High24h(), ShouldEqual, 2.30)
+		So(row.Low24h(), ShouldEqual, 1.80)
 	})
 }
