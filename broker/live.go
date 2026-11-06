@@ -111,6 +111,7 @@ order_qty is sent as a JSON number, which the private socket requires.
 func (live *Live) Seal(message []byte) ([]byte, error) {
 	var request struct {
 		Method string         `json:"method"`
+		ReqID  int64          `json:"req_id,omitempty"`
 		Params map[string]any `json:"params"`
 	}
 
@@ -158,4 +159,11 @@ BalanceURL is the signed REST balance path for a live account.
 */
 func (live *Live) BalanceURL() string {
 	return "https://api.kraken.com" + system.Cfg.WebSocket.Endpoints.Balance
+}
+
+/*
+TradeBalanceURL is the signed REST trade-balance path for a live account.
+*/
+func (live *Live) TradeBalanceURL() string {
+	return "https://api.kraken.com" + system.Cfg.WebSocket.Endpoints.TradeBalance
 }

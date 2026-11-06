@@ -2,9 +2,11 @@ package strategy
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
@@ -109,9 +111,23 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				}
 			}
 
-			rez := envelope.Resonance[symbol]
 			learn := system.Cfg.Learning
 			bypass := learn.ResonanceBypass
+
+			// Oracle gate after pending exits: block flat symbols that are not
+			// tradable. Open lots still run hold/exit.
+			if len(open) == 0 && !bypass && !model.oracleAllows(envelope.Regions[symbol]) {
+				decide(&runtime.Decision{
+					Symbol: symbol,
+					Action: "skip",
+					Reason: "oracle veto lit — not tradable",
+					Gate:   "oracle",
+					Path:   path,
+				})
+				return
+			}
+
+			rez := envelope.Resonance[symbol]
 
 			if rez == nil {
 				if !bypass {
@@ -201,19 +217,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			wantEnter := action == ActionEnter ||
 				(action == ActionNone && bullish && cut.Len() >= minPath)
 
-			// Resonance bypass is the lab "open the floodgates" switch: skip
-			// the emit-board oracle too. Lab oracle lamps stay local-only.
-			if wantEnter && !bypass && !Board(envelope.Regions[symbol]).Tradable() {
-				decide(&runtime.Decision{
-					Symbol: symbol,
-					Action: "skip",
-					Reason: "oracle veto lit — not tradable",
-					Gate:   "oracle",
-					Path:   path,
-				})
-				return
-			}
-
 			if action != ActionNone {
 				model.applyAction(decide, symbol, path, action, resistance, bullish, bypass, open)
 				return
@@ -267,6 +270,28 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 	wg.Wait()
 	return envelope
+}
+
+/*
+oracleAllows is true when at least one approve is lit and no veto is lit.
+*/
+func (model *Model) oracleAllows(regions []*runtime.Region) bool {
+	approved := false
+
+	for _, region := range regions {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		switch store.Catalog.ByKey(region.Key).Side {
+		case "veto":
+			return false
+		case "approve":
+			approved = true
+		}
+	}
+
+	return approved
 }
 
 func (model *Model) applyAction(
@@ -402,22 +427,11 @@ func (model *Model) tryEnter(
 	reason string,
 ) {
 	if err := model.desk.Enter(symbol, path, tt, pathFound); err != nil {
-		action, gate, reason := "blocked", "tier", err.Error()
-
-		if denial, ok := err.(*broker.EntryDenial); ok {
-			gate = denial.Gate
-			reason = denial.Reason
-
-			if denial.Gate == "size" {
-				action = "skip"
-			}
-		}
-
 		decide(&runtime.Decision{
 			Symbol: symbol,
-			Action: action,
-			Reason: reason,
-			Gate:   gate,
+			Action: "blocked",
+			Reason: err.Error(),
+			Gate:   "tier",
 			Path:   path,
 			Tier:   tt.String(),
 		})
@@ -554,11 +568,7 @@ func (model *Model) Exit(position *broker.Position, path string) {
 	tree.Ensure(position.EntryPath, ActionEnter)
 	tree.Ensure(position.ExitPath, ActionExit)
 
-	delta := system.Cfg.Learning.ThresholdStep
-
-	if position.PnL != nil && position.PnL.Sign() > 0 {
-		delta = -delta
-	}
+	delta := model.resistanceDelta(position)
 
 	tree.Update(position.EntryPath, delta)
 	tree.Update(position.ExitPath, delta)
@@ -584,6 +594,62 @@ func (model *Model) bookTier(position *broker.Position) broker.TierType {
 	default:
 		return broker.TierTypeVirtual
 	}
+}
+
+/*
+resistanceDelta is the leaf step for a settled (or settling) lot.
+
+Losses raise resistance by the full ThresholdStep. Wins lower it by
+step × timeWeight × pnlWeight, where short holds and larger fee-net PnL%
+earn more credit, never more than one step per proof. Hold duration is
+measured in seconds against a multi-hour half-life (lots live minutes–hours).
+*/
+func (model *Model) resistanceDelta(position *broker.Position) float64 {
+	step := system.Cfg.Learning.ThresholdStep
+
+	if position == nil || position.PnL == nil || position.PnL.Sign() <= 0 {
+		return step
+	}
+
+	halfLife := system.Cfg.Learning.ResistanceHoldHalfLifeSec
+	pnlRef := system.Cfg.Learning.ResistancePnLRefPct
+
+	hold := model.holdDuration(position, halfLife).Seconds()
+	timeWeight := 1.0 / (1.0 + hold/halfLife)
+
+	pnlPct := 0.0
+
+	if position.PnLPct != nil {
+		pnlPct = position.PnLPct.InexactFloat64()
+	}
+
+	pnlWeight := math.Tanh(pnlPct / pnlRef)
+
+	if pnlWeight < 0 {
+		pnlWeight = 0
+	}
+
+	return -step * timeWeight * pnlWeight
+}
+
+func (model *Model) holdDuration(position *broker.Position, halfLifeSec float64) time.Duration {
+	if position.OpenedAt.IsZero() {
+		return time.Duration(halfLifeSec * float64(time.Second))
+	}
+
+	end := time.Now().UTC()
+
+	if position.ClosedAt != nil {
+		end = position.ClosedAt.UTC()
+	}
+
+	hold := end.Sub(position.OpenedAt.UTC())
+
+	if hold < 0 {
+		return time.Duration(halfLifeSec * float64(time.Second))
+	}
+
+	return hold
 }
 
 func (model *Model) dropPending(position *broker.Position) {

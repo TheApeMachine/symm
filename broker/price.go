@@ -261,12 +261,18 @@ func (price *Price) feeSymbol(pair string) string {
 	}
 
 	// Internal keys (XXRPZUSD) resolve through the primed AssetPairs aliases.
-	if named := price.normalizer.Name(pair); price.Instrument.Has(named) {
+	named := price.normalizer.Name(pair)
+
+	if named == "" {
+		return ""
+	}
+
+	if price.Instrument.Has(named) {
 		return named
 	}
 
 	for _, symbol := range price.Instrument.Symbols() {
-		if price.normalizer.Name(symbol) == price.normalizer.Name(pair) {
+		if price.normalizer.Name(symbol) == named {
 			return symbol
 		}
 	}

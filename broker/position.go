@@ -208,12 +208,15 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 		qty, err = position.price.Allocate(position.Symbol, wallet)
 
 		if err != nil || qty == nil || qty.Sign() <= 0 {
-			reason := "cannot size " + position.Symbol
 			if err != nil {
-				reason = err.Error()
+				return errnie.Error(err)
 			}
 
-			return &EntryDenial{Gate: "size", Reason: reason}
+			return errnie.Err(
+				errnie.UnprocessableContent,
+				"[position.Enter] cannot size "+position.Symbol,
+				nil,
+			)
 		}
 	}
 

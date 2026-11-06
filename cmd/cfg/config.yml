@@ -226,6 +226,11 @@ learning:
   paper_eligible_resistance: 0.2
   # Fee-net PnL% floor before a tree exit leaf may settle a lot.
   policy_exit_min_profit_pct: 0.5
+  # Win resistance credit: shorter holds and higher PnL% lower more, capped
+  # at threshold_step so paths still need multiple proofs. Half-life is in
+  # seconds (14400 = 4h) — lots usually live minutes to hours, not ticks.
+  resistance_hold_half_life_sec: 14400
+  resistance_pnl_ref_pct: 1.0
   min_supported_horizon: 2
   # Minimum enterNet z before the coder marks bullish.
   min_enter_z: 0.35

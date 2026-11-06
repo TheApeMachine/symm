@@ -308,6 +308,18 @@ func TestPost(t *testing.T) {
 
 				So(err, ShouldBeNil)
 
+				if tc.url == "/0/private/TradeBalance" {
+					var venue kraken.TradeBalance
+					So(json.Unmarshal(raw, &venue), ShouldBeNil)
+
+					book := market.NewTradeBalance(nil)
+					venue.ToMarket(book)
+					So(book.Equity.String(), ShouldEqual, "1000")
+					So(book.AvailableCash.String(), ShouldEqual, "1000")
+					So(book.FreeMargin.String(), ShouldEqual, "1000")
+					return
+				}
+
 				venue := kraken.NewBalance()
 				So(json.Unmarshal(raw, venue), ShouldBeNil)
 				So(venue.Result["USD"].String(), ShouldEqual, "1000")

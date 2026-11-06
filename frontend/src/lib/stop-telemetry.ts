@@ -107,7 +107,12 @@ export const heldVerdict = (args: {
 			text: room
 				? `Armed — ${room} before floor at ${fmtPct(args.floor)}`
 				: `Armed — floor at ${fmtPct(args.floor)}`,
-			tone: args.proximity !== null && args.proximity >= 0.7 ? "warn" : "info",
+			tone:
+				typeof args.proximity === "number" &&
+				Number.isFinite(args.proximity) &&
+				args.proximity >= 0.7
+					? "warn"
+					: "info",
 		};
 	}
 

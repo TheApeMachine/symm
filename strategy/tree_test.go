@@ -257,3 +257,19 @@ func TestEnsure(t *testing.T) {
 		So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
 	})
 }
+
+func TestLeafObject(t *testing.T) {
+	Convey("leafObject parses action-suffixed and legacy flat keys", t, func() {
+		path, action := leafObject("model/paths/R01/M1/enter.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "enter")
+
+		path, action = leafObject("model/paths/R01/M1/exit.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "exit")
+
+		path, action = leafObject("model/paths/R01/M1.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "")
+	})
+}

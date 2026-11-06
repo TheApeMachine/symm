@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/theapemachine/nomagique/runtime"
@@ -73,26 +74,33 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		symbol, sources := symbol, sources
 		wg.Add(1)
 
-		system.Q.Submit(func() {
+		task := func() {
 			defer wg.Done()
 
-			regions, err := training.grid.Observe(symbol, sources)
+			risk := system.Cfg.Risk
+			spreadOK := risk.MaxEntrySpreadPct <= 0
+
+			if !spreadOK {
+				if spread, ok := training.price.SpreadPct(symbol); ok && spread != nil {
+					spreadOK = spread.InexactFloat64() <= risk.MaxEntrySpreadPct
+				}
+			}
+
+			regions, err := training.grid.Observe(
+				symbol,
+				sources,
+				training.desk.Has(symbol),
+				training.price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD,
+				training.price.ChangePct(symbol) >= risk.MinMoverChangePct,
+				spreadOK,
+				training.price.BookIntact(symbol),
+				training.price.BelowPeak(symbol),
+			)
 
 			if err != nil {
 				training.Error(err)
 				return
 			}
-
-			training.lightBroker(symbol, regions)
-
-			open := false
-
-			for range training.desk.Positions(broker.TierTypePaper, symbol) {
-				open = true
-				break
-			}
-
-			training.grid.Emit(regions, open)
 
 			cut := training.stepCut(symbol, regions)
 
@@ -100,7 +108,11 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Regions[symbol] = regions
 			envelope.Paths[symbol] = cut
 			mu.Unlock()
-		})
+		}
+
+		if err := system.Q.Submit(task); err != nil {
+			task()
+		}
 	}
 
 	wg.Wait()
@@ -162,72 +174,28 @@ func (training *Training) ResetSequencer(symbol string) {
 }
 
 /*
-lightBroker paints volume / day / spread / book / peak oracle sides before Emit.
+stepCut steps the sequencer from the brightest published action region.
 */
-func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
-	if len(regions) < store.RegionCount {
-		return
-	}
+func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
+	var action *runtime.Region
 
-	price := training.price
-	risk := system.Cfg.Risk
+	for _, region := range regions {
+		if region == nil || region.Brightness <= 0 || region.Key > 8 {
+			continue
+		}
 
-	training.shine(regions, 9, 10, price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD)
-	training.shine(regions, 11, 12, price.ChangePct(symbol) >= risk.MinMoverChangePct)
-
-	// MaxEntrySpreadPct <= 0 disables the spread oracle (lab zero = no limit).
-	spreadOK := risk.MaxEntrySpreadPct <= 0
-	if !spreadOK {
-		if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
-			spreadOK = spread.InexactFloat64() <= risk.MaxEntrySpreadPct
+		if action == nil || region.Brightness > action.Brightness {
+			action = region
 		}
 	}
 
-	training.shine(regions, 13, 14, spreadOK)
-	training.shine(regions, 15, 16, price.BookIntact(symbol))
-	training.shine(regions, 23, 24, price.BelowPeak(symbol))
-}
-
-/*
-shine paints the given region with the given brightness.
-*/
-func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
-	if ok {
-		store.Shine(regions[approve])
-		zeroRegion(regions[veto])
-		return
-	}
-
-	store.Shine(regions[veto])
-	zeroRegion(regions[approve])
-}
-
-/*
-zeroRegion zeros the given region.
-*/
-func zeroRegion(region *runtime.Region) {
-	if region == nil {
-		return
-	}
-
-	region.Brightness = 0
-	region.Deformation = 0
-	region.Counts = 0
-}
-
-/*
-stepCut steps the sequencer for the given symbol and regions.
-*/
-func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
-	token, brightness := store.PathToken(regions)
-
-	if token == "" {
+	if action == nil {
 		cut := runtime.Tokens{}
 		return &cut
 	}
 
 	seq := training.Sequencer(symbol)
-	cut := seq.Step(token, brightness)
+	cut := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
 
 	if err := training.catalog.Persist(
 		training.Context(), training.client, symbol, seq.State(),
@@ -267,36 +235,4 @@ func (training *Training) Flush() error {
 	})
 
 	return errs
-}
-
-/*
-Board is the Emit region set. Tradable means approve winners only — no veto.
-*/
-type Board []*runtime.Region
-
-/*
-Tradable returns true if the board is tradable.
-*/
-func (board Board) Tradable() bool {
-	approved := false
-
-	for _, region := range board {
-		if region == nil || region.Brightness <= 0 {
-			continue
-		}
-
-		key := int(region.Key)
-
-		if key < 9 || key >= store.RegionCount {
-			continue
-		}
-
-		if key&1 == 1 {
-			return false
-		}
-
-		approved = true
-	}
-
-	return approved
 }

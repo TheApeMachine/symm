@@ -5,6 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 )
 
@@ -26,6 +27,7 @@ NewBalanceFromMap builds a REST Balance from the paper CLI balance model.
 */
 func NewBalanceFromMap(model map[string]any) json.Marshaler {
 	out := NewBalance()
+	out.Channel = "balances"
 	rows, _ := model["balances"].(map[string]any)
 
 	for asset, raw := range rows {
@@ -92,6 +94,12 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 
 	if err := sonic.Unmarshal(data, &decoded); err != nil {
 		return err
+	}
+
+	if len(decoded.Error) > 0 {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[kraken.Balance] venue error in balance frame", nil,
+		).With("error", decoded.Error))
 	}
 
 	onChange := balance.onChange

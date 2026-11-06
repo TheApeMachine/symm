@@ -3,7 +3,6 @@ package kraken
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -164,9 +163,9 @@ func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
 		}
 	}
 
-	nonce := fmt.Sprint(payload["nonce"])
+	nonce, ok := payload["nonce"].(string)
 
-	if nonce == "" || nonce == "<nil>" {
+	if !ok || nonce == "" {
 		nonce = next()
 		payload["nonce"] = nonce
 	}

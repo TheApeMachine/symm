@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
@@ -151,13 +153,17 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 		first := "R09.R03/R10.R04/R11.R05"
 		second := "R12.R06/R13.R07/R14.R08"
 		win := decimal.NewFromFloat(0.04)
+		pnlPct := decimal.NewFromFloat(5.0)
 		closed := time.Now().UTC()
+		opened := closed.Add(-time.Second)
 
 		position := &broker.Position{
 			Symbol:    "AKE/USD",
 			Book:      broker.TierTypeVirtual.String(),
 			EntryPath: entry,
 			PnL:       &win,
+			PnLPct:    &pnlPct,
+			OpenedAt:  opened,
 			ClosedAt:  &closed,
 		}
 
@@ -166,9 +172,10 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 
 		So(position.ExitPath, ShouldEqual, first)
 
+		delta := model.resistanceDelta(position)
 		enterLeaf, ok := get(tree, entry)
 		So(ok, ShouldBeTrue)
-		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance()-0.05, 0.001)
+		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance()+delta, 0.001)
 
 		_, ok = get(tree, second)
 		So(ok, ShouldBeFalse)
@@ -189,5 +196,66 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 		}
 
 		So(model.exitCut(envelope, "AKE/USD", position), ShouldEqual, "")
+	})
+}
+
+func TestResistanceDelta(t *testing.T) {
+	Convey("losses raise by the full step", t, func() {
+		model := &Model{}
+		loss := decimal.NewFromFloat(-0.1)
+
+		So(model.resistanceDelta(&broker.Position{PnL: &loss}), ShouldEqual, system.Cfg.Learning.ThresholdStep)
+		So(model.resistanceDelta(&broker.Position{}), ShouldEqual, system.Cfg.Learning.ThresholdStep)
+	})
+
+	Convey("short hold + fat PnL% lowers more than long hold + thin PnL%", t, func() {
+		model := &Model{}
+		win := decimal.NewFromFloat(1)
+		step := system.Cfg.Learning.ThresholdStep
+		halfLife := system.Cfg.Learning.ResistanceHoldHalfLifeSec
+		pnlRef := system.Cfg.Learning.ResistancePnLRefPct
+		closed := time.Now().UTC()
+
+		fat := decimal.NewFromFloat(2.0)
+		short := &broker.Position{
+			PnL:      &win,
+			PnLPct:   &fat,
+			OpenedAt: closed.Add(-time.Second),
+			ClosedAt: &closed,
+		}
+
+		thin := decimal.NewFromFloat(0.2)
+		long := &broker.Position{
+			PnL:      &win,
+			PnLPct:   &thin,
+			OpenedAt: closed.Add(-2 * time.Duration(halfLife) * time.Second),
+			ClosedAt: &closed,
+		}
+
+		shortDelta := model.resistanceDelta(short)
+		longDelta := model.resistanceDelta(long)
+
+		So(shortDelta, ShouldBeLessThan, 0)
+		So(longDelta, ShouldBeLessThan, 0)
+		So(shortDelta, ShouldBeLessThan, longDelta)
+		So(shortDelta, ShouldBeGreaterThanOrEqualTo, -step)
+
+		// One-second hold is near-full time credit against a multi-hour half-life.
+		hold := 1.0
+		want := -step * (1.0 / (1.0 + hold/halfLife)) * math.Tanh(2.0/pnlRef)
+		So(shortDelta, ShouldAlmostEqual, want, 0.0001)
+
+		hour := &broker.Position{
+			PnL:      &win,
+			PnLPct:   &fat,
+			OpenedAt: closed.Add(-time.Hour),
+			ClosedAt: &closed,
+		}
+		hourDelta := model.resistanceDelta(hour)
+		wantHour := -step * (1.0 / (1.0 + 3600.0/halfLife)) * math.Tanh(2.0/pnlRef)
+		So(hourDelta, ShouldAlmostEqual, wantHour, 0.0001)
+		// More negative = more lowering: short < hour < long (long is thin+slow).
+		So(shortDelta, ShouldBeLessThan, hourDelta)
+		So(hourDelta, ShouldBeLessThan, longDelta)
 	})
 }

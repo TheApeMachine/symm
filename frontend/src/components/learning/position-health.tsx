@@ -808,7 +808,7 @@ export const ActivePositionHealthCard = ({ life }: { life: Lifecycle }) => {
 				<div
 					style={{
 						display: "grid",
-						gridTemplateColumns: "repeat(25, minmax(0, 1fr))",
+						gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
 						gap: "0.25rem",
 					}}
 				>

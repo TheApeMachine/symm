@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
@@ -12,6 +13,18 @@ import (
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
 )
+
+/*
+RestPath returns the URL path for REST map lookups. Full URLs and bare paths
+both resolve to the map keys.
+*/
+func RestPath(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil && parsed.Path != "" {
+		return parsed.Path
+	}
+
+	return raw
+}
 
 var commandMap = map[string][]string{
 	"balances":     {"balance", "--verbose"},
@@ -42,6 +55,7 @@ type Paper struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	queue  *lf.Queue[[]byte]
+	notify chan struct{}
 }
 
 func NewPaper(ctx context.Context) *Paper {
@@ -51,6 +65,7 @@ func NewPaper(ctx context.Context) *Paper {
 		ctx:    ctx,
 		cancel: cancel,
 		queue:  lf.NewQueue[[]byte](),
+		notify: make(chan struct{}, 1),
 	}
 }
 
@@ -71,7 +86,7 @@ func (paper *Paper) Read(keys ...string) ([]byte, error) {
 		select {
 		case <-paper.ctx.Done():
 			return nil, errnie.Error(paper.ctx.Err())
-		default:
+		case <-paper.notify:
 		}
 	}
 }
@@ -148,12 +163,20 @@ func (paper *Paper) Write(message []byte) error {
 	}
 
 	paper.queue.Enqueue(buf)
+	paper.signal()
 
 	if entity == "add_order" {
 		paper.enqueueFill(model, clOrdID)
 	}
 
 	return nil
+}
+
+func (paper *Paper) signal() {
+	select {
+	case paper.notify <- struct{}{}:
+	default:
+	}
 }
 
 /*
@@ -180,6 +203,7 @@ func (paper *Paper) enqueueFill(model map[string]any, clOrdID string) {
 	}
 
 	paper.queue.Enqueue(raw)
+	paper.signal()
 }
 
 func (paper *Paper) Watch(
@@ -278,7 +302,7 @@ Balance polls return the venue Balance observation for Client.Watch.
 func (paper *Paper) Post(url string, body any) ([]byte, error) {
 	_ = body
 
-	entity, ok := restMap[url]
+	entity, ok := restMap[RestPath(url)]
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(

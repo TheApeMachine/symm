@@ -182,7 +182,7 @@ const noteRegions = (
 	const next =
 		last !== undefined && last.tick === tick
 			? prior.slice(0, -1)
-			: prior.slice(-25);
+			: prior.slice(-REGION_COUNT);
 	next.push({ tick, row });
 	regionRings.set(symbol, next);
 
@@ -690,7 +690,7 @@ export const ingestPolicyLayers = (
 
 	for (const layer of layers) {
 		const key = policyKeyFromIndex(layer.index);
-		if (!key || !key.startsWith(active) || keys.includes(key)) continue;
+		if (!key?.startsWith(active) || keys.includes(key)) continue;
 		keys.push(key);
 
 		const threshold = thresholdFromExploreBytes(layer.bytes);

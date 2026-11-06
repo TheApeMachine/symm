@@ -84,12 +84,11 @@ func NewCache(
 			continue
 		}
 
-		// Unfinished open-prefix settle: clear ClosedAt so mark can finish exit.
+		// Unfinished open-prefix settle: clear ClosedAt so mark can finish
+		// exit, but keep Closing/ExitTick so a late fill and resend work.
 		position.ClosedAt = nil
 
-		if position.Stoploss != nil {
-			position.Stoploss.State = StoplossHealthy
-		} else {
+		if position.Stoploss == nil {
 			pnlPct := 0.0
 
 			if position.PnLPct != nil {
@@ -329,20 +328,10 @@ func (cache *Cache) Drop(symbol string) {
 
 	cache.mu.Lock()
 	delete(cache.positions["open"], symbol)
-	delete(cache.positions["closed"], symbol)
 	cache.mu.Unlock()
 
-	// Symbol-scoped prefixes clear every orphan ID under the pair, not only
-	// the lot currently held in memory.
-	err := cache.store.DeletePrefix(fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol))
-	
-	if err != nil {
-		errnie.Error(err)
-	}
-	
-	err = cache.store.DeletePrefix(fmt.Sprintf("%s/closed/%s/", cache.tierKey, symbol))
-	
-	if err != nil {
+	// Only the failed open lot — closed history must survive a reject.
+	if err := cache.store.DeletePrefix(fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol)); err != nil {
 		errnie.Error(err)
 	}
 }

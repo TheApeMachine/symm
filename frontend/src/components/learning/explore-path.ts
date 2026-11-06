@@ -5,8 +5,8 @@ const PATH_ACTIONS = new Set(["enter", "hold", "exit"]);
 
 /*
 pathBookPolicyKey maps an S3 object key to the trie key RadixTreeViz expects.
-Tree.persist writes model/paths/<tokens>.bin with action in JSON; rewrite to
-…/enter|hold|exit.bin. Canonical action-suffixed keys pass through.
+Canonical keys are model/paths/<tokens>/<enter|hold|exit>.bin. Legacy flat
+model/paths/<tokens>.bin keys are rewritten when action is known.
 */
 export const pathBookPolicyKey = (
 	storageKey: string,

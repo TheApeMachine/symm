@@ -558,10 +558,6 @@ func (hub *Hub) Run() error {
 Close stops streams, drains the hub store, and shuts the HTTP server.
 */
 func (hub *Hub) Close() error {
-	if hub.cancel != nil {
-		hub.cancel()
-	}
-
 	hub.streamMu.Lock()
 
 	for kind, cancel := range hub.streams {
@@ -573,10 +569,15 @@ func (hub *Hub) Close() error {
 
 	var errs error
 
+	// Drain the store before cancelling hub.ctx so Close can finish uploads.
 	if hub.store != nil {
 		if err := hub.store.Close(); err != nil {
 			errs = errors.Join(errs, err)
 		}
+	}
+
+	if hub.cancel != nil {
+		hub.cancel()
 	}
 
 	if hub.app != nil {

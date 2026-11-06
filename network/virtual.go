@@ -19,7 +19,7 @@ import (
 
 var virtualREST = map[string]string{
 	"/0/private/Balance":      "balances",
-	"/0/private/TradeBalance": "balances",
+	"/0/private/TradeBalance": "tradebalance",
 }
 
 /*
@@ -279,7 +279,7 @@ func (virtual *Virtual) applyFill(
 
 	if side == "buy" {
 		if cash.Capital.Cmp(cost) < 0 {
-			// Soft denial — Tier maps this to EntryDenial; do not ERROR-log.
+			// Soft denial — do not ERROR-log.
 			return errnie.Err(
 				errnie.NotAcceptable,
 				"[network.Virtual.applyFill] insufficient cash",
@@ -398,7 +398,7 @@ func (virtual *Virtual) enqueue(frame json.Marshaler) error {
 func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 	_ = body
 
-	entity, ok := virtualREST[url]
+	entity, ok := virtualREST[kraken.RestPath(url)]
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(
@@ -406,21 +406,64 @@ func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 		), "url", url)
 	}
 
-	if entity != "balances" {
+	virtual.mu.Lock()
+	wallet := virtual.wallet
+	virtual.mu.Unlock()
+
+	switch entity {
+	case "balances":
+		out := kraken.NewBalance()
+		out.Channel = "balances"
+		out.FromMarket(market.NewBalance(wallet))
+		return out.MarshalJSON()
+
+	case "tradebalance":
+		out := kraken.NewTradeBalance()
+		cash, unrealized, equity := virtualTradeBalance(wallet)
+		out.FromMarket(market.NewTradeBalance(map[string]any{
+			"equity":         equity,
+			"unrealized_pnl": unrealized,
+			"available_cash": cash,
+			"free_margin":    cash,
+		}))
+		return out.MarshalJSON()
+
+	default:
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation, "[network.Virtual.Post] unsupported entity", nil,
 		), "entity", entity)
 	}
+}
 
-	out := kraken.NewBalance()
-	out.Channel = "balances"
+func virtualQuoteCash(wallet map[string]any) *decimal.Decimal {
+	cash, _, _ := virtualTradeBalance(wallet)
+	return cash
+}
 
-	virtual.mu.Lock()
-	book := market.NewBalance(virtual.wallet)
-	out.FromMarket(book)
-	virtual.mu.Unlock()
+func virtualTradeBalance(wallet map[string]any) (cash, unrealized, equity *decimal.Decimal) {
+	quote, _ := wallet["quote"].(string)
+	assets, _ := wallet["assets"].([]*market.Asset)
 
-	return out.MarshalJSON()
+	cashAmt := decimal.Zero
+	pnlAmt := decimal.Zero
+	equityAmt := decimal.Zero
+
+	for _, asset := range assets {
+		if asset == nil {
+			continue
+		}
+
+		if asset.Symbol == quote {
+			cashAmt = asset.Capital
+			equityAmt = equityAmt.Add(asset.Capital)
+			continue
+		}
+
+		pnlAmt = pnlAmt.Add(asset.PnL)
+		equityAmt = equityAmt.Add(asset.Equity)
+	}
+
+	return decimalPtr(cashAmt), decimalPtr(pnlAmt), decimalPtr(equityAmt)
 }
 
 func (virtual *Virtual) Watch(

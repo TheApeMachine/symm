@@ -61,16 +61,20 @@ func (stoploss *Stoploss) Update(PnLPct float64) {
 		stoploss.PeakPnLPct = stoploss.CurrentPnLPct
 	}
 
-	if stoploss.CurrentPnLPct > stoploss.ArmPnlPct {
-		stoploss.State = StoplossArmed
-	}
+	// Terminal states never regress; healthy may arm, armed may take-profit.
+	if stoploss.State != StoplossTriggered && stoploss.State != StoplossTakeProfit {
+		if stoploss.CurrentPnLPct > stoploss.ArmPnlPct {
+			stoploss.State = StoplossArmed
+		}
 
-	if stoploss.CurrentPnLPct > stoploss.TakeProfitPnlPct {
-		stoploss.State = StoplossTakeProfit
+		if stoploss.CurrentPnLPct > stoploss.TakeProfitPnlPct {
+			stoploss.State = StoplossTakeProfit
+		}
 	}
 
 	if stoploss.State == StoplossArmed {
 		stoploss.FloorPnLPct = stoploss.PeakPnLPct * stoploss.GivebackPnlPct
+
 		if stoploss.CurrentPnLPct < stoploss.FloorPnLPct {
 			stoploss.State = StoplossTriggered
 		}

@@ -238,9 +238,9 @@ func listFrameBudget() int {
 
 /*
 policyPathKey normalizes an S3 object key to the trie key the dashboard
-expects (…/enter.bin|hold.bin|exit.bin). Tree.persist writes
-model/paths/<tokens>.bin with action only inside JSON — rewrite that into
-the action-suffixed form the cognitive trie filters on.
+expects (…/enter.bin|hold.bin|exit.bin). Canonical Tree.persist keys already
+use that form; legacy flat model/paths/<tokens>.bin keys are rewritten when
+action is known.
 */
 func policyPathKey(storageKey, action string) string {
 	switch {

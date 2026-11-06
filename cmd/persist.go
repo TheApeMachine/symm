@@ -12,19 +12,29 @@ import (
 	"github.com/theapemachine/nomagique/store"
 )
 
+const (
+	persistWorkers = 2
+	persistQueue   = 64
+)
+
 /*
 tickPersist writes the finished envelope after the model ring. Ingress must not
 marshal that envelope — Step hands it to the disruptor asynchronously.
 */
 type tickPersist struct {
 	*nmruntime.System
-	store *store.Client
-	armed atomic.Bool
-	wg    sync.WaitGroup
+	store  *store.Client
+	armed  atomic.Bool
+	queue  chan *nmruntime.Envelope
+	wg     sync.WaitGroup
+	closeQ sync.Once
 }
 
 func newTickPersist(ctx context.Context, client *store.Client) *tickPersist {
-	persist := &tickPersist{store: client}
+	persist := &tickPersist{
+		store: client,
+		queue: make(chan *nmruntime.Envelope, persistQueue),
+	}
 	persist.System = nmruntime.NewSystem(ctx, "tick-persist", persist)
 	persist.Transition(nmruntime.READY)
 
@@ -32,18 +42,28 @@ func newTickPersist(ctx context.Context, client *store.Client) *tickPersist {
 }
 
 func (persist *tickPersist) Arm() {
-	persist.armed.Store(true)
+	if !persist.armed.CompareAndSwap(false, true) {
+		return
+	}
+
+	for range persistWorkers {
+		persist.wg.Add(1)
+		go persist.worker()
+	}
 }
 
 /*
-Disarm stops accepting new tick writes during shutdown.
+Disarm stops accepting new tick writes and closes the queue so workers drain.
 */
 func (persist *tickPersist) Disarm() {
 	persist.armed.Store(false)
+	persist.closeQ.Do(func() {
+		close(persist.queue)
+	})
 }
 
 /*
-Wait blocks until every in-flight write goroutine has finished.
+Wait joins persist workers after Disarm has closed the queue.
 */
 func (persist *tickPersist) Wait() {
 	persist.wg.Wait()
@@ -54,16 +74,37 @@ func (persist *tickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		return envelope
 	}
 
-	// Pipeline rings are done with this envelope. Marshal off-thread so JSON/S3
-	// never stalls the disruptor (that freeze left impulse/kernels on last paint).
-	persist.wg.Add(1)
+	select {
+	case persist.queue <- envelope:
+	default:
+		// Coalesce under backpressure: drop the oldest queued tick, then try
+		// once more; if still full, drop this envelope.
+		select {
+		case dropped := <-persist.queue:
+			errnie.Warn(fmt.Sprintf(
+				"[tick-persist] queue full — dropped older tick n=%d", dropped.N,
+			))
+		default:
+		}
 
-	go func() {
-		defer persist.wg.Done()
-		persist.write(envelope)
-	}()
+		select {
+		case persist.queue <- envelope:
+		default:
+			errnie.Warn(fmt.Sprintf(
+				"[tick-persist] queue full — dropped tick n=%d", envelope.N,
+			))
+		}
+	}
 
 	return envelope
+}
+
+func (persist *tickPersist) worker() {
+	defer persist.wg.Done()
+
+	for envelope := range persist.queue {
+		persist.write(envelope)
+	}
 }
 
 func (persist *tickPersist) write(envelope *nmruntime.Envelope) {

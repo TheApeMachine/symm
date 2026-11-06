@@ -15,7 +15,12 @@ type Learning struct {
 	MaxPathLength  int
 	MinPathLength  int
 	// PolicyExitMinProfitPct is the fee-net PnL% floor for a tree exit leaf.
-	PolicyExitMinProfitPct   float64
+	PolicyExitMinProfitPct float64
+	// ResistanceHoldHalfLifeSec scales win credit by hold duration in seconds
+	// (shorter → more). Defaults to a few hours — typical lot lives.
+	ResistanceHoldHalfLifeSec float64
+	// ResistancePnLRefPct is the fee-net PnL% that earns full win credit.
+	ResistancePnLRefPct      float64
 	PaperEligibleResistance  float64
 	MinSupportedHorizon      int
 	MinTaskRelativePrecision float64
@@ -32,6 +37,8 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.max_path_length", 8)
 	viper.SetDefault("learning.min_path_length", 2)
 	viper.SetDefault("learning.policy_exit_min_profit_pct", 0.5)
+	viper.SetDefault("learning.resistance_hold_half_life_sec", 14400)
+	viper.SetDefault("learning.resistance_pnl_ref_pct", 1.0)
 	viper.SetDefault("learning.paper_eligible_resistance", 0.2)
 	viper.SetDefault("learning.min_supported_horizon", 2)
 	viper.SetDefault("learning.min_task_relative_precision", 0.5)
@@ -40,19 +47,21 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.min_enter_z", 0.35)
 
 	return &Learning{
-		ThresholdStart:           viper.GetFloat64("learning.threshold_start"),
-		ThresholdStep:            viper.GetFloat64("learning.threshold_step"),
-		ThresholdFloor:           viper.GetFloat64("learning.threshold_floor"),
-		ThresholdCeil:            viper.GetFloat64("learning.threshold_ceil"),
-		MaxPathLength:            viper.GetInt("learning.max_path_length"),
-		MinPathLength:            viper.GetInt("learning.min_path_length"),
-		PolicyExitMinProfitPct:   viper.GetFloat64("learning.policy_exit_min_profit_pct"),
-		PaperEligibleResistance:  viper.GetFloat64("learning.paper_eligible_resistance"),
-		MinSupportedHorizon:      viper.GetInt("learning.min_supported_horizon"),
-		MinTaskRelativePrecision: viper.GetFloat64("learning.min_task_relative_precision"),
-		MinSurprise:              viper.GetFloat64("learning.min_surprise"),
-		ResonanceBypass:          viper.GetBool("learning.resonance_bypass"),
-		MinEnterZ:                viper.GetFloat64("learning.min_enter_z"),
+		ThresholdStart:            viper.GetFloat64("learning.threshold_start"),
+		ThresholdStep:             viper.GetFloat64("learning.threshold_step"),
+		ThresholdFloor:            viper.GetFloat64("learning.threshold_floor"),
+		ThresholdCeil:             viper.GetFloat64("learning.threshold_ceil"),
+		MaxPathLength:             viper.GetInt("learning.max_path_length"),
+		MinPathLength:             viper.GetInt("learning.min_path_length"),
+		PolicyExitMinProfitPct:    viper.GetFloat64("learning.policy_exit_min_profit_pct"),
+		ResistanceHoldHalfLifeSec: viper.GetFloat64("learning.resistance_hold_half_life_sec"),
+		ResistancePnLRefPct:       viper.GetFloat64("learning.resistance_pnl_ref_pct"),
+		PaperEligibleResistance:   viper.GetFloat64("learning.paper_eligible_resistance"),
+		MinSupportedHorizon:       viper.GetInt("learning.min_supported_horizon"),
+		MinTaskRelativePrecision:  viper.GetFloat64("learning.min_task_relative_precision"),
+		MinSurprise:               viper.GetFloat64("learning.min_surprise"),
+		ResonanceBypass:           viper.GetBool("learning.resonance_bypass"),
+		MinEnterZ:                 viper.GetFloat64("learning.min_enter_z"),
 	}
 }
 

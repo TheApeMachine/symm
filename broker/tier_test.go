@@ -1,8 +1,6 @@
 package broker
 
 import (
-	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -79,106 +77,43 @@ func TestTierUnlocked(t *testing.T) {
 	})
 }
 
-func TestWalletReadingEquityIncludesOpenMarketValue(t *testing.T) {
-	Convey("Equity is free cash plus close-now proceeds, not cash plus PnL", t, func() {
-		books := NewBookManager()
-		bid := decimal.RequireFromString("100")
-		ask := decimal.RequireFromString("101")
-		qty := decimal.RequireFromString("1")
-
-		books.Update(&market.Level3{
-			Type: "snapshot",
-			Data: []*market.Level3Data{{
-				Symbol: "AAA/USD",
-				Bids: []*market.Level3Order{{
-					OrderID:    "b1",
-					LimitPrice: &bid,
-					OrderQty:   &qty,
-					Timestamp:  time.Unix(1, 0),
-				}},
-				Asks: []*market.Level3Order{{
-					OrderID:    "a1",
-					LimitPrice: &ask,
-					OrderQty:   &qty,
-					Timestamp:  time.Unix(1, 0),
-				}},
-			}},
-		})
-
-		fee := decimal.Zero
-		instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}}
-		instrument.takerFees.Store("AAA/USD", &fee)
-
-		price := &Price{
-			Instrument: instrument,
-			Books:      books,
-		}
-
+func TestWalletReadingFromTradeBalance(t *testing.T) {
+	Convey("Wallet.Reading mirrors venue TradeBalance", t, func() {
 		host := venue.NewKraken("USD")
 		cash := decimal.NewFromInt(900)
-		host.Balance().FromMarket(market.NewBalance(map[string]any{
-			"quote": "USD",
-			"assets": []*market.Asset{
-				market.NewAsset(nil, "USD", cash, decimal.Zero, cash),
-			},
+		equity := decimal.NewFromInt(1000)
+		pnl := decimal.Zero
+
+		host.TradeBalance().FromMarket(market.NewTradeBalance(map[string]any{
+			"equity":         &equity,
+			"unrealized_pnl": &pnl,
+			"available_cash": &cash,
+			"free_margin":    &cash,
 		}))
 
-		// Empty in-memory cache — avoid S3 restore colliding on symbol.
-		tier := &Tier{
-			Type:  TierTypeVirtual,
-			price: price,
-			venue: host,
-			positions: &Cache{
-				positions: map[string]map[string]*Position{
-					"open":   {},
-					"closed": {},
-				},
-			},
-		}
-
-		pos := NewPosition(context.Background(), "AAA/USD", "virtual", "path", price, nil, nil)
-		entry := decimal.RequireFromString("100")
-		pos.Qty = &qty
-		pos.Entry = &entry
-		mark := decimal.RequireFromString("100")
-		So(pos.Update(&mark), ShouldBeNil)
-		So(tier.positions.Add("AAA/USD", pos, true), ShouldBeFalse)
-
-		reading := tier.walletReading()
+		reading := NewWallet(host).Reading()
 		So(reading["cash"], ShouldEqual, 900)
 		So(reading["unrealized"], ShouldEqual, 0)
-		// Free cash 900 + flat 100 notional lot ≈ starting 1000, not 900+0.
 		So(reading["equity"], ShouldEqual, 1000)
 	})
 }
 
 func TestWalletReadingKeepsZeroCash(t *testing.T) {
-	Convey("fully deployed virtual cash stays at zero", t, func() {
+	Convey("fully deployed cash stays at zero", t, func() {
 		prevBal := system.Cfg.Market.Balance
 		system.Cfg.Market.Balance = 200
 		Reset(func() { system.Cfg.Market.Balance = prevBal })
 
 		host := venue.NewKraken("USD")
 		zero := decimal.Zero
-		host.Balance().FromMarket(market.NewBalance(map[string]any{
-			"quote": "USD",
-			"assets": []*market.Asset{
-				market.NewAsset(nil, "USD", zero, decimal.Zero, zero),
-			},
+		host.TradeBalance().FromMarket(market.NewTradeBalance(map[string]any{
+			"equity":         &zero,
+			"unrealized_pnl": &zero,
+			"available_cash": &zero,
+			"free_margin":    &zero,
 		}))
 
-		tier := &Tier{
-			Type:  TierTypeVirtual,
-			venue: host,
-			positions: &Cache{
-				positions: map[string]map[string]*Position{
-					"open":   {},
-					"closed": {},
-				},
-			},
-		}
-
-		reading := tier.walletReading()
+		reading := NewWallet(host).Reading()
 		So(reading["cash"], ShouldEqual, 0)
 		So(reading["equity"], ShouldEqual, 0)
 	})

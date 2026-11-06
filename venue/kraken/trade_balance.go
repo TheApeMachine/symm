@@ -5,6 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 )
 
@@ -35,6 +36,10 @@ type TradeBalance struct {
 	onChange func(market.MarketType)
 }
 
+func NewTradeBalance() *TradeBalance {
+	return &TradeBalance{}
+}
+
 func NewTradeBalanceFromMap(model map[string]any) json.Marshaler {
 	return &TradeBalance{Result: tradeBalanceFromMap(model)}
 }
@@ -46,6 +51,7 @@ func tradeBalanceFromMap(model map[string]any) TradeBalanceResult {
 	zero := decimal.Zero
 
 	result := TradeBalanceResult{
+		AvailableCash:     equity,
 		EquivalentBalance: equity,
 		TradeBalance:      &trade,
 		MarginAmount:      &zero,
@@ -111,6 +117,12 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if len(decoded.Error) > 0 {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[kraken.TradeBalance] venue error in trade-balance frame", nil,
+		).With("error", decoded.Error))
+	}
+
 	onChange := balance.onChange
 	*balance = TradeBalance(decoded)
 	balance.onChange = onChange
@@ -129,10 +141,20 @@ func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType
 		return other
 	}
 
+	cash := balance.Result.AvailableCash
+
+	if cash == nil {
+		cash = balance.Result.FreeMargin
+	}
+
+	if cash == nil {
+		cash = balance.Result.EquivalentBalance
+	}
+
 	return market.NewTradeBalance(map[string]any{
 		"equity":         balance.Result.Equity,
 		"unrealized_pnl": balance.Result.UnrealizedPnL,
-		"available_cash": balance.Result.AvailableCash,
+		"available_cash": cash,
 		"free_margin":    balance.Result.FreeMargin,
 	}).ToMarket(book)
 }

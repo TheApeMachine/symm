@@ -285,7 +285,7 @@ func (desk *Desk) Hello() {
 			positions[position.ID] = position
 		}
 
-		balances[tier.Type.String()] = tier.walletReading()
+		balances[tier.Type.String()] = tier.wallet.Reading()
 	}
 
 	ui.UI.WriteJSON(map[string]any{

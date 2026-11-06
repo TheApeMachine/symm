@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"iter"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -55,9 +56,12 @@ type Tier struct {
 	private   network.Client
 	price     *Price
 	venue     market.Venue
+	wallet    *Wallet
 	positions *Cache
 	pending   *sync.Map
 	inflight  sync.Map
+	savedAt   sync.Map
+	reqSeq    atomic.Int64
 	live      *Live
 	unlocked  bool
 	halted    bool
@@ -67,11 +71,12 @@ type Tier struct {
 }
 
 /*
-submission is one add_order waiting on a venue ack.
+submission is one add_order waiting on a venue ack, keyed by req_id.
 */
 type submission struct {
 	position *Position
 	action   string
+	reqID    int64
 }
 
 func NewTier(
@@ -110,6 +115,7 @@ func NewTier(
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle, client,
 	)
+	tier.wallet = NewWallet(host)
 
 	// Virtual wallet is process-local; reopen credits base for S3 open lots
 	// before the balance prime so settle can sell.
@@ -127,6 +133,10 @@ func NewTier(
 				frame.ToMarket(tier.price.balance)
 			}
 
+			tier.Hello()
+		})
+
+		host.TradeBalance().OnChange(func(market.MarketType) {
 			tier.Hello()
 		})
 
@@ -157,14 +167,16 @@ func NewTier(
 		}
 	}
 
-	// Virtual and paper serve the balance path themselves. Real signs the
-	// same REST call and also folds the private balances channel.
+	// Virtual and paper serve the balance paths themselves. Real signs the
+	// same REST calls and also folds the private balances channel.
 	if host != nil && tier.private != nil &&
 		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper || tier.live != nil) {
 		balanceURL := system.Cfg.WebSocket.Endpoints.Balance
+		tradeBalanceURL := system.Cfg.WebSocket.Endpoints.TradeBalance
 
 		if tier.live != nil {
 			balanceURL = tier.live.BalanceURL()
+			tradeBalanceURL = tier.live.TradeBalanceURL()
 		}
 
 		tier.private.Watch(
@@ -172,13 +184,25 @@ func NewTier(
 			host.Balance().Request(),
 			host.Balance(),
 		)
+		tier.private.Watch(
+			tradeBalanceURL,
+			host.TradeBalance().Request(),
+			host.TradeBalance(),
+		)
 
-		// Prime once so Allocate sees cash before the first Watch tick.
+		// Prime once so Allocate / wallet see cash before the first Watch tick.
 		if raw, err := tier.private.Post(
 			balanceURL,
 			host.Balance().Request(),
 		); err == nil {
 			_ = json.Unmarshal(raw, host.Balance())
+		}
+
+		if raw, err := tier.private.Post(
+			tradeBalanceURL,
+			host.TradeBalance().Request(),
+		); err == nil {
+			_ = json.Unmarshal(raw, host.TradeBalance())
 		}
 	}
 
@@ -198,10 +222,6 @@ func (tier *Tier) apply(executions *market.Execution) {
 	for _, execution := range executions.Data {
 		if execution == nil || !tier.fillReport(execution) {
 			continue
-		}
-
-		if execution.ClientOrderID != "" {
-			tier.inflight.Delete(execution.ClientOrderID)
 		}
 
 		matched := false
@@ -244,86 +264,13 @@ func (tier *Tier) apply(executions *market.Execution) {
 }
 
 /*
-walletReading projects venue free cash, open PnL, and NLV into the dashboard
-{cash, unrealized, equity} shape keyed under balances.<tier>.
-
-Cash is free quote after entry debits. Unrealized is Σ fee-net PnL. Equity is
-cash + Σ close-now proceeds (not cash+PnL — that double-subtracts cost).
-*/
-func (tier *Tier) walletReading() map[string]float64 {
-	quote := system.Cfg.Market.QuoteCurrency
-	cash := 0.0
-	unrealized := 0.0
-	marketValue := 0.0
-
-	book := market.NewBalance(map[string]any{
-		"quote":  quote,
-		"assets": []*market.Asset{},
-	})
-
-	if tier.venue != nil {
-		tier.venue.Balance().ToMarket(book)
-	}
-
-	found := false
-
-	if c := book.Cash(quote); c != nil {
-		cash, _ = c.Float64()
-		found = true
-	} else if c := book.Cash(book.Quote); c != nil {
-		cash, _ = c.Float64()
-		found = true
-	} else {
-		for _, asset := range book.Assets {
-			if asset == nil {
-				continue
-			}
-
-			if asset.Symbol == quote || asset.Symbol == "Z"+quote {
-				cash, _ = asset.Capital.Float64()
-				found = true
-				break
-			}
-		}
-	}
-
-	// Only seed starting balance when the wallet never reported quote cash.
-	// Deployed cash at $0 is real and must not reinflate equity.
-	if !found && tier.Type == TierTypeVirtual {
-		cash = float64(system.Cfg.Market.Balance)
-	}
-
-	for _, position := range tier.positions.Open() {
-		if position == nil {
-			continue
-		}
-
-		if position.PnL != nil {
-			u, _ := position.PnL.Float64()
-			unrealized += u
-		}
-
-		if proceeds := position.CloseNowProceeds(); proceeds != nil {
-			v, _ := proceeds.Float64()
-			marketValue += v
-		}
-	}
-
-	return map[string]float64{
-		"cash":       cash,
-		"unrealized": unrealized,
-		"equity":     cash + marketValue,
-	}
-}
-
-/*
 publishLedger fans positions and this tier's wallet reading to the hub.
 */
 func (tier *Tier) publishLedger(positions map[string]*Position) {
 	ui.UI.WriteJSON(map[string]any{
 		"positions": positions,
 		"balances": map[string]any{
-			tier.Type.String(): tier.walletReading(),
+			tier.Type.String(): tier.wallet.Reading(),
 		},
 	})
 }
@@ -362,14 +309,15 @@ func (tier *Tier) Update(data *market.Update) {
 			continue
 		}
 
-		now := time.Now()
+		last, _ := tier.savedAt.Load(position.ID)
+		savedAt, _ := last.(time.Time)
 
-		if position.UpdatedAt != nil && time.Since(*position.UpdatedAt) > 30*time.Second {
+		if savedAt.IsZero() || time.Since(savedAt) > 30*time.Second {
 			if err := tier.positions.Save(position); err != nil {
 				errnie.Error(err)
+			} else {
+				tier.savedAt.Store(position.ID, time.Now())
 			}
-
-			position.UpdatedAt = &now
 		}
 
 		touched[position.ID] = position
@@ -494,24 +442,6 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	// Hard rails always run — even virtual resonance bypass. Peak and mover
-	// are desk physics, not lab story switches.
-	if peak := CheckEntryPeak(tier.price, symbol); !peak.Allowed {
-		return &EntryDenial{Gate: "physical", Reason: peak.Reason}
-	}
-
-	if mover := CheckEntryMover(tier.price, symbol); !mover.Allowed {
-		return &EntryDenial{Gate: "physical", Reason: mover.Reason}
-	}
-
-	// Virtual + resonance bypass explores without the remaining physical desk
-	// gates so a lab bypass can open sample lots. Paper/real stay fully gated.
-	if !(tier.Type == TierTypeVirtual && system.Cfg.Learning.ResonanceBypass) {
-		if decision := CheckEntryPhysical(tier.price, symbol); !decision.Allowed {
-			return &EntryDenial{Gate: "physical", Reason: decision.Reason}
-		}
-	}
-
 	if tier.positions.Has(symbol) {
 		return errnie.Err(
 			errnie.TooManyRequests,
@@ -534,12 +464,15 @@ func (tier *Tier) Enter(
 	qty, err := tier.price.Allocate(symbol, wallet)
 
 	if err != nil || qty == nil || qty.Sign() <= 0 {
-		reason := "cannot size " + symbol
 		if err != nil {
-			reason = err.Error()
+			return errnie.Error(err)
 		}
 
-		return &EntryDenial{Gate: "size", Reason: reason}
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.Tier.Enter] cannot size "+symbol,
+			nil,
+		)
 	}
 
 	pos := NewPosition(
@@ -553,21 +486,12 @@ func (tier *Tier) Enter(
 	)
 
 	if err := pos.Enter(path, qty, wallet); err != nil {
-		if _, ok := err.(*EntryDenial); ok {
-			return err
-		}
-
 		return errnie.Error(err)
 	}
 
 	tier.positions.Add(symbol, pos, true)
 
 	if err := tier.Send(pos, "enter"); err != nil {
-		// Send already Drop'd the lot. Soft cash/base denials are routine.
-		if errnie.IsNotAcceptable(err) {
-			return &EntryDenial{Gate: "size", Reason: err.Error()}
-		}
-
 		return errnie.Error(err)
 	}
 
@@ -590,12 +514,20 @@ func (tier *Tier) fillsEnter(position *Position) error {
 
 	qty, err := decimal.NewFromString(position.EntryOrder.Volume)
 	if err != nil || qty.Sign() <= 0 {
-		return &EntryDenial{Gate: "size", Reason: "bad entry volume"}
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.Tier.fillsEnter] bad entry volume",
+			err,
+		)
 	}
 
 	px := tier.price.FillAsk(position.Symbol, &qty)
 	if px == nil || px.Sign() <= 0 {
-		return &EntryDenial{Gate: "size", Reason: "no book price for " + position.Symbol}
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.Tier.fillsEnter] no book price for "+position.Symbol,
+			nil,
+		)
 	}
 
 	now := time.Now().UTC()
@@ -657,8 +589,11 @@ func (tier *Tier) Send(position *Position, action string) error {
 		return nil
 	}
 
+	reqID := tier.reqSeq.Add(1)
+
 	msg := map[string]any{
 		"method": "add_order",
+		"req_id": reqID,
 		"params": map[string]any{
 			"symbol":     position.Symbol,
 			"side":       order.Type,
@@ -682,6 +617,12 @@ func (tier *Tier) Send(position *Position, action string) error {
 		)
 	}
 
+	sent := &submission{
+		position: position,
+		action:   action,
+		reqID:    reqID,
+	}
+
 	if tier.live != nil {
 		buf, err = tier.live.Seal(buf)
 
@@ -692,15 +633,12 @@ func (tier *Tier) Send(position *Position, action string) error {
 
 			return errnie.Error(err)
 		}
-
-		tier.inflight.Store(order.ClOrdId, &submission{
-			position: position,
-			action:   action,
-		})
 	}
 
+	tier.inflight.Store(reqID, sent)
+
 	if err := tier.private.Write(buf); err != nil {
-		tier.inflight.Delete(order.ClOrdId)
+		tier.inflight.Delete(reqID)
 
 		if action == "enter" {
 			tier.positions.Drop(position.Symbol)
@@ -829,6 +767,13 @@ func (tier *Tier) Run() {
 		}
 	}
 
+	// Resend exits for lots restored mid-close once private ingress is up.
+	for _, position := range tier.positions.Open() {
+		if position != nil && position.Closing && position.ClosedAt == nil {
+			tier.settle(position)
+		}
+	}
+
 	for {
 		select {
 		case <-tier.ctx.Done():
@@ -868,33 +813,32 @@ func (tier *Tier) ack(order *kraken.Order) {
 	}
 
 	if order.Success {
-		if order.Result.ClOrdID != "" {
-			tier.inflight.Delete(order.Result.ClOrdID)
+		if order.ReqID != 0 {
+			tier.inflight.Delete(order.ReqID)
 		}
 
 		return
 	}
 
-	tier.reject(order.Result.ClOrdID, order.Error)
+	tier.reject(order.ReqID, order.Error)
 }
 
-func (tier *Tier) reject(clOrdID, reason string) {
-	if clOrdID != "" {
-		value, ok := tier.inflight.LoadAndDelete(clOrdID)
+func (tier *Tier) reject(reqID int64, reason string) {
+	if reqID == 0 {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable, "[broker.Tier] order rejected without req_id", nil,
+		).With("reason", reason))
 
-		if !ok {
-			return
-		}
-
-		tier.dropRejected(value.(*submission), reason)
 		return
 	}
 
-	tier.inflight.Range(func(key, value any) bool {
-		tier.inflight.Delete(key)
-		tier.dropRejected(value.(*submission), reason)
-		return true
-	})
+	value, ok := tier.inflight.LoadAndDelete(reqID)
+
+	if !ok {
+		return
+	}
+
+	tier.dropRejected(value.(*submission), reason)
 }
 
 func (tier *Tier) dropRejected(sent *submission, reason string) {

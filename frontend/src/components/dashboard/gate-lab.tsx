@@ -303,7 +303,7 @@ export const GateLab = () => {
 					>
 						rez:{resonance.bypass ? "bypass" : "gate"}
 					</Button>
-					<Hint text="Bypass auto-applies: skips missing readings, story floors, oracle board, and soft physical desk gates on virtual. Peak, day-move, and volume rails still block. Cold explores need a full-length path." />
+					<Hint text="Bypass auto-applies: skips missing readings, story floors, and the region oracle gate (volume / day / spread / book / peak). Cold explores still need a full-length path." />
 				</span>
 				{RESONANCE_FIELDS.map((field) => {
 					const inputId = `gate-lab-rez-${field.key}`;
