@@ -28,6 +28,23 @@ func (stub stubFills) FillBid(_ string, _ *decimal.Decimal) *decimal.Decimal {
 	return &out
 }
 
+// stubSettle mirrors broker.Price.afterFee for tests (rate = feePct/100).
+func stubSettle(feePct decimal.Decimal) QuoteSettle {
+	return func(_ string, gross decimal.Decimal, buy bool) (cash, feeAmt decimal.Decimal) {
+		if feePct.Sign() <= 0 || gross.Sign() <= 0 {
+			return gross, decimal.Zero
+		}
+
+		feeAmt = gross.Mul(feePct).Div(decimal.NewFromInt(100))
+
+		if buy {
+			return gross.Add(feeAmt), feeAmt
+		}
+
+		return gross.Sub(feeAmt), feeAmt
+	}
+}
+
 func withVirtual(f func(*Virtual)) func() {
 	return func() {
 		prevQuote := system.Cfg.Market.QuoteCurrency
@@ -151,12 +168,13 @@ func TestWrite(t *testing.T) {
 			So(book.Cash("USD").String(), ShouldEqual, "1000")
 		})
 
-		Convey("When add_order fills against the book", func() {
+		Convey("When add_order fills against the book with desk fees", func() {
 			fresh := NewVirtual(virtual.ctx)
 			fresh.UseFills(stubFills{
 				ask: decimal.NewFromInt(10),
 				bid: decimal.NewFromInt(9),
 			})
+			fresh.UseQuoteSettle(stubSettle(decimal.RequireFromString("0.4")))
 
 			buf, err := sonic.Marshal(map[string]any{
 				"method": "add_order",
@@ -185,6 +203,8 @@ func TestWrite(t *testing.T) {
 			So(exec.Data[0].LastQty.String(), ShouldEqual, "2")
 			So(exec.Data[0].LastPrice.String(), ShouldEqual, "10")
 			So(exec.Data[0].AvgPrice.String(), ShouldEqual, "10")
+			So(exec.Data[0].FeeUsdEquiv.String(), ShouldEqual, "0.08")
+			So(exec.Data[0].Cost.String(), ShouldEqual, "20")
 
 			book := &market.Execution{}
 			exec.ToMarket(book)
@@ -197,7 +217,7 @@ func TestWrite(t *testing.T) {
 
 			venue := kraken.NewBalance()
 			So(sonic.Unmarshal(balances, venue), ShouldBeNil)
-			So(venue.Result["USD"].String(), ShouldEqual, "980")
+			So(venue.Result["USD"].String(), ShouldEqual, "979.92")
 			So(venue.Result["AAA"].String(), ShouldEqual, "2")
 		})
 
@@ -224,8 +244,13 @@ func TestWrite(t *testing.T) {
 				ask: decimal.NewFromInt(10),
 				bid: decimal.NewFromInt(9),
 			})
+			fresh.UseQuoteSettle(stubSettle(decimal.RequireFromString("0.4")))
 
-			fresh.Restock("AAA/USD", decimal.NewFromInt(2), decimal.NewFromInt(20))
+			fresh.Restock(
+				"AAA/USD",
+				decimal.NewFromInt(2),
+				decimal.RequireFromString("20.08"),
+			)
 
 			buf, err := sonic.Marshal(map[string]any{
 				"method": "add_order",
@@ -246,6 +271,7 @@ func TestWrite(t *testing.T) {
 			So(sonic.Unmarshal(frame, exec), ShouldBeNil)
 			So(exec.Data[0].Side, ShouldEqual, "sell")
 			So(exec.Data[0].LastQty.String(), ShouldEqual, "2")
+			So(exec.Data[0].FeeUsdEquiv.String(), ShouldEqual, "0.072")
 
 			balances, err := fresh.Read()
 			So(err, ShouldBeNil)
@@ -253,7 +279,7 @@ func TestWrite(t *testing.T) {
 			venue := kraken.NewBalance()
 			So(sonic.Unmarshal(balances, venue), ShouldBeNil)
 			So(venue.Result["AAA"].String(), ShouldEqual, "0")
-			So(venue.Result["USD"].String(), ShouldEqual, "998")
+			So(venue.Result["USD"].String(), ShouldEqual, "997.848")
 		})
 	}))
 }

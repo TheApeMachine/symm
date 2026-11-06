@@ -25,7 +25,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 			Symbol:    "XLM/USD",
 			Book:      broker.TierTypeVirtual.String(),
 			EntryPath: "R00/R01",
-			PnL:       &loss,
+			PnLPct:    &loss,
 		}
 
 		var got *runtime.Decision
@@ -43,7 +43,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		So(lot.ExitPath, ShouldEqual, "")
 	})
 
-	Convey("Policy exit settles a green lot when story is not bullish", t, func() {
+	Convey("Policy exit does not settle a thin green below the profit floor", t, func() {
 		tree := emptyTree()
 		model := &Model{
 			tree:      &atomic.Pointer[Tree]{},
@@ -51,12 +51,42 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		}
 		model.tree.Store(tree)
 
-		win := decimal.NewFromFloat(0.12)
+		thin := decimal.NewFromFloat(0.2)
 		lot := &broker.Position{
 			Symbol:    "XLM/USD",
 			Book:      broker.TierTypeVirtual.String(),
 			EntryPath: "R00/R01",
-			PnL:       &win,
+			PnLPct:    &thin,
+		}
+
+		var got *runtime.Decision
+		decide := func(d *runtime.Decision) { got = d }
+
+		model.applyAction(
+			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			[]*broker.Position{lot},
+		)
+
+		So(got, ShouldNotBeNil)
+		So(got.Action, ShouldEqual, "hold")
+		So(got.Gate, ShouldEqual, "pnl")
+		So(lot.ExitPath, ShouldEqual, "")
+	})
+
+	Convey("Policy exit settles a lot at or above the profit floor", t, func() {
+		tree := emptyTree()
+		model := &Model{
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		win := decimal.NewFromFloat(0.5)
+		lot := &broker.Position{
+			Symbol:    "XLM/USD",
+			Book:      broker.TierTypeVirtual.String(),
+			EntryPath: "R00/R01",
+			PnLPct:    &win,
 		}
 
 		var got *runtime.Decision
@@ -101,15 +131,47 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 		enterLeaf, ok := get(tree, entry)
 		So(ok, ShouldBeTrue)
 		So(enterLeaf.Action, ShouldEqual, "enter")
-		// Loss widens resistance (+0.05 off the seed).
-		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance+0.05, 0.001)
+		// Loss widens resistance (+step off the seed).
+		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance()+0.05, 0.001)
 
 		exitLeaf, ok := get(tree, exit)
 		So(ok, ShouldBeTrue)
 		So(exitLeaf.Action, ShouldEqual, "exit")
-		So(exitLeaf.Resistance, ShouldAlmostEqual, seedResistance+0.05, 0.001)
+		So(exitLeaf.Resistance, ShouldAlmostEqual, seedResistance()+0.05, 0.001)
 
 		So(position.ExitPath, ShouldEqual, exit)
+	})
+
+	Convey("closed pending trains once — later cuts do not spawn EXIT leaves", t, func() {
+		tree := emptyTree()
+		model := &Model{tree: &atomic.Pointer[Tree]{}}
+		model.tree.Store(tree)
+
+		entry := "R06.R00/R07.R01/R08.R02"
+		first := "R09.R03/R10.R04/R11.R05"
+		second := "R12.R06/R13.R07/R14.R08"
+		win := decimal.NewFromFloat(0.04)
+		closed := time.Now().UTC()
+
+		position := &broker.Position{
+			Symbol:    "AKE/USD",
+			Book:      broker.TierTypeVirtual.String(),
+			EntryPath: entry,
+			PnL:       &win,
+			ClosedAt:  &closed,
+		}
+
+		model.Exit(position, first)
+		model.Exit(position, second)
+
+		So(position.ExitPath, ShouldEqual, first)
+
+		enterLeaf, ok := get(tree, entry)
+		So(ok, ShouldBeTrue)
+		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance()-0.05, 0.001)
+
+		_, ok = get(tree, second)
+		So(ok, ShouldBeFalse)
 	})
 
 	Convey("exitCut refuses EntryPath — pending must wait for a distinct cut or hold", t, func() {

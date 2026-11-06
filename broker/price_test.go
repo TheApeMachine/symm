@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"math"
 	"sync"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	shop "github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -333,6 +335,73 @@ func TestExitRoomUsesBestBid(t *testing.T) {
 		room := fixture.price.ExitRoom(fixture.symbol, &lot)
 		So(room, ShouldNotBeNil)
 		So(room.String(), ShouldEqual, "3")
+	})
+}
+
+func TestCloseNowPartialDepthMarksDown(t *testing.T) {
+	Convey("thin bids mark only available depth; remainder is worthless", t, func() {
+		fixture := newPriceFixture(t, priceFixture{
+			symbol:     "THIN/USD",
+			cash:       1000,
+			qtyMinRaw:  "1",
+			costMinRaw: "1",
+			step:       "1",
+			bidPx:      100,
+			bidQty:     1,
+			askPx:      101,
+			askQty:     100,
+			feePct:     0,
+		})
+
+		qty := decimal.NewFromInt(10)
+		entry := decimal.NewFromInt(100)
+		fee := decimal.Zero
+
+		_, _, pnl, _ := fixture.price.closeNow(fixture.symbol, &qty, &entry, &fee)
+		So(pnl, ShouldNotBeNil)
+		// Available exit 100; full entry cost 1000 → pnl -900.
+		// Touch-fallback would have marked the whole lot at 100 → pnl 0.
+		So(pnl.InexactFloat64(), ShouldAlmostEqual, -900.0, 1e-9)
+	})
+}
+
+func TestBackingRatioZeroAsksIsStrong(t *testing.T) {
+	Convey("an ask vacuum inside the band is strongly backed", t, func() {
+		fixture := newPriceFixture(t, priceFixture{
+			symbol:     "BULL/USD",
+			cash:       1000,
+			qtyMinRaw:  "1",
+			costMinRaw: "1",
+			step:       "1",
+			bidPx:      100,
+			bidQty:     50,
+			askPx:      101,
+			askQty:     50,
+			feePct:     0.4,
+		})
+
+		prev := system.Cfg.Risk.BackingBandFrac
+		system.Cfg.Risk.BackingBandFrac = 0.001
+		Reset(func() { system.Cfg.Risk.BackingBandFrac = prev })
+
+		// Ask just beyond the tiny band; Midpoint geometry leaves askCash at 0.
+		far := decimal.RequireFromString("102")
+		qty := decimal.NewFromInt(50)
+		managed := fixture.books.Get(fixture.symbol)
+		managed.Update(&market.Delta{
+			Direction: market.SideAsk,
+			Price:     managed.BestAsk().Price,
+			Quantity:  &decimal.Zero,
+		})
+		managed.Update(&market.Delta{
+			Direction: market.SideAsk,
+			Price:     &far,
+			Quantity:  &qty,
+		})
+
+		ratio, ok := fixture.price.BackingRatio(fixture.symbol)
+		So(ok, ShouldBeTrue)
+		So(math.IsInf(ratio, 1), ShouldBeTrue)
 	})
 }
 

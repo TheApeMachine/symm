@@ -31,6 +31,13 @@ type Fills interface {
 }
 
 /*
+QuoteSettle applies desk fee math to a fill's gross quote notional.
+Buy returns fee-inclusive debit; sell returns fee-net credit. feeAmt is the
+taker dollars. Wired from broker via Price.afterFee — Virtual does not own fees.
+*/
+type QuoteSettle func(symbol string, gross decimal.Decimal, buy bool) (cash, feeAmt decimal.Decimal)
+
+/*
 Virtual is an in-process private Client so the virtual tier speaks the same
 Read/Write/Post surface as paper and live.
 */
@@ -42,6 +49,7 @@ type Virtual struct {
 	mu     sync.Mutex
 	wallet map[string]any
 	fills  Fills
+	settle QuoteSettle
 }
 
 func NewVirtual(ctx context.Context) *Virtual {
@@ -64,11 +72,28 @@ func NewVirtual(ctx context.Context) *Virtual {
 }
 
 /*
+Close cancels the virtual private transport so blocked Reads return.
+*/
+func (virtual *Virtual) Close() error {
+	virtual.cancel()
+	return nil
+}
+
+/*
 UseFills wires the book pricer used by add_order fills.
 */
 func (virtual *Virtual) UseFills(fills Fills) {
 	virtual.mu.Lock()
 	virtual.fills = fills
+	virtual.mu.Unlock()
+}
+
+/*
+UseQuoteSettle wires fee-adjusted quote cash (broker Price.afterFee).
+*/
+func (virtual *Virtual) UseQuoteSettle(settle QuoteSettle) {
+	virtual.mu.Lock()
+	virtual.settle = settle
 	virtual.mu.Unlock()
 }
 
@@ -160,6 +185,7 @@ func (virtual *Virtual) addOrder(request map[string]any) error {
 
 	virtual.mu.Lock()
 	fills := virtual.fills
+	settle := virtual.settle
 	virtual.mu.Unlock()
 
 	if fills == nil {
@@ -182,13 +208,19 @@ func (virtual *Virtual) addOrder(request map[string]any) error {
 		), "symbol", symbol, "side", side)
 	}
 
-	cost := qty.Mul(*px)
-	fee := decimal.Zero
+	gross := qty.Mul(*px)
+	cash := gross
+	feeAmt := decimal.Zero
+
+	if settle != nil {
+		cash, feeAmt = settle(symbol, gross, side == "buy")
+	}
+
 	now := time.Now().UTC()
 	orderID := "V-" + uuid.NewString()
 
-	if err := virtual.applyFill(side, symbol, qty, cost); err != nil {
-		return err
+	if err := virtual.applyFill(side, symbol, qty, cash); err != nil {
+		return errnie.Error(err)
 	}
 
 	frame := &kraken.Execution{
@@ -203,19 +235,19 @@ func (virtual *Virtual) addOrder(request map[string]any) error {
 			Side:          side,
 			LastQty:       decimalPtr(qty),
 			LastPrice:     decimalPtr(*px),
-			Cost:          decimalPtr(cost),
+			Cost:          decimalPtr(gross),
 			OrderType:     "market",
 			Timestamp:     now,
 			OrderStatus:   "filled",
 			CumQty:        decimalPtr(qty),
-			CumCost:       decimalPtr(cost),
+			CumCost:       decimalPtr(gross),
 			AvgPrice:      decimalPtr(*px),
-			FeeUsdEquiv:   decimalPtr(fee),
+			FeeUsdEquiv:   decimalPtr(feeAmt),
 		}},
 	}
 
 	if err := virtual.enqueue(frame); err != nil {
-		return err
+		return errnie.Error(err)
 	}
 
 	return virtual.enqueueBalances()
@@ -414,10 +446,15 @@ func (virtual *Virtual) Watch(
 			response, err := virtual.Post(url, body)
 
 			if err != nil {
+				errnie.Error(err)
 				continue
 			}
 
-			_ = json.Unmarshal(response, dest)
+			err = json.Unmarshal(response, dest)
+
+			if err != nil {
+				errnie.Error(err)
+			}
 		}
 	}()
 }

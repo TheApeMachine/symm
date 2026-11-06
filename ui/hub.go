@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -72,8 +73,11 @@ func NewHub(ctx context.Context) *Hub {
 		frames = 256
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	hub := &Hub{
 		ctx:        ctx,
+		cancel:     cancel,
 		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
 			JSONEncoder:     Sonic.Marshal,
@@ -203,7 +207,11 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 		))
 	}
 
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[hub] websocket close failed", err,
+		))
+	}
 
 	if hub.conn.CompareAndSwap(conn, nil) {
 		hub.connected.Store(false)
@@ -519,13 +527,6 @@ func (hub *Hub) handleCommand(payload []byte) error {
 }
 
 /*
-App exposes the underlying Fiber application for registering domain services.
-*/
-func (hub *Hub) App() *fiber.App {
-	return hub.app
-}
-
-/*
 Run binds the dashboard listener before returning and only then transitions
 the hub READY, so nothing upstream writes to a hub that cannot serve yet.
 */
@@ -551,4 +552,40 @@ func (hub *Hub) Run() error {
 	}()
 
 	return nil
+}
+
+/*
+Close stops streams, drains the hub store, and shuts the HTTP server.
+*/
+func (hub *Hub) Close() error {
+	if hub.cancel != nil {
+		hub.cancel()
+	}
+
+	hub.streamMu.Lock()
+
+	for kind, cancel := range hub.streams {
+		cancel()
+		delete(hub.streams, kind)
+	}
+
+	hub.streamMu.Unlock()
+
+	var errs error
+
+	if hub.store != nil {
+		if err := hub.store.Close(); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+
+	if hub.app != nil {
+		if err := hub.app.ShutdownWithTimeout(5 * time.Second); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[hub] shutdown failed", err,
+			)))
+		}
+	}
+
+	return errs
 }

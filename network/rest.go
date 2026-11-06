@@ -1,11 +1,9 @@
 package network
 
 import (
-	"encoding/json"
 	"net/url"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
@@ -91,33 +89,6 @@ func (rest *REST) Post(url string, body any) (*client.Response, error) {
 		Header: header,
 		Body:   body,
 	})
-}
-
-func (rest *REST) Watch(
-	url string,
-	body any,
-	dest json.Unmarshaler,
-) {
-	if dest == nil {
-		return
-	}
-
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			<-ticker.C
-
-			response, err := rest.Post(url, body)
-
-			if err != nil || response == nil {
-				continue
-			}
-
-			_ = json.Unmarshal(response.Body(), dest)
-		}
-	}()
 }
 
 /*

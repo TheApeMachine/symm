@@ -318,9 +318,9 @@ export const summarizeBook = (
 
 /*
 summarizeStops folds open-lot DynamicStoploss for one book. Legacy field names
-(invalidation / trailing / damage) map to pressure, floor proximity, and
-magnitude ratio so longtail history stays compatible. Exit reason maps are not
-stored here — use summarizeExits so samples stay fixed-size.
+(invalidation / trailing / damage) map onto floor proximity samples so
+longtail history stays compatible. Exit reason maps are not stored here —
+use summarizeExits so samples stay fixed-size.
 */
 export const summarizeStops = (
 	rows: Record<string, unknown>[],
@@ -329,9 +329,7 @@ export const summarizeStops = (
 	const open = rows.filter(
 		(row) => onBook(row, book) && !positionReadout(row).closed,
 	);
-	const pressureSamples: number[] = [];
 	const proximitySamples: number[] = [];
-	const magnitudeSamples: number[] = [];
 	let armed = 0;
 	let maxProximity = 0;
 	let withState = 0;
@@ -342,30 +340,25 @@ export const summarizeStops = (
 		withState += 1;
 
 		const proximity = stoploss.proximity;
-		const downside = stoploss.downside_pressure;
-		const magnitude = stoploss.downside_magnitude_ratio;
 
-		if (downside > 0) pressureSamples.push(downside);
 		if (stoploss.has_floor && proximity > 0) {
 			proximitySamples.push(proximity);
 		}
-		if (magnitude > 0) magnitudeSamples.push(magnitude);
 
 		const rowArmed =
-			stoploss.state === "Critical" ||
-			stoploss.state === "Dangerous" ||
+			stoploss.state === "Armed" ||
+			stoploss.state === "TakeProfit" ||
 			stoploss.state === "Triggered" ||
-			proximity >= 0.7 ||
-			downside >= 0.7;
+			proximity >= 0.7;
 		if (rowArmed) armed += 1;
 		if (proximity > maxProximity) maxProximity = proximity;
 	}
 
 	return {
 		open: open.length > 0 ? open.length : null,
-		invalidation: mean(pressureSamples),
+		invalidation: mean(proximitySamples),
 		trailing: mean(proximitySamples),
-		damage: mean(magnitudeSamples),
+		damage: null,
 		armed: withState > 0 ? armed : null,
 		maxProximity: withState > 0 && maxProximity > 0 ? maxProximity : null,
 	};

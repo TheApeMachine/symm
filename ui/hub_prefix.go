@@ -119,7 +119,16 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 	thresholds := make(map[string]float64, 256)
 
 	for key := range hub.store.ListKeys(prefix) {
-		raw := hub.store.Fetch(hub.ctx, key)
+		raw, err := hub.store.Download(hub.ctx, key)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[hub] error downloading path book", err,
+			))
+
+			continue
+		}
+
 		book := decodePathBook(raw)
 
 		if book == nil {
@@ -171,7 +180,17 @@ func (hub *Hub) writeClosedListing(prefix string, budget int) {
 	for key := range hub.store.ListKeys(prefix) {
 		var entry closedEntry
 
-		if !entry.read(hub.store.Fetch(hub.ctx, key)) {
+		raw, err := hub.store.Download(hub.ctx, key)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[hub] error downloading closed entry", err,
+			))
+
+			continue
+		}
+
+		if !entry.read(raw) {
 			continue
 		}
 

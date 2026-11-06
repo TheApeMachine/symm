@@ -10,8 +10,13 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 )
 
-func TestDecodeLotBareAndWrapped(t *testing.T) {
-	Convey("decodeLot reads a bare position", t, func() {
+func TestRestore(t *testing.T) {
+	Convey("Restore unmarshals a bare position and rebinds collaborators", t, func() {
+		cache := &Cache{
+			System:  runtime.NewSystem(context.Background(), "cache"),
+			tierKey: "virtual",
+		}
+
 		raw, err := sonic.Marshal(&Position{
 			ID:       "lot-1",
 			Symbol:   "ETH/USD",
@@ -19,21 +24,13 @@ func TestDecodeLotBareAndWrapped(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		got := decodeLot(raw)
+		got := cache.Restore(raw)
 
 		So(got, ShouldNotBeNil)
 		So(got.Symbol, ShouldEqual, "ETH/USD")
 		So(got.ID, ShouldEqual, "lot-1")
-	})
-
-	Convey("decodeLot peels a nested position envelope", t, func() {
-		raw := []byte(`{"epoch":1,"tick":2,"timestamp":3,"position":{"id":"lot-2","symbol":"AAVE/USD","opened_at":"2026-11-03T15:07:12.627877Z"}}`)
-
-		got := decodeLot(raw)
-
-		So(got, ShouldNotBeNil)
-		So(got.Symbol, ShouldEqual, "AAVE/USD")
-		So(got.ID, ShouldEqual, "lot-2")
+		So(got.TierKey, ShouldEqual, "virtual")
+		So(got.Book, ShouldEqual, "virtual")
 	})
 }
 
@@ -44,18 +41,17 @@ func TestRestoreNilPnLPct(t *testing.T) {
 			tierKey: "virtual",
 		}
 
-		raw := []byte(`{"position":{"id":"lot-3","symbol":"ADA/USD","book":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"1"}}}`)
+		raw := []byte(`{"id":"lot-3","symbol":"ADA/USD","book":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"1"}}`)
 
 		got := cache.Restore(raw)
 
 		So(got, ShouldNotBeNil)
 		So(got.Symbol, ShouldEqual, "ADA/USD")
-		So(got.Stoploss, ShouldNotBeNil)
 	})
 }
 
-func TestRestoreClearsClosedAt(t *testing.T) {
-	Convey("Open-prefix Restore clears ClosedAt so settle can finish", t, func() {
+func TestRestoreKeepsClosedAt(t *testing.T) {
+	Convey("Restore leaves ClosedAt alone — open load clears it", t, func() {
 		cache := &Cache{
 			System:  runtime.NewSystem(context.Background(), "cache"),
 			tierKey: "virtual",
@@ -66,7 +62,37 @@ func TestRestoreClearsClosedAt(t *testing.T) {
 		got := cache.Restore(raw)
 
 		So(got, ShouldNotBeNil)
-		So(got.ClosedAt, ShouldBeNil)
+		So(got.ClosedAt, ShouldNotBeNil)
+		So(got.ClosedAt.UTC().Format(time.RFC3339), ShouldEqual, "2026-11-03T16:00:00Z")
+	})
+}
+
+func TestRestoreKeepsFlatLotClosed(t *testing.T) {
+	Convey("Open-prefix Restore keeps ClosedAt when fills already flattened the lot", t, func() {
+		cache := &Cache{
+			System:  runtime.NewSystem(context.Background(), "cache"),
+			tierKey: "virtual",
+		}
+
+		raw := []byte(`{
+			"id":"lot-flat",
+			"symbol":"INIT/USD",
+			"book":"virtual",
+			"opened_at":"2026-11-05T09:56:31Z",
+			"closed_at":"2026-11-05T13:19:50Z",
+			"fills":[
+				{"exec_id":"b1","side":"buy","last_qty":"10","last_price":"1","exec_type":"trade"},
+				{"exec_id":"s1","side":"sell","last_qty":"10","last_price":"1.1","exec_type":"trade"},
+				{"exec_id":"s2","side":"sell","last_qty":"10","last_price":"0.9","exec_type":"trade"}
+			]
+		}`)
+
+		got := cache.Restore(raw)
+
+		So(got, ShouldNotBeNil)
+		So(got.Flat(), ShouldBeTrue)
+		So(got.ClosedAt, ShouldNotBeNil)
+		So(got.ExitVWAP.String(), ShouldEqual, "1.1")
 	})
 }
 
@@ -90,19 +116,3 @@ func TestHasKeepsOpenClosedAt(t *testing.T) {
 	})
 }
 
-func TestRestoreClosedKeepsClosedAt(t *testing.T) {
-	Convey("Closed-prefix restore keeps the settle time", t, func() {
-		cache := &Cache{
-			System:  runtime.NewSystem(context.Background(), "cache"),
-			tierKey: "real",
-		}
-
-		raw := []byte(`{"id":"lot-5","symbol":"SOL/USD","book":"real","opened_at":"2026-11-03T15:07:12.627877Z","closed_at":"2026-11-03T16:00:00Z"}`)
-
-		got := cache.restore(raw, false)
-
-		So(got, ShouldNotBeNil)
-		So(got.ClosedAt, ShouldNotBeNil)
-		So(got.ClosedAt.UTC().Format(time.RFC3339), ShouldEqual, "2026-11-03T16:00:00Z")
-	})
-}

@@ -144,27 +144,6 @@ type AddOrderRequest struct {
 	PostOnly bool   `json:"post_only,omitempty"`
 }
 
-type AddOrderMessage struct {
-	Method string          `json:"method"`
-	Params AddOrderRequest `json:"params"`
-}
-
-func NewAddOrderMessage(token string, req *AddOrderRequest) AddOrderMessage {
-	req.Token = token
-
-	if req.OrdType == "" {
-		req.OrdType = "market"
-		if req.Price != "" {
-			req.OrdType = "limit"
-		}
-	}
-
-	return AddOrderMessage{
-		Method: "add_order",
-		Params: *req,
-	}
-}
-
 /*
 Command is the paper CLI argv for this add_order.
 */
@@ -180,35 +159,4 @@ func (req *AddOrderRequest) Command() []string {
 	}
 
 	return command
-}
-
-func (msg AddOrderMessage) MarshalJSON() ([]byte, error) {
-	type alias AddOrderMessage
-	return sonic.Marshal((*alias)(&msg))
-}
-
-/*
-CancelOrderRequest is the WS v2 cancel_order params body.
-*/
-type CancelOrderRequest struct {
-	Token   string   `json:"token,omitempty"`
-	OrderID []string `json:"order_id,omitempty"`
-	ClOrdID []string `json:"cl_ord_id,omitempty"`
-}
-
-type CancelOrderMessage struct {
-	Method string             `json:"method"`
-	Params CancelOrderRequest `json:"params"`
-}
-
-func NewCancelOrderMessage(clOrdID string) CancelOrderMessage {
-	return CancelOrderMessage{
-		Method: "cancel_order",
-		Params: CancelOrderRequest{ClOrdID: []string{clOrdID}},
-	}
-}
-
-func (msg CancelOrderMessage) MarshalJSON() ([]byte, error) {
-	type alias CancelOrderMessage
-	return sonic.Marshal((*alias)(&msg))
 }

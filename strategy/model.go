@@ -14,6 +14,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Model is the main strategy engine, which is responsible for making
+decisions based on the current state of the market.
+*/
 type Model struct {
 	*runtime.System
 	desk      *broker.Desk
@@ -23,14 +27,17 @@ type Model struct {
 	resetPath func(string)
 }
 
+/*
+NewModel initializes a new model with the given context, desk, price,
+and reset path function. It also initializes the tree and the store.
+*/
 func NewModel(
 	ctx context.Context,
 	desk *broker.Desk,
 	price *broker.Price,
 	resetPath func(string),
+	client *store.Client,
 ) *Model {
-	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
-
 	model := &Model{
 		System:    runtime.NewSystem(ctx, "model"),
 		desk:      desk,
@@ -40,12 +47,16 @@ func NewModel(
 		resetPath: resetPath,
 	}
 
-	tree := NewTree(ctx, "model/paths/")
+	tree := NewTree(ctx, "model/paths/", client)
 	model.tree.Store(tree)
 
 	return model
 }
 
+/*
+Step is the main entry point for the model. It takes an envelope and returns 
+a new envelope. This makes it compatible with the LMAX Disruptor pipeline.
+*/
 func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
 		return nil
@@ -183,8 +194,12 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
+			minPath := learn.MinPathLength
+
+			// Cold explore (no ENTER leaf) needs a full-length cut — a 1-token
+			// flicker is not a choice. Bypass does not shorten that bar.
 			wantEnter := action == ActionEnter ||
-				(action == ActionNone && bullish && cut.Len() > 0)
+				(action == ActionNone && bullish && cut.Len() >= minPath)
 
 			// Resonance bypass is the lab "open the floodgates" switch: skip
 			// the emit-board oracle too. Lab oracle lamps stay local-only.
@@ -203,8 +218,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				model.applyAction(decide, symbol, path, action, resistance, bullish, bypass, open)
 				return
 			}
-
-			minPath := learn.MinPathLength
 
 			if len(open) > 0 && path != "" && cut.Len() >= minPath {
 				for _, lot := range open {
@@ -231,7 +244,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if !bypass && cut.Len() < minPath {
+			if cut.Len() < minPath {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -292,13 +305,15 @@ func (model *Model) applyAction(
 			return
 		}
 
-		// Policy match takes profit; underwater lots stay open for the
-		// hard stop. Seeding exit leaves from losses already poisoned
-		// early trees into giving up mid-drag.
+		// Policy match takes profit only once fee-net PnL% clears the
+		// floor. Thin greens and underwater lots stay for the hard stop;
+		// seeding exit leaves from losses poisoned early trees.
+		minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
 		exited := 0
 
 		for _, lot := range open {
-			if lot == nil || lot.PnL == nil || lot.PnL.Sign() <= 0 {
+			if lot == nil || lot.PnLPct == nil ||
+				lot.PnLPct.InexactFloat64() < minProfit {
 				continue
 			}
 
@@ -314,7 +329,7 @@ func (model *Model) applyAction(
 			decide(&runtime.Decision{
 				Symbol: symbol,
 				Action: "hold",
-				Reason: "exit leaf ignored — lot still in loss",
+				Reason: "exit leaf ignored — lot below min profit",
 				Gate:   "pnl",
 				Path:   path,
 			})
@@ -523,35 +538,58 @@ func (model *Model) Exit(position *broker.Position, path string) {
 		return
 	}
 
+	settled := position.ClosedAt != nil
+
+	// Stoploss lots sit in pending until one distinct cut is attributed.
+	// Re-training every tick was seeding a new EXIT leaf per live path and
+	// walking resistance into the thousands.
+	if settled && position.ExitPath != "" {
+		model.dropPending(position)
+		return
+	}
+
 	position.ExitPath = path
 	tree := model.tree.Load()
 
 	tree.Ensure(position.EntryPath, ActionEnter)
 	tree.Ensure(position.ExitPath, ActionExit)
 
-	delta := 0.05
+	delta := system.Cfg.Learning.ThresholdStep
 
 	if position.PnL != nil && position.PnL.Sign() > 0 {
-		delta = -0.05
+		delta = -delta
 	}
 
 	tree.Update(position.EntryPath, delta)
 	tree.Update(position.ExitPath, delta)
 
-	if position.ClosedAt != nil || model.desk == nil {
+	if settled {
+		model.dropPending(position)
 		return
 	}
 
-	var tt broker.TierType
-
-	switch position.Book {
-	case broker.TierTypePaper.String():
-		tt = broker.TierTypePaper
-	case broker.TierTypeReal.String():
-		tt = broker.TierTypeReal
-	default:
-		tt = broker.TierTypeVirtual
+	if model.desk == nil {
+		return
 	}
 
-	model.desk.Exit(tt, position)
+	model.desk.Exit(model.bookTier(position), position)
+}
+
+func (model *Model) bookTier(position *broker.Position) broker.TierType {
+	switch position.Book {
+	case broker.TierTypePaper.String():
+		return broker.TierTypePaper
+	case broker.TierTypeReal.String():
+		return broker.TierTypeReal
+	default:
+		return broker.TierTypeVirtual
+	}
+}
+
+func (model *Model) dropPending(position *broker.Position) {
+	if model.desk == nil || position == nil {
+		return
+	}
+
+	model.desk.ClearPending(model.bookTier(position), position.Symbol)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue"
 )
 
@@ -137,9 +138,10 @@ func TestWalletReadingEquityIncludesOpenMarketValue(t *testing.T) {
 
 		pos := NewPosition(context.Background(), "AAA/USD", "virtual", "path", price, nil, nil)
 		entry := decimal.RequireFromString("100")
-		pos.qty = &qty
-		pos.entry = &entry
-		pos.Update(nil)
+		pos.Qty = &qty
+		pos.Entry = &entry
+		mark := decimal.RequireFromString("100")
+		So(pos.Update(&mark), ShouldBeNil)
 		So(tier.positions.Add("AAA/USD", pos, true), ShouldBeFalse)
 
 		reading := tier.walletReading()
@@ -147,6 +149,38 @@ func TestWalletReadingEquityIncludesOpenMarketValue(t *testing.T) {
 		So(reading["unrealized"], ShouldEqual, 0)
 		// Free cash 900 + flat 100 notional lot ≈ starting 1000, not 900+0.
 		So(reading["equity"], ShouldEqual, 1000)
+	})
+}
+
+func TestWalletReadingKeepsZeroCash(t *testing.T) {
+	Convey("fully deployed virtual cash stays at zero", t, func() {
+		prevBal := system.Cfg.Market.Balance
+		system.Cfg.Market.Balance = 200
+		Reset(func() { system.Cfg.Market.Balance = prevBal })
+
+		host := venue.NewKraken("USD")
+		zero := decimal.Zero
+		host.Balance().FromMarket(market.NewBalance(map[string]any{
+			"quote": "USD",
+			"assets": []*market.Asset{
+				market.NewAsset(nil, "USD", zero, decimal.Zero, zero),
+			},
+		}))
+
+		tier := &Tier{
+			Type:  TierTypeVirtual,
+			venue: host,
+			positions: &Cache{
+				positions: map[string]map[string]*Position{
+					"open":   {},
+					"closed": {},
+				},
+			},
+		}
+
+		reading := tier.walletReading()
+		So(reading["cash"], ShouldEqual, 0)
+		So(reading["equity"], ShouldEqual, 0)
 	})
 }
 

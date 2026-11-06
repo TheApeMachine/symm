@@ -20,10 +20,12 @@ const (
 	ActionEnter Action = "enter"
 	ActionHold  Action = "hold"
 	ActionExit  Action = "exit"
-
-	// seedResistance is the desk baseline for a brand-new leaf.
-	seedResistance = 0.5
 )
+
+// seedResistance is the desk baseline for a brand-new leaf.
+func seedResistance() float64 {
+	return system.Cfg.Learning.ThresholdStart
+}
 
 func NewAction(action string) Action {
 	switch action {
@@ -52,14 +54,14 @@ type Tree struct {
 	store  *store.Client
 }
 
-func NewTree(ctx context.Context, seedPrefix string) *Tree {
+func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree {
 	ctx, cancel := context.WithCancel(ctx)
 
 	tree := &Tree{
 		ctx:    ctx,
 		cancel: cancel,
 		root:   atomic.Pointer[iradix.Tree[*runtime.Decision]]{},
-		store:  store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		store:  client,
 	}
 
 	tree.root.Store(iradix.New[*runtime.Decision]())
@@ -70,7 +72,16 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 				continue
 			}
 
-			raw := tree.store.Fetch(ctx, *object.Key)
+			raw, err := tree.store.Download(ctx, *object.Key)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[tree] error downloading decision", err,
+				))
+
+				continue
+			}
+
 			decision := &runtime.Decision{}
 
 			if err := sonic.Unmarshal(raw, decision); err != nil {
@@ -80,6 +91,8 @@ func NewTree(ctx context.Context, seedPrefix string) *Tree {
 
 				continue
 			}
+
+			decision.Resistance = clampResistance(decision.Resistance)
 
 			path := strings.TrimSuffix(strings.TrimPrefix(*object.Key, seedPrefix), ".json")
 			path = strings.TrimSuffix(path, ".bin")
@@ -116,7 +129,9 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 		prunes     []string
 	)
 
-	tree.root.Load().Root().WalkPrefix([]byte(tokens.String()), func(key []byte, decision *runtime.Decision) bool {
+	tree.root.Load().Root().WalkPrefix([]byte(tokens.String()), func(
+		key []byte, decision *runtime.Decision,
+	) bool {
 		if decision == nil {
 			return false
 		}
@@ -179,12 +194,26 @@ func (tree *Tree) Update(path string, delta float64) {
 		return
 	}
 
-	tree.root.Load().Root().WalkPrefix([]byte(path), func(key []byte, decision *runtime.Decision) bool {
+	floor := system.Cfg.Learning.ThresholdFloor
+	ceil := system.Cfg.Learning.ThresholdCeil
+
+	tree.root.Load().Root().WalkPrefix([]byte(path), func(
+		key []byte, decision *runtime.Decision,
+	) bool {
 		if decision == nil {
 			return false
 		}
 
 		decision.Resistance += delta
+
+		if decision.Resistance < floor {
+			decision.Resistance = floor
+		}
+
+		if decision.Resistance > ceil {
+			decision.Resistance = ceil
+		}
+
 		root := tree.root.Load()
 		root, _, _ = root.Insert(key, decision)
 		tree.root.Store(root)
@@ -231,8 +260,24 @@ func (tree *Tree) Ensure(path string, action Action) {
 	tree.Insert(path, &runtime.Decision{
 		Action:     action.String(),
 		Path:       path,
-		Resistance: seedResistance,
+		Resistance: seedResistance(),
 	})
+}
+
+// clampResistance keeps a loaded leaf inside the configured band.
+func clampResistance(value float64) float64 {
+	floor := system.Cfg.Learning.ThresholdFloor
+	ceil := system.Cfg.Learning.ThresholdCeil
+
+	if value < floor {
+		return floor
+	}
+
+	if value > ceil {
+		return ceil
+	}
+
+	return value
 }
 
 func (tree *Tree) Delete(path string) {

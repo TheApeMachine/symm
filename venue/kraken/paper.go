@@ -54,6 +54,14 @@ func NewPaper(ctx context.Context) *Paper {
 	}
 }
 
+/*
+Close cancels the paper private transport so blocked Reads return.
+*/
+func (paper *Paper) Close() error {
+	paper.cancel()
+	return nil
+}
+
 func (paper *Paper) Read(keys ...string) ([]byte, error) {
 	for {
 		if buf, ok := paper.queue.Dequeue(); ok {
@@ -167,6 +175,7 @@ func (paper *Paper) enqueueFill(model map[string]any, clOrdID string) {
 	raw, err := exec.MarshalJSON()
 
 	if err != nil {
+		errnie.Error(err)
 		return
 	}
 
@@ -196,10 +205,15 @@ func (paper *Paper) Watch(
 			response, err := paper.Post(url, body)
 
 			if err != nil {
+				errnie.Error(err)
 				continue
 			}
 
-			_ = json.Unmarshal(response, dest)
+			err = json.Unmarshal(response, dest)
+
+			if err != nil {
+				errnie.Error(err)
+			}
 		}
 	}()
 }

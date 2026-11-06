@@ -5,16 +5,15 @@ export type Balance = {
 };
 
 /*
-Stoploss state as Go's StoplossState iota (broker/stoploss.go). Wire JSON
-ships the numeric enum unless a string label is present.
+Stoploss state as Go's StoplossState iota (broker/stoploss.go):
+Healthy=0, Armed=1, TakeProfit=2, Triggered=3.
 */
-export type StoplossStateCode = 0 | 1 | 2 | 3 | 4 | 5;
+export type StoplossStateCode = 0 | 1 | 2 | 3;
 
 export type DynamicStoplossState =
 	| "Healthy"
-	| "Protected"
-	| "Critical"
-	| "Dangerous"
+	| "Armed"
+	| "TakeProfit"
 	| "Triggered";
 
 /** UI-facing stop telemetry derived from broker.Stoploss JSON. */
@@ -29,13 +28,6 @@ export type DynamicStoploss = {
 	has_floor: boolean;
 	room_pct: number;
 	proximity: number;
-	/** Peak near-floor proximity [0,1] from broker.Stoploss.Damage. */
-	damage?: number;
-	/** Last book/tape upward probability [0,1]. */
-	up_prob?: number;
-	downside_pressure: number;
-	downside_magnitude_ratio: number;
-	consecutive_down: number;
 	opened_at?: string;
 	last_peak_time?: string;
 };

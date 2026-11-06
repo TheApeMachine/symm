@@ -12,10 +12,9 @@ func TestNewConfig(t *testing.T) {
 			So(Cfg, ShouldNotBeNil)
 			So(Cfg.Resonance, ShouldNotBeNil)
 			So(Cfg.Risk, ShouldNotBeNil)
-			So(Cfg.Planner, ShouldNotBeNil)
+			So(Cfg.Learning, ShouldNotBeNil)
 			So(Cfg.UI, ShouldNotBeNil)
 			So(Cfg.Workbench, ShouldNotBeNil)
-			So(Cfg.Audit, ShouldNotBeNil)
 		})
 
 		Convey("It should construct independent config instances", func() {
@@ -23,10 +22,9 @@ func TestNewConfig(t *testing.T) {
 			So(config, ShouldNotBeNil)
 			So(config.Resonance, ShouldNotBeNil)
 			So(config.Risk, ShouldNotBeNil)
-			So(config.Planner, ShouldNotBeNil)
+			So(config.Learning, ShouldNotBeNil)
 			So(config.UI, ShouldNotBeNil)
 			So(config.Workbench, ShouldNotBeNil)
-			So(config.Audit, ShouldNotBeNil)
 		})
 	})
 }

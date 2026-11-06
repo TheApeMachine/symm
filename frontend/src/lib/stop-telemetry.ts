@@ -1,6 +1,6 @@
 /*
 Human words and tones for DynamicStoploss so a held lot is never a black box.
-State comes from broker.DynamicStoploss on each position frame.
+State comes from broker.Stoploss on each position frame.
 */
 
 import type { DynamicStoplossState } from "#/collections/types";
@@ -46,10 +46,10 @@ export const stateTone = (
 	switch (state) {
 		case "Healthy":
 			return "good";
-		case "Protected":
+		case "Armed":
 			return "info";
-		case "Dangerous":
-		case "Critical":
+		case "TakeProfit":
+			return "warn";
 		case "Triggered":
 			return "bad";
 		default:
@@ -68,7 +68,6 @@ export const heldVerdict = (args: {
 	friction: number | null;
 	has_floor?: boolean;
 	proximity?: number | null;
-	downside_pressure?: number | null;
 	exit_reason?: string | null;
 	room_pct?: number | null;
 }): { text: string; tone: Tone } => {
@@ -82,17 +81,33 @@ export const heldVerdict = (args: {
 		};
 	}
 
-	if (args.state === "Dangerous") {
+	if (args.state === "TakeProfit") {
+		const room =
+			args.room_pct !== null &&
+			args.room_pct !== undefined &&
+			Number.isFinite(args.room_pct)
+				? `${Math.abs(args.room_pct).toFixed(1)}pp above floor`
+				: null;
 		return {
-			text: "Dangerous — floor proximity or cascade pressure is elevated",
-			tone: "bad",
+			text: room
+				? `Take-profit locked — next down tick settles (${room})`
+				: "Take-profit locked — next down tick settles",
+			tone: "warn",
 		};
 	}
 
-	if (args.state === "Critical") {
+	if (args.state === "Armed") {
+		const room =
+			args.room_pct !== null &&
+			args.room_pct !== undefined &&
+			Number.isFinite(args.room_pct)
+				? `${Math.abs(args.room_pct).toFixed(1)}pp room`
+				: null;
 		return {
-			text: "Critical — room to floor is thinner than entry drag",
-			tone: "bad",
+			text: room
+				? `Armed — ${room} before floor at ${fmtPct(args.floor)}`
+				: `Armed — floor at ${fmtPct(args.floor)}`,
+			tone: args.proximity !== null && args.proximity >= 0.7 ? "warn" : "info",
 		};
 	}
 
@@ -104,56 +119,22 @@ export const heldVerdict = (args: {
 		};
 	}
 
-	if (
-		args.has_floor &&
-		args.proximity !== null &&
-		args.proximity !== undefined
-	) {
-		if (args.proximity >= 1) {
-			return { text: "At the profit floor — stop should arm", tone: "bad" };
-		}
-
-		const room =
-			args.room_pct !== null &&
-			args.room_pct !== undefined &&
-			Number.isFinite(args.room_pct)
-				? `${Math.abs(args.room_pct).toFixed(1)}pp room`
-				: null;
-		if (room) {
-			return {
-				text: `Protected — ${room} before floor at ${fmtPct(args.floor)}`,
-				tone: args.proximity >= 0.7 ? "warn" : stateTone(args.state),
-			};
-		}
-	}
-
 	const peakKnown = args.peak !== null && Number.isFinite(args.peak);
 	if (peakKnown && args.peak !== null && args.peak > (args.friction ?? 0)) {
 		return {
-			text: `In profit (peak ${args.peak.toFixed(1)}%) — dynamic floor armed`,
+			text: `In profit (peak ${args.peak.toFixed(1)}%) — waiting to arm`,
 			tone: "good",
-		};
-	}
-
-	if (
-		args.downside_pressure !== null &&
-		args.downside_pressure !== undefined &&
-		args.downside_pressure > 0
-	) {
-		return {
-			text: `Underwater — downside pressure ${Math.round(args.downside_pressure * 100)}%`,
-			tone: args.downside_pressure >= 0.7 ? "bad" : "warn",
 		};
 	}
 
 	return {
 		text: `Holding near entry (${current.toFixed(2)}%) — stop healthy`,
-		tone: stateTone(args.state) === "neutral" ? "good" : stateTone(args.state),
+		tone: "good",
 	};
 };
 
 export type StopCheck = {
-	id: "floor" | "pressure" | "stall";
+	id: "floor" | "peak" | "state";
 	name: string;
 	role: "defence" | "harvest" | "context";
 	word: StopWord;
@@ -162,16 +143,6 @@ export type StopCheck = {
 };
 
 export type StopWord = { label: string; short: string; title: string };
-
-const pressureTone = (ratio: number | null | undefined): Tone => {
-	if (ratio === null || ratio === undefined || !Number.isFinite(ratio)) {
-		return "neutral";
-	}
-	if (ratio >= 0.85) return "bad";
-	if (ratio >= 0.55) return "warn";
-	if (ratio >= 0.25) return "info";
-	return "good";
-};
 
 const floorTone = (proximity: number | null | undefined): Tone => {
 	if (
@@ -190,15 +161,12 @@ const floorTone = (proximity: number | null | undefined): Tone => {
 export const buildStopChecks = (args: {
 	state: DynamicStoplossState | null | undefined;
 	proximity?: number | null;
-	downside_pressure?: number | null;
-	downside_magnitude_ratio?: number | null;
-	consecutive_down?: number | null;
 	has_floor?: boolean;
 	room_pct?: number | null;
 	current?: number | null;
+	peak?: number | null;
 }): StopCheck[] => {
 	const prox = proximityPct(args.proximity);
-	const pressure = proximityPct(args.downside_pressure);
 
 	const floorShort =
 		args.has_floor && args.room_pct !== null && args.room_pct !== undefined
@@ -209,7 +177,7 @@ export const buildStopChecks = (args: {
 					: "armed"
 				: "no floor";
 
-	const checks: StopCheck[] = [
+	return [
 		{
 			id: "floor",
 			name: "Floor",
@@ -218,66 +186,45 @@ export const buildStopChecks = (args: {
 				label: "Floor proximity",
 				short: floorShort,
 				title: args.has_floor
-					? `Distance from peak toward the profit floor. ${prox !== null ? `${Math.round(prox)}% of the peak→floor span consumed` : "Floor is set"}${args.current !== null && args.current !== undefined ? `, mark ${fmtPct(args.current)}` : ""}.`
-					: "Floor has not armed yet — trail engages once peak clears friction.",
+					? `Distance from peak toward the give-back floor. ${prox !== null ? `${Math.round(prox)}% of the peak→floor span consumed` : "Floor is set"}${args.current !== null && args.current !== undefined ? `, mark ${fmtPct(args.current)}` : ""}.`
+					: "Floor has not armed yet — trail engages once mark clears the arm threshold.",
 			},
 			percent: args.has_floor ? prox : null,
 			tone: args.has_floor ? floorTone(args.proximity) : "neutral",
 		},
 		{
-			id: "pressure",
-			name: "Pressure",
-			role: "defence",
-			word: {
-				label: "Downside pressure",
-				short: pressure !== null ? `${Math.round(pressure)}%` : "calm",
-				title:
-					pressure !== null
-						? `Cascade pressure from consecutive adverse marks — ${Math.round(pressure)}% of the exit budget.`
-						: "No elevated downside pressure on this mark.",
-			},
-			percent: pressure,
-			tone: pressureTone(args.downside_pressure),
-		},
-		{
-			id: "stall",
-			name: "Stall",
+			id: "peak",
+			name: "Peak",
 			role: "context",
 			word: {
-				label: "Stall",
+				label: "Peak mark",
 				short:
-					args.state === "Critical"
-						? "critical"
-						: typeof args.consecutive_down === "number" &&
-								args.consecutive_down > 0
-							? `${args.consecutive_down}↓`
-							: "clear",
+					args.peak !== null && args.peak !== undefined
+						? fmtPct(args.peak)
+						: "—",
 				title:
-					args.state === "Critical"
-						? "Room to floor is thinner than entry drag."
-						: typeof args.consecutive_down === "number" &&
-								args.consecutive_down > 0
-							? `${args.consecutive_down} consecutive down marks without a new peak.`
-							: "No stall pattern on the current path.",
+					args.peak !== null && args.peak !== undefined
+						? `Best fee-net mark this hold: ${fmtPct(args.peak)}.`
+						: "No peak printed yet.",
 			},
-			percent:
-				args.state === "Critical"
-					? 90
-					: typeof args.consecutive_down === "number" &&
-							args.consecutive_down > 0
-						? Math.min(100, args.consecutive_down * 20)
-						: null,
-			tone:
-				args.state === "Critical"
-					? "bad"
-					: typeof args.consecutive_down === "number" &&
-							args.consecutive_down >= 3
-						? "info"
-						: "neutral",
+			percent: null,
+			tone: "info",
+		},
+		{
+			id: "state",
+			name: "State",
+			role: "defence",
+			word: {
+				label: "Stop state",
+				short: args.state ?? "—",
+				title: args.state
+					? `Live stop state: ${args.state}.`
+					: "No stop telemetry on this lot.",
+			},
+			percent: null,
+			tone: stateTone(args.state),
 		},
 	];
-
-	return checks;
 };
 
 export const stopRule = (

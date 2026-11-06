@@ -433,7 +433,7 @@ const deskRowFromClosedLife = (
 		book,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at,
-		pnl: outcome.pnl,
+		pnl: outcome.money ?? null,
 		pnl_pct: outcome.pnl_pct,
 		hold_ns: outcome.hold_ns,
 		outcome_triggers: outcome.triggers,

@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +111,7 @@ func (price *Price) SetTicker(
 
 func (price *Price) tickerOf(symbol string) tickerSnap {
 	raw, ok := price.ticker.Load(symbol)
+
 	if !ok {
 		return tickerSnap{}
 	}
@@ -564,8 +566,10 @@ func (price *Price) closeNow(
 			return
 		}
 
-		filled, gross, err := price.consume(managed, quantity, nil, SELL)
-		if err != nil || filled == nil || gross == nil || filled.Sign() <= 0 {
+		// Partial depth still marks: unfilled remainder is worth zero so an
+		// evaporating book cannot look better than a liquid walk.
+		filled, gross, _ := price.consume(managed, quantity, nil, SELL)
+		if filled == nil || gross == nil || filled.Sign() <= 0 {
 			return
 		}
 
@@ -925,6 +929,7 @@ func (price *Price) sizeBuy(
 	}
 
 	askPx := managed.BestAsk().Price
+	feeRate := fee.Mul(decimalPercent)
 	fail := fmt.Sprintf(
 		"cannot trim fill to fee-inclusive budget %s (filled=%s)",
 		budget.String(), filled.String(),
@@ -935,14 +940,17 @@ func (price *Price) sizeBuy(
 		if total == nil {
 			return nil, nil, "fee-inclusive cost unknown"
 		}
+
 		if total.Cmp(*budget) <= 0 {
-			return filled, gross, ""
+			return price.venueFill(managed, symbol, filled, gross)
 		}
+
 		if askPx == nil || askPx.Sign() <= 0 {
 			return nil, nil, fail
 		}
 
-		cut := total.Sub(*budget).Div(*askPx)
+		// Each base unit cut saves askPx*(1+feeRate) of fee-inclusive cash.
+		cut := total.Sub(*budget).Div(askPx.Mul(decimalOne.Add(feeRate)))
 		if step := pair.QtyIncrement; step != nil && step.Sign() > 0 && cut.Cmp(*step) < 0 {
 			cut = *step
 		}
@@ -972,24 +980,38 @@ func (price *Price) sizeBuy(
 	return nil, nil, fail
 }
 
-func (price *Price) roundTrip(
+// venueFill snaps qty to the instrument step and re-walks so gross matches.
+func (price *Price) venueFill(
+	managed *market.Book,
 	symbol string,
-	quantity, entry, entryFee, exitFee *decimal.Decimal,
-) (profit, cost *decimal.Decimal) {
-	if quantity == nil || entry == nil ||
-		quantity.Sign() <= 0 || entry.Sign() <= 0 ||
-		entryFee == nil || exitFee == nil {
-		return nil, nil
+	filled, gross *decimal.Decimal,
+) (*decimal.Decimal, *decimal.Decimal, string) {
+	if filled == nil || filled.Sign() <= 0 {
+		return nil, nil, "venue size is non-positive"
 	}
 
-	_, _, profit, _ = price.closeNow(symbol, quantity, entry, entryFee)
-	if profit == nil {
-		return nil, nil
+	sized := filled
+	if formatted, err := price.formatSize(symbol, filled); err == nil && formatted != nil {
+		sized = formatted
 	}
 
-	entryCost := entry.Mul(*quantity)
-	cost = price.afterFee(&entryCost, entryFee, BUY)
-	return profit, cost
+	if sized.Sign() <= 0 {
+		return nil, nil, "venue size rounded to zero"
+	}
+
+	if sized.Cmp(*filled) == 0 {
+		return filled, gross, ""
+	}
+
+	next, nextGross, err := price.consume(managed, sized, nil, BUY)
+	if err != nil || next == nil || next.Sign() <= 0 {
+		if err != nil {
+			return nil, nil, "venue size format walk failed: " + err.Error()
+		}
+		return nil, nil, "venue size format walk failed"
+	}
+
+	return next, nextGross, ""
 }
 
 func (price *Price) roundTripPct(
@@ -1121,6 +1143,9 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 
 		if askCash > 0 {
 			ratio, ok = bidCash/askCash, true
+		} else {
+			// No ask notional in-band is an overhead vacuum, not a missing book.
+			ratio, ok = math.Inf(1), true
 		}
 	})
 

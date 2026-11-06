@@ -24,44 +24,15 @@ workbench:
   max_temp_directory_size: 64GB
   threads: 4
 
-experimental:
-  # Presentation and diagnostic experiments are opt-in and paper-only.
-  enabled: false
-
-runtime:
-  workspace:
-    # Disruptor slot count. Must be a power of two. Each sequence keeps its own
-    # feed snapshot so signals see that event, not only the latest register slot.
-    buffer: 8192
-
 system:
   data_path: ~/.symm/data
-  pprof:
-    enabled: false
-    addr: 127.0.0.1:6060
   log:
     level: debug
-  streaming:
-    max_shards: 128
-    lane_capacity: 4096
-    max_workers: 0
-    spin_limit: 64
-    drain_limit: 256
-  bus:
-    # The thesis broadcast re-asserts itself on this interval while an epoch is
-    # unfinished, so a module that missed or coalesced a wake-up is woken again
-    # instead of leaving the epoch stalled with no stamp and no way to recover.
-    # Lower costs idle broadcasts; higher lengthens the worst-case recovery.
-    heartbeat: 250ms
   websocket:
-    # UI delivery budget only; does not control decisions or tape maturity.
-    learning_interval: 250ms
     endpoints:
       public: "wss://ws.kraken.com/v2"
       private: "wss://ws-auth.kraken.com/v2"
       level3: "wss://ws-l3.kraken.com/v2"
-      futures: "wss://futures.kraken.com/ws/v1"
-      tradebalance: "/0/private/TradeBalance"
       tradevolume: "/0/private/TradeVolume"
       ticker: "/0/public/Ticker"
     # How often a session sends its keepalive. A half-open connection — one
@@ -69,68 +40,11 @@ system:
     # is invisible to a socket that only reads. The periodic write is what
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
-    decay_rate: 0.33
-    calls_per_update: 2
-    calls_per_second: 1
-    channel:
-      # Public trade and Level3 ingress queues and UI fan-out. Undersizing
-      # stalls the Kraken reader behind book decode and starves trades.
-      # ponytail: fixed capacity is an intentional simplification with memory
-      # and burst limits; telemetry-driven or adaptive sizing is the upgrade path.
-      buffer: 4096
-
-hindsight:
-  capture:
-    # Controls whether the root symm process tees and drains live streaming
-    # market and sensory data into Iceberg. Set to true only for standalone recording;
-    # when symm collect runs on a dedicated collector node, leave false here to
-    # prevent duplicate table writes and fragmented short runs.
-    enabled: false
-    # Records queue in memory while the writer drains them into the tables.
-    # Maximum records collected before one drain of the queue.
-    batch_size: 256
-    # Drain a partial batch even when no further observations arrive.
-    flush_interval: 50ms
-    # Commit cadence is deliberately far coarser than the drain above. An
-    # Iceberg commit writes a snapshot, a manifest, a manifest list and a new
-    # metadata file, so committing per drain produced three metadata objects
-    # per data file and left the table in thousands of tiny fragments.
-    # Buffered rows stay in memory until one of these is reached.
-    commit_rows: 20000
-    commit_interval: 30s
-  rehearsal:
-    # Replay workers practise on the whole capture archive, not only the run
-    # being recorded now: a confirmed excursion needs a qualifying move and
-    # then a retracement away from its extremum, which a freshly started
-    # process has not had time to produce. The live run is always read;
-    # completed runs are then taken newest first until this many observations
-    # are resident, so a larger archive degrades to the most recent tape
-    # rather than exhausting memory. A run is always read whole — stopping
-    # mid-run would end a tape at the budget rather than at the record.
-    observation_budget: 500000
 
 resonance:
-  # Chord-level surprise gate (strategy symbolTape.advance, shared by train
-  # and run): the midpoint rule proposes a chord; it is appended to the
-  # grammar only when the resonance solver's surprise, as a causal running
-  # z-score per symbol, reaches surprise_z. Before that the symbol warms up:
-  # its gate stays closed (chords blocked, counted "cold") until its coder's
-  # error has settled, i.e. its average at the coder's fastest rate (0.15)
-  # is no longer below its average at learning_rate. There is no warm-up
-  # length to configure; the z-score accumulates only once warm. gate: false
-  # appends every proposed chord. Every policy records these settings; run
-  # refuses a policy epoch trained under different ones. No defaults in code.
-  gate: true
-  surprise_z: 1.0
-  # The resonance solver's pace: each coder's resting learning rate, and the
-  # slow rate of its warm-up error average. At most 0.15 (the coders' fastest).
+  # The resonance solver's pace and layer depth for the per-symbol coder.
   learning_rate: 0.01
   layers: 3
-
-regulator:
-  # Number of model-surprise observations retained for the dashboard only.
-  # Predictive learning retains its own sufficient statistics separately.
-  history_capacity: 256
 
 kraken:
   credentials:
@@ -150,7 +64,6 @@ market:
   # live market entries. Fees come from the account TradeVolume schedule.
   model: paper
   quote_currency: USD
-  taker_fee: 0.8
   balance: 200 # No, this is neither a typo nor a test amount. It is the exact amount I 
                # found in my Kraken account, and the only money I am willing to risk.
                # Now, you might think this system is therefore overkill. That is a valid point.
@@ -178,10 +91,10 @@ market:
                # deploying smaller slices of your capital, sized according to the liquidity 
                # actually available in the book.
                #
-               # trading.allocation.touch_carry_divisor enforces that cap on
-               # every entry: at most one third of the touch bid, or nothing if
-               # the venue minimum is larger than that slice. Profitable and
-               # sympathetic beats greedy; the market sets size, not ambition.
+               # risk.touch_divisor enforces that cap on every entry: at most
+               # one third of the touch bid, or nothing if the venue minimum is
+               # larger than that slice. Profitable and sympathetic beats
+               # greedy; the market sets size, not ambition.
                #
                # Because if you're paying to be your own liquidity, you're gonna have a bad time.
                #
@@ -242,16 +155,10 @@ market:
       - ADA
       - DOT
       - LINK
-  book_depth_levels: 25
-  baseline_halflife: 30s
-  l3_enabled: true
   l3_depth: 10
   # Kraken's standard L3 subscription-rate budget. Depth determines the cost
   # per symbol, so websocket batches are derived from this value.
   l3_rate_limit: 200
-  # How long after subscribing every level3 symbol must have its snapshot;
-  # symbols still without one are raised as an error.
-  l3_snapshot_timeout: 30s
   # Lock-free MPMC ingress requires a power-of-two capacity. Producers apply
   # backpressure rather than discard authoritative order-level deltas.
   # ponytail: fixed capacity is an intentional simplification with memory and
@@ -263,76 +170,35 @@ market:
     record: true
     record_flush_bytes: 4194304
     record_flush_lines: 2000
-  # Book signals read the verified book version in effect at each frame's
-  # venue time, not the live book. Retention is sized from the data: the book
-  # keeps every version back to the largest lag a lookup has asked for, so a
-  # frame never reads a book newer than itself; a lookup older than what is
-  # retained reads no book (missing evidence, counted by Book.HistoryMisses).
-  # This optional per-symbol version cap bounds memory only; 0 leaves
-  # retention to the learned lag.
-  book_history_limit: 0
   # Level3 subscribe frames are sized to one second of l3_rate_limit (40
   # symbols at depth 10, cost 5 each; Kraken's limit is per second). Measured:
   # at 1s Kraken silently drops every other full-budget frame (no ack, no
   # error; 208 of 621 never seeded), so frames go out every 2s.
   subscribe:
     pace: 2s
-    batch: 25
-  book:
-    depth: 10
-  forecast:
-    # Dimensionless RLS covariance prior and memory policy for the per-symbol,
-    # next-L3-epoch mid-return learner. A factor of one retains all observations
-    # without imposing one wall-clock decay scale on every market.
-    rls:
-      initial_variance: 1.0
-      forgetting_factor: 1.0
-  manifold:
-    # Maximum chronological lifetime observations retained per admitted symbol.
-    lifetime_capacity: 4096
-    # Zero keeps the solver MaxDelta from physics/fluid DefaultConfig.
-    integration_interval: 0
+    batch: 40
 
 ui:
   addr: 127.0.0.1:8765
-  webrtc:
-    # Per-channel records retained for an attached manifold viewer. Reaching
-    # this bound backpressures publication rather than dropping an unpainted state.
-    client_queue_frames: 4
-    # SCTP buffered-amount high-water expressed in RFC 8831 16 KiB segments.
-    # Flow control waits for capacity before enqueueing the next segment.
-    buffered_segments: 64
   websocket:
-    # UI delivery budget only; does not control decisions or tape maturity.
-    learning_interval: 100ms
     # Upper bound for one ordered dashboard batch. Later frames remain queued
     # for the next message; no telemetry record is truncated or discarded.
     max_message_bytes: 4194304
 
-trading:
-  model: paper
-  allocation:
-    # Upper bound on quote cash one desk entry may spend (Enter / Quote).
-    max_fraction: 0.20
-    # Entry quantity cap: best-bid size divided by this divisor. 3 means we
-    # take at most one third of what the touch can carry, so a touch exit
-    # still has margin if the book thins. Below instrument minimum → no entry.
-    touch_carry_divisor: 3
-  persistence:
-    # Stoploss checkpoints and trade-journal updates leave guardian threads
-    # through this ordered, non-dropping queue.
-    queue_depth: 1024
-    batch_size: 128
-
 risk:
+  # Upper bound on quote cash one desk entry may spend (Enter / Quote).
   max_fraction: 0.20
+  # Entry quantity cap: best-bid size divided by this divisor. 3 means we
+  # take at most one third of what the touch can carry, so a touch exit
+  # still has margin if the book thins. Below instrument minimum → no entry.
+  touch_divisor: 3
   # 24h quote-volume floor for the mover pre-filter (USD).
   min_mover_volume_usd: 50000
   # Open-to-last day move floor (%) — liquid-but-flat names stay out.
-  min_mover_change_pct: 0.5
+  min_mover_change_pct: 1.0
   # Max last position in the 24h high–low range (0–1). At/above → peak veto.
-  # 0.90 = top 10% of the day's range is off-limits. <=0 or >=1 disables.
-  max_entry_peak_frac: 0.90
+  # 0.5 = top half of the day's range is off-limits. <=0 or >=1 disables.
+  max_entry_peak_frac: 0.5
   # Touch spread cap for mover pre-filter and desk entry (% of mid).
   max_entry_spread_pct: 2.0
   # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
@@ -340,99 +206,26 @@ risk:
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
   # Each half of the tape comparison. Last window must beat the one before it.
-  tape_window: 10m
+  tape_window: 15m
   # Quote dollars the last window must clear, on top of beating the prior window.
   min_tape_notional_usd: 100
-  # Hard maximum adverse PnL from entry for Stoploss (percentage points).
-  max_allowed_loss_pct: 5
-  # Peak PnL% where the profit trail arms. Give-back is gone one target above this.
-  profit_target_pct: 10.0
-  # TimeElastic memory for mark-arrival pace (faster marks pull the floor harder).
-  stop_pace_halflife: 2s
-  # Floor under the TimeElastic baseline denominator.
-  stop_pace_epsilon: 0.000001
-  # Maximum duration in profit without a new peak before taking profit.
-  stop_flatline_timeout: 15m
-  # Profit threshold required to arm the flatline exit (percentage points).
-  stop_flatline_min_profit_pct: 1.0
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
   min_backing_ratio: 0.6
 
 learning:
-  policy_prefix: "model/current/"
-  enter_suffix: "/enter.bin"
-  exit_suffix: "/exit.bin"
-  minimum_path_confidence: 2
   threshold_start: 0.5
   threshold_step: 0.05
-  explore_temporal_penalty: 0.0
   threshold_floor: 0.05
   threshold_ceil: 0.95
-  vocab_size: 15
-  default_window_size: 15
-  shannon_capacity: 0.45
   # Sequencer cut depth: reject / ignore leaves shorter than min.
   max_path_length: 8
   min_path_length: 2
   # Virtual → paper promotion floor on path resistance.
   paper_eligible_resistance: 0.2
-  # Paper/real settles required before real may arm.
-  confirm_after: 3
-  # Consecutive losses that disarm real entries.
-  demotion_losses: 3
-  # Minimum paper/real win rate and mean return to arm real.
-  min_win_rate: 0.55
-  min_mean_return: 0.0
-  excursion_timeout: 45m
-  max_excursion_bars: 8
-  policy_shadow_bars: 32
+  # Fee-net PnL% floor before a tree exit leaf may settle a lot.
+  policy_exit_min_profit_pct: 0.5
   min_supported_horizon: 2
   # Minimum enterNet z before the coder marks bullish.
   min_enter_z: 0.35
-  cliff_horizon_drop: 2
-  cliff_energy_mult: 1.4
-  # Volume-clock acceleration floor at rank (bars must speed up).
-  gate_ignition_floor: 0.15
-  gate_ignition_ceil: 1.00
-  gate_opposition_floor: 0.05
-  gate_opposition_ceil: 0.95
-  gate_regime_ignition_floor: 0.05
-  gate_regime_ignition_ceil: 0.95
-  gate_regime_friction_floor: 0.05
-  gate_regime_friction_ceil: 0.95
-  gate_maturity_floor: 0.05
-  gate_maturity_ceil: 0.95
-  max_path_objects: 8192
-  # Append-only JSONL: virtual/venue open, review, close, emergency (empty = off).
-  position_trace_path: logs/position_trace.jsonl
-
-detector:
-  # Fewest ticks in the clamped A→B precursor before detect emits an excursion.
-  min_precursor_ticks: 10
-  # Pull B, C, entry, and exit back by this fraction of the A→B span (ticks).
-  execution_lead_fraction: 0.1
-
-paper:
-  # `make run` never writes storage: every paper-trade record (one data.Value
-  # per traded decision, data.PaperKeys) is appended to this local file, and
-  # `make paper` uploads it under paper/<action>/<symbol>/<epoch>/<seq>.bin.
-  # Relative paths are relative to the working directory. Required while
-  # paper trading is active: there is no default in code.
-  records_path: paper_records/records.bin
-
-signals:
-  depthflow:
-    sampleSize: 128
-  pumpdump:
-    baselineCapacity: 128
-
-manifold:
-  grid:
-    x: 64
-    y: 64
-    z: 64
-  phase:
-    lattice:
-      width: 1024

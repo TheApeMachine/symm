@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/theapemachine/nomagique/runtime"
@@ -12,6 +13,9 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Training handles the grid observations, and sequence state management.
+*/
 type Training struct {
 	*runtime.System
 	price      *broker.Price
@@ -22,26 +26,36 @@ type Training struct {
 	sequencers *sync.Map
 }
 
+/*
+NewTraining initializes a new training engine.
+*/
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
+	client *store.Client,
 ) *Training {
 	training := &Training{
 		System:     runtime.NewSystem(ctx, "training", price),
 		price:      price,
 		desk:       desk,
 		grid:       store.NewGrid(ctx),
-		client:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		catalog:    &tokenizer.GrammarCatalog{},
+		client:     client,
+		catalog:    tokenizer.NewGrammarCatalog(),
 		sequencers: &sync.Map{},
 	}
 
-	training.catalog.RestoreCatalog(ctx, training.client, training.restoreSequencer)
+	training.catalog.RestoreCatalog(
+		ctx, training.client, training.restoreSequencer,
+	)
 
 	return training
 }
 
+/*
+Step is the main entry point for the training engine. It takes an envelope and
+returns a new envelope. This makes it compatible with the LMAX Disruptor pipeline.
+*/
 func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
 		return nil
@@ -59,7 +73,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		symbol, sources := symbol, sources
 		wg.Add(1)
 
-		task := func() {
+		system.Q.Submit(func() {
 			defer wg.Done()
 
 			regions, err := training.grid.Observe(symbol, sources)
@@ -86,11 +100,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Regions[symbol] = regions
 			envelope.Paths[symbol] = cut
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
@@ -106,6 +116,9 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	return envelope
 }
 
+/*
+Sequencer returns the sequencer for the given symbol.
+*/
 func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	if symbol == "" {
 		return tokenizer.NewSequencer()
@@ -115,6 +128,9 @@ func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	return loaded.(*tokenizer.Sequencer)
 }
 
+/*
+restoreSequencer restores the sequencer for the given symbol and state.
+*/
 func (training *Training) restoreSequencer(symbol string, state tokenizer.SequencerState) {
 	if symbol == "" {
 		return
@@ -125,6 +141,9 @@ func (training *Training) restoreSequencer(symbol string, state tokenizer.Sequen
 	training.sequencers.Store(symbol, seq)
 }
 
+/*
+ResetSequencer resets the sequencer for the given symbol.
+*/
 func (training *Training) ResetSequencer(symbol string) {
 	loaded, ok := training.sequencers.Load(symbol)
 
@@ -134,10 +153,17 @@ func (training *Training) ResetSequencer(symbol string) {
 
 	seq := loaded.(*tokenizer.Sequencer)
 	seq.Reset()
-	training.catalog.Persist(training.Context(), training.client, symbol, seq.State())
+
+	if err := training.catalog.Persist(
+		training.Context(), training.client, symbol, seq.State(),
+	); err != nil {
+		training.Error(err)
+	}
 }
 
-// lightBroker paints volume / day / spread / book / peak oracle sides before Emit.
+/*
+lightBroker paints volume / day / spread / book / peak oracle sides before Emit.
+*/
 func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
 	if len(regions) < store.RegionCount {
 		return
@@ -162,6 +188,9 @@ func (training *Training) lightBroker(symbol string, regions []*runtime.Region) 
 	training.shine(regions, 23, 24, price.BelowPeak(symbol))
 }
 
+/*
+shine paints the given region with the given brightness.
+*/
 func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
 	if ok {
 		store.Shine(regions[approve])
@@ -173,6 +202,9 @@ func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, 
 	zeroRegion(regions[approve])
 }
 
+/*
+zeroRegion zeros the given region.
+*/
 func zeroRegion(region *runtime.Region) {
 	if region == nil {
 		return
@@ -183,6 +215,9 @@ func zeroRegion(region *runtime.Region) {
 	region.Counts = 0
 }
 
+/*
+stepCut steps the sequencer for the given symbol and regions.
+*/
 func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
 	token, brightness := store.PathToken(regions)
 
@@ -193,14 +228,55 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 
 	seq := training.Sequencer(symbol)
 	cut := seq.Step(token, brightness)
-	training.catalog.Persist(training.Context(), training.client, symbol, seq.State())
+
+	if err := training.catalog.Persist(
+		training.Context(), training.client, symbol, seq.State(),
+	); err != nil {
+		training.Error(err)
+	}
 
 	return &cut
 }
 
-// Board is the Emit region set. Tradable means approve winners only — no veto.
+/*
+Flush persists every sequencer so a shutdown does not lose grammar state.
+*/
+func (training *Training) Flush() error {
+	var errs error
+
+	training.sequencers.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok || symbol == "" {
+			return true
+		}
+
+		seq, ok := value.(*tokenizer.Sequencer)
+
+		if !ok || seq == nil {
+			return true
+		}
+
+		if err := training.catalog.Persist(
+			training.Context(), training.client, symbol, seq.State(),
+		); err != nil {
+			errs = errors.Join(errs, err)
+		}
+
+		return true
+	})
+
+	return errs
+}
+
+/*
+Board is the Emit region set. Tradable means approve winners only — no veto.
+*/
 type Board []*runtime.Region
 
+/*
+Tradable returns true if the board is tradable.
+*/
 func (board Board) Tradable() bool {
 	approved := false
 
@@ -210,6 +286,7 @@ func (board Board) Tradable() bool {
 		}
 
 		key := int(region.Key)
+
 		if key < 9 || key >= store.RegionCount {
 			continue
 		}

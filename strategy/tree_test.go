@@ -179,7 +179,7 @@ func withUpdateLeaf(f func(*Tree, string)) func() {
 	return func() {
 		tree := emptyTree()
 		path := "R06.R00/R07.R01"
-		put(tree, path, leaf(ActionEnter, seedResistance))
+		put(tree, path, leaf(ActionEnter, seedResistance()))
 		f(tree, path)
 	}
 }
@@ -198,7 +198,7 @@ func TestUpdate(t *testing.T) {
 		for _, tc := range cases {
 			Convey("When a "+tc.name+" is applied", func() {
 				fresh := emptyTree()
-				put(fresh, path, leaf(ActionEnter, seedResistance))
+				put(fresh, path, leaf(ActionEnter, seedResistance()))
 				fresh.Update(path, tc.delta)
 
 				decision, ok := get(fresh, path)
@@ -212,7 +212,7 @@ func TestUpdate(t *testing.T) {
 
 			decision, ok := get(tree, path)
 			So(ok, ShouldBeTrue)
-			So(decision.Resistance, ShouldAlmostEqual, seedResistance, 0.001)
+			So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
 		})
 
 		Convey("When the tree has no matching leaf", func() {
@@ -221,6 +221,19 @@ func TestUpdate(t *testing.T) {
 
 			_, ok := get(bare, path)
 			So(ok, ShouldBeFalse)
+		})
+
+		Convey("When repeated wins hit the floor", func() {
+			fresh := emptyTree()
+			put(fresh, path, leaf(ActionEnter, seedResistance()))
+
+			for range 100 {
+				fresh.Update(path, -0.05)
+			}
+
+			decision, ok := get(fresh, path)
+			So(ok, ShouldBeTrue)
+			So(decision.Resistance, ShouldAlmostEqual, 0.05, 0.001)
 		})
 	}))
 }
@@ -235,12 +248,12 @@ func TestEnsure(t *testing.T) {
 		decision, ok := get(tree, path)
 		So(ok, ShouldBeTrue)
 		So(decision.Action, ShouldEqual, "enter")
-		So(decision.Resistance, ShouldAlmostEqual, seedResistance, 0.001)
+		So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
 
 		tree.Ensure(path, ActionExit)
 		decision, ok = get(tree, path)
 		So(ok, ShouldBeTrue)
 		So(decision.Action, ShouldEqual, "enter")
-		So(decision.Resistance, ShouldAlmostEqual, seedResistance, 0.001)
+		So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
 	})
 }

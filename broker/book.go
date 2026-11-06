@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +23,12 @@ BookManager holds per-symbol market books. Venue frames arrive as market.Level3
 (converted at the edge); this type never imports a venue package.
 */
 type BookManager struct {
-	mu      sync.RWMutex
-	books   map[string]*market.Book
-	pending map[string]struct{}
-	stale   map[string]struct{}
-	seeded  chan struct{}
+	mu        sync.RWMutex
+	books     map[string]*market.Book
+	pending   map[string]struct{}
+	stale     map[string]struct{}
+	seeded    chan struct{}
+	onInvalid func([]string)
 }
 
 func NewBookManager() *BookManager {
@@ -36,6 +38,16 @@ func NewBookManager() *BookManager {
 		stale:   make(map[string]struct{}),
 		seeded:  make(chan struct{}, 1),
 	}
+}
+
+/*
+OnInvalid registers recovery after a checksum miss or crossed book.
+*/
+func (manager *BookManager) OnInvalid(fn func([]string)) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	manager.onInvalid = fn
 }
 
 func (manager *BookManager) Expect(symbols []string) {
@@ -95,7 +107,8 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 	}
 
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
+
+	var invalid []string
 
 	for _, data := range level3.Data {
 		if data == nil || data.Symbol == "" {
@@ -116,11 +129,18 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 		}
 
 		for _, order := range data.Bids {
-			applyOrder(book, market.SideBid, order)
+			manager.applyOrder(book, market.SideBid, order)
 		}
 
 		for _, order := range data.Asks {
-			applyOrder(book, market.SideAsk, order)
+			manager.applyOrder(book, market.SideAsk, order)
+		}
+
+		if manager.diverged(book, data.Checksum) {
+			invalid = append(invalid, data.Symbol)
+			manager.stale[data.Symbol] = struct{}{}
+			delete(manager.books, data.Symbol)
+			continue
 		}
 
 		delete(manager.pending, data.Symbol)
@@ -133,9 +153,43 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 		default:
 		}
 	}
+
+	onInvalid := manager.onInvalid
+	manager.mu.Unlock()
+
+	if len(invalid) > 0 && onInvalid != nil {
+		onInvalid(invalid)
+	}
 }
 
-func applyOrder(book *market.Book, side market.SideKind, order *market.Level3Order) {
+/*
+diverged is true when the venue checksum misses or the book is crossed.
+*/
+func (manager *BookManager) diverged(book *market.Book, checksum int) bool {
+	if book == nil {
+		return true
+	}
+
+	bid, ask := book.BestBid(), book.BestAsk()
+	
+	if bid != nil && ask != nil && bid.Price != nil && ask.Price != nil &&
+		bid.Price.Cmp(*ask.Price) >= 0 {
+		return true
+	}
+
+	if checksum == 0 {
+		return false
+	}
+
+	result := book.L3Checksum(strconv.Itoa(checksum))
+	return result == nil || !result.Match
+}
+
+func (manager *BookManager) applyOrder(
+	book *market.Book,
+	side market.SideKind,
+	order *market.Level3Order,
+) {
 	if order == nil || order.LimitPrice == nil {
 		return
 	}
@@ -143,6 +197,7 @@ func applyOrder(book *market.Book, side market.SideKind, order *market.Level3Ord
 	// Kraken delete frames still carry the last positive order_qty; removal
 	// is signaled only by event=delete. Force qty 0 so the book drops it.
 	qty := order.OrderQty
+
 	if order.Event == "delete" {
 		zero := decimal.Zero
 		qty = &zero

@@ -21,9 +21,9 @@ func (denial *EntryDenial) Error() string {
 
 /*
 EntryPhysicalDecision is the book-integrity outcome at the desk lot size:
-spread, absolute bid cash, backing ratio, tape uptake, then close-now vs
-open-drag cap. Gate and desk must both use CheckEntryPhysical so entry
-guards cannot drift.
+local high, day move / volume, spread, absolute bid cash, backing ratio,
+tape uptake, then close-now vs open-drag cap. Gate and desk must both use
+CheckEntryPhysical so entry guards cannot drift.
 */
 type EntryPhysicalDecision struct {
 	Allowed bool
@@ -57,12 +57,108 @@ func openDragCapPct(price *Price, symbol string) float64 {
 	return cap
 }
 
+/*
+CheckEntryPeak blocks entries when last sits at/above max_entry_peak_frac of
+the 24h range. Hard rail for every book — including virtual resonance bypass.
+*/
+func CheckEntryPeak(price *Price, symbol string) EntryPhysicalDecision {
+	if price == nil {
+		return EntryPhysicalDecision{
+			Allowed: false,
+			Reason:  "no price book to vet entry peak",
+		}
+	}
+
+	cap := system.Cfg.Risk.MaxEntryPeakFrac
+
+	if cap <= 0 || cap >= 1 {
+		return EntryPhysicalDecision{Allowed: true}
+	}
+
+	frac, ok := price.PeakFrac(symbol)
+
+	if !ok {
+		return EntryPhysicalDecision{
+			Allowed: false,
+			Reason:  "24h range unavailable — cannot clear local-high entry gate",
+		}
+	}
+
+	if frac >= cap {
+		return EntryPhysicalDecision{
+			Allowed: false,
+			Reason: fmt.Sprintf(
+				"too close to local high: last at %.0f%% of 24h range (cap %.0f%%)",
+				frac*100,
+				cap*100,
+			),
+		}
+	}
+
+	return EntryPhysicalDecision{Allowed: true}
+}
+
+/*
+CheckEntryMover blocks flat or illiquid names. Volume and open-to-last day
+move are desk rails, not only oracle paint — including virtual bypass.
+*/
+func CheckEntryMover(price *Price, symbol string) EntryPhysicalDecision {
+	if price == nil {
+		return EntryPhysicalDecision{
+			Allowed: false,
+			Reason:  "no price book to vet mover",
+		}
+	}
+
+	volFloor := system.Cfg.Risk.MinMoverVolumeUSD
+
+	if volFloor > 0 {
+		volume := price.VolumeUSD(symbol)
+
+		if volume < volFloor {
+			return EntryPhysicalDecision{
+				Allowed: false,
+				Reason: fmt.Sprintf(
+					"24h volume too thin ($%.0f < $%.0f)",
+					volume, volFloor,
+				),
+			}
+		}
+	}
+
+	chgFloor := system.Cfg.Risk.MinMoverChangePct
+
+	if chgFloor > 0 {
+		change := price.ChangePct(symbol)
+
+		if change < chgFloor {
+			return EntryPhysicalDecision{
+				Allowed: false,
+				Reason: fmt.Sprintf(
+					"day move too flat (%.2f%% < %.2f%%) — liquid-but-flat stays out",
+					change, chgFloor,
+				),
+			}
+		}
+	}
+
+	return EntryPhysicalDecision{Allowed: true}
+}
+
 func CheckEntryPhysical(price *Price, symbol string) EntryPhysicalDecision {
 	if price == nil {
 		return EntryPhysicalDecision{
 			Allowed: false,
 			Reason:  "no price book to vet entry drag",
 		}
+	}
+
+	if peak := CheckEntryPeak(price, symbol); !peak.Allowed {
+		return peak
+	}
+
+	if mover := CheckEntryMover(price, symbol); !mover.Allowed {
+		return mover
 	}
 
 	// MaxEntrySpreadPct <= 0 means the spread ceiling is disabled (lab zero =

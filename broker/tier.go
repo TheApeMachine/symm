@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -79,6 +81,7 @@ func NewTier(
 	private network.Client,
 	price *Price,
 	host market.Venue,
+	client *store.Client,
 ) *Tier {
 	// Real orders leave the process only when market.model is real.
 	if tt == TierTypeReal && system.Cfg.Market.Model != "real" {
@@ -105,7 +108,7 @@ func NewTier(
 	}
 
 	tier.positions = NewCache(
-		ctx, tt.String(), private, price, tier.settle,
+		ctx, tt.String(), private, price, tier.settle, client,
 	)
 
 	// Virtual wallet is process-local; reopen credits base for S3 open lots
@@ -203,7 +206,7 @@ func (tier *Tier) apply(executions *market.Execution) {
 
 		matched := false
 
-		for _, position := range tier.positions.Open(execution.Symbol) {
+		for _, position := range tier.positions.Submitted(execution.Symbol) {
 			if position == nil || !position.Owns(*execution) {
 				continue
 			}
@@ -232,7 +235,9 @@ func (tier *Tier) apply(executions *market.Execution) {
 	}
 
 	for _, position := range touched {
-		tier.positions.Save(position)
+		if err := tier.positions.Save(position); err != nil {
+			errnie.Error(err)
+		}
 	}
 
 	tier.publishLedger(touched)
@@ -260,10 +265,14 @@ func (tier *Tier) walletReading() map[string]float64 {
 		tier.venue.Balance().ToMarket(book)
 	}
 
+	found := false
+
 	if c := book.Cash(quote); c != nil {
 		cash, _ = c.Float64()
+		found = true
 	} else if c := book.Cash(book.Quote); c != nil {
 		cash, _ = c.Float64()
+		found = true
 	} else {
 		for _, asset := range book.Assets {
 			if asset == nil {
@@ -272,12 +281,15 @@ func (tier *Tier) walletReading() map[string]float64 {
 
 			if asset.Symbol == quote || asset.Symbol == "Z"+quote {
 				cash, _ = asset.Capital.Float64()
+				found = true
 				break
 			}
 		}
 	}
 
-	if cash == 0 && tier.Type == TierTypeVirtual {
+	// Only seed starting balance when the wallet never reported quote cash.
+	// Deployed cash at $0 is real and must not reinflate equity.
+	if !found && tier.Type == TierTypeVirtual {
 		cash = float64(system.Cfg.Market.Balance)
 	}
 
@@ -326,7 +338,13 @@ func (tier *Tier) Hello() {
 
 		// Closed lots are frozen snapshots — do not re-mark them.
 		if position.ClosedAt == nil {
-			position.Update(nil)
+			mark := position.Mark
+			if mark == nil && tier.price != nil {
+				mark = tier.price.TouchBid(position.Symbol)
+			}
+			if err := position.Update(mark); err != nil {
+				errnie.Error(err)
+			}
 		}
 
 		positions[position.ID] = position
@@ -339,12 +357,18 @@ func (tier *Tier) Update(data *market.Update) {
 	touched := make(map[string]*Position)
 
 	for _, position := range tier.positions.Open(data.Symbol) {
-		position.Update(data.Price)
+		if err := position.Update(data.Price); err != nil {
+			errnie.Error(err)
+			continue
+		}
 
 		now := time.Now()
 
 		if position.UpdatedAt != nil && time.Since(*position.UpdatedAt) > 30*time.Second {
-			tier.positions.Save(position)
+			if err := tier.positions.Save(position); err != nil {
+				errnie.Error(err)
+			}
+
 			position.UpdatedAt = &now
 		}
 
@@ -470,8 +494,18 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	// Virtual + resonance bypass explores without the physical desk gates so
-	// a lab bypass can actually open sample lots. Paper/real stay gated.
+	// Hard rails always run — even virtual resonance bypass. Peak and mover
+	// are desk physics, not lab story switches.
+	if peak := CheckEntryPeak(tier.price, symbol); !peak.Allowed {
+		return &EntryDenial{Gate: "physical", Reason: peak.Reason}
+	}
+
+	if mover := CheckEntryMover(tier.price, symbol); !mover.Allowed {
+		return &EntryDenial{Gate: "physical", Reason: mover.Reason}
+	}
+
+	// Virtual + resonance bypass explores without the remaining physical desk
+	// gates so a lab bypass can open sample lots. Paper/real stay fully gated.
 	if !(tier.Type == TierTypeVirtual && system.Cfg.Learning.ResonanceBypass) {
 		if decision := CheckEntryPhysical(tier.price, symbol); !decision.Allowed {
 			return &EntryDenial{Gate: "physical", Reason: decision.Reason}
@@ -537,35 +571,78 @@ func (tier *Tier) Enter(
 		return errnie.Error(err)
 	}
 
-	// Fill Apply (async on Run) owns the first Save/publish with fills+pnl.
-	// No-transport lots seed in Enter — persist and push them now.
+	// Fill Apply owns the first Save/publish. No-transport desks Apply a
+	// book fill here so Enter never seeds outside Apply.
 	if pos.transport == nil {
-		pos.Update(nil)
-		tier.positions.Save(pos)
-		tier.publishLedger(map[string]*Position{pos.ID: pos})
+		if err := tier.fillsEnter(pos); err != nil {
+			tier.positions.Drop(symbol)
+			return err
+		}
 	}
 
+	return nil
+}
+
+func (tier *Tier) fillsEnter(position *Position) error {
+	if position == nil || position.EntryOrder == nil {
+		return nil
+	}
+
+	qty, err := decimal.NewFromString(position.EntryOrder.Volume)
+	if err != nil || qty.Sign() <= 0 {
+		return &EntryDenial{Gate: "size", Reason: "bad entry volume"}
+	}
+
+	px := tier.price.FillAsk(position.Symbol, &qty)
+	if px == nil || px.Sign() <= 0 {
+		return &EntryDenial{Gate: "size", Reason: "no book price for " + position.Symbol}
+	}
+
+	now := time.Now().UTC()
+	position.Apply(market.ExecutionData{
+		ExecID:        "local-" + position.ID + "-enter",
+		ExecType:      "trade",
+		ClientOrderID: position.EntryOrder.ClOrdId,
+		Symbol:        position.Symbol,
+		Side:          "buy",
+		LastQty:       &qty,
+		LastPrice:     px,
+		AvgPrice:      px,
+		CumQty:        &qty,
+		OrderStatus:   "filled",
+		Timestamp:     now,
+	})
+
+	if err := tier.positions.Save(position); err != nil {
+		return errnie.Error(err)
+	}
+
+	tier.publishLedger(map[string]*Position{position.ID: position})
 	return nil
 }
 
 func (tier *Tier) Exit(
 	position *Position,
 ) error {
-	// Policy path must settle the lot (ClosedAt, ExitTrigger, final mark)
-	// before the order leaves — otherwise Forward shows a naked return.
+	// Policy path arms Closing; exit fills in Apply stamp ClosedAt, then
+	// settle Removes. Do not archive before the sell prints.
 	if err := position.Exit(); err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := tier.Send(position, "exit"); err != nil {
+		position.mu.Lock()
+		position.Closing = false
+		position.ExitTick = 0
+		position.mu.Unlock()
 		return errnie.Error(err)
 	}
 
-	tier.positions.Remove(position.Symbol)
-	tier.Recalculate()
-	tier.publishLedger(map[string]*Position{position.ID: position})
+	if err := tier.positions.Save(position); err != nil {
+		return errnie.Error(err)
+	}
 
-	tier.pending.Delete(position.Symbol)
+	tier.publishLedger(map[string]*Position{position.ID: position})
 	return nil
 }
 
@@ -644,19 +721,30 @@ func (tier *Tier) settle(position *Position) {
 		return
 	}
 
+	// Exit fills landed — archive and hand to the model.
+	if position.ClosedAt != nil {
+		tier.positions.Remove(position.Symbol)
+		tier.Recalculate()
+		tier.pending.Store(position.Symbol, position)
+		tier.publishLedger(map[string]*Position{position.ID: position})
+		return
+	}
+
+	// Closing armed — send the exit and stay open until Apply flats the lot.
 	if err := tier.Send(position, "exit"); err != nil {
-		// A missing book price is permanent — the symbol was evicted.
-		// Forcing the lot closed prevents an infinite retry loop.
 		if errnie.IsNotFound(err) {
+			now := time.Now().UTC()
+			position.mu.Lock()
+			position.ClosedAt = &now
+			position.mu.Unlock()
 			tier.positions.Remove(position.Symbol)
 			tier.Recalculate()
 			tier.pending.Store(position.Symbol, position)
 			return
 		}
 
-		// Reopen so mark can retry; ClosedAt was claimed before Send.
 		position.mu.Lock()
-		position.ClosedAt = nil
+		position.Closing = false
 		position.ExitTick = 0
 		position.mu.Unlock()
 
@@ -664,9 +752,12 @@ func (tier *Tier) settle(position *Position) {
 		return
 	}
 
-	tier.positions.Remove(position.Symbol)
-	tier.Recalculate()
-	tier.pending.Store(position.Symbol, position)
+	if err := tier.positions.Save(position); err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	tier.publishLedger(map[string]*Position{position.ID: position})
 }
 
 func (tier *Tier) Recalculate() {
@@ -815,7 +906,7 @@ func (tier *Tier) dropRejected(sent *submission, reason string) {
 
 	if sent.action == "exit" {
 		position.mu.Lock()
-		position.ClosedAt = nil
+		position.Closing = false
 		position.ExitTick = 0
 		position.mu.Unlock()
 

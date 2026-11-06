@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	sysruntime "runtime"
 	"sync"
@@ -145,8 +146,90 @@ func (booter *Booter) Run() error {
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
-	booter.store.Close()
+
+	return booter.shutdown()
+}
+
+/*
+shutdown stops ingress acceptance, persists open state, drains S3, then
+releases pools. Parent cancel already woke transports; store life survives
+that cancel so Flush can finish uploads.
+*/
+func (booter *Booter) shutdown() error {
+	errnie.Info("[booter] shutting down")
+
+	var errs error
+
+	if booter.persist != nil {
+		booter.persist.Disarm()
+	}
+
+	if err := booter.closeTransports(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
+	if booter.desk != nil {
+		if err := booter.desk.Flush(); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] desk flush failed", err,
+			)))
+		}
+	}
+
+	if booter.training != nil {
+		if err := booter.training.Flush(); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] training flush failed", err,
+			)))
+		}
+	}
+
+	if booter.persist != nil {
+		booter.persist.Wait()
+	}
+
+	if booter.store != nil {
+		if err := booter.store.Close(); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] store close failed", err,
+			)))
+		}
+	}
+
+	if err := ui.UI.Close(); err != nil {
+		errs = errors.Join(errs, errnie.Error(errnie.Err(
+			errnie.IO, "[booter] hub close failed", err,
+		)))
+	}
+
+	if err := system.Q.Release(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
+	if errs != nil {
+		return errs
+	}
+
+	errnie.Info("[booter] shutdown complete")
 	return nil
+}
+
+func (booter *Booter) closeTransports() error {
+	var errs error
+
+	for _, transport := range []any{
+		booter.public, booter.private, booter.paper, booter.virtual,
+	} {
+		if closer, ok := transport.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				errs = errors.Join(errs, errnie.Error(errnie.Err(
+					errnie.IO, "[booter] transport close failed", err,
+				)))
+			}
+		}
+	}
+
+	return errs
 }
 
 func (booter *Booter) initTransports() error {
@@ -191,7 +274,7 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
-	booter.virtual.UseFills(booter.price)
+	broker.BindVirtual(booter.virtual, booter.price)
 
 	booter.desk = broker.NewDesk(
 		ctx,
@@ -202,6 +285,7 @@ func (booter *Booter) initMarket() error {
 			"private": booter.private,
 		},
 		booter.price,
+		booter.store,
 	)
 
 	ui.UI.RegisterCallback(func() {
@@ -214,8 +298,11 @@ func (booter *Booter) initMarket() error {
 func (booter *Booter) initPipeline() error {
 	ctx := booter.Context()
 
-	training := strategy.NewTraining(ctx, booter.price, booter.desk)
-	model := strategy.NewModel(ctx, booter.desk, booter.price, training.ResetSequencer)
+	training := strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
+	model := strategy.NewModel(
+		ctx, booter.desk, booter.price, training.ResetSequencer, booter.store,
+	)
+	booter.training = training
 	booter.model = model
 	booter.persist = newTickPersist(ctx, booter.store)
 
@@ -278,6 +365,18 @@ seedBooks opens level3, waits until every symbol has a book, then continues.
 func (booter *Booter) seedBooks() error {
 	symbols := booter.instrument.Symbols()
 	booter.book.Expect(symbols)
+
+	booter.book.OnInvalid(func(symbols []string) {
+		for _, symbol := range symbols {
+			if err := booter.instrument.ResubscribeLevel3(symbol); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					"[booter] level3 checksum recovery failed for "+symbol,
+					err,
+				))
+			}
+		}
+	})
 
 	if err := booter.instrument.SubscribeBooks(broker.Level3{
 		Stale: booter.book.Stale,

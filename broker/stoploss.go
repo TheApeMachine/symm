@@ -12,71 +12,78 @@ const (
 /*
 Stoploss invalidates an open lot.
 
-The hard rail protects initial entry noise until Peak turns positive.
-Once Peak clears zero, the trailing floor arms and never sits below
-breakeven: a winner cannot be trailed back into a loss. Give-back
-shrinks as Peak advances toward and beyond ProfitTarget.
-A raised floor settles on a decisive wick break or after StopPaceHalflife
-grace while the mark is still green. A mark back through zero settles
-on that print.
-
-Nomagique: Max, Compression, CUSUM, Bernoulli, Rank, FastSlow, EvidenceGeomean.
+Arms after a small green print, trails a give-back floor, and locks a
+take-profit once the peak clears the target — the next down tick settles.
 */
 type Stoploss struct {
-	State            StoplossState
-	initialPnLPct    float64
-	currentPnLPct    float64
-	previousPnLPct   float64
-	peakPnLPct       float64
-	floorPnLPct      float64
-	armPnlPct        float64
-	givebackPnlPct   float64
-	takeProfitPnlPct float64
+	State            StoplossState `json:"State"`
+	InitialPnLPct    float64       `json:"InitialPnLPct"`
+	CurrentPnLPct    float64       `json:"CurrentPnLPct"`
+	PreviousPnLPct   float64       `json:"PreviousPnLPct"`
+	PeakPnLPct       float64       `json:"PeakPnLPct"`
+	FloorPnLPct      float64       `json:"FloorPnLPct"`
+	ArmPnlPct        float64       `json:"ArmPnlPct"`
+	GivebackPnlPct   float64       `json:"GivebackPnlPct"`
+	TakeProfitPnlPct float64       `json:"TakeProfitPnlPct"`
 }
 
-func NewStoploss(PnLPct float64, price *Price, symbol string) *Stoploss {
+/*
+Newstoploss initializes a new stoploss with the given PnL percentage.
+*/
+func NewStoploss(PnLPct float64) *Stoploss {
 	stoploss := &Stoploss{
 		State:            StoplossHealthy,
-		initialPnLPct:    PnLPct,
-		currentPnLPct:    PnLPct,
-		peakPnLPct:       PnLPct,
-		floorPnLPct:      PnLPct,
-		armPnlPct:        0.5,
-		takeProfitPnlPct: 1.0,
-		givebackPnlPct:   0.5,
+		InitialPnLPct:    PnLPct,
+		CurrentPnLPct:    PnLPct,
+		PeakPnLPct:       PnLPct,
+		FloorPnLPct:      PnLPct,
+		ArmPnlPct:        0.5,
+		TakeProfitPnlPct: 1.0,
+		GivebackPnlPct:   0.5,
 	}
 
 	return stoploss
 }
 
+/*
+Update the stoploss state based on the current PnL percentage.
+There is no floor to this stoploss, because it has proven to be next to impossible
+to deal with the highly chaotic nature of the market. Instead, we rely on the system's
+entry guards to make good decisions, and to hold on to positions until they are going
+up again. This tracks with long-term observations of the market, where the same symbols
+keep repeating the same patterns over and over again.
+*/
 func (stoploss *Stoploss) Update(PnLPct float64) {
-	stoploss.previousPnLPct = stoploss.currentPnLPct
-	stoploss.currentPnLPct = PnLPct
+	stoploss.PreviousPnLPct = stoploss.CurrentPnLPct
+	stoploss.CurrentPnLPct = PnLPct
 
-	if stoploss.currentPnLPct > stoploss.peakPnLPct {
-		stoploss.peakPnLPct = stoploss.currentPnLPct
+	if stoploss.CurrentPnLPct > stoploss.PeakPnLPct {
+		stoploss.PeakPnLPct = stoploss.CurrentPnLPct
 	}
 
-	if stoploss.currentPnLPct > stoploss.armPnlPct {
+	if stoploss.CurrentPnLPct > stoploss.ArmPnlPct {
 		stoploss.State = StoplossArmed
 	}
 
-	if stoploss.currentPnLPct > stoploss.takeProfitPnlPct {
+	if stoploss.CurrentPnLPct > stoploss.TakeProfitPnlPct {
 		stoploss.State = StoplossTakeProfit
 	}
 
 	if stoploss.State == StoplossArmed {
-		stoploss.floorPnLPct = stoploss.peakPnLPct * stoploss.givebackPnlPct
-		if stoploss.currentPnLPct < stoploss.floorPnLPct {
+		stoploss.FloorPnLPct = stoploss.PeakPnLPct * stoploss.GivebackPnlPct
+		if stoploss.CurrentPnLPct < stoploss.FloorPnLPct {
 			stoploss.State = StoplossTriggered
 		}
 	}
 
-	if stoploss.State == StoplossTakeProfit && stoploss.currentPnLPct < stoploss.previousPnLPct {
+	if stoploss.State == StoplossTakeProfit && stoploss.CurrentPnLPct < stoploss.PreviousPnLPct {
 		stoploss.State = StoplossTriggered
 	}
 }
 
+/*
+Check if the stoploss has been triggered.
+*/
 func (stoploss *Stoploss) Triggered() bool {
 	return stoploss.State == StoplossTriggered
 }

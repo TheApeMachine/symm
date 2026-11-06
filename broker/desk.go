@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
@@ -38,6 +40,7 @@ func NewDesk(
 	ctx context.Context,
 	transports map[string]network.Client,
 	price *Price,
+	client *store.Client,
 ) *Desk {
 	quote := system.Cfg.Market.QuoteCurrency
 
@@ -65,6 +68,7 @@ func NewDesk(
 				transports["virtual"],
 				price,
 				venue.NewKraken(quote),
+				client,
 			),
 			TierTypePaper: NewTier(
 				ctx,
@@ -73,6 +77,7 @@ func NewDesk(
 				transports["paper"],
 				price,
 				venue.NewKraken(quote),
+				client,
 			),
 			TierTypeReal: NewTier(
 				ctx,
@@ -81,6 +86,7 @@ func NewDesk(
 				transports["private"],
 				price,
 				venue.NewKraken(quote),
+				client,
 			),
 		},
 	}
@@ -267,7 +273,13 @@ func (desk *Desk) Hello() {
 			}
 
 			if position.ClosedAt == nil {
-				position.Update(nil)
+				mark := position.Mark
+				if mark == nil && desk.price != nil {
+					mark = desk.price.TouchBid(position.Symbol)
+				}
+				if err := position.Update(mark); err != nil {
+					errnie.Error(err)
+				}
 			}
 
 			positions[position.ID] = position
@@ -281,6 +293,31 @@ func (desk *Desk) Hello() {
 		"positions":      positions,
 		"balances":       balances,
 	})
+}
+
+/*
+Flush persists every open lot (including Closing) before process exit.
+*/
+func (desk *Desk) Flush() error {
+	var errs error
+
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
+		for _, position := range tier.positions.Submitted() {
+			if position == nil {
+				continue
+			}
+
+			if err := tier.positions.Save(position); err != nil {
+				errs = errors.Join(errs, err)
+			}
+		}
+	}
+
+	return errs
 }
 
 func (desk *Desk) Update(trades []*market.TradeData) {
@@ -437,6 +474,15 @@ func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 				return
 			}
 		}
+	}
+}
+
+/*
+ClearPending drops a settled lot after the model has attributed its exit path.
+*/
+func (desk *Desk) ClearPending(tier TierType, symbol string) {
+	if t := desk.tiers[tier]; t != nil {
+		t.ClearPending(symbol)
 	}
 }
 

@@ -125,4 +125,33 @@ func TestBookManagerUpdate(t *testing.T) {
 		So(len(book.Bids.Levels), ShouldEqual, 1)
 		So(book.MaxDepth, ShouldEqual, system.Cfg.Market.Level3.Depth)
 	})
+
+	Convey("A crossed book is marked stale and notifies recovery", t, func() {
+		manager := NewBookManager()
+		notified := []string{}
+		manager.OnInvalid(func(symbols []string) {
+			notified = append(notified, symbols...)
+		})
+
+		bid := decimal.RequireFromString("101")
+		ask := decimal.RequireFromString("100")
+		qty := decimal.RequireFromString("1")
+
+		manager.Update(&market.Level3{
+			Type: "snapshot",
+			Data: []*market.Level3Data{{
+				Symbol: "BTC/USD",
+				Bids: []*market.Level3Order{{
+					OrderID: "b1", LimitPrice: &bid, OrderQty: &qty,
+				}},
+				Asks: []*market.Level3Order{{
+					OrderID: "a1", LimitPrice: &ask, OrderQty: &qty,
+				}},
+			}},
+		})
+
+		So(manager.Get("BTC/USD"), ShouldBeNil)
+		So(manager.StaleSymbol("BTC/USD"), ShouldBeTrue)
+		So(notified, ShouldResemble, []string{"BTC/USD"})
+	})
 }

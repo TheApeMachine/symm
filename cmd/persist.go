@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
@@ -19,6 +20,7 @@ type tickPersist struct {
 	*nmruntime.System
 	store *store.Client
 	armed atomic.Bool
+	wg    sync.WaitGroup
 }
 
 func newTickPersist(ctx context.Context, client *store.Client) *tickPersist {
@@ -33,6 +35,20 @@ func (persist *tickPersist) Arm() {
 	persist.armed.Store(true)
 }
 
+/*
+Disarm stops accepting new tick writes during shutdown.
+*/
+func (persist *tickPersist) Disarm() {
+	persist.armed.Store(false)
+}
+
+/*
+Wait blocks until every in-flight write goroutine has finished.
+*/
+func (persist *tickPersist) Wait() {
+	persist.wg.Wait()
+}
+
 func (persist *tickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelope {
 	if envelope == nil || persist.store == nil || !persist.armed.Load() {
 		return envelope
@@ -40,7 +56,12 @@ func (persist *tickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 
 	// Pipeline rings are done with this envelope. Marshal off-thread so JSON/S3
 	// never stalls the disruptor (that freeze left impulse/kernels on last paint).
-	go persist.write(envelope)
+	persist.wg.Add(1)
+
+	go func() {
+		defer persist.wg.Done()
+		persist.write(envelope)
+	}()
 
 	return envelope
 }

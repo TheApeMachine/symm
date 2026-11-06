@@ -8,7 +8,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 )
 
@@ -381,20 +380,3 @@ func (execution *Execution) Tradable() bool {
 	return false
 }
 
-/*
-DecodeExecution decodes an executions frame. An undecodable frame is an error:
-applying a partially decoded fill would silently diverge the desk's positions.
-*/
-func DecodeExecution(buf []byte) (*Execution, error) {
-	frame := NewExecution()
-
-	if err := sonic.Unmarshal(buf, frame); err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[kraken.execution] invalid executions frame",
-			err,
-		)
-	}
-
-	return frame, nil
-}

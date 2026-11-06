@@ -269,7 +269,11 @@ func (client *WebsocketClient) Watch(
 				continue
 			}
 
-			_ = json.Unmarshal(resp.Body(), dest)
+			err = json.Unmarshal(resp.Body(), dest)
+
+			if err != nil {
+				errnie.Error(err)
+			}
 		}
 	}()
 }
@@ -368,7 +372,7 @@ func (client *WebsocketClient) SoftDown(cause error) error {
 		hook()
 	}
 
-	return cause
+	return errnie.Error(cause)
 }
 
 func (client *WebsocketClient) softDown(cause error) error {

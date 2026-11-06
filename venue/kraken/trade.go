@@ -36,24 +36,6 @@ func NewTrade() *Trade {
 	}
 }
 
-/*
-DecodeTrade decodes a trade frame. An undecodable frame is an error, never a
-partially filled Trade: ingress halts instead of stepping a half-decoded print.
-*/
-func DecodeTrade(buf []byte) (*Trade, error) {
-	trade := NewTrade()
-
-	if err := sonic.Unmarshal(buf, trade); err != nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[kraken.trade] invalid trade frame",
-			err,
-		)
-	}
-
-	return trade, nil
-}
-
 func (trade *Trade) Request() map[string]any {
 	return map[string]any{
 		"method": "subscribe",

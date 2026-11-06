@@ -59,7 +59,9 @@ func (live *Live) Subscribe() error {
 	token, err := live.token(live.ctx)
 
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Subscribe] failed to get token", err,
+		))
 	}
 
 	if err := live.write(map[string]any{
@@ -70,7 +72,9 @@ func (live *Live) Subscribe() error {
 			"token":    token,
 		},
 	}); err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Subscribe] failed to write balance subscription", err,
+		))
 	}
 
 	return live.write(map[string]any{
@@ -111,9 +115,9 @@ func (live *Live) Seal(message []byte) ([]byte, error) {
 	}
 
 	if err := sonic.Unmarshal(message, &request); err != nil {
-		return nil, errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Validation, "[broker.Live.Seal] order frame is not JSON", err,
-		)
+		))
 	}
 
 	if request.Method != "add_order" {
@@ -123,7 +127,9 @@ func (live *Live) Seal(message []byte) ([]byte, error) {
 	token, err := live.token(live.ctx)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Seal] failed to get token", err,
+		))
 	}
 
 	if request.Params == nil {
@@ -139,9 +145,9 @@ func (live *Live) Seal(message []byte) ([]byte, error) {
 	buf, err := sonic.Marshal(request)
 
 	if err != nil {
-		return nil, errnie.Err(
+		return nil, errnie.Error(errnie.Err(
 			errnie.Internal, "[broker.Live.Seal] failed to marshal order", err,
-		)
+		))
 	}
 
 	return buf, nil
