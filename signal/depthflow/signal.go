@@ -2,15 +2,15 @@ package depthflow
 
 import (
 	"context"
+	"math"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -62,81 +62,89 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if data.Price.IsZero() || data.Qty.IsZero() {
 				return
 			}
 
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
+			price := data.Price.InexactFloat64()
+			qty := data.Qty.InexactFloat64()
 
 			if price <= 0 || qty <= 0 {
 				return
 			}
 
 			var (
-				input equation.BookflowInput
-				ready bool
-				err   error
+				bids     []flow.BookLevel
+				asks     []flow.BookLevel
+				tickSize float64
+				haveBook bool
 			)
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				pair := signal.instrument.Pair(data.Symbol)
 
 				if pair.TickSize == nil {
 					return
 				}
 
-				tickSize, _ := pair.TickSize.Float64()
+				tickSize = pair.TickSize.InexactFloat64()
 
 				if tickSize <= 0 {
 					return
 				}
 
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+				bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
 
 				for _, level := range book.Bids.Levels {
-					levelPrice := level.Price.Float64()
+					levelPrice := level.Price.InexactFloat64()
 					bids = append(bids, flow.BookLevel{
 						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
-						Ticks:    int64(levelPrice / tickSize),
+						Quantity: level.Quantity.InexactFloat64(),
+						Ticks:    int64(math.Round(levelPrice / tickSize)),
 					})
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
+				asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
 
 				for _, level := range book.Asks.Levels {
-					levelPrice := level.Price.Float64()
+					levelPrice := level.Price.InexactFloat64()
 					asks = append(asks, flow.BookLevel{
 						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
-						Ticks:    int64(levelPrice / tickSize),
+						Quantity: level.Quantity.InexactFloat64(),
+						Ticks:    int64(math.Round(levelPrice / tickSize)),
 					})
 				}
 
-				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
-					Symbol:   data.Symbol,
-					TickSize: tickSize,
-					Bids:     bids,
-					Asks:     asks,
-				})
+				haveBook = true
+			})
 
-				if err != nil || !ready {
-					return
-				}
+			if !haveBook {
+				return
+			}
 
-				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
-					Symbol:   data.Symbol,
-					Price:    price,
-					Quantity: qty,
-					Side:     flow.TradeSide(data.Side.String()),
-					At:       data.Timestamp,
-				})
+			input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
+				Symbol:   data.Symbol,
+				TickSize: tickSize,
+				Bids:     bids,
+				Asks:     asks,
+			})
+
+			if err != nil {
+				signal.Error(err)
+				return
+			}
+
+			if !ready {
+				return
+			}
+
+			input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+				Symbol:   data.Symbol,
+				Price:    price,
+				Quantity: qty,
+				Side:     flow.TradeSide(data.Side.String()),
+				At:       data.Timestamp,
 			})
 
 			if err != nil {
@@ -155,18 +163,12 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			if !outcome.Ready {
-				return
-			}
-
+			// Publish not-ready/zero readings too — resonance holds until every
+			// Map() label has been seen (thin_score / loaded_score).
 			mu.Lock()
 			envelope.DepthFlow[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

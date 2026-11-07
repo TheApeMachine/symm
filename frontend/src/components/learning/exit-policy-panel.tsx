@@ -34,12 +34,10 @@ export const ExitPolicyPanel = ({
 	const checks = buildStopChecks({
 		state: stoploss?.state,
 		proximity: stoploss?.proximity,
-		downside_pressure: stoploss?.downside_pressure,
-		downside_magnitude_ratio: stoploss?.downside_magnitude_ratio,
-		consecutive_down: stoploss?.consecutive_down,
 		has_floor: stoploss?.has_floor,
 		room_pct: stoploss?.room_pct,
 		current: currentStop,
+		peak: peakStop,
 	});
 
 	const verdict = heldVerdict({
@@ -50,7 +48,6 @@ export const ExitPolicyPanel = ({
 		friction: stoploss?.friction ?? null,
 		has_floor: stoploss?.has_floor,
 		proximity: stoploss?.proximity,
-		downside_pressure: stoploss?.downside_pressure,
 		exit_reason: stoploss?.exit_reason ?? null,
 		room_pct: stoploss?.room_pct,
 	});

@@ -174,8 +174,8 @@ describe("position-health components", () => {
 		expect(markup).toContain("Position Health Gauge");
 	});
 
-	it("has complete region metadata for R00 through R22", () => {
-		for (let i = 0; i <= 22; i++) {
+	it("has complete region metadata for R00 through R24", () => {
+		for (let i = 0; i <= 24; i++) {
 			const key = `R${i.toString().padStart(2, "0")}`;
 			expect(REGIONS[key]).toBeDefined();
 			expect(REGIONS[key].title).toBeTruthy();

@@ -99,12 +99,13 @@ const brightnessAt = (rows: Region[] | undefined, key: number): number => {
 	return 0;
 };
 
+/** Region keys from a path — accepts R06 or R06.R00-style segments. */
 const pathKeys = (path: string | undefined): Set<number> => {
 	const out = new Set<number>();
 	if (!path) return out;
 
 	for (const part of path.split("/")) {
-		const match = /^R(\d{2})$/.exec(part.trim());
+		const match = /^R(\d{2})/.exec(part.trim());
 		if (!match) continue;
 		out.add(Number(match[1]));
 	}

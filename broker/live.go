@@ -2,195 +2,168 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/bytedance/sonic"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
-SubscribeExecutions opens the private executions stream. Live sends the
-websocket token Kraken requires; paper uses the same subscribe envelope
-through the simulator CLI.
+Live is the real tier's private session: websocket token, balance and
+execution subscriptions, and authenticated order writes.
 */
-func SubscribeExecutions(ctx context.Context, transport Transport, instrument *Instrument) error {
-	if transport == nil {
+type Live struct {
+	ctx    context.Context
+	token  func(context.Context) (string, error)
+	socket *network.WebsocketClient
+}
+
+func NewLive(ctx context.Context, private network.Client) *Live {
+	socket, ok := private.(*network.WebsocketClient)
+
+	if !ok || socket == nil {
 		return nil
 	}
 
-	params := map[string]any{
-		"channel": "executions",
+	auth := kraken.NewAuth()
+
+	return &Live{
+		ctx:    ctx,
+		token:  auth.Token,
+		socket: socket,
 	}
+}
 
-	if _, live := transport.(*network.WebsocketClient); live {
-		if instrument == nil {
-			return errnie.Err(
-				errnie.Validation,
-				"[broker] executions subscribe needs instrument",
-				nil,
-			)
-		}
-
-		token, err := instrument.WebSocketToken(ctx)
-		if err != nil {
-			return err
-		}
-
-		params["token"] = token
-		params["snap_orders"] = true
-		params["snap_trades"] = false
-	}
-
-	buf, err := sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": params,
+/*
+Arm subscribes balances and executions, and resubscribes after a redial.
+*/
+func (live *Live) Arm() error {
+	live.socket.OnReconnect(func() error {
+		return live.Subscribe()
 	})
 
-	if err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"[broker] executions subscribe marshal failed",
-			err,
-		)
-	}
-
-	if err := transport.Write(buf); err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"[broker] executions subscribe write failed",
-			err,
-		)
+	if err := live.Subscribe(); err != nil {
+		return live.socket.SoftDown(err)
 	}
 
 	return nil
 }
 
-// LiveBalances polls the authenticated REST wallet for market.Balance.Follow.
-type LiveBalances struct{}
-
-func NewLiveBalances() *LiveBalances {
-	return &LiveBalances{}
-}
-
-func (live *LiveBalances) Fetch(ctx context.Context) ([]*market.Asset, error) {
-	_ = ctx
-
-	client, err := kraken.NewAuthenticatedREST()
+/*
+Subscribe opens the private balance and execution streams.
+*/
+func (live *Live) Subscribe() error {
+	token, err := live.token(live.ctx)
 
 	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	resp, err := client.Balances()
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	if resp == nil || resp.Result == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.IO, "[live] empty balance response", nil,
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Subscribe] failed to get token", err,
 		))
 	}
 
-	raw, err := sonic.Marshal(resp.Result)
-
-	if err != nil {
-		return nil, errnie.Error(err)
+	if err := live.write(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":  "balances",
+			"snapshot": true,
+			"token":    token,
+		},
+	}); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Subscribe] failed to write balance subscription", err,
+		))
 	}
 
-	amounts := map[string]string{}
-
-	if err := sonic.Unmarshal(raw, &amounts); err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	result, err := spot.Call[kraken.TradeBalanceResult](client, spot.RequestOptions{
-		Auth:   true,
-		Method: "POST",
-		Path:   system.Cfg.WebSocket.Endpoints.TradeBalance,
+	return live.write(map[string]any{
+		"method": "subscribe",
+		"params": map[string]any{
+			"channel":     "executions",
+			"snap_orders": true,
+			"snap_trades": true,
+			"token":       token,
+		},
 	})
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	trade := result.Result
-	quote := system.Cfg.Market.QuoteCurrency
-	assets := make([]*market.Asset, 0, len(amounts))
-
-	for asset, amount := range amounts {
-		capital, parseErr := decimal.NewFromString(amount)
-
-		if parseErr != nil {
-			continue
-		}
-
-		pnl := decimal.Zero
-		equity := capital
-
-		if asset == quote || asset == market.Alias(quote) {
-			if trade.UnrealizedPnL != nil {
-				pnl = shopString(trade.UnrealizedPnL)
-			}
-
-			if trade.Equity != nil {
-				equity = shopString(trade.Equity)
-			}
-		}
-
-		assets = append(assets, market.NewAsset(nil, asset, capital, pnl, equity))
-	}
-
-	return assets, nil
 }
 
-func assetsFromWallet(
-	quote string, wallet *kraken.Balance, trade *kraken.TradeBalanceResult,
-) []*market.Asset {
-	assets := make([]*market.Asset, 0, len(wallet.Data))
+func (live *Live) write(payload map[string]any) error {
+	buf, err := sonic.Marshal(payload)
 
-	for _, entry := range wallet.Data {
-		capital := decimal.Zero
+	if err != nil {
+		return errnie.Err(
+			errnie.Internal, "[broker.Live] failed to marshal subscription", err,
+		)
+	}
 
-		if entry.Available != nil {
-			capital = shopString(entry.Available)
-		} else if entry.Balance != nil {
-			capital = shopString(entry.Balance)
-		}
+	if err := live.socket.Write(buf); err != nil {
+		return errnie.Error(err)
+	}
 
-		pnl := decimal.Zero
-		equity := capital
+	return nil
+}
 
-		if entry.Asset == quote || entry.Asset == market.Alias(quote) {
-			if trade != nil && trade.UnrealizedPnL != nil {
-				pnl = shopString(trade.UnrealizedPnL)
-			}
+/*
+Seal copies an add_order frame and attaches the session token.
+order_qty is sent as a JSON number, which the private socket requires.
+*/
+func (live *Live) Seal(message []byte) ([]byte, error) {
+	var request struct {
+		Method string         `json:"method"`
+		ReqID  int64          `json:"req_id,omitempty"`
+		Params map[string]any `json:"params"`
+	}
 
-			if trade != nil && trade.Equity != nil {
-				equity = shopString(trade.Equity)
-			}
-		}
-
-		assets = append(assets, market.NewAsset(
-			nil, entry.Asset, capital, pnl, equity,
+	if err := sonic.Unmarshal(message, &request); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[broker.Live.Seal] order frame is not JSON", err,
 		))
 	}
 
-	return assets
-}
-
-func shopString(v interface{ String() string }) decimal.Decimal {
-	parsed, err := decimal.NewFromString(v.String())
-
-	if err != nil {
-		return decimal.Zero
+	if request.Method != "add_order" {
+		return message, nil
 	}
 
-	return parsed
+	token, err := live.token(live.ctx)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Seal] failed to get token", err,
+		))
+	}
+
+	if request.Params == nil {
+		request.Params = map[string]any{}
+	}
+
+	request.Params["token"] = token
+
+	if qty, ok := request.Params["order_qty"].(string); ok && qty != "" {
+		request.Params["order_qty"] = json.Number(qty)
+	}
+
+	buf, err := sonic.Marshal(request)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal, "[broker.Live.Seal] failed to marshal order", err,
+		))
+	}
+
+	return buf, nil
+}
+
+/*
+BalanceURL is the signed REST balance path for a live account.
+*/
+func (live *Live) BalanceURL() string {
+	return "https://api.kraken.com" + system.Cfg.WebSocket.Endpoints.Balance
+}
+
+/*
+TradeBalanceURL is the signed REST trade-balance path for a live account.
+*/
+func (live *Live) TradeBalanceURL() string {
+	return "https://api.kraken.com" + system.Cfg.WebSocket.Endpoints.TradeBalance
 }

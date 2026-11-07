@@ -1,182 +1,145 @@
 package broker
 
-import (
-	"math"
-	"time"
-
-	"github.com/theapemachine/nomagique/adaptive"
-	"github.com/theapemachine/symm/system"
-)
-
-type StoplossState uint8
+type StoplossState int
 
 const (
-	StoplossStateInit StoplossState = iota
-	StoplossHealthy                 // Closer to profit than to the floor.
-	StoplossDangerous               // Closer to the floor than to profit.
-	StoplossCritical                // Closer to the floor than entry drag allows.
-	StoplossProtected               // Cleared the mirror profit target.
-	StoplossTriggered               // Hit the active floor; exit.
+	StoplossHealthy StoplossState = iota
+	StoplossArmed
+	// stoplossLegacyTakeProfit kept so Triggered stays wire value 3.
+	stoplossLegacyTakeProfit
+	StoplossTriggered
 )
 
 /*
-Stoploss:
+Stoploss invalidates an open lot.
 
-	Hard rails (absolute, centered on 0):
-	  MaxLossPct      = -MaxAllowedLossPct
-	  ProfitTargetPct = +MaxAllowedLossPct
-
-	Entry PnL is already fee/spread-negative. Green is not protected until
-	ProfitTargetPct.
-
-	Active FloorPnLPct starts at MaxLossPct and breathes with the mark:
-	  up-move   → widen  by |Δ| × pace × (1 - nearFloor)
-	  down-move → tighten by |Δ| × pace × max(nearFloor, nearProfit)
-	pace is mark-arrival speed vs a TimeElastic baseline (faster clusters pull harder).
-	Floor never breaches MaxLossPct. Once Protected, floor never sits below 0.
+Arms above 1%, trails a keep-ratio floor of peak (50% at arm, +5pp keep per
++1% peak), and never lets the floor sit below 0.5% once armed.
 */
 type Stoploss struct {
-	State           StoplossState
-	InitialPnLPct   float64
-	MaxLossPct      float64
-	ProfitTargetPct float64
-	PreviousPnLPct  float64
-	CurrentPnLPct   float64
-	PeakPnLPct      float64
-	FloorPnLPct     float64
-	PreviousTime    time.Time
-	CurrentTime     time.Time
-	pace            *adaptive.TimeElastic
+	State          StoplossState `json:"State"`
+	InitialPnLPct  float64       `json:"InitialPnLPct"`
+	CurrentPnLPct  float64       `json:"CurrentPnLPct"`
+	PreviousPnLPct float64       `json:"PreviousPnLPct"`
+	PeakPnLPct     float64       `json:"PeakPnLPct"`
+	FloorPnLPct    float64       `json:"FloorPnLPct"`
+	ArmPnlPct      float64       `json:"ArmPnlPct"`
+	GivebackPnlPct float64       `json:"GivebackPnlPct"`
+	FloorMinPnlPct float64       `json:"FloorMinPnlPct"`
+	TightenPerPct  float64       `json:"TightenPerPct"`
 }
 
+/*
+NewStoploss initializes a new stoploss with the given PnL percentage.
+*/
 func NewStoploss(PnLPct float64) *Stoploss {
-	maxLoss := system.Cfg.Risk.MaxAllowedLossPct
-	now := time.Now()
-
 	return &Stoploss{
-		State:           StoplossStateInit,
-		InitialPnLPct:   PnLPct,
-		MaxLossPct:      -maxLoss,
-		ProfitTargetPct: maxLoss,
-		PreviousPnLPct:  PnLPct,
-		CurrentPnLPct:   PnLPct,
-		PeakPnLPct:      PnLPct,
-		FloorPnLPct:     -maxLoss,
-		PreviousTime:    now,
-		CurrentTime:     now,
-		pace: adaptive.NewTimeElastic(adaptive.TimeElasticConfig{
-			Halflife: system.Cfg.Risk.StopPaceHalflife,
-			Epsilon:  system.Cfg.Risk.StopPaceEpsilon,
-		}),
+		State:          StoplossHealthy,
+		InitialPnLPct:  PnLPct,
+		CurrentPnLPct:  PnLPct,
+		PeakPnLPct:     PnLPct,
+		FloorPnLPct:    PnLPct,
+		ArmPnlPct:      1.0,
+		GivebackPnlPct: 0.5,
+		FloorMinPnlPct: 0.5,
+		TightenPerPct:  0.05,
 	}
 }
 
+/*
+Update advances peak, arms above ArmPnlPct, then trails a tightening floor.
+*/
 func (stoploss *Stoploss) Update(PnLPct float64) {
+	stoploss.ensureDefaults()
+
+	stoploss.PreviousPnLPct = stoploss.CurrentPnLPct
+	stoploss.CurrentPnLPct = PnLPct
+
+	if stoploss.CurrentPnLPct > stoploss.PeakPnLPct {
+		stoploss.PeakPnLPct = stoploss.CurrentPnLPct
+	}
+
+	// Legacy TakeProfit wire value folds into Armed with the new arm base.
+	if stoploss.State == stoplossLegacyTakeProfit {
+		stoploss.State = StoplossArmed
+		stoploss.GivebackPnlPct = 0.5
+	}
+
 	if stoploss.State == StoplossTriggered {
 		return
 	}
 
-	stoploss.PreviousPnLPct = stoploss.CurrentPnLPct
-	stoploss.CurrentPnLPct = PnLPct
-	stoploss.PreviousTime = stoploss.CurrentTime
-	stoploss.CurrentTime = time.Now()
-
-	if PnLPct > stoploss.PeakPnLPct {
-		stoploss.PeakPnLPct = PnLPct
+	if stoploss.State == StoplossHealthy &&
+		stoploss.CurrentPnLPct > stoploss.ArmPnlPct {
+		stoploss.State = StoplossArmed
 	}
 
-	stoploss.breathe(PnLPct)
-
-	if stoploss.FloorPnLPct < stoploss.MaxLossPct {
-		stoploss.FloorPnLPct = stoploss.MaxLossPct
-	}
-
-	if PnLPct <= stoploss.FloorPnLPct {
-		stoploss.State = StoplossTriggered
+	if stoploss.State != StoplossArmed {
 		return
 	}
 
-	if PnLPct >= stoploss.ProfitTargetPct {
-		stoploss.State = StoplossProtected
-
-		if stoploss.FloorPnLPct < 0 {
-			stoploss.FloorPnLPct = 0
-		}
-
-		return
-	}
-
-	stoploss.State = stoploss.health(PnLPct)
-}
-
-func (stoploss *Stoploss) Triggered() bool {
-	return stoploss.State == StoplossTriggered
-}
-
-func (stoploss *Stoploss) breathe(pnl float64) {
-	delta := pnl - stoploss.PreviousPnLPct
-	
-	if delta == 0 {
-		return
-	}
-
-	span := stoploss.ProfitTargetPct - stoploss.MaxLossPct
-	
-	if span <= 0 {
-		return
-	}
-
-	nearFloor := 1 - math.Max(0, math.Min(1, (pnl-stoploss.FloorPnLPct)/span))
-	nearProfit := 1 - math.Max(0, math.Min(1, (stoploss.ProfitTargetPct-pnl)/span))
-
-	pace := stoploss.markPace()
-	move := math.Abs(delta) * pace
-
-	if delta > 0 {
-		stoploss.FloorPnLPct -= move * (1 - nearFloor)
-		return
-	}
-
-	stoploss.FloorPnLPct += move * math.Max(nearFloor, nearProfit)
+	stoploss.trailArmed()
 }
 
 /*
-markPace is instant mark speed relative to the TimeElastic tempo baseline.
+ensureDefaults fills trail knobs missing on lots restored before this schema.
 */
-func (stoploss *Stoploss) markPace() float64 {
-	interval := stoploss.CurrentTime.Sub(stoploss.PreviousTime)
-
-	if interval <= 0 {
-		return 1
+func (stoploss *Stoploss) ensureDefaults() {
+	if stoploss.ArmPnlPct <= 0 {
+		stoploss.ArmPnlPct = 1.0
 	}
 
-	instantSpeed := float64(time.Second) / float64(interval)
-	
-	out, err := stoploss.pace.Measure(adaptive.TimedValue{
-		Value: instantSpeed,
-		At:    stoploss.CurrentTime,
-	})
-
-	if err != nil || !out.Ready {
-		return 1
+	if stoploss.GivebackPnlPct <= 0 {
+		stoploss.GivebackPnlPct = 0.5
 	}
 
-	return out.Value
+	if stoploss.FloorMinPnlPct <= 0 {
+		stoploss.FloorMinPnlPct = 0.5
+	}
+
+	if stoploss.TightenPerPct <= 0 {
+		stoploss.TightenPerPct = 0.05
+	}
 }
 
-func (stoploss *Stoploss) health(pnl float64) StoplossState {
-	roomToFloor := pnl - stoploss.FloorPnLPct
-	roomToProfit := stoploss.ProfitTargetPct - pnl
+/*
+trailArmed keeps GivebackPnlPct of peak at arm, then raises the keep ratio by
+TightenPerPct for each +1% of peak above Arm, never below FloorMinPnlPct.
+GivebackPnlPct stays the arm base; the live keep is only folded into Floor.
+*/
+func (stoploss *Stoploss) trailArmed() {
+	above := stoploss.PeakPnLPct - stoploss.ArmPnlPct
 
-	if roomToFloor < roomToProfit {
-		entryDrag := math.Abs(stoploss.InitialPnLPct)
-
-		if entryDrag > 0 && roomToFloor < entryDrag {
-			return StoplossCritical
-		}
-
-		return StoplossDangerous
+	if above < 0 {
+		above = 0
 	}
 
-	return StoplossHealthy
+	keep := stoploss.GivebackPnlPct + above*stoploss.TightenPerPct
+
+	if keep > 1 {
+		keep = 1
+	}
+
+	if keep < 0 {
+		keep = 0
+	}
+
+	floor := stoploss.PeakPnLPct * keep
+
+	if floor < stoploss.FloorMinPnlPct {
+		floor = stoploss.FloorMinPnlPct
+	}
+
+	stoploss.FloorPnLPct = floor
+
+	if stoploss.CurrentPnLPct < stoploss.FloorPnLPct {
+		stoploss.State = StoplossTriggered
+	}
+}
+
+/*
+Triggered reports whether the stoploss has fired.
+*/
+func (stoploss *Stoploss) Triggered() bool {
+	return stoploss.State == StoplossTriggered
 }

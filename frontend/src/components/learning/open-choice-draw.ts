@@ -118,18 +118,8 @@ const markFloor = (pos: Position): number | undefined => {
 };
 
 /** Skip duplicate store publishes that did not move this lot's mark. */
-const markStamp = (pos: Position): string => {
-	const stop = normalizeStoploss(pos.stoploss);
-
-	return [
-		pos.pnl_pct,
-		pos.pnl,
-		pos.mark,
-		stop?.floor_pnl,
-		stop?.proximity,
-		stop?.room_pct,
-	].join("|");
-};
+const markStamp = (pos: Position): string =>
+	[pos.pnl_pct, pos.pnl, pos.mark].join("|");
 
 type LotBind = {
 	line: FastLineRenderableSeries;

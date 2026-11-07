@@ -2,6 +2,10 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -9,8 +13,63 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
+
+/*
+seedClient fails the first Read (soft disconnect), then yields a snapshot after
+resubscribe — mirrors Kraken 1013 during instrument seed.
+*/
+type seedClient struct {
+	reads atomic.Int32
+	frame []byte
+}
+
+func (client *seedClient) Read(...string) ([]byte, error) {
+	if client.reads.Add(1) == 1 {
+		return nil, errors.New("websocket: close 1013: Market data unavailable")
+	}
+
+	return client.frame, nil
+}
+
+func (client *seedClient) Write([]byte) error { return nil }
+
+func (client *seedClient) Post(string, any) ([]byte, error) { return nil, nil }
+
+func (client *seedClient) Watch(string, any, json.Unmarshaler) {}
+
+func TestSeedSnapshotRetriesSoftDisconnect(t *testing.T) {
+	Convey("Soft disconnect during seed re-subscribes and still arms", t, func() {
+		costMin, _ := decimal.NewFromString("1.0")
+		snapshot := &kraken.Instrument{
+			Channel: "instrument",
+			Type:    "snapshot",
+		}
+		snapshot.Data.Pairs = []kraken.InstrumentPair{{
+			Symbol:  "BTC/USD",
+			Base:    "BTC",
+			Quote:   "USD",
+			Status:  "online",
+			CostMin: &costMin,
+		}}
+
+		frame, err := sonic.Marshal(snapshot)
+		So(err, ShouldBeNil)
+
+		public := &seedClient{frame: frame}
+		instrument := &Instrument{
+			System: runtime.NewSystem(context.Background(), "instrument"),
+			public: public,
+			cache:  &sync.Map{},
+			quote:  "USD",
+		}
+
+		So(instrument.seedSnapshot([]byte(`{"method":"subscribe"}`)), ShouldBeNil)
+		So(public.reads.Load(), ShouldEqual, 2)
+		So(instrument.Has("BTC/USD"), ShouldBeTrue)
+	})
+}
 
 func TestSubscribeRequiresLevel3Reader(t *testing.T) {
 	Convey("Given an instrument without a Level3 reader", t, func() {

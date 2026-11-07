@@ -6,7 +6,6 @@ import (
 
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -36,11 +35,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			input, ok, err := signal.sample.MeasureArrival(excitation.TradeInput{
 				Symbol:    data.Symbol,
 				Side:      data.Side.String(),
@@ -70,11 +65,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.Hawkes[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

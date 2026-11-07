@@ -4,13 +4,12 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -38,39 +37,41 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			var (
-				input equation.MorphologyInput
-				ready bool
-				err   error
+				bids     []flow.BookLevel
+				asks     []flow.BookLevel
+				haveBook bool
 			)
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+			signal.books.Book(data.Symbol, func(book *market.Book) {
+				bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
 				for _, level := range book.Bids.Levels {
 					bids = append(bids, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
+						Price:    level.Price.InexactFloat64(),
+						Quantity: level.Quantity.InexactFloat64(),
 					})
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
+				asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
 				for _, level := range book.Asks.Levels {
 					asks = append(asks, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
+						Price:    level.Price.InexactFloat64(),
+						Quantity: level.Quantity.InexactFloat64(),
 					})
 				}
 
-				input, ready, err = signal.sample.MeasureBook(flow.BookInput{
-					Symbol: data.Symbol,
-					Bids:   bids,
-					Asks:   asks,
-				})
+				haveBook = true
+			})
+
+			if !haveBook {
+				return
+			}
+
+			input, ready, err := signal.sample.MeasureBook(flow.BookInput{
+				Symbol: data.Symbol,
+				Bids:   bids,
+				Asks:   asks,
 			})
 
 			if err != nil {
@@ -91,11 +92,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.Morphology[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

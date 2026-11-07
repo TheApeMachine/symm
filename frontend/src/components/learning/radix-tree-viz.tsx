@@ -5,11 +5,58 @@ import { Flex } from "../ui/flex";
 import { explorePathKept } from "./explore-path";
 import {
 	formatTrieLinkToken,
+	getNodePos,
 	paintRadixTreeStructure,
 	type TreeNode,
 	updateRadixTreeHighlights,
 } from "./radix-tree-paint";
 import type { FeasibleAction, SymbolProgress, TrieNodeData } from "./types";
+
+const FIT_PAD = 48;
+const FIT_NODE_PAD = 36;
+
+/*
+fitTreeZoomTransform scales and centers screen-space node positions into the
+viewport. Used once on first layout and again when the projection changes.
+*/
+export const fitTreeZoomTransform = (
+	width: number,
+	height: number,
+	points: ReadonlyArray<{ x: number; y: number }>,
+	padding = FIT_PAD,
+): d3.ZoomTransform => {
+	if (width <= 0 || height <= 0 || points.length === 0) {
+		return d3.zoomIdentity;
+	}
+
+	let minX = Number.POSITIVE_INFINITY;
+	let maxX = Number.NEGATIVE_INFINITY;
+	let minY = Number.POSITIVE_INFINITY;
+	let maxY = Number.NEGATIVE_INFINITY;
+
+	for (const point of points) {
+		minX = Math.min(minX, point.x - FIT_NODE_PAD);
+		maxX = Math.max(maxX, point.x + FIT_NODE_PAD);
+		minY = Math.min(minY, point.y - FIT_NODE_PAD);
+		maxY = Math.max(maxY, point.y + FIT_NODE_PAD);
+	}
+
+	const spanX = Math.max(maxX - minX, 1);
+	const spanY = Math.max(maxY - minY, 1);
+	const usableW = Math.max(width - padding * 2, 1);
+	const usableH = Math.max(height - padding * 2, 1);
+	const scale = Math.max(
+		0.1,
+		Math.min(usableW / spanX, usableH / spanY, 2),
+	);
+	const midX = (minX + maxX) / 2;
+	const midY = (minY + maxY) / 2;
+
+	return d3.zoomIdentity
+		.translate(width / 2, height / 2)
+		.scale(scale)
+		.translate(-midX, -midY);
+};
 
 interface RadixTreeVizProps {
 	data?: TrieNodeData | null;
@@ -251,11 +298,11 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		null,
 	);
 	const transformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
-	const zoomProjectionRef = useRef<typeof projection | null>(null);
-	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+	const fittedProjectionRef = useRef<string | null>(null);
+	const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 	const [internalProjection, setInternalProjection] = useState<
 		"horizontal" | "vertical" | "radial"
-	>("horizontal");
+	>("vertical");
 
 	const projection = externalProjection ?? internalProjection;
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -446,20 +493,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		return () => resizeObserver.unobserve(observeTarget);
 	}, []);
 
-	const initialZoomTransform = useCallback(
-		(width: number, height: number, mode: typeof projection) => {
-			if (mode === "radial") {
-				return d3.zoomIdentity.translate(width / 2, height / 2).scale(0.8);
-			}
-			if (mode === "vertical") {
-				return d3.zoomIdentity.translate(width / 2, 60).scale(0.85);
-			}
-			return d3.zoomIdentity.translate(80, height / 2).scale(0.85);
-		},
-		[],
-	);
-
-	// Setup D3 Zoom — keep the user's pan/zoom unless projection changes.
+	// Setup D3 Zoom — keep the user's pan/zoom; fit runs separately.
 	useEffect(() => {
 		if (!svgRef.current || dimensions.width === 0 || dimensions.height === 0)
 			return;
@@ -485,20 +519,10 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			[width, height],
 		]);
 
-		const projectionChanged = zoomProjectionRef.current !== projection;
-		zoomProjectionRef.current = projection;
-
-		if (projectionChanged) {
-			const initial = initialZoomTransform(width, height, projection);
-			svg.call(zoom.transform, initial);
-			applyZoomTransform(initial);
-			return;
-		}
-
 		const current = transformRef.current;
 		svg.call(zoom.transform, current);
 		applyZoomTransform(current);
-	}, [dimensions, projection, applyZoomTransform, initialZoomTransform]);
+	}, [dimensions, applyZoomTransform]);
 
 	const { nodes, links } = useMemo(() => {
 		if (!treeData) return { nodes: [], links: [] };
@@ -546,6 +570,25 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 			links: pointRoot.links(),
 		};
 	}, [treeData, collapsedIds, projection]);
+
+	// Fit the tree into the viewport on first layout and whenever projection changes.
+	useEffect(() => {
+		if (!svgRef.current || !zoomBehavior.current) return;
+		if (dimensions.width === 0 || dimensions.height === 0) return;
+		if (nodes.length === 0) return;
+		if (fittedProjectionRef.current === projection) return;
+
+		const points = nodes.map((node) => getNodePos(node, projection));
+		const fitted = fitTreeZoomTransform(
+			dimensions.width,
+			dimensions.height,
+			points,
+		);
+		const svg = d3.select(svgRef.current);
+		svg.call(zoomBehavior.current.transform, fitted);
+		applyZoomTransform(fitted);
+		fittedProjectionRef.current = projection;
+	}, [nodes, projection, dimensions, applyZoomTransform]);
 
 	const activePathIds = useMemo(() => {
 		if (!hoveredNodeId) return null;
@@ -759,7 +802,7 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 							gap={1}
 							className="bg-(--sunken) border-(--line) border p-0.5 rounded text-[11px]"
 						>
-							{(["horizontal", "vertical", "radial"] as const).map((mode) => (
+							{(["vertical", "horizontal", "radial"] as const).map((mode) => (
 								<button
 									key={mode}
 									type="button"

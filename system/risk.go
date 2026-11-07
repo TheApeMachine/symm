@@ -7,22 +7,22 @@ import (
 )
 
 type Risk struct {
-	MaxFraction         float64
-	TouchDivisor        float64
-	MinMoverVolumeUSD   float64
-	MinMoverChangePct   float64
-	MaxEntrySpreadPct   float64
+	MaxFraction       float64
+	TouchDivisor      float64
+	MinMoverVolumeUSD float64
+	MinMoverChangePct float64
+	MaxEntrySpreadPct float64
+	// MaxEntryPeakFrac is the highest allowed last/24h-range position (0–1).
+	// At or above this fraction of (high−low) vetoes entry. <=0 or >=1 disables.
+	MaxEntryPeakFrac    float64
 	MaxEntryOpenDragPct float64
 	MinTouchBidCash     float64
-	TapeWindow          time.Duration
-	MinTapeTrades       int
-	MaxAllowedLossPct   float64
-	BackingBandFrac     float64
-	MinBackingRatio     float64
-	// StopPaceHalflife is the TimeElastic memory for mark-arrival speed.
-	StopPaceHalflife time.Duration
-	// StopPaceEpsilon floors the TimeElastic baseline denominator.
-	StopPaceEpsilon float64
+	// TapeWindow is one half of the entry tape comparison.
+	TapeWindow time.Duration
+	// MinTapeNotionalUSD is the quote-dollar floor for the latest tape window.
+	MinTapeNotionalUSD float64
+	BackingBandFrac    float64
+	MinBackingRatio    float64
 }
 
 func NewRisk() *Risk {
@@ -31,15 +31,13 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.min_mover_volume_usd", 100_000.0)
 	viper.SetDefault("risk.min_mover_change_pct", 0.5)
 	viper.SetDefault("risk.max_entry_spread_pct", 2.0)
+	viper.SetDefault("risk.max_entry_peak_frac", 0.90)
 	viper.SetDefault("risk.max_entry_open_drag_pct", 2.5)
 	viper.SetDefault("risk.min_touch_bid_cash", 100.0)
 	viper.SetDefault("risk.tape_window", 10*time.Minute)
-	viper.SetDefault("risk.min_tape_trades", 8)
-	viper.SetDefault("risk.max_allowed_loss_pct", 2.5)
+	viper.SetDefault("risk.min_tape_notional_usd", 100.0)
 	viper.SetDefault("risk.backing_band_frac", 0.01)
 	viper.SetDefault("risk.min_backing_ratio", 0.6)
-	viper.SetDefault("risk.stop_pace_halflife", 2*time.Second)
-	viper.SetDefault("risk.stop_pace_epsilon", 1e-6)
 
 	return &Risk{
 		MaxFraction:         viper.GetFloat64("risk.max_fraction"),
@@ -47,15 +45,13 @@ func NewRisk() *Risk {
 		MinMoverVolumeUSD:   viper.GetFloat64("risk.min_mover_volume_usd"),
 		MinMoverChangePct:   viper.GetFloat64("risk.min_mover_change_pct"),
 		MaxEntrySpreadPct:   viper.GetFloat64("risk.max_entry_spread_pct"),
+		MaxEntryPeakFrac:    viper.GetFloat64("risk.max_entry_peak_frac"),
 		MaxEntryOpenDragPct: viper.GetFloat64("risk.max_entry_open_drag_pct"),
 		MinTouchBidCash:     viper.GetFloat64("risk.min_touch_bid_cash"),
 		TapeWindow:          viper.GetDuration("risk.tape_window"),
-		MinTapeTrades:       viper.GetInt("risk.min_tape_trades"),
-		MaxAllowedLossPct:   viper.GetFloat64("risk.max_allowed_loss_pct"),
+		MinTapeNotionalUSD:  viper.GetFloat64("risk.min_tape_notional_usd"),
 		BackingBandFrac:     viper.GetFloat64("risk.backing_band_frac"),
 		MinBackingRatio:     viper.GetFloat64("risk.min_backing_ratio"),
-		StopPaceHalflife:    viper.GetDuration("risk.stop_pace_halflife"),
-		StopPaceEpsilon:     viper.GetFloat64("risk.stop_pace_epsilon"),
 	}
 }
 
@@ -86,29 +82,12 @@ func (risk *Risk) Apply(patch map[string]any) {
 		}
 	}
 
-	setInt := func(dst *int, key string) {
-		raw, ok := patch[key]
-		if !ok || dst == nil {
-			return
-		}
-
-		switch value := raw.(type) {
-		case float64:
-			if value == value {
-				*dst = int(value)
-			}
-		case int:
-			*dst = value
-		case int64:
-			*dst = int(value)
-		}
-	}
-
 	setFloat(&risk.MinMoverVolumeUSD, "min_mover_volume_usd")
 	setFloat(&risk.MinMoverChangePct, "min_mover_change_pct")
 	setFloat(&risk.MaxEntrySpreadPct, "max_entry_spread_pct")
+	setFloat(&risk.MaxEntryPeakFrac, "max_entry_peak_frac")
 	setFloat(&risk.MinTouchBidCash, "min_touch_bid_cash")
 	setFloat(&risk.MinBackingRatio, "min_backing_ratio")
 	setFloat(&risk.MaxEntryOpenDragPct, "max_entry_open_drag_pct")
-	setInt(&risk.MinTapeTrades, "min_tape_trades")
+	setFloat(&risk.MinTapeNotionalUSD, "min_tape_notional_usd")
 }

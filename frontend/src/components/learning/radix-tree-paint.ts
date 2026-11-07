@@ -109,7 +109,7 @@ const getPorts = (
 	};
 };
 
-const getNodePos = (
+export const getNodePos = (
 	node: TreeNode,
 	projection: "horizontal" | "vertical" | "radial",
 ) => {

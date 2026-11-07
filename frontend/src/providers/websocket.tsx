@@ -24,6 +24,7 @@ import {
 	requestClosedPositionHistory,
 	resetClosedHistoryRequest,
 } from "#/lib/lifecycle";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
@@ -98,6 +99,48 @@ const decisionsFromWire = (
 	return next;
 };
 
+const mergeEnvelope = (
+	into: Record<string, unknown>,
+	payload: Record<string, unknown>,
+) => {
+	for (const [key, value] of Object.entries(payload)) {
+		if (key === "positions_mode") {
+			into.positions_mode = value;
+			continue;
+		}
+
+		if (
+			(key === "positions" ||
+				key === "balances" ||
+				key === "decisions" ||
+				key === "paths" ||
+				key === "closed") &&
+			value &&
+			typeof value === "object" &&
+			!Array.isArray(value) &&
+			into[key] &&
+			typeof into[key] === "object" &&
+			!Array.isArray(into[key])
+		) {
+			into[key] = {
+				...(into[key] as Record<string, unknown>),
+				...(value as Record<string, unknown>),
+			};
+			continue;
+		}
+
+		into[key] = value;
+	}
+};
+
+const TELEMETRY_KEYS = new Set([
+	"decisions",
+	"confidence",
+	"positions",
+	"paths",
+	"closed",
+]);
+
 const ingestEnvelope = (payload: Record<string, unknown>) => {
 	const mode =
 		typeof payload.positions_mode === "string"
@@ -167,6 +210,7 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 			} else {
 				store.setState((prev) => ({ ...prev, ...lots }));
 			}
+			syncOpenPositionCount();
 			continue;
 		}
 
@@ -182,6 +226,13 @@ const ingestEnvelope = (payload: Record<string, unknown>) => {
 	}
 };
 
+const needsTelemetry = (payload: Record<string, unknown>) => {
+	for (const key of Object.keys(payload)) {
+		if (TELEMETRY_KEYS.has(key)) return true;
+	}
+	return false;
+};
+
 export const WsFeed = () => {
 	useEffect(() => {
 		ensureLongtailRecorder();
@@ -191,13 +242,39 @@ export const WsFeed = () => {
 			type: "module",
 		});
 
+		let pending: Record<string, unknown> | null = null;
+		let raf = 0;
+
+		const flush = () => {
+			raf = 0;
+			const payload = pending;
+			pending = null;
+			if (!payload) return;
+
+			ingestEnvelope(payload);
+			if (needsTelemetry(payload)) {
+				syncEngineTelemetry();
+			}
+		};
+
+		const queueEnvelope = (payload: Record<string, unknown>) => {
+			if (!pending) {
+				pending = { ...payload };
+			} else {
+				mergeEnvelope(pending, payload);
+			}
+
+			if (raf === 0) {
+				raf = requestAnimationFrame(flush);
+			}
+		};
+
 		worker.addEventListener("message", (event: MessageEvent) => {
 			const data = event.data;
 			if (!data) return;
 
 			if (data.type === "ENVELOPE") {
-				ingestEnvelope(data.payload as Record<string, unknown>);
-				syncEngineTelemetry();
+				queueEnvelope(data.payload as Record<string, unknown>);
 				return;
 			}
 
@@ -246,6 +323,11 @@ export const WsFeed = () => {
 		});
 
 		return () => {
+			if (raf !== 0) {
+				cancelAnimationFrame(raf);
+				flush();
+			}
+
 			unsubscribeFocus.unsubscribe();
 			unsubscribeRoute.unsubscribe();
 			worker.postMessage({ type: "DISCONNECT" });

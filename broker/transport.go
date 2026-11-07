@@ -1,10 +1,23 @@
 package broker
 
+import (
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/network"
+)
+
 /*
-Transport is the execution transport abstraction satisfied by
-network.WebsocketClient in live trading and broker.Paper in simulation.
+OpenWS dials a WebsocketClient. Paper/virtual clients are a no-op.
 */
-type Transport interface {
-	Read(...string) ([]byte, error)
-	Write([]byte) error
+func OpenWS(client network.Client, url string) error {
+	ws, ok := client.(*network.WebsocketClient)
+
+	if !ok || ws == nil {
+		return nil
+	}
+
+	if err := ws.Open(url); err != nil {
+		return errnie.Error(err)
+	}
+
+	return nil
 }

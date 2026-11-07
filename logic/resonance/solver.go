@@ -74,11 +74,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, sources := symbol, sources
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			reading := solver.stepSymbol(symbol, sources)
 			if reading == nil {
 				return
@@ -89,11 +85,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Unlock()
 
 			ui.Focus("resonance", symbol, reading)
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

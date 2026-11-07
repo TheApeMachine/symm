@@ -9,43 +9,25 @@ func init() {
 }
 
 type Config struct {
-	Runtime   *Runtime
 	Resonance *Resonance
 	Risk      *Risk
-	Planner   *PlannerConfig
-	PumpDump  *PumpDump
-	CVD       *CVD
-	Manifold  *ManifoldConfig
 	WebSocket *WebSocket
 	Market    *Market
 	Learning  *Learning
-	Detector  *Detector
-	Paper     *Paper
 	Storage   *Storage
 	UI        *UI
 	Workbench *Workbench
-	Audit     *Audit
-	Parallel  *Parallel
 }
 
 func NewConfig() *Config {
 	return &Config{
-		Runtime:   NewRuntime(),
 		Resonance: NewResonance(),
 		Risk:      NewRisk(),
-		Planner:   NewPlannerConfig(),
-		PumpDump:  NewPumpDump(),
-		CVD:       NewCVD(),
-		Manifold:  NewManifoldConfig(),
 		WebSocket: NewWebSocket(),
 		Market:    NewMarket(),
 		Learning:  NewLearning(),
-		Detector:  NewDetector(),
-		Paper:     NewPaper(),
 		Storage:   NewStorage(),
 		UI:        NewUI(),
 		Workbench: NewWorkbench(),
-		Audit:     NewAudit(),
-		Parallel:  NewParallel(),
 	}
 }

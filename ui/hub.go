@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -56,10 +57,20 @@ type Hub struct {
 	callbacks      []func()
 	commit         atomic.Value
 	store          *store.Client
+	ownStore       bool
 	streamMu       sync.Mutex
 	streams        map[string]context.CancelFunc
 	streamGen      map[string]uint64
 	nextStream     uint64
+}
+
+/*
+UseStore wires the shared object-store client. Prefer this over a second
+store.Client so the hub does not spawn another ants upload/download pool.
+*/
+func (hub *Hub) UseStore(client *store.Client) {
+	hub.store = client
+	hub.ownStore = false
 }
 
 /*
@@ -72,11 +83,14 @@ func NewHub(ctx context.Context) *Hub {
 		frames = 256
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	hub := &Hub{
 		ctx:        ctx,
+		cancel:     cancel,
 		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
-			JSONEncoder:     sonic.Marshal,
+			JSONEncoder:     Sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
@@ -84,7 +98,6 @@ func NewHub(ctx context.Context) *Hub {
 		}),
 		frameCh:   make(chan []byte, frames),
 		callbacks: make([]func(), 0),
-		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
 	hub.streams = make(map[string]context.CancelFunc)
@@ -203,7 +216,11 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 		))
 	}
 
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[hub] websocket close failed", err,
+		))
+	}
 
 	if hub.conn.CompareAndSwap(conn, nil) {
 		hub.connected.Store(false)
@@ -296,7 +313,7 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 		return
 	}
 
-	buf, err := sonic.Marshal(frame)
+	buf, err := Sonic.Marshal(frame)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -519,13 +536,6 @@ func (hub *Hub) handleCommand(payload []byte) error {
 }
 
 /*
-App exposes the underlying Fiber application for registering domain services.
-*/
-func (hub *Hub) App() *fiber.App {
-	return hub.app
-}
-
-/*
 Run binds the dashboard listener before returning and only then transitions
 the hub READY, so nothing upstream writes to a hub that cannot serve yet.
 */
@@ -551,4 +561,41 @@ func (hub *Hub) Run() error {
 	}()
 
 	return nil
+}
+
+/*
+Close stops streams, drains the hub store, and shuts the HTTP server.
+*/
+func (hub *Hub) Close() error {
+	hub.streamMu.Lock()
+
+	for kind, cancel := range hub.streams {
+		cancel()
+		delete(hub.streams, kind)
+	}
+
+	hub.streamMu.Unlock()
+
+	var errs error
+
+	// Only close a store this hub created. Shared clients are owned by Booter.
+	if hub.ownStore && hub.store != nil {
+		if err := hub.store.Close(); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+
+	if hub.cancel != nil {
+		hub.cancel()
+	}
+
+	if hub.app != nil {
+		if err := hub.app.ShutdownWithTimeout(5 * time.Second); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[hub] shutdown failed", err,
+			)))
+		}
+	}
+
+	return errs
 }

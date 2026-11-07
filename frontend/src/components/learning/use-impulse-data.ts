@@ -112,12 +112,11 @@ export type UseImpulseDataOptions = {
 };
 
 /*
-useImpulseData paints each symbol's grid regions onto the map in turn.
-No cross-symbol merge — the map shows what one symbol's grid published,
-then the next, in quick succession.
+useImpulseData paints the focus symbol's grid regions onto the map.
+Full multi-symbol frames stay in signals.regions for other consumers.
 */
 export const useImpulseData = (
-	_symbol = "",
+	symbol = "",
 	options: UseImpulseDataOptions = {},
 ): ImpulseDataState => {
 	const paused = options.paused ?? false;
@@ -216,15 +215,15 @@ export const useImpulseData = (
 		};
 
 		const paintSymbol = (
-			symbol: string,
+			next: string,
 			rows: Region[],
 			marketTick: number,
 		) => {
 			paintRegions(rows, heldBrightness, heldMembers);
-			heldLitSymbols.current = [symbol];
+			heldLitSymbols.current = [next];
 
 			for (const pin of CANONICAL_PINS) {
-				const raw = pinMetric(pin, symbol);
+				const raw = pinMetric(pin, next);
 				if (raw === undefined) {
 					heldPins.current[pin.id] = { activation: 0, snr: 1 };
 					continue;
@@ -240,38 +239,38 @@ export const useImpulseData = (
 			publish(marketTick);
 		};
 
+		const frameForFocus = (
+			frames: Array<{ symbol: string; rows: Region[] }>,
+		) => {
+			if (!symbol) {
+				return frames[0];
+			}
+
+			const dashed = symbol.replace(/\//g, "-");
+
+			return frames.find(
+				(frame) => frame.symbol === symbol || frame.symbol === dashed,
+			);
+		};
+
 		const updateFromTelemetry = () => {
 			if (paused) {
 				return;
 			}
 
 			const tick = atoms.tickCount.get() || lastPublishedTick.current;
-
 			const frames = symbolGridFrames();
-			if (frames.length === 0) {
+			const frame = frameForFocus(frames);
+
+			if (!frame) {
 				paintRegions([], heldBrightness, heldMembers);
-				heldLitSymbols.current = [];
+				heldLitSymbols.current = symbol ? [symbol] : [];
 				publish(tick);
 				return;
 			}
 
-			const token = ++paintToken.current;
-			let index = 0;
-
-			const step = () => {
-				if (token !== paintToken.current) return;
-				if (index >= frames.length) return;
-
-				const frame = frames[index];
-				index += 1;
-				paintSymbol(frame.symbol, frame.rows, tick);
-
-				if (index < frames.length) {
-					requestAnimationFrame(step);
-				}
-			};
-
-			step();
+			paintToken.current += 1;
+			paintSymbol(frame.symbol, frame.rows, tick);
 		};
 
 		publish(lastPublishedTick.current);
@@ -304,7 +303,7 @@ export const useImpulseData = (
 				u?.();
 			}
 		};
-	}, [paused]);
+	}, [paused, symbol]);
 
 	return state;
 };

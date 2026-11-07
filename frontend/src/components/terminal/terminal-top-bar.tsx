@@ -15,6 +15,7 @@ import { Key } from "#/components/ui/key";
 import { Tabs } from "#/components/ui/tabs";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 const SymmLogo = () => (
 	<svg
@@ -66,7 +67,10 @@ export const TerminalTopBar = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const book = useSelector(bookAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
-	const choose = (next: Book) => () => bookAtom.set(next);
+	const choose = (next: Book) => () => {
+		bookAtom.set(next);
+		syncOpenPositionCount(next);
+	};
 
 	return (
 		<Toolbar size="lg" className="relative z-5">

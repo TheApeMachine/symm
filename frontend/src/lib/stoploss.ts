@@ -4,23 +4,15 @@ import type {
 	StoplossStateCode,
 } from "#/collections/types";
 
+// Exact match for broker.StoplossState iota. Wire 2 is legacy TakeProfit → Armed.
 const STATE_FROM_CODE: Record<StoplossStateCode, DynamicStoplossState> = {
 	0: "Healthy",
-	1: "Healthy",
-	2: "Dangerous",
-	3: "Critical",
-	4: "Protected",
-	5: "Triggered",
+	1: "Armed",
+	2: "Armed",
+	3: "Triggered",
 };
 
-const STATE_LABELS = new Set<string>([
-	"Healthy",
-	"Protected",
-	"Critical",
-	"Dangerous",
-	"Triggered",
-	"Stalled",
-]);
+const STATE_LABELS = new Set<string>(["Healthy", "Armed", "Triggered"]);
 
 const num = (value: unknown): number | null => {
 	if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -31,24 +23,24 @@ const num = (value: unknown): number | null => {
 	return null;
 };
 
-const pick = (
-	raw: Record<string, unknown>,
-	...keys: string[]
-): unknown => {
+const pick = (raw: Record<string, unknown>, ...keys: string[]): unknown => {
 	for (const key of keys) {
 		if (raw[key] !== undefined && raw[key] !== null) return raw[key];
 	}
 	return undefined;
 };
 
-const stateFromWire = (raw: Record<string, unknown>): DynamicStoplossState | null => {
+const stateFromWire = (
+	raw: Record<string, unknown>,
+): DynamicStoplossState | null => {
 	const labeled = pick(raw, "state", "State");
-	if (typeof labeled === "string" && STATE_LABELS.has(labeled)) {
-		return labeled === "Stalled" ? "Dangerous" : (labeled as DynamicStoplossState);
+	if (typeof labeled === "string") {
+		if (labeled === "TakeProfit") return "Armed";
+		if (STATE_LABELS.has(labeled)) return labeled as DynamicStoplossState;
 	}
 
 	const code = num(labeled);
-	if (code === null || code < 0 || code > 5) return null;
+	if (code === null || code < 0 || code > 3) return null;
 
 	return STATE_FROM_CODE[code as StoplossStateCode];
 };
@@ -66,31 +58,23 @@ export const normalizeStoploss = (raw: unknown): DynamicStoploss | null => {
 
 	const current =
 		num(pick(row, "current_pnl", "CurrentPnLPct", "current_pnl_pct")) ?? null;
-	const peak =
-		num(pick(row, "peak_pnl", "PeakPnLPct", "peak_pnl_pct")) ?? null;
+	const peak = num(pick(row, "peak_pnl", "PeakPnLPct", "peak_pnl_pct")) ?? null;
 	const floor =
 		num(pick(row, "floor_pnl", "FloorPnLPct", "floor_pnl_pct")) ?? null;
 	const initial =
 		num(pick(row, "friction", "InitialPnLPct", "initial_pnl_pct")) ?? null;
-	const maxLoss = num(pick(row, "MaxLossPct", "max_loss_pct"));
-	const profitTarget = num(pick(row, "ProfitTargetPct", "profit_target_pct"));
 
 	if (current === null || peak === null || floor === null) return null;
 
-	const span =
-		profitTarget !== null && maxLoss !== null
-			? Math.max(1e-9, profitTarget - maxLoss)
-			: Math.max(1e-9, peak - floor);
+	// Soft floor is live once Armed (or later): Go trails keep × peak, min 0.5%.
+	const hasFloor =
+		row.has_floor === true || state === "Armed" || state === "Triggered";
 
+	const span = Math.max(1e-9, peak - floor);
 	const room = num(pick(row, "room_pct")) ?? current - floor;
 	const proximity =
-		num(pick(row, "proximity")) ??
-		Math.max(0, Math.min(1, 1 - room / span));
+		num(pick(row, "proximity")) ?? Math.max(0, Math.min(1, 1 - room / span));
 	const friction = initial !== null ? Math.abs(initial) : 0;
-	const hasFloor =
-		row.has_floor === true ||
-		row.has_floor === undefined ||
-		Number.isFinite(floor);
 
 	const stop: DynamicStoploss = {
 		state,
@@ -101,23 +85,22 @@ export const normalizeStoploss = (raw: unknown): DynamicStoploss | null => {
 		has_floor: hasFloor,
 		room_pct: room,
 		proximity,
-		downside_pressure: num(pick(row, "downside_pressure")) ?? 0,
-		downside_magnitude_ratio:
-			num(pick(row, "downside_magnitude_ratio")) ?? 0,
-		consecutive_down: num(pick(row, "consecutive_down")) ?? 0,
 	};
 
 	const reason = pick(row, "exit_reason");
+
 	if (typeof reason === "string" && reason !== "") {
 		stop.exit_reason = reason;
 	}
 
 	const opened = pick(row, "opened_at", "PreviousTime");
+
 	if (typeof opened === "string" && opened !== "") {
 		stop.opened_at = opened;
 	}
 
 	const peakAt = pick(row, "last_peak_time", "CurrentTime");
+
 	if (typeof peakAt === "string" && peakAt !== "") {
 		stop.last_peak_time = peakAt;
 	}

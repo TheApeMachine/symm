@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -29,7 +29,7 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public    Transport
+	public    network.Client
 	snapshot  *kraken.Instrument
 	Level3    *sync.Map
 	cache     *sync.Map
@@ -50,7 +50,7 @@ NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
 func NewInstrument(
-	ctx context.Context, public Transport,
+	ctx context.Context, public network.Client,
 ) *Instrument {
 	instrument := &Instrument{
 		public:    public,
@@ -67,6 +67,16 @@ func NewInstrument(
 	)
 
 	instrument.Transition(runtime.BUSY)
+
+	if err := OpenWS(public, system.Cfg.WebSocket.Endpoints.Public); err != nil {
+		instrument.Error(errnie.Err(
+			errnie.IO,
+			"[instrument] public websocket open failed",
+			err,
+		))
+
+		return instrument
+	}
 
 	message, err := kraken.NewInstrumentSubscription().MarshalJSON()
 
@@ -90,19 +100,44 @@ func NewInstrument(
 		return instrument
 	}
 
-	var snapshot *kraken.Instrument
+	if err := instrument.seedSnapshot(message); err != nil {
+		instrument.Error(err)
+		return instrument
+	}
 
+	instrument.Transition(runtime.READY)
+	return instrument
+}
+
+/*
+seedSnapshot waits for the instrument channel snapshot. Soft disconnects
+(Kraken 1013 market data unavailable, ping drops) SoftDown to WAITING — the
+next Write redials and re-subscribes; only context cancel or a bad decode fail.
+*/
+func (instrument *Instrument) seedSnapshot(subscribe []byte) error {
 	for {
-		buf, err := public.Read()
-
-		if err != nil {
-			instrument.Error(errnie.Err(
+		if err := instrument.Context().Err(); err != nil {
+			return errnie.Err(
 				errnie.IO,
 				"[instrument] snapshot unavailable",
 				err,
-			))
+			)
+		}
 
-			return instrument
+		buf, err := instrument.public.Read()
+
+		if err != nil {
+			errnie.Warn(
+				"[instrument] snapshot wait interrupted, resubscribing: " + err.Error(),
+			)
+
+			if writeErr := instrument.public.Write(subscribe); writeErr != nil {
+				errnie.Warn(
+					"[instrument] snapshot resubscribe failed: " + writeErr.Error(),
+				)
+			}
+
+			continue
 		}
 
 		// Acks and heartbeats carry no instrument channel; a frame whose
@@ -118,14 +153,14 @@ func NewInstrument(
 			continue
 		}
 
-		if snapshot = kraken.NewInstrument(buf); snapshot == nil {
-			instrument.Error(errnie.Err(
+		snapshot := kraken.NewInstrument(buf)
+
+		if snapshot == nil {
+			return errnie.Err(
 				errnie.UnprocessableContent,
 				"[instrument] instrument snapshot did not decode",
 				nil,
-			))
-
-			return instrument
+			)
 		}
 
 		instrument.snapshot = snapshot
@@ -135,11 +170,8 @@ func NewInstrument(
 			instrument.cachePair(pair)
 		}
 
-		break
+		return nil
 	}
-
-	instrument.Transition(runtime.READY)
-	return instrument
 }
 
 func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {
@@ -667,4 +699,14 @@ func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decim
 	}
 
 	return val.(*decimal.Decimal)
+}
+
+func level3Depth() (int, error) {
+	depth := viper.GetInt("market.l3_depth")
+
+	if depth <= 0 {
+		return 0, errnie.Err(errnie.Validation, "[instrument] market.l3_depth is not configured", nil)
+	}
+
+	return depth, nil
 }

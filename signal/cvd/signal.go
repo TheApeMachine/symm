@@ -4,12 +4,11 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -41,17 +40,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if data.Price.IsZero() || data.Qty.IsZero() {
 				return
 			}
 
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
+			price := data.Price.InexactFloat64()
+			qty := data.Qty.InexactFloat64()
 
 			if price <= 0 || qty <= 0 {
 				return
@@ -59,13 +54,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			var mid float64
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				midDec := book.Midpoint()
 				if midDec == nil {
 					return
 				}
 
-				mid = midDec.Float64()
+				mid = midDec.InexactFloat64()
 			})
 
 			if mid <= 0 {
@@ -98,11 +93,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.CVD[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

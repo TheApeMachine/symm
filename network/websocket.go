@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -37,6 +38,9 @@ type WebsocketClient struct {
 	dial        func(url string) (*gorilla.Conn, *http.Response, error)
 	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
 	writeMu sync.Mutex
+	// dialMu serializes ensureReady redials so concurrent Read/Write cannot
+	// open duplicate sockets or race client.conn / backoff.
+	dialMu sync.Mutex
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -225,6 +229,58 @@ func (client *WebsocketClient) Write(message []byte) error {
 	return nil
 }
 
+func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
+	resp, err := NewREST().Post(url, body)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if resp == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] empty post response", nil,
+		))
+	}
+
+	return resp.Body(), nil
+}
+
+func (client *WebsocketClient) Watch(
+	url string,
+	body any,
+	dest json.Unmarshaler,
+) {
+	if dest == nil {
+		return
+	}
+
+	go func() {
+		rest := NewREST()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-client.Context().Done():
+				return
+			case <-ticker.C:
+			}
+
+			resp, err := rest.Post(url, body)
+
+			if err != nil || resp == nil {
+				continue
+			}
+
+			err = json.Unmarshal(resp.Body(), dest)
+
+			if err != nil {
+				errnie.Error(err)
+			}
+		}
+	}()
+}
+
 func (client *WebsocketClient) writePing() error {
 	conn := client.conn
 	ready := client.Status() == runtime.READY
@@ -265,6 +321,13 @@ func (client *WebsocketClient) ensureReady() error {
 			"[network.websocket] not open",
 			nil,
 		))
+	}
+
+	client.dialMu.Lock()
+	defer client.dialMu.Unlock()
+
+	if client.Status() == runtime.READY && client.conn != nil {
+		return nil
 	}
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
@@ -319,7 +382,7 @@ func (client *WebsocketClient) SoftDown(cause error) error {
 		hook()
 	}
 
-	return cause
+	return errnie.Error(cause)
 }
 
 func (client *WebsocketClient) softDown(cause error) error {

@@ -49,6 +49,7 @@ afterEach(() => {
 
 describe("Count", () => {
 	it("counts the paper lots the open-positions panel is showing", () => {
+		bookAtom.set("paper");
 		setLots([
 			lot("BTC/USD"),
 			lot("SENT/USD"),

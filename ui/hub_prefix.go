@@ -58,7 +58,10 @@ func (entry *closedEntry) read(raw []byte) bool {
 	row, err := data.AttributeOk[map[string]any](raw, "position")
 
 	if err != nil || len(row) == 0 {
-		return false
+		// Legacy bare Position root (pre-lotBlob envelope).
+		if err := sonic.Unmarshal(raw, &row); err != nil || len(row) == 0 {
+			return false
+		}
 	}
 
 	id, _ := row["id"].(string)
@@ -119,7 +122,16 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 	thresholds := make(map[string]float64, 256)
 
 	for key := range hub.store.ListKeys(prefix) {
-		raw := hub.store.Fetch(hub.ctx, key)
+		raw, err := hub.store.Download(hub.ctx, key)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[hub] error downloading path book", err,
+			))
+
+			continue
+		}
+
 		book := decodePathBook(raw)
 
 		if book == nil {
@@ -171,7 +183,17 @@ func (hub *Hub) writeClosedListing(prefix string, budget int) {
 	for key := range hub.store.ListKeys(prefix) {
 		var entry closedEntry
 
-		if !entry.read(hub.store.Fetch(hub.ctx, key)) {
+		raw, err := hub.store.Download(hub.ctx, key)
+
+		if err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[hub] error downloading closed entry", err,
+			))
+
+			continue
+		}
+
+		if !entry.read(raw) {
 			continue
 		}
 
@@ -219,16 +241,22 @@ func listFrameBudget() int {
 
 /*
 policyPathKey normalizes an S3 object key to the trie key the dashboard
-expects (…/enter.bin|hold.bin|exit.bin).
+expects (…/enter.bin|hold.bin|exit.bin). Canonical Tree.persist keys already
+use that form; legacy flat model/paths/<tokens>.bin keys are rewritten when
+action is known.
 */
 func policyPathKey(storageKey, action string) string {
-	if strings.HasSuffix(storageKey, ".bin") {
+	switch {
+	case strings.HasSuffix(storageKey, "/enter.bin"),
+		strings.HasSuffix(storageKey, "/hold.bin"),
+		strings.HasSuffix(storageKey, "/exit.bin"):
 		return storageKey
 	}
 
 	switch action {
 	case "enter", "hold", "exit":
-		return storageKey + "/" + action + ".bin"
+		base := strings.TrimSuffix(storageKey, ".bin")
+		return base + "/" + action + ".bin"
 	default:
 		return storageKey
 	}
@@ -292,7 +320,7 @@ func chunkClosedEntries(entries []closedEntry, budget int) [][]closedEntry {
 	}
 
 	for i, entry := range entries {
-		raw, err := sonic.Marshal(entry)
+		raw, err := Sonic.Marshal(entry)
 		cost := 64
 
 		if err == nil {

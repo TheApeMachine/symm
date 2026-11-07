@@ -843,12 +843,12 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 					</span>
 				</div>
 
-				{/* Global grid regions R00–R22: stable order, brightness per tick */}
+				{/* Global grid regions R00–R24: full height, all meters, no scroll */}
 				<div
 					data-l="region-brightness-panel"
-					className="absolute top-4 left-4 w-72 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl font-mono"
+					className="absolute top-4 bottom-14 left-4 w-72 bg-(--surface)/90 backdrop-blur border border-(--line) rounded p-2.5 pointer-events-none shadow-xl font-mono flex flex-col"
 				>
-					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between gap-2">
+					<div className="text-[10px] uppercase tracking-widest text-(--f4) mb-2 flex items-center justify-between gap-2 shrink-0">
 						<span
 							title={
 								litSymbols.length > 0
@@ -880,7 +880,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							</span>
 						</span>
 					</div>
-					<div className="space-y-1 text-[10px] max-h-[min(420px,55vh)] overflow-y-auto pr-0.5">
+					<div className="flex-1 flex flex-col justify-between text-[10px] min-h-0">
 						{REGION_KEYS.map((regionKey, idx) => {
 							const meta = REGIONS[regionKey];
 							const row = regions[idx] ?? regions.find((r) => r.id === idx);

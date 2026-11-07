@@ -2,63 +2,362 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"iter"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
+
+// Trade pump is drop-oldest; Level3 uses configured backpressure capacity.
+const tradeQueueFrames = 256
 
 /*
 Desk fans work across the virtual, paper, and real tiers.
 */
 type Desk struct {
 	*runtime.System
-	price *Price
-	tiers map[TierType]*Tier
+	price     *Price
+	public    network.Client
+	venue     market.Venue
+	tiers     map[TierType]*Tier
+	onTrade   func(*market.Trade)
+	level3Ch  chan *market.Level3
+	tradeCh   chan *market.Trade
+	l3Symbols []string
 }
 
 func NewDesk(
 	ctx context.Context,
-	transports map[string]Transport,
+	transports map[string]network.Client,
 	price *Price,
+	client *store.Client,
 ) *Desk {
-	desk := &Desk{
-		System: runtime.NewSystem(ctx, "desk"),
-		price:  price,
-		tiers:  make(map[TierType]*Tier, 3),
-	}
-
-	for _, tt := range []TierType{TierTypeVirtual, TierTypePaper, TierTypeReal} {
-		desk.tiers[tt] = NewTier(ctx, tt, transports[tt.String()], price)
-	}
+	quote := system.Cfg.Market.QuoteCurrency
 
 	if price != nil {
-		price.balance = desk.tiers[TierTypePaper].balance
+		price.balance = market.NewBalance(map[string]any{
+			"quote":  quote,
+			"assets": []*market.Asset{},
+		})
 	}
+
+	host := venue.NewKraken(quote)
+
+	desk := &Desk{
+		System:   runtime.NewSystem(ctx, "desk"),
+		price:    price,
+		public:   transports["public"],
+		venue:    host,
+		level3Ch: make(chan *market.Level3, system.Cfg.Market.Level3.RingCapacity),
+		tradeCh:  make(chan *market.Trade, tradeQueueFrames),
+		tiers: map[TierType]*Tier{
+			TierTypeVirtual: NewTier(
+				ctx,
+				TierTypeVirtual,
+				transports["public"],
+				transports["virtual"],
+				price,
+				venue.NewKraken(quote),
+				client,
+			),
+			TierTypePaper: NewTier(
+				ctx,
+				TierTypePaper,
+				transports["public"],
+				transports["paper"],
+				price,
+				venue.NewKraken(quote),
+				client,
+			),
+			TierTypeReal: NewTier(
+				ctx,
+				TierTypeReal,
+				transports["public"],
+				transports["private"],
+				price,
+				venue.NewKraken(quote),
+				client,
+			),
+		},
+	}
+
+	go desk.pumpLevel3()
+	go desk.pumpTrade()
+
+	host.Trade().OnChange(func(frame market.MarketType) {
+		trade := market.NewTrade("", "", nil)
+		frame.ToMarket(trade)
+		desk.enqueueTrade(trade)
+	})
 
 	desk.Transition(runtime.READY)
 	return desk
 }
 
-func (desk *Desk) Hello() {
-	for _, tier := range desk.tiers {
-		tier.Hello()
+/*
+enqueueLevel3 applies backpressure instead of dropping deltas. A dropped
+Level3 frame permanently diverges the book until the next snapshot.
+*/
+func (desk *Desk) enqueueLevel3(book *market.Level3) {
+	if book == nil {
+		return
+	}
+
+	select {
+	case desk.level3Ch <- book:
+	case <-desk.Context().Done():
 	}
 }
 
-func (desk *Desk) Update(trades []kraken.TradeData) {
-	for _, trade := range trades {
-		price, err := decimal.NewFromString(trade.Price.String())
+/*
+pumpLevel3 applies queued Level3 snapshots in order on one worker.
+*/
+func (desk *Desk) pumpLevel3() {
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		case book := <-desk.level3Ch:
+			if desk.price != nil && desk.price.Books != nil {
+				desk.price.Books.Update(book)
+			}
+
+			desk.l3Symbols = desk.l3Symbols[:0]
+
+			for _, row := range book.Data {
+				if row != nil && row.Symbol != "" {
+					desk.l3Symbols = append(desk.l3Symbols, row.Symbol)
+				}
+			}
+
+			desk.Refresh(desk.l3Symbols)
+		}
+	}
+}
+
+/*
+enqueueTrade pushes a trade snapshot without blocking. Full ring drops oldest.
+*/
+func (desk *Desk) enqueueTrade(trade *market.Trade) {
+	if trade == nil {
+		return
+	}
+
+	select {
+	case desk.tradeCh <- trade:
+		return
+	default:
+	}
+
+	select {
+	case <-desk.tradeCh:
+	default:
+	}
+
+	select {
+	case desk.tradeCh <- trade:
+	default:
+	}
+}
+
+/*
+pumpTrade marks lots and fans the workspace tick from queued trades in order.
+*/
+func (desk *Desk) pumpTrade() {
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		case trade := <-desk.tradeCh:
+			desk.Update(trade.Data)
+
+			if desk.onTrade != nil {
+				desk.onTrade(trade)
+			}
+		}
+	}
+}
+
+/*
+OnTrade registers the workspace tick sink for public trade frames.
+*/
+func (desk *Desk) OnTrade(fn func(*market.Trade)) {
+	desk.onTrade = fn
+}
+
+/*
+Feed decodes one Level3 socket frame into a private book copy and enqueues it.
+Each L3 batch has its own reader; sharing a venue Level3 would race.
+*/
+func (desk *Desk) Feed(buf []byte) {
+	var head struct {
+		Channel string `json:"channel"`
+	}
+
+	if err := sonic.Unmarshal(buf, &head); err != nil || head.Channel != "level3" {
+		return
+	}
+
+	raw := kraken.DecodeLevel3(buf)
+	if raw == nil || len(raw.Data) == 0 {
+		return
+	}
+
+	book := market.NewLevel3()
+	raw.ToMarket(book)
+	desk.enqueueLevel3(book)
+}
+
+/*
+Start begins per-tier private ingress and the shared public reader.
+*/
+func (desk *Desk) Start() {
+	go desk.Run()
+}
+
+/*
+Run starts per-tier private ingress and the shared public reader.
+*/
+func (desk *Desk) Run() {
+	for _, tier := range desk.tiers {
+		go tier.Run()
+	}
+
+	if desk.public == nil || desk.venue == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		default:
+		}
+
+		buf, err := desk.public.Read()
 
 		if err != nil {
+			if desk.Context().Err() != nil {
+				return
+			}
+
 			continue
 		}
 
-		desk.mark(trade.Symbol, &price)
+		desk.venue.Read(buf)
+	}
+}
+
+func (desk *Desk) Hello() {
+	positions := make(map[string]*Position)
+	balances := make(map[string]any)
+
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
+		for _, position := range tier.positions.All() {
+			if position == nil || position.ID == "" {
+				continue
+			}
+
+			if position.ClosedAt == nil {
+				mark := position.Mark
+				if mark == nil && desk.price != nil {
+					mark = desk.price.TouchBid(position.Symbol)
+				}
+				if err := position.Update(mark); err != nil {
+					errnie.Error(err)
+				}
+			}
+
+			positions[position.ID] = position
+		}
+
+		balances[tier.Type.String()] = tier.wallet.Reading()
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"positions_mode": "snapshot",
+		"positions":      positions,
+		"balances":       balances,
+	})
+}
+
+/*
+Flush persists every open lot (including Closing) before process exit.
+*/
+func (desk *Desk) Flush() error {
+	var errs error
+
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
+		for _, position := range tier.positions.Submitted() {
+			if position == nil {
+				continue
+			}
+
+			if err := tier.positions.Save(position); err != nil {
+				errs = errors.Join(errs, err)
+			}
+		}
+	}
+
+	return errs
+}
+
+func (desk *Desk) Update(trades []*market.TradeData) {
+	for _, trade := range trades {
+		if trade == nil {
+			continue
+		}
+
+		if desk.price != nil {
+			at := trade.Timestamp
+
+			if at.IsZero() {
+				at = time.Now()
+			}
+
+			quote := trade.Price.Mul(trade.Qty).InexactFloat64()
+			desk.price.tape.Note(trade.Symbol, quote, at)
+		}
+
+		// Longs mark on the executable bid, never the print. Aggressive
+		// buys print the ask and would inflate Peak before an L3 bid mark.
+		var price *decimal.Decimal
+
+		if desk.price != nil && desk.price.Books != nil {
+			desk.price.Books.Book(trade.Symbol, func(managed *market.Book) {
+				if managed == nil || managed.BestBid() == nil || managed.BestBid().Price == nil {
+					return
+				}
+
+				price = managed.BestBid().Price
+			})
+		}
+
+		if price == nil {
+			p := trade.Price
+			price = &p
+		}
+
+		desk.mark(trade.Symbol, price)
 	}
 }
 
@@ -68,28 +367,35 @@ func (desk *Desk) Refresh(symbols []string) {
 			continue
 		}
 
-		desk.price.Books.Book(symbol, func(managed *book.Book) {
+		var price *decimal.Decimal
+
+		desk.price.Books.Book(symbol, func(managed *market.Book) {
 			if managed == nil {
 				return
 			}
 
-			mid := managed.Midpoint()
-			if mid == nil {
+			bid := managed.BestBid()
+			if bid == nil || bid.Price == nil {
 				return
 			}
 
-			price, err := decimal.NewFromString(mid.String())
-			if err != nil {
-				return
-			}
-
-			desk.mark(symbol, &price)
+			price = bid.Price
 		})
+
+		if price != nil {
+			desk.mark(symbol, price)
+		}
 	}
 }
 
 func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	if symbol == "" || price == nil {
+		return
+	}
+
+	// L3 frames touch the whole universe; skip tiers with no open lot so
+	// pumpLevel3 does not thrash ledger/hub for idle symbols.
+	if !desk.Has(symbol) {
 		return
 	}
 
@@ -100,19 +406,13 @@ func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	}
 }
 
-func (desk *Desk) Apply(executions *kraken.Execution) {
+func (desk *Desk) Apply(executions *market.Execution) {
 	if executions == nil {
 		return
 	}
 
-	for _, execution := range executions.Data {
-		for _, tier := range desk.tiers {
-			for _, position := range tier.positions.Open(execution.Symbol) {
-				if position != nil {
-					position.Apply(execution)
-				}
-			}
-		}
+	for _, tier := range desk.tiers {
+		tier.apply(executions)
 	}
 }
 
@@ -133,22 +433,10 @@ func (desk *Desk) Enter(
 	return tier.Enter(symbol, path, pathFound)
 }
 
-func (desk *Desk) Exit(position *Position, tt TierType) error {
-	if tier := desk.tiers[tt]; tier != nil {
-		return tier.Exit(position)
-	}
-
-	for _, tier := range desk.tiers {
-		if tier.positions.Has(position.Symbol) {
-			return tier.Exit(position)
-		}
-	}
-
-	return errnie.Err(
-		errnie.NotFound,
-		"[desk.Exit] position not found",
-		nil,
-	)
+func (desk *Desk) Exit(
+	tier TierType, position *Position,
+) error {
+	return desk.tiers[tier].Exit(position)
 }
 
 func (desk *Desk) Has(symbol string) bool {
@@ -161,95 +449,47 @@ func (desk *Desk) Has(symbol string) bool {
 	return false
 }
 
-func (desk *Desk) Positions(symbol string) []*Position {
-	out := make([]*Position, 0, 3)
+func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
+	return func(yield func(*Position) bool) {
+		tier := desk.tiers[tier]
 
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open(symbol)...)
-	}
+		if tier == nil {
+			return
+		}
 
-	return out
-}
-
-func (desk *Desk) Position(symbol string) *Position {
-	for _, tt := range []TierType{TierTypePaper, TierTypeReal, TierTypeVirtual} {
-		if position := desk.PositionOn(symbol, tt); position != nil {
-			return position
+		for _, position := range tier.positions.Open(symbol) {
+			if !yield(position) {
+				return
+			}
 		}
 	}
-
-	return nil
-}
-
-func (desk *Desk) PositionOn(symbol string, tt TierType) *Position {
-	tier := desk.tiers[tt]
-
-	if tier == nil {
-		return nil
-	}
-
-	for _, position := range tier.positions.Open(symbol) {
-		if position != nil {
-			return position
-		}
-	}
-
-	return nil
-}
-
-func (desk *Desk) OpenPositions() []*Position {
-	out := make([]*Position, 0)
-
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open()...)
-	}
-
-	return out
-}
-
-func (desk *Desk) Virtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.All()
-}
-
-func (desk *Desk) ClosedVirtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.Closed()
 }
 
 /*
 Pending yields stoploss-settled lots waiting for the model to record an exit path.
 */
-func (desk *Desk) Pending() iter.Seq[*Position] {
+func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
-		for _, tt := range []TierType{TierTypeVirtual, TierTypePaper, TierTypeReal} {
-			tier := desk.tiers[tt]
-			if tier == nil {
-				continue
-			}
+		tier := desk.tiers[tier]
 
-			for position := range tier.Pending() {
-				if !yield(position) {
-					return
-				}
+		if tier == nil {
+			return
+		}
+
+		for position := range tier.Pending() {
+			if !yield(position) {
+				return
 			}
 		}
 	}
 }
 
-func (desk *Desk) ClearPending(symbol string) {
-	for _, tier := range desk.tiers {
-		tier.ClearPending(symbol)
+/*
+ClearPending drops a settled lot after the model has attributed its exit path.
+*/
+func (desk *Desk) ClearPending(tier TierType, symbol string) {
+	if t := desk.tiers[tier]; t != nil {
+		t.ClearPending(symbol)
 	}
 }
 
