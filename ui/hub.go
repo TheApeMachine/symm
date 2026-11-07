@@ -57,10 +57,20 @@ type Hub struct {
 	callbacks      []func()
 	commit         atomic.Value
 	store          *store.Client
+	ownStore       bool
 	streamMu       sync.Mutex
 	streams        map[string]context.CancelFunc
 	streamGen      map[string]uint64
 	nextStream     uint64
+}
+
+/*
+UseStore wires the shared object-store client. Prefer this over a second
+store.Client so the hub does not spawn another ants upload/download pool.
+*/
+func (hub *Hub) UseStore(client *store.Client) {
+	hub.store = client
+	hub.ownStore = false
 }
 
 /*
@@ -88,7 +98,6 @@ func NewHub(ctx context.Context) *Hub {
 		}),
 		frameCh:   make(chan []byte, frames),
 		callbacks: make([]func(), 0),
-		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 	}
 
 	hub.streams = make(map[string]context.CancelFunc)
@@ -569,8 +578,8 @@ func (hub *Hub) Close() error {
 
 	var errs error
 
-	// Drain the store before cancelling hub.ctx so Close can finish uploads.
-	if hub.store != nil {
+	// Only close a store this hub created. Shared clients are owned by Booter.
+	if hub.ownStore && hub.store != nil {
 		if err := hub.store.Close(); err != nil {
 			errs = errors.Join(errs, err)
 		}

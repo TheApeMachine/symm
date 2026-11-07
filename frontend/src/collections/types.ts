@@ -6,15 +6,11 @@ export type Balance = {
 
 /*
 Stoploss state as Go's StoplossState iota (broker/stoploss.go):
-Healthy=0, Armed=1, TakeProfit=2, Triggered=3.
+Healthy=0, Armed=1, legacy TakeProfit=2 (folded to Armed), Triggered=3.
 */
 export type StoplossStateCode = 0 | 1 | 2 | 3;
 
-export type DynamicStoplossState =
-	| "Healthy"
-	| "Armed"
-	| "TakeProfit"
-	| "Triggered";
+export type DynamicStoplossState = "Healthy" | "Armed" | "Triggered";
 
 /** UI-facing stop telemetry derived from broker.Stoploss JSON. */
 export type DynamicStoploss = {

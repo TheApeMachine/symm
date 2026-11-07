@@ -1,12 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { atoms, signals } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { TerminalTopBar } from "./terminal-top-bar";
 
 describe("TerminalTopBar", () => {
 	beforeEach(() => {
 		atoms.tickCount.set(0);
-		signals.training.setState(() => ({}));
 	});
 
 	it("renders the tick readout", () => {

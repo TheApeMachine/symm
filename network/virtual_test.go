@@ -284,6 +284,66 @@ func TestWrite(t *testing.T) {
 	}))
 }
 
+func TestApplyFillEquityUsesQuoteBasis(t *testing.T) {
+	Convey("Base quantity is not added into quote equity", t, withVirtual(func(virtual *Virtual) {
+		virtual.UseFills(stubFills{
+			ask: decimal.NewFromInt(10),
+			bid: decimal.NewFromInt(10),
+		})
+		virtual.UseQuoteSettle(stubSettle(decimal.Zero))
+
+		err := virtual.applyFill(
+			"buy", "PEPE/USD",
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(10),
+		)
+		So(err, ShouldBeNil)
+
+		raw, err := virtual.Post("/0/private/TradeBalance", nil)
+		So(err, ShouldBeNil)
+
+		var venue kraken.TradeBalance
+		So(json.Unmarshal(raw, &venue), ShouldBeNil)
+
+		book := market.NewTradeBalance(nil)
+		venue.ToMarket(book)
+		// Cash 990 + PEPE mark 10 = 1000, not 990 + base qty.
+		So(book.Equity.String(), ShouldEqual, "1000")
+		So(book.AvailableCash.String(), ShouldEqual, "990")
+		So(book.UnrealizedPnL.String(), ShouldEqual, "0")
+	}))
+}
+
+func TestTradeBalanceMarksOpenLots(t *testing.T) {
+	Convey("Open lots mark at fee-net bid so unrealized moves equity", t, withVirtual(func(virtual *Virtual) {
+		virtual.UseFills(stubFills{
+			ask: decimal.NewFromInt(10),
+			bid: decimal.NewFromInt(9),
+		})
+		virtual.UseQuoteSettle(stubSettle(decimal.Zero))
+
+		err := virtual.applyFill(
+			"buy", "DOGE/USD",
+			decimal.NewFromInt(1),
+			decimal.NewFromInt(10),
+		)
+		So(err, ShouldBeNil)
+
+		raw, err := virtual.Post("/0/private/TradeBalance", nil)
+		So(err, ShouldBeNil)
+
+		var venue kraken.TradeBalance
+		So(json.Unmarshal(raw, &venue), ShouldBeNil)
+
+		book := market.NewTradeBalance(nil)
+		venue.ToMarket(book)
+		// Cash 990 + mark 9 = 999; unrealized = mark − cost = −1.
+		So(book.AvailableCash.String(), ShouldEqual, "990")
+		So(book.UnrealizedPnL.String(), ShouldEqual, "-1")
+		So(book.Equity.String(), ShouldEqual, "999")
+	}))
+}
+
 func TestPost(t *testing.T) {
 	Convey("Setup", t, withVirtual(func(virtual *Virtual) {
 		cases := []struct {

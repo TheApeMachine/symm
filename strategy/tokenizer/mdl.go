@@ -57,7 +57,14 @@ func (mdl *MDL) Analyze(symbol string) (cut bool, gain float64) {
 	mdl.offset += k
 	mdl.dist = newSymbolHistogram()
 
-	for _, symID := range mdl.stream[mdl.offset:] {
+	// Drop the committed prefix so Persist does not rewrite unbounded history.
+	if mdl.offset > 0 {
+		remaining := append([]uint32(nil), mdl.stream[mdl.offset:]...)
+		mdl.stream = remaining
+		mdl.offset = 0
+	}
+
+	for _, symID := range mdl.stream {
 		mdl.dist.add(symID)
 	}
 

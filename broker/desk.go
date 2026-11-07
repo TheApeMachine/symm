@@ -27,13 +27,14 @@ Desk fans work across the virtual, paper, and real tiers.
 */
 type Desk struct {
 	*runtime.System
-	price    *Price
-	public   network.Client
-	venue    market.Venue
-	tiers    map[TierType]*Tier
-	onTrade  func(*market.Trade)
-	level3Ch chan *market.Level3
-	tradeCh  chan *market.Trade
+	price     *Price
+	public    network.Client
+	venue     market.Venue
+	tiers     map[TierType]*Tier
+	onTrade   func(*market.Trade)
+	level3Ch  chan *market.Level3
+	tradeCh   chan *market.Trade
+	l3Symbols []string
 }
 
 func NewDesk(
@@ -132,15 +133,15 @@ func (desk *Desk) pumpLevel3() {
 				desk.price.Books.Update(book)
 			}
 
-			symbols := make([]string, 0, len(book.Data))
+			desk.l3Symbols = desk.l3Symbols[:0]
 
 			for _, row := range book.Data {
 				if row != nil && row.Symbol != "" {
-					symbols = append(symbols, row.Symbol)
+					desk.l3Symbols = append(desk.l3Symbols, row.Symbol)
 				}
 			}
 
-			desk.Refresh(symbols)
+			desk.Refresh(desk.l3Symbols)
 		}
 	}
 }
@@ -389,6 +390,12 @@ func (desk *Desk) Refresh(symbols []string) {
 
 func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	if symbol == "" || price == nil {
+		return
+	}
+
+	// L3 frames touch the whole universe; skip tiers with no open lot so
+	// pumpLevel3 does not thrash ledger/hub for idle symbols.
+	if !desk.Has(symbol) {
 		return
 	}
 

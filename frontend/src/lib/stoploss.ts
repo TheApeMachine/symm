@@ -4,20 +4,15 @@ import type {
 	StoplossStateCode,
 } from "#/collections/types";
 
-// Exact match for broker.StoplossState iota.
+// Exact match for broker.StoplossState iota. Wire 2 is legacy TakeProfit → Armed.
 const STATE_FROM_CODE: Record<StoplossStateCode, DynamicStoplossState> = {
 	0: "Healthy",
 	1: "Armed",
-	2: "TakeProfit",
+	2: "Armed",
 	3: "Triggered",
 };
 
-const STATE_LABELS = new Set<string>([
-	"Healthy",
-	"Armed",
-	"TakeProfit",
-	"Triggered",
-]);
+const STATE_LABELS = new Set<string>(["Healthy", "Armed", "Triggered"]);
 
 const num = (value: unknown): number | null => {
 	if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -39,8 +34,9 @@ const stateFromWire = (
 	raw: Record<string, unknown>,
 ): DynamicStoplossState | null => {
 	const labeled = pick(raw, "state", "State");
-	if (typeof labeled === "string" && STATE_LABELS.has(labeled)) {
-		return labeled as DynamicStoplossState;
+	if (typeof labeled === "string") {
+		if (labeled === "TakeProfit") return "Armed";
+		if (STATE_LABELS.has(labeled)) return labeled as DynamicStoplossState;
 	}
 
 	const code = num(labeled);
@@ -70,12 +66,9 @@ export const normalizeStoploss = (raw: unknown): DynamicStoploss | null => {
 
 	if (current === null || peak === null || floor === null) return null;
 
-	// Soft floor is live once Armed (or later): Go sets FloorPnLPct = peak * giveback.
+	// Soft floor is live once Armed (or later): Go trails keep × peak, min 0.5%.
 	const hasFloor =
-		row.has_floor === true ||
-		state === "Armed" ||
-		state === "TakeProfit" ||
-		state === "Triggered";
+		row.has_floor === true || state === "Armed" || state === "Triggered";
 
 	const span = Math.max(1e-9, peak - floor);
 	const room = num(pick(row, "room_pct")) ?? current - floor;

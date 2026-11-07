@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -34,10 +33,11 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
+		wg.Go(func() {
+			var (
+				bid, ask float64
+				ok       bool
+			)
 
 			signal.books.Book(data.Symbol, func(book *market.Book) {
 				bestBid := book.BestBid()
@@ -48,36 +48,37 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					return
 				}
 
-				price := data.Price.InexactFloat64()
-				qty := data.Qty.InexactFloat64()
-
-				output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
-					At:     data.Timestamp,
-					Symbol: data.Symbol,
-					Last:   price,
-					Volume: qty,
-					Ask:    bestAsk.Price.InexactFloat64(),
-					Bid:    bestBid.Price.InexactFloat64(),
-				})
-
-				if err != nil {
-					signal.Error(err)
-					return
-				}
-
-				if !ready {
-					return
-				}
-
-				mu.Lock()
-				envelope.Pumpdump[data.Symbol] = &output
-				mu.Unlock()
+				bid = bestBid.Price.InexactFloat64()
+				ask = bestAsk.Price.InexactFloat64()
+				ok = true
 			})
-		}
 
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+			if !ok {
+				return
+			}
+
+			output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
+				At:     data.Timestamp,
+				Symbol: data.Symbol,
+				Last:   data.Price.InexactFloat64(),
+				Volume: data.Qty.InexactFloat64(),
+				Ask:    ask,
+				Bid:    bid,
+			})
+
+			if err != nil {
+				signal.Error(err)
+				return
+			}
+
+			if !ready {
+				return
+			}
+
+			mu.Lock()
+			envelope.Pumpdump[data.Symbol] = &output
+			mu.Unlock()
+		})
 	}
 
 	wg.Wait()

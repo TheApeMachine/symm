@@ -27,3 +27,29 @@ func SetRoute(route string) {
 
 	uiRoute.Store(route)
 }
+
+/*
+Route returns the active dashboard surface.
+*/
+func Route() string {
+	value, _ := uiRoute.Load().(string)
+	if value == "" {
+		return "dashboard"
+	}
+
+	return value
+}
+
+/*
+WantsGrid reports whether the active surface consumes per-tick regions/paths.
+Longtail and workbench never paint the grid; other surfaces may, so publishers
+still throttle rather than relying on this alone.
+*/
+func WantsGrid() bool {
+	switch Route() {
+	case "longtail", "workbench":
+		return false
+	default:
+		return true
+	}
+}

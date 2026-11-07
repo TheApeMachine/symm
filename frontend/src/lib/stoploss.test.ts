@@ -4,20 +4,32 @@ import { normalizeStoploss } from "./stoploss";
 describe("normalizeStoploss", () => {
 	it("maps Go PascalCase + iota State onto UI telemetry", () => {
 		const stop = normalizeStoploss({
-			State: 2,
+			State: 1,
 			CurrentPnLPct: 1.2,
 			PeakPnLPct: 2.0,
 			FloorPnLPct: 1.0,
 			InitialPnLPct: -0.3,
 		});
 
-		expect(stop?.state).toBe("TakeProfit");
+		expect(stop?.state).toBe("Armed");
 		expect(stop?.current_pnl).toBe(1.2);
 		expect(stop?.peak_pnl).toBe(2.0);
 		expect(stop?.floor_pnl).toBe(1.0);
 		expect(stop?.friction).toBe(0.3);
 		expect(stop?.has_floor).toBe(true);
 		expect(stop?.room_pct).toBeCloseTo(0.2, 5);
+	});
+
+	it("folds legacy TakeProfit wire value into Armed", () => {
+		expect(
+			normalizeStoploss({
+				State: 2,
+				CurrentPnLPct: 1.2,
+				PeakPnLPct: 2.0,
+				FloorPnLPct: 1.0,
+				InitialPnLPct: -0.3,
+			})?.state,
+		).toBe("Armed");
 	});
 
 	it("accepts an already-normalized DynamicStoploss object", () => {

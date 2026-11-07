@@ -48,8 +48,6 @@ export const stateTone = (
 			return "good";
 		case "Armed":
 			return "info";
-		case "TakeProfit":
-			return "warn";
 		case "Triggered":
 			return "bad";
 		default:
@@ -78,21 +76,6 @@ export const heldVerdict = (args: {
 					? args.exit_reason
 					: "Stop triggered — desk should exit on this mark",
 			tone: "bad",
-		};
-	}
-
-	if (args.state === "TakeProfit") {
-		const room =
-			args.room_pct !== null &&
-			args.room_pct !== undefined &&
-			Number.isFinite(args.room_pct)
-				? `${Math.abs(args.room_pct).toFixed(1)}pp above floor`
-				: null;
-		return {
-			text: room
-				? `Take-profit locked — next down tick settles (${room})`
-				: "Take-profit locked — next down tick settles",
-			tone: "warn",
 		};
 	}
 

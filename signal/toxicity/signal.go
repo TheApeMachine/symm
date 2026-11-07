@@ -10,7 +10,6 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -42,11 +41,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if data.Price.IsZero() || data.Qty.IsZero() {
 				return
 			}
@@ -59,13 +54,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			var (
-				input equation.BookQualityInput
-				ready bool
-				err   error
+				bids     []flow.BookLevel
+				asks     []flow.BookLevel
+				haveBook bool
 			)
 
 			signal.books.Book(data.Symbol, func(book *market.Book) {
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+				bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
 				for _, level := range book.Bids.Levels {
 					bids = append(bids, flow.BookLevel{
 						Price:    level.Price.InexactFloat64(),
@@ -73,7 +68,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					})
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
+				asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
 				for _, level := range book.Asks.Levels {
 					asks = append(asks, flow.BookLevel{
 						Price:    level.Price.InexactFloat64(),
@@ -81,23 +76,34 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					})
 				}
 
-				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
-					Symbol: data.Symbol,
-					Bids:   bids,
-					Asks:   asks,
-				})
+				haveBook = true
+			})
 
-				if err != nil || !ready {
-					return
-				}
+			if !haveBook {
+				return
+			}
 
-				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
-					Symbol:   data.Symbol,
-					Price:    price,
-					Quantity: qty,
-					Side:     flow.TradeSide(data.Side.String()),
-					At:       data.Timestamp,
-				})
+			input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
+				Symbol: data.Symbol,
+				Bids:   bids,
+				Asks:   asks,
+			})
+
+			if err != nil {
+				signal.Error(err)
+				return
+			}
+
+			if !ready {
+				return
+			}
+
+			input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+				Symbol:   data.Symbol,
+				Price:    price,
+				Quantity: qty,
+				Side:     flow.TradeSide(data.Side.String()),
+				At:       data.Timestamp,
 			})
 
 			if err != nil {
@@ -120,11 +126,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.Toxicity[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

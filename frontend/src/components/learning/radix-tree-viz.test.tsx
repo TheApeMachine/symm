@@ -3,11 +3,34 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
 	buildTreeFromPrefixes,
+	fitTreeZoomTransform,
 	keyMatchesPrefix,
 	keyMatchesSymbol,
 	RadixTreeViz,
 } from "./radix-tree-viz";
 import type { SymbolProgress, TrieNodeData } from "./types";
+
+describe("fitTreeZoomTransform", () => {
+	it("centers and scales a tall tree into the viewport", () => {
+		const transform = fitTreeZoomTransform(400, 600, [
+			{ x: -100, y: 0 },
+			{ x: 100, y: 800 },
+		]);
+
+		expect(transform.k).toBeGreaterThan(0);
+		expect(transform.k).toBeLessThanOrEqual(2);
+		// Midpoint (0, 400) should land near the viewport center after transform.
+		expect(transform.applyX(0)).toBeCloseTo(200, 0);
+		expect(transform.applyY(400)).toBeCloseTo(300, 0);
+	});
+
+	it("returns identity when there is nothing to fit", () => {
+		const empty = fitTreeZoomTransform(400, 600, []);
+		expect(empty.k).toBe(1);
+		expect(empty.x).toBe(0);
+		expect(empty.y).toBe(0);
+	});
+});
 
 const actionsOf = (node: TrieNodeData | null): string[] => {
 	if (!node) return [];

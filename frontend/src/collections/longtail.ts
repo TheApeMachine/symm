@@ -347,7 +347,6 @@ export const summarizeStops = (
 
 		const rowArmed =
 			stoploss.state === "Armed" ||
-			stoploss.state === "TakeProfit" ||
 			stoploss.state === "Triggered" ||
 			proximity >= 0.7;
 		if (rowArmed) armed += 1;

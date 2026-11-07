@@ -108,8 +108,14 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 
 			tree.mu.Lock()
 			root := tree.root.Load()
-			root, _, _ = root.Insert([]byte(path), decision)
-			tree.root.Store(root)
+
+			// First writer wins — matches Ensure. Duplicate action files
+			// from a concurrent Ensure race must not clobber the leaf.
+			if _, exists := root.Get([]byte(path)); !exists {
+				root, _, _ = root.Insert([]byte(path), decision)
+				tree.root.Store(root)
+			}
+
 			tree.mu.Unlock()
 		}
 	}
@@ -271,15 +277,24 @@ func (tree *Tree) Ensure(path string, action Action) {
 		return
 	}
 
-	if _, exists := tree.root.Load().Get([]byte(path)); exists {
-		return
-	}
-
-	tree.Insert(path, &runtime.Decision{
+	decision := &runtime.Decision{
 		Action:     action.String(),
 		Path:       path,
 		Resistance: seedResistance(),
-	})
+	}
+
+	tree.mu.Lock()
+	root := tree.root.Load()
+
+	if _, exists := root.Get([]byte(path)); exists {
+		tree.mu.Unlock()
+		return
+	}
+
+	root, _, _ = root.Insert([]byte(path), decision)
+	tree.root.Store(root)
+	tree.mu.Unlock()
+	tree.persist(path, decision)
 }
 
 // clampResistance keeps a loaded leaf inside the configured band.
@@ -327,20 +342,24 @@ func (tree *Tree) persist(path string, decision *runtime.Decision) {
 		return
 	}
 
-	raw, err := sonic.Marshal(decision)
+	store := tree.store
 
-	if err != nil || len(raw) == 0 {
-		errnie.Error(errnie.Err(
-			errnie.IO, "[tree] error marshalling decision", err,
-		))
+	go func() {
+		raw, err := sonic.Marshal(decision)
 
-		return
-	}
+		if err != nil || len(raw) == 0 {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[tree] error marshalling decision", err,
+			))
 
-	// model/paths/<tokens>/<enter|hold|exit>.bin
-	tree.store.WriteAtPrefix(
-		"model/paths/"+path+"/"+action.String()+".bin", raw,
-	)
+			return
+		}
+
+		// model/paths/<tokens>/<enter|hold|exit>.bin
+		store.WriteAtPrefix(
+			"model/paths/"+path+"/"+action.String()+".bin", raw,
+		)
+	}()
 }
 
 /*

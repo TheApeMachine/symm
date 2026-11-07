@@ -100,19 +100,44 @@ func NewInstrument(
 		return instrument
 	}
 
-	var snapshot *kraken.Instrument
+	if err := instrument.seedSnapshot(message); err != nil {
+		instrument.Error(err)
+		return instrument
+	}
 
+	instrument.Transition(runtime.READY)
+	return instrument
+}
+
+/*
+seedSnapshot waits for the instrument channel snapshot. Soft disconnects
+(Kraken 1013 market data unavailable, ping drops) SoftDown to WAITING — the
+next Write redials and re-subscribes; only context cancel or a bad decode fail.
+*/
+func (instrument *Instrument) seedSnapshot(subscribe []byte) error {
 	for {
-		buf, err := public.Read()
-
-		if err != nil {
-			instrument.Error(errnie.Err(
+		if err := instrument.Context().Err(); err != nil {
+			return errnie.Err(
 				errnie.IO,
 				"[instrument] snapshot unavailable",
 				err,
-			))
+			)
+		}
 
-			return instrument
+		buf, err := instrument.public.Read()
+
+		if err != nil {
+			errnie.Warn(
+				"[instrument] snapshot wait interrupted, resubscribing: " + err.Error(),
+			)
+
+			if writeErr := instrument.public.Write(subscribe); writeErr != nil {
+				errnie.Warn(
+					"[instrument] snapshot resubscribe failed: " + writeErr.Error(),
+				)
+			}
+
+			continue
 		}
 
 		// Acks and heartbeats carry no instrument channel; a frame whose
@@ -128,14 +153,14 @@ func NewInstrument(
 			continue
 		}
 
-		if snapshot = kraken.NewInstrument(buf); snapshot == nil {
-			instrument.Error(errnie.Err(
+		snapshot := kraken.NewInstrument(buf)
+
+		if snapshot == nil {
+			return errnie.Err(
 				errnie.UnprocessableContent,
 				"[instrument] instrument snapshot did not decode",
 				nil,
-			))
-
-			return instrument
+			)
 		}
 
 		instrument.snapshot = snapshot
@@ -145,11 +170,8 @@ func NewInstrument(
 			instrument.cachePair(pair)
 		}
 
-		break
+		return nil
 	}
-
-	instrument.Transition(runtime.READY)
-	return instrument
 }
 
 func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {

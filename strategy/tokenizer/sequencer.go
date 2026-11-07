@@ -8,7 +8,7 @@ import (
 
 /*
 Sequencer wires Sequitur (grammar) and MDL (segment cuts). Step returns the
-live cut: a Tokens sequence over the current grammar root tail.
+live cut plus whether grammar/MDL state mutated.
 */
 type Sequencer struct {
 	grammar       *Sequitur
@@ -32,17 +32,17 @@ func (sequencer *Sequencer) Reset() {
 
 /*
 Step appends one path symbol into Sequitur, feeds the new tail symbol to MDL,
-and returns the current cut as Tokens.
+and returns the current cut plus whether grammar/MDL state mutated.
 */
-func (sequencer *Sequencer) Step(symbol string, brightness float64) Tokens {
+func (sequencer *Sequencer) Step(symbol string, brightness float64) (Tokens, bool) {
 	return sequencer.StepPath([]string{symbol}, brightness)
 }
 
 /*
 StepPath appends symbols into the grammar in order. Training feeds one regime
-per call via Step; a repeated symbol only refreshes brightness.
+per call via Step; a repeated symbol only refreshes brightness (mutated=false).
 */
-func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) Tokens {
+func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) (Tokens, bool) {
 	parts := make([]string, 0, len(symbols))
 
 	for _, symbol := range symbols {
@@ -54,18 +54,21 @@ func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) Token
 	}
 
 	if len(parts) == 0 {
-		return NewTokens()
+		return NewTokens(), false
 	}
+
+	mutated := false
 
 	if sequencer.sentenceBreak {
 		sequencer.grammar.Sentence()
 		sequencer.sentenceBreak = false
+		mutated = true
 	}
 
 	key := strings.Join(parts, ".")
 
 	if key == sequencer.lastEmitted {
-		return sequencer.cut(brightness)
+		return sequencer.cut(brightness), mutated
 	}
 
 	for _, symbol := range parts {
@@ -80,7 +83,7 @@ func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) Token
 
 	sequencer.lastEmitted = key
 
-	return sequencer.cut(brightness)
+	return sequencer.cut(brightness), true
 }
 
 func (sequencer *Sequencer) cut(tailBrightness float64) Tokens {

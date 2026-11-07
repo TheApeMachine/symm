@@ -58,7 +58,10 @@ func (entry *closedEntry) read(raw []byte) bool {
 	row, err := data.AttributeOk[map[string]any](raw, "position")
 
 	if err != nil || len(row) == 0 {
-		return false
+		// Legacy bare Position root (pre-lotBlob envelope).
+		if err := sonic.Unmarshal(raw, &row); err != nil || len(row) == 0 {
+			return false
+		}
 	}
 
 	id, _ := row["id"].(string)

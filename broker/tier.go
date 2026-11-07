@@ -63,6 +63,7 @@ type Tier struct {
 	savedAt   sync.Map
 	reqSeq    atomic.Int64
 	live      *Live
+	gateMu    sync.Mutex
 	unlocked  bool
 	halted    bool
 	sawOK     bool
@@ -267,6 +268,10 @@ func (tier *Tier) apply(executions *market.Execution) {
 publishLedger fans positions and this tier's wallet reading to the hub.
 */
 func (tier *Tier) publishLedger(positions map[string]*Position) {
+	if ui.UI == nil || !ui.UI.Active() || len(positions) == 0 {
+		return
+	}
+
 	ui.UI.WriteJSON(map[string]any{
 		"positions": positions,
 		"balances": map[string]any{
@@ -313,11 +318,8 @@ func (tier *Tier) Update(data *market.Update) {
 		savedAt, _ := last.(time.Time)
 
 		if savedAt.IsZero() || time.Since(savedAt) > 30*time.Second {
-			if err := tier.positions.Save(position); err != nil {
-				errnie.Error(err)
-			} else {
-				tier.savedAt.Store(position.ID, time.Now())
-			}
+			tier.savedAt.Store(position.ID, time.Now())
+			tier.positions.SaveAsync(position)
 		}
 
 		touched[position.ID] = position
@@ -358,6 +360,9 @@ edge above 0. Once real has history it must stay there too; after it slips,
 paper has to lose that proof and earn it again before real entries resume.
 */
 func (tier *Tier) Unlocked(paper *Tier) bool {
+	tier.gateMu.Lock()
+	defer tier.gateMu.Unlock()
+
 	if tier.Type != TierTypeReal {
 		tier.unlocked = true
 		return true
@@ -403,6 +408,7 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 
 /*
 noteHalt keeps a failed real shut until paper goes cold and proves again.
+Caller must hold gateMu.
 */
 func (tier *Tier) noteHalt(paperOK bool) {
 	if paperOK && tier.broke {
@@ -434,7 +440,11 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	if !tier.unlocked {
+	tier.gateMu.Lock()
+	unlocked := tier.unlocked
+	tier.gateMu.Unlock()
+
+	if !unlocked {
 		return errnie.Err(
 			errnie.Forbidden,
 			"[broker.Tier.Enter] tier not unlocked",
@@ -734,14 +744,18 @@ func (tier *Tier) Recalculate() {
 
 	tier.WinRate = float64(wins) / float64(count)
 	tier.Edge = totalReturn / float64(count)
+
+	tier.gateMu.Lock()
 	tier.reprieve = false
 
 	if tier.Type != TierTypeReal {
+		tier.gateMu.Unlock()
 		return
 	}
 
 	if tier.ok() {
 		tier.halted = false
+		tier.gateMu.Unlock()
 		return
 	}
 
@@ -749,6 +763,7 @@ func (tier *Tier) Recalculate() {
 	tier.sawOK = false
 	tier.broke = false
 	tier.unlocked = false
+	tier.gateMu.Unlock()
 }
 
 /*

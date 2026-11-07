@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -19,24 +20,32 @@ import (
 type Book = BookManager
 
 /*
+bookLane is one symbol's book plus its readiness flags. Update/Book take this
+lock so an L3 write on BTC does not block readers of ETH.
+*/
+type bookLane struct {
+	mu      sync.RWMutex
+	book    *market.Book
+	pending bool
+	stale   bool
+}
+
+/*
 BookManager holds per-symbol market books. Venue frames arrive as market.Level3
 (converted at the edge); this type never imports a venue package.
 */
 type BookManager struct {
 	mu        sync.RWMutex
-	books     map[string]*market.Book
-	pending   map[string]struct{}
-	stale     map[string]struct{}
+	lanes     map[string]*bookLane
+	pendingN  atomic.Int64
 	seeded    chan struct{}
 	onInvalid func([]string)
 }
 
 func NewBookManager() *BookManager {
 	return &BookManager{
-		books:   make(map[string]*market.Book),
-		pending: make(map[string]struct{}),
-		stale:   make(map[string]struct{}),
-		seeded:  make(chan struct{}, 1),
+		lanes:  make(map[string]*bookLane),
+		seeded: make(chan struct{}, 1),
 	}
 }
 
@@ -54,13 +63,19 @@ func (manager *BookManager) Expect(symbols []string) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 
-	manager.pending = make(map[string]struct{}, len(symbols))
+	manager.lanes = make(map[string]*bookLane, len(symbols))
+	pending := int64(0)
 
 	for _, symbol := range symbols {
-		if symbol != "" {
-			manager.pending[symbol] = struct{}{}
+		if symbol == "" {
+			continue
 		}
+
+		manager.lanes[symbol] = &bookLane{pending: true}
+		pending++
 	}
+
+	manager.pendingN.Store(pending)
 }
 
 func (manager *BookManager) Wait(timeout time.Duration) error {
@@ -89,24 +104,64 @@ func (manager *BookManager) Wait(timeout time.Duration) error {
 
 func (manager *BookManager) Pending() []string {
 	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	type pendingLane struct {
+		symbol string
+		lane   *bookLane
+	}
 
-	out := make([]string, 0, len(manager.pending))
+	snapshot := make([]pendingLane, 0, len(manager.lanes))
 
-	for symbol := range manager.pending {
-		out = append(out, symbol)
+	for symbol, lane := range manager.lanes {
+		snapshot = append(snapshot, pendingLane{symbol: symbol, lane: lane})
+	}
+
+	manager.mu.RUnlock()
+
+	out := make([]string, 0)
+
+	for _, item := range snapshot {
+		item.lane.mu.RLock()
+		pending := item.lane.pending
+		item.lane.mu.RUnlock()
+
+		if pending {
+			out = append(out, item.symbol)
+		}
 	}
 
 	slices.Sort(out)
 	return out
 }
 
+func (manager *BookManager) lookup(symbol string) *bookLane {
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+
+	return manager.lanes[symbol]
+}
+
+func (manager *BookManager) lane(symbol string) *bookLane {
+	if lane := manager.lookup(symbol); lane != nil {
+		return lane
+	}
+
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+
+	if lane := manager.lanes[symbol]; lane != nil {
+		return lane
+	}
+
+	lane := &bookLane{}
+	manager.lanes[symbol] = lane
+
+	return lane
+}
+
 func (manager *BookManager) Update(level3 *market.Level3) {
 	if level3 == nil {
 		return
 	}
-
-	manager.mu.Lock()
 
 	var invalid []string
 
@@ -115,7 +170,10 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 			continue
 		}
 
-		book := manager.books[data.Symbol]
+		lane := manager.lane(data.Symbol)
+		lane.mu.Lock()
+
+		book := lane.book
 
 		// Snapshots are full state — replace so ghosts from a prior
 		// stream (or missed deletes) cannot stick around.
@@ -125,7 +183,7 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 			// Kraken does not delete levels that fall out of subscribed
 			// depth; EnforceDepth must match the subscription.
 			book.MaxDepth = system.Cfg.Market.Level3.Depth
-			manager.books[data.Symbol] = book
+			lane.book = book
 		}
 
 		for _, order := range data.Bids {
@@ -138,28 +196,41 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 
 		if manager.diverged(book, data.Checksum) {
 			invalid = append(invalid, data.Symbol)
-			manager.stale[data.Symbol] = struct{}{}
-			delete(manager.books, data.Symbol)
+			lane.stale = true
+			manager.clearPending(lane)
+			lane.book = nil
+			lane.mu.Unlock()
 			continue
 		}
 
-		delete(manager.pending, data.Symbol)
-		delete(manager.stale, data.Symbol)
+		manager.clearPending(lane)
+		lane.stale = false
+		lane.mu.Unlock()
 	}
 
-	if len(manager.pending) == 0 {
+	if manager.pendingN.Load() == 0 {
 		select {
 		case manager.seeded <- struct{}{}:
 		default:
 		}
 	}
 
+	manager.mu.RLock()
 	onInvalid := manager.onInvalid
-	manager.mu.Unlock()
+	manager.mu.RUnlock()
 
 	if len(invalid) > 0 && onInvalid != nil {
 		onInvalid(invalid)
 	}
+}
+
+func (manager *BookManager) clearPending(lane *bookLane) {
+	if !lane.pending {
+		return
+	}
+
+	lane.pending = false
+	manager.pendingN.Add(-1)
 }
 
 /*
@@ -171,7 +242,7 @@ func (manager *BookManager) diverged(book *market.Book, checksum int) bool {
 	}
 
 	bid, ask := book.BestBid(), book.BestAsk()
-	
+
 	if bid != nil && ask != nil && bid.Price != nil && ask.Price != nil &&
 		bid.Price.Cmp(*ask.Price) >= 0 {
 		return true
@@ -217,27 +288,31 @@ func (manager *BookManager) applyOrder(
 }
 
 func (manager *BookManager) Get(symbol string) *market.Book {
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	lane := manager.lookup(symbol)
+	if lane == nil {
+		return nil
+	}
 
-	return manager.books[symbol]
+	lane.mu.RLock()
+	defer lane.mu.RUnlock()
+
+	return lane.book
 }
 
 func (manager *BookManager) Book(symbol string, read func(*market.Book)) {
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
-
-	if _, pending := manager.pending[symbol]; pending {
+	lane := manager.lookup(symbol)
+	if lane == nil {
 		return
 	}
 
-	if _, stale := manager.stale[symbol]; stale {
+	lane.mu.RLock()
+	defer lane.mu.RUnlock()
+
+	if lane.pending || lane.stale || lane.book == nil {
 		return
 	}
 
-	if book := manager.books[symbol]; book != nil {
-		read(book)
-	}
+	read(lane.book)
 }
 
 func (manager *BookManager) BlockReason(symbol string) string {
@@ -245,18 +320,23 @@ func (manager *BookManager) BlockReason(symbol string) string {
 		return "symbol is empty"
 	}
 
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	lane := manager.lookup(symbol)
+	if lane == nil {
+		return "level3 book not seeded"
+	}
 
-	if _, pending := manager.pending[symbol]; pending {
+	lane.mu.RLock()
+	defer lane.mu.RUnlock()
+
+	if lane.pending {
 		return "level3 book still pending snapshot"
 	}
 
-	if _, stale := manager.stale[symbol]; stale {
+	if lane.stale {
 		return "level3 book is stale"
 	}
 
-	if manager.books[symbol] == nil {
+	if lane.book == nil {
 		return "level3 book not seeded"
 	}
 
@@ -264,33 +344,51 @@ func (manager *BookManager) BlockReason(symbol string) string {
 }
 
 func (manager *BookManager) StaleSymbol(symbol string) bool {
-	manager.mu.RLock()
-	defer manager.mu.RUnlock()
+	lane := manager.lookup(symbol)
+	if lane == nil {
+		return true
+	}
 
-	_, stale := manager.stale[symbol]
-	return stale || manager.books[symbol] == nil
+	lane.mu.RLock()
+	defer lane.mu.RUnlock()
+
+	return lane.stale || lane.book == nil
 }
 
 func (manager *BookManager) Stale(symbols []string) {
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-
 	for _, symbol := range symbols {
 		if symbol == "" {
 			continue
 		}
 
-		manager.stale[symbol] = struct{}{}
-		delete(manager.books, symbol)
+		lane := manager.lane(symbol)
+		lane.mu.Lock()
+		lane.stale = true
+		lane.book = nil
+		lane.mu.Unlock()
 	}
 }
 
 func (manager *BookManager) All() iter.Seq[*market.Book] {
 	return func(yield func(*market.Book) bool) {
 		manager.mu.RLock()
-		defer manager.mu.RUnlock()
+		lanes := make([]*bookLane, 0, len(manager.lanes))
 
-		for _, book := range manager.books {
+		for _, lane := range manager.lanes {
+			lanes = append(lanes, lane)
+		}
+
+		manager.mu.RUnlock()
+
+		for _, lane := range lanes {
+			lane.mu.RLock()
+			book := lane.book
+			lane.mu.RUnlock()
+
+			if book == nil {
+				continue
+			}
+
 			if !yield(book) {
 				return
 			}

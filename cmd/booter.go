@@ -56,7 +56,7 @@ type Booter struct {
 	training   *strategy.Training
 	model      *strategy.Model
 	workspace  *nmruntime.Workspace
-	persist    *tickPersist
+	persist    *TickPersist
 	store      *store.Client
 	replies    sync.Map
 }
@@ -82,10 +82,30 @@ func NewBooter(ctx context.Context, name string) *Booter {
 
 	network.SetPrivateSigner(kraken.SignPrivate)
 
+	// Pyroscope requests mutex/block profile types, but the Go runtime keeps
+	// those samplers off until these rates are set — otherwise Grafana shows
+	// empty lock views for the app.
+	sysruntime.SetMutexProfileFraction(5)
+	sysruntime.SetBlockProfileRate(10_000)
+
+	appName := "symm." + name + ".theapemachine.app"
+
 	_, err := pyroscope.Start(pyroscope.Config{
-		ApplicationName: "symm." + name + ".theapemachine.app",
+		ApplicationName: appName,
 		ServerAddress:   "http://localhost:4040",
 		Logger:          nil,
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileMutexCount,
+			pyroscope.ProfileMutexDuration,
+			pyroscope.ProfileBlockCount,
+			pyroscope.ProfileBlockDuration,
+		},
 	})
 
 	if err != nil {
@@ -94,9 +114,15 @@ func NewBooter(ctx context.Context, name string) *Booter {
 			"[booter] error starting pyroscope profiler",
 			err,
 		))
+	} else {
+		errnie.Info("[booter] pyroscope profiling " + appName)
 	}
 
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+
+	if ui.UI != nil {
+		ui.UI.UseStore(client)
+	}
 
 	return &Booter{
 		System: nmruntime.NewSystem(ctx, name, nil),
@@ -136,7 +162,6 @@ func (booter *Booter) Run() error {
 	}
 
 	booter.Transition(nmruntime.READY)
-	booter.persist.Arm()
 
 	errnie.Info(fmt.Sprintf(
 		"[booter] trade firehose open %s after boot",
@@ -160,10 +185,6 @@ func (booter *Booter) shutdown() error {
 
 	var errs error
 
-	if booter.persist != nil {
-		booter.persist.Disarm()
-	}
-
 	if err := booter.closeTransports(); err != nil {
 		errs = errors.Join(errs, err)
 	}
@@ -184,10 +205,6 @@ func (booter *Booter) shutdown() error {
 		}
 	}
 
-	if booter.persist != nil {
-		booter.persist.Wait()
-	}
-
 	if booter.store != nil {
 		if err := booter.store.Close(); err != nil {
 			errs = errors.Join(errs, errnie.Error(errnie.Err(
@@ -200,10 +217,6 @@ func (booter *Booter) shutdown() error {
 		errs = errors.Join(errs, errnie.Error(errnie.Err(
 			errnie.IO, "[booter] hub close failed", err,
 		)))
-	}
-
-	if err := system.Q.Release(); err != nil {
-		errs = errors.Join(errs, err)
 	}
 
 	if errs != nil {
@@ -304,7 +317,7 @@ func (booter *Booter) initPipeline() error {
 	)
 	booter.training = training
 	booter.model = model
-	booter.persist = newTickPersist(ctx, booter.store)
+	booter.persist = NewTickPersist(ctx, booter.store)
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
@@ -322,9 +335,8 @@ func (booter *Booter) initPipeline() error {
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
 			}},
-			{Group: "observe", Nodes: []nmruntime.Node{
-				resonance.NewSolver(ctx),
-				training,
+			{Group: "resonance", Nodes: []nmruntime.Node{
+				resonance.NewSolver(ctx), training,
 			}},
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
@@ -345,12 +357,14 @@ func (booter *Booter) initPipeline() error {
 		tick := nmruntime.NewEnvelope(trade)
 		tick.N = data.Tick.Add(1)
 
-		ui.UI.WriteJSON(map[string]any{
-			"tick": map[string]any{
-				"epoch": data.Epoch.Load(),
-				"n":     tick.N,
-			},
-		})
+		if ui.UI != nil && ui.UI.Active() {
+			ui.UI.WriteJSON(map[string]any{
+				"tick": map[string]any{
+					"epoch": data.Epoch.Load(),
+					"n":     tick.N,
+				},
+			})
+		}
 
 		booter.workspace.Step(tick)
 	})

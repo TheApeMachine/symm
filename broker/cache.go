@@ -138,7 +138,40 @@ func (cache *Cache) Closed(symbols ...string) []*Position {
 }
 
 /*
-Restore unmarshals a bare Position and rebinds live collaborators.
+lotBlob is the S3 / DuckDB / UI envelope around a Position.
+*/
+type lotBlob struct {
+	Epoch     uint64    `json:"epoch"`
+	Tick      uint64    `json:"tick"`
+	Timestamp uint64    `json:"timestamp"`
+	Position  *Position `json:"position"`
+}
+
+func encodeLot(position *Position) ([]byte, error) {
+	blob := lotBlob{
+		Epoch:    position.PolicyEpoch,
+		Tick:     position.EntryTick,
+		Position: position,
+	}
+
+	if position.ExitTick > 0 {
+		blob.Tick = position.ExitTick
+	}
+
+	switch {
+	case position.ClosedAt != nil:
+		blob.Timestamp = uint64(position.ClosedAt.UnixNano())
+	case position.UpdatedAt != nil:
+		blob.Timestamp = uint64(position.UpdatedAt.UnixNano())
+	default:
+		blob.Timestamp = uint64(position.OpenedAt.UnixNano())
+	}
+
+	return sonic.Marshal(blob)
+}
+
+/*
+Restore unmarshals a lot blob (or legacy bare Position) and rebinds collaborators.
 */
 func (cache *Cache) Restore(raw []byte) *Position {
 	if len(raw) == 0 {
@@ -146,8 +179,11 @@ func (cache *Cache) Restore(raw []byte) *Position {
 	}
 
 	var position *Position
+	var wrapped lotBlob
 
-	if err := sonic.Unmarshal(raw, &position); err != nil {
+	if err := sonic.Unmarshal(raw, &wrapped); err == nil && wrapped.Position != nil {
+		position = wrapped.Position
+	} else if err := sonic.Unmarshal(raw, &position); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
 		))
@@ -219,8 +255,8 @@ func (cache *Cache) keepClosed(position *Position) {
 }
 
 func (cache *Cache) Has(symbol string) bool {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
 
 	// Still under open (including ClosedAt claimed while settle Sends) occupies
 	// the symbol. Remove is the only path into closed.
@@ -265,26 +301,55 @@ func (cache *Cache) Save(position *Position) error {
 		return nil
 	}
 
-	body, err := sonic.Marshal(position)
+	position.mu.Lock()
+	body, err := encodeLot(position)
+	symbol := position.Symbol
+	id := position.ID
+	closedAt := position.ClosedAt
+	position.mu.Unlock()
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
+	return cache.writeLot(position, symbol, id, closedAt != nil, body)
+}
+
+/*
+SaveAsync runs Save off the mark path so encode + upload never stall Tier.Update.
+*/
+func (cache *Cache) SaveAsync(position *Position) {
+	if position == nil || position.ID == "" || cache.store == nil {
+		return
+	}
+
+	go func() {
+		if err := cache.Save(position); err != nil {
+			errnie.Error(err)
+		}
+	}()
+}
+
+func (cache *Cache) writeLot(
+	position *Position,
+	symbol, id string,
+	closed bool,
+	body []byte,
+) error {
 	cache.mu.RLock()
-	inClosed := cache.positions["closed"][position.Symbol] == position
-	inOpen := cache.positions["open"][position.Symbol] == position
+	inClosed := cache.positions["closed"][symbol] == position
+	inOpen := cache.positions["open"][symbol] == position
 	cache.mu.RUnlock()
 
-	if inClosed || (position.ClosedAt != nil && !inOpen) {
-		closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, position.Symbol, position.ID)
-		open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, position.Symbol, position.ID)
+	if inClosed || (closed && !inOpen) {
+		closedKey := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, symbol, id)
+		openKey := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, symbol, id)
 
-		if _, err := cache.store.WriteAtPrefix(closed, body); err != nil {
+		if _, err := cache.store.WriteAtPrefix(closedKey, body); err != nil {
 			return errnie.Error(err)
 		}
 
-		if err := cache.store.DeletePrefix(open); err != nil {
+		if err := cache.store.DeletePrefix(openKey); err != nil {
 			return errnie.Error(err)
 		}
 
@@ -292,7 +357,7 @@ func (cache *Cache) Save(position *Position) error {
 	}
 
 	if _, err := cache.store.WriteAtPrefix(fmt.Sprintf(
-		"%s/open/%s/%s", cache.tierKey, position.Symbol, position.ID,
+		"%s/open/%s/%s", cache.tierKey, symbol, id,
 	), body); err != nil {
 		return errnie.Error(err)
 	}
@@ -341,7 +406,7 @@ func (cache *Cache) move(position *Position) error {
 		return nil
 	}
 
-	body, err := sonic.Marshal(position)
+	body, err := encodeLot(position)
 
 	if err != nil {
 		return errnie.Error(err)

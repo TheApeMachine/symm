@@ -56,7 +56,7 @@ func NewModel(
 }
 
 /*
-Step is the main entry point for the model. It takes an envelope and returns 
+Step is the main entry point for the model. It takes an envelope and returns
 a new envelope. This makes it compatible with the LMAX Disruptor pipeline.
 */
 func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
@@ -79,14 +79,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu.Lock()
 		envelope.Decide(decision)
 		mu.Unlock()
-
-		if decision == nil || decision.Symbol == "" {
-			return
-		}
-
-		ui.UI.WriteJSON(map[string]any{
-			"decisions": map[string]any{decision.Symbol: decision},
-		})
 	}
 
 	for symbol, cut := range envelope.Paths {
@@ -95,11 +87,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, cut := symbol, cut
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			path := cut.String()
 			var open []*broker.Position
 
@@ -261,25 +249,30 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			if wantEnter {
 				model.enterTiers(decide, symbol, path, resistance, false, bypass)
 			}
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
+
+	if ui.UI != nil && ui.UI.Active() && len(envelope.Decisions) > 0 {
+		if payload := envelope.Publish("decisions"); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
+	}
+
 	return envelope
 }
 
 /*
-oracleAllows is true when at least one approve is lit and no veto is lit.
+oracleAllows is true when at least one approve is lit and no veto is selected.
+Grid.Observe emits exactly one side of each oracle pair; a selected veto fails
+closed even at zero brightness (tied dormant metrics).
 */
 func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 	approved := false
 
 	for _, region := range regions {
-		if region == nil || region.Brightness <= 0 {
+		if region == nil {
 			continue
 		}
 
@@ -287,7 +280,9 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 		case "veto":
 			return false
 		case "approve":
-			approved = true
+			if region.Brightness > 0 {
+				approved = true
+			}
 		}
 	}
 
@@ -554,15 +549,33 @@ func (model *Model) Exit(position *broker.Position, path string) {
 
 	settled := position.ClosedAt != nil
 
-	// Stoploss lots sit in pending until one distinct cut is attributed.
-	// Re-training every tick was seeding a new EXIT leaf per live path and
-	// walking resistance into the thousands.
-	if settled && position.ExitPath != "" {
+	// Train only on realized fills. Policy exits arm the broker first; marking
+	// the tree before the order fills poisoned resistance on rejects and
+	// re-trained every tick while Closing.
+	if !settled {
+		if position.ExitPath != "" {
+			return
+		}
+
+		position.ExitPath = path
+
+		if model.desk == nil {
+			return
+		}
+
+		model.desk.Exit(model.bookTier(position), position)
+		return
+	}
+
+	if position.TreeApplied {
 		model.dropPending(position)
 		return
 	}
 
-	position.ExitPath = path
+	if position.ExitPath == "" {
+		position.ExitPath = path
+	}
+
 	tree := model.tree.Load()
 
 	tree.Ensure(position.EntryPath, ActionEnter)
@@ -572,17 +585,8 @@ func (model *Model) Exit(position *broker.Position, path string) {
 
 	tree.Update(position.EntryPath, delta)
 	tree.Update(position.ExitPath, delta)
-
-	if settled {
-		model.dropPending(position)
-		return
-	}
-
-	if model.desk == nil {
-		return
-	}
-
-	model.desk.Exit(model.bookTier(position), position)
+	position.TreeApplied = true
+	model.dropPending(position)
 }
 
 func (model *Model) bookTier(position *broker.Position) broker.TierType {

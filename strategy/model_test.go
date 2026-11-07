@@ -259,3 +259,41 @@ func TestResistanceDelta(t *testing.T) {
 		So(hourDelta, ShouldBeLessThan, longDelta)
 	})
 }
+
+func TestOracleAllowsFailClosed(t *testing.T) {
+	Convey("Selected zero-brightness veto fails closed", t, func() {
+		model := &Model{}
+
+		// Metric oracle pair board (17 veto / 18 approve) tied at zero —
+		// Observe emits the veto side.
+		regions := []*runtime.Region{
+			{Key: 10, Brightness: 1}, // liquid_quote approve
+			{Key: 12, Brightness: 1},
+			{Key: 14, Brightness: 1},
+			{Key: 16, Brightness: 1},
+			{Key: 17, Brightness: 0}, // board_stress veto (dormant tie)
+			{Key: 20, Brightness: 1},
+			{Key: 22, Brightness: 1},
+			{Key: 24, Brightness: 1},
+		}
+
+		So(model.oracleAllows(regions), ShouldBeFalse)
+	})
+
+	Convey("All lit approves with no veto allow entry", t, func() {
+		model := &Model{}
+
+		regions := []*runtime.Region{
+			{Key: 10, Brightness: 1},
+			{Key: 12, Brightness: 1},
+			{Key: 14, Brightness: 1},
+			{Key: 16, Brightness: 1},
+			{Key: 18, Brightness: 0.4},
+			{Key: 20, Brightness: 0.3},
+			{Key: 22, Brightness: 0.2},
+			{Key: 24, Brightness: 1},
+		}
+
+		So(model.oracleAllows(regions), ShouldBeTrue)
+	})
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -72,11 +73,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, sources := symbol, sources
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			risk := system.Cfg.Risk
 			spreadOK := risk.MaxEntrySpreadPct <= 0
 
@@ -108,21 +105,19 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Regions[symbol] = regions
 			envelope.Paths[symbol] = cut
 			mu.Unlock()
-		}
-
-		if err := system.Q.Submit(task); err != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
 
-	if payload := envelope.Publish("regions"); len(payload) > 0 {
-		ui.UI.Write(payload)
-	}
+	if ui.UI != nil && ui.UI.Active() && types.WantsGrid() {
+		if payload := envelope.Publish("regions"); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
 
-	if payload := envelope.Publish("paths"); len(payload) > 0 {
-		ui.UI.Write(payload)
+		if payload := envelope.Publish("paths"); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
 	}
 
 	return envelope
@@ -195,12 +190,19 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 	}
 
 	seq := training.Sequencer(symbol)
-	cut := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
+	cut, mutated := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
 
-	if err := training.catalog.Persist(
-		training.Context(), training.client, symbol, seq.State(),
-	); err != nil {
-		training.Error(err)
+	if mutated {
+		state := seq.State()
+		client := training.client
+		catalog := training.catalog
+		ctx := training.Context()
+
+		go func() {
+			if err := catalog.Persist(ctx, client, symbol, state); err != nil {
+				training.Error(err)
+			}
+		}()
 	}
 
 	return &cut

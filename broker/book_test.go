@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -153,5 +154,62 @@ func TestBookManagerUpdate(t *testing.T) {
 		So(manager.Get("BTC/USD"), ShouldBeNil)
 		So(manager.StaleSymbol("BTC/USD"), ShouldBeTrue)
 		So(notified, ShouldResemble, []string{"BTC/USD"})
+	})
+
+	Convey("Per-symbol lanes keep ETH readable while BTC is written", t, func() {
+		manager := NewBookManager()
+		bid := decimal.RequireFromString("100")
+		ask := decimal.RequireFromString("101")
+		qty := decimal.RequireFromString("1")
+
+		manager.Update(&market.Level3{
+			Type: "snapshot",
+			Data: []*market.Level3Data{{
+				Symbol: "ETH/USD",
+				Bids: []*market.Level3Order{{
+					OrderID: "e1", LimitPrice: &bid, OrderQty: &qty,
+				}},
+				Asks: []*market.Level3Order{{
+					OrderID: "e2", LimitPrice: &ask, OrderQty: &qty,
+				}},
+			}},
+		})
+
+		btcBid := decimal.RequireFromString("200")
+		btcAsk := decimal.RequireFromString("201")
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			manager.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: "BTC/USD",
+					Bids: []*market.Level3Order{{
+						OrderID: "b1", LimitPrice: &btcBid, OrderQty: &qty,
+					}},
+					Asks: []*market.Level3Order{{
+						OrderID: "b2", LimitPrice: &btcAsk, OrderQty: &qty,
+					}},
+				}},
+			})
+		}()
+
+		var ethBid *decimal.Decimal
+
+		manager.Book("ETH/USD", func(book *market.Book) {
+			if best := book.BestBid(); best != nil {
+				ethBid = best.Price
+			}
+		})
+
+		wg.Wait()
+
+		So(ethBid, ShouldNotBeNil)
+		So(ethBid.String(), ShouldEqual, "100")
+		So(manager.Get("BTC/USD"), ShouldNotBeNil)
 	})
 }

@@ -50,6 +50,8 @@ type Position struct {
 	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	Closing         bool                    `json:"closing,omitempty"`
+	// TreeApplied is set after Model.Exit trains resistance for this lot.
+	TreeApplied bool `json:"-"`
 }
 
 func NewPosition(
@@ -131,9 +133,25 @@ func (position *Position) Update(price *decimal.Decimal) error {
 	now := time.Now().UTC()
 	position.UpdatedAt = &now
 
-	vwap, room, bookPnL, bookPnLPct := position.price.closeNow(
-		position.Symbol, position.Qty, position.Entry, fee,
+	// Snapshot under the position lock, then walk the book unlocked so marks
+	// do not hold Position.mu across BookManager.RLock.
+	symbol := position.Symbol
+	qty := *position.Qty
+	entry := *position.Entry
+	feeVal := *fee
+	pricer := position.price
+	position.mu.Unlock()
+
+	vwap, room, bookPnL, bookPnLPct := pricer.closeNow(
+		symbol, &qty, &entry, &feeVal,
 	)
+
+	position.mu.Lock()
+
+	if position.ClosedAt != nil || position.Qty == nil || position.Entry == nil {
+		position.mu.Unlock()
+		return nil
+	}
 
 	if vwap != nil {
 		position.ExitVWAP = vwap
@@ -145,7 +163,7 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		position.PnL = bookPnL
 		position.PnLPct = bookPnLPct
 	} else {
-		position.feeNetPnL(position.Entry, position.Qty, price, fee)
+		position.feeNetPnL(position.Entry, position.Qty, price, &feeVal)
 	}
 
 	if position.PnLPct == nil {

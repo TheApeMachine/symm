@@ -38,6 +38,9 @@ type WebsocketClient struct {
 	dial        func(url string) (*gorilla.Conn, *http.Response, error)
 	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
 	writeMu sync.Mutex
+	// dialMu serializes ensureReady redials so concurrent Read/Write cannot
+	// open duplicate sockets or race client.conn / backoff.
+	dialMu sync.Mutex
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -318,6 +321,13 @@ func (client *WebsocketClient) ensureReady() error {
 			"[network.websocket] not open",
 			nil,
 		))
+	}
+
+	client.dialMu.Lock()
+	defer client.dialMu.Unlock()
+
+	if client.Status() == runtime.READY && client.conn != nil {
+		return nil
 	}
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)

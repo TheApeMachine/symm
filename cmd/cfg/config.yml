@@ -193,7 +193,7 @@ risk:
   # still has margin if the book thins. Below instrument minimum → no entry.
   touch_divisor: 3
   # 24h quote-volume floor for the mover pre-filter (USD).
-  min_mover_volume_usd: 50000
+  min_mover_volume_usd: 25000
   # Open-to-last day move floor (%) — liquid-but-flat names stay out.
   min_mover_change_pct: 1.0
   # Max last position in the 24h high–low range (0–1). At/above → peak veto.
@@ -206,7 +206,7 @@ risk:
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
   # Each half of the tape comparison. Last window must beat the one before it.
-  tape_window: 15m
+  tape_window: 5m
   # Quote dollars the last window must clear, on top of beating the prior window.
   min_tape_notional_usd: 100
   # Mid-relative band for bid/ask support cash at entry.

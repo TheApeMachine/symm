@@ -289,8 +289,9 @@ func (virtual *Virtual) applyFill(
 
 		cash.Capital = cash.Capital.Sub(cost)
 		cash.Equity = cash.Capital
+		// Capital is base qty; Equity is quote cost basis for TradeBalance.
 		lot.Capital = lot.Capital.Add(qty)
-		lot.Equity = lot.Capital
+		lot.Equity = lot.Equity.Add(cost)
 	} else {
 		if lot.Capital.Cmp(qty) < 0 {
 			return errnie.Err(
@@ -300,8 +301,19 @@ func (virtual *Virtual) applyFill(
 			).With("need", qty.String(), "have", lot.Capital.String())
 		}
 
+		prev := lot.Capital
 		lot.Capital = lot.Capital.Sub(qty)
-		lot.Equity = lot.Capital
+
+		if prev.Sign() > 0 && lot.Equity.Sign() > 0 {
+			basis := lot.Equity.Mul(qty).Div(prev)
+			lot.Equity = lot.Equity.Sub(basis)
+		}
+
+		if lot.Capital.Sign() <= 0 {
+			lot.Capital = decimal.Zero
+			lot.Equity = decimal.Zero
+		}
+
 		cash.Capital = cash.Capital.Add(cost)
 		cash.Equity = cash.Capital
 	}
@@ -329,11 +341,12 @@ func (virtual *Virtual) Restock(symbol string, qty, cost decimal.Decimal) {
 
 	lot := virtual.asset(base)
 	lot.Capital = lot.Capital.Add(qty)
-	lot.Equity = lot.Capital
 
 	if cost.Sign() <= 0 {
 		return
 	}
+
+	lot.Equity = lot.Equity.Add(cost)
 
 	quote, _ := virtual.wallet["quote"].(string)
 
@@ -406,12 +419,12 @@ func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 		), "url", url)
 	}
 
-	virtual.mu.Lock()
-	wallet := virtual.wallet
-	virtual.mu.Unlock()
-
 	switch entity {
 	case "balances":
+		virtual.mu.Lock()
+		wallet := virtual.wallet
+		virtual.mu.Unlock()
+
 		out := kraken.NewBalance()
 		out.Channel = "balances"
 		out.FromMarket(market.NewBalance(wallet))
@@ -419,7 +432,7 @@ func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 
 	case "tradebalance":
 		out := kraken.NewTradeBalance()
-		cash, unrealized, equity := virtualTradeBalance(wallet)
+		cash, unrealized, equity := virtual.tradeBalance()
 		out.FromMarket(market.NewTradeBalance(map[string]any{
 			"equity":         equity,
 			"unrealized_pnl": unrealized,
@@ -435,14 +448,17 @@ func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 	}
 }
 
-func virtualQuoteCash(wallet map[string]any) *decimal.Decimal {
-	cash, _, _ := virtualTradeBalance(wallet)
-	return cash
-}
+/*
+tradeBalance is quote cash plus fee-net bid marks of open lots.
+*/
+func (virtual *Virtual) tradeBalance() (cash, unrealized, equity *decimal.Decimal) {
+	virtual.mu.Lock()
+	defer virtual.mu.Unlock()
 
-func virtualTradeBalance(wallet map[string]any) (cash, unrealized, equity *decimal.Decimal) {
-	quote, _ := wallet["quote"].(string)
-	assets, _ := wallet["assets"].([]*market.Asset)
+	quote, _ := virtual.wallet["quote"].(string)
+	assets, _ := virtual.wallet["assets"].([]*market.Asset)
+	fills := virtual.fills
+	settle := virtual.settle
 
 	cashAmt := decimal.Zero
 	pnlAmt := decimal.Zero
@@ -459,8 +475,30 @@ func virtualTradeBalance(wallet map[string]any) (cash, unrealized, equity *decim
 			continue
 		}
 
-		pnlAmt = pnlAmt.Add(asset.PnL)
-		equityAmt = equityAmt.Add(asset.Equity)
+		cost := asset.Equity
+		qty := asset.Capital
+		value := cost
+
+		if fills != nil && qty.Sign() > 0 && quote != "" {
+			pair := asset.Symbol + "/" + quote
+			bid := fills.FillBid(pair, &qty)
+
+			if bid != nil && bid.Sign() > 0 {
+				gross := qty.Mul(*bid)
+				net := gross
+
+				if settle != nil {
+					net, _ = settle(pair, gross, false)
+				}
+
+				value = net
+			}
+		}
+
+		pnl := value.Sub(cost)
+		asset.PnL = pnl
+		pnlAmt = pnlAmt.Add(pnl)
+		equityAmt = equityAmt.Add(value)
 	}
 
 	return decimalPtr(cashAmt), decimalPtr(pnlAmt), decimalPtr(equityAmt)
