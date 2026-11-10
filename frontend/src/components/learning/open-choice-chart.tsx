@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import { moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import type {
 	OpenChoiceChartApi,
@@ -16,23 +17,6 @@ const OpenChoiceSciChart = lazy(() =>
 	})),
 );
 
-const pctText = (value: number) => {
-	const digits = Math.abs(value) >= 10 ? 0 : 1;
-	const sign = value > 0 ? "+" : "";
-	return `${sign}${value.toFixed(digits)}%`;
-};
-
-const moneyText = (value: number) => {
-	const abs = Math.abs(value);
-	const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
-	return value >= 0 ? `$+${abs.toFixed(digits)}` : `$-${abs.toFixed(digits)}`;
-};
-
-const roomText = (room: number) => {
-	const digits = Math.abs(room) >= 10 ? 0 : 1;
-	return `${room.toFixed(digits)}pp`;
-};
-
 export const OpenChoiceChart = () => {
 	const [isGrid, setIsGrid] = useState(false);
 	const [legend, setLegend] = useState<OpenChoiceLegendItem[]>([]);
@@ -43,7 +27,7 @@ export const OpenChoiceChart = () => {
 		const key = items
 			.map(
 				(item) =>
-					`${item.id}:${item.pnlMoney ?? ""}:${item.pnlPct ?? ""}:${item.stopRoomPct ?? ""}:${item.stopProximity ?? ""}`,
+					`${item.id}:${item.pnlMoney ?? ""}:${item.pnlPct ?? ""}`,
 			)
 			.join("|");
 		if (key === legendKey.current) return;
@@ -130,20 +114,6 @@ export const OpenChoiceChart = () => {
 							<span className="tabular-nums text-(--f4)">
 								{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
 							</span>
-							{item.stopRoomPct !== undefined ? (
-								<span
-									className={cn(
-										"tabular-nums",
-										(item.stopProximity ?? 0) >= 0.7
-											? "text-(--warn)"
-											: "text-(--f4)",
-									)}
-								>
-									{(item.stopProximity ?? 0) >= 1
-										? "stop"
-										: `${roomText(item.stopRoomPct)} to stop`}
-								</span>
-							) : null}
 						</span>
 					))}
 				</div>

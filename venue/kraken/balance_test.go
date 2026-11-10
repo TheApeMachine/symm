@@ -24,14 +24,14 @@ func TestBalanceJSONRoundTrip(t *testing.T) {
 			},
 		}
 
-		Convey("sonic.Marshal round-trips result assets", func() {
+		Convey("Unmarshal normalizes REST ledger codes onto desk names", func() {
 			raw, err := sonic.Marshal(original)
 			So(err, ShouldBeNil)
 
 			var decoded kraken.Balance
 			So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
-			So(decoded.Result["XXBT"].String(), ShouldEqual, btcBal.String())
-			So(decoded.Result["ZUSD"].String(), ShouldEqual, usdBal.String())
+			So(decoded.QuoteCash("USD").String(), ShouldEqual, usdBal.String())
+			So(decoded.QuoteCash("XBT").String(), ShouldEqual, btcBal.String())
 		})
 	})
 }
@@ -62,8 +62,8 @@ func TestBalanceToMarketViaVenue(t *testing.T) {
 		So(changed, ShouldEqual, 1)
 		So(book.Quote, ShouldEqual, "USD")
 		So(len(book.Assets), ShouldEqual, 2)
-		So(book.Cash("ZUSD").String(), ShouldEqual, "200")
-		So(book.Cash("XXBT").String(), ShouldEqual, "0.5")
+		So(book.Cash("USD").String(), ShouldEqual, "200")
+		So(book.Cash("XBT").String(), ShouldEqual, "0.5")
 	})
 }
 
@@ -101,7 +101,7 @@ func TestBalanceWebsocketSnapshotUsesSpotMain(t *testing.T) {
 
 		So(sonic.Unmarshal(raw, host.Balance()), ShouldBeNil)
 		So(book.Cash("USD").String(), ShouldEqual, "200")
-		So(book.Cash("BTC").String(), ShouldEqual, "1.2")
+		So(book.Cash("XBT").String(), ShouldEqual, "1.2")
 
 		update := []byte(`{
 			"channel":"balances",
@@ -117,6 +117,6 @@ func TestBalanceWebsocketSnapshotUsesSpotMain(t *testing.T) {
 
 		So(sonic.Unmarshal(update, host.Balance()), ShouldBeNil)
 		So(book.Cash("USD").String(), ShouldEqual, "150")
-		So(book.Cash("BTC").String(), ShouldEqual, "1.2")
+		So(book.Cash("XBT").String(), ShouldEqual, "1.2")
 	})
 }

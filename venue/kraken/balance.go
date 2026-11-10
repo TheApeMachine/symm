@@ -2,6 +2,8 @@ package kraken
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
@@ -52,9 +54,31 @@ func NewBalanceFromMap(model map[string]any) json.Marshaler {
 }
 
 func (balance *Balance) Request() map[string]any {
-	return map[string]any{
-		"nonce": 0,
+	// Signer owns the nonce; a placeholder here used to stick as "0".
+	return map[string]any{}
+}
+
+func balanceNonceRejected(errs ...any) bool {
+	for _, entry := range errs {
+		switch value := entry.(type) {
+		case []any:
+			if balanceNonceRejected(value...) {
+				return true
+			}
+		case []string:
+			for _, line := range value {
+				if strings.Contains(strings.ToLower(line), "invalid nonce") {
+					return true
+				}
+			}
+		default:
+			if strings.Contains(strings.ToLower(fmt.Sprint(entry)), "invalid nonce") {
+				return true
+			}
+		}
 	}
+
+	return false
 }
 
 func (balance *Balance) OnChange(fn func(market.MarketType)) {
@@ -97,6 +121,10 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 	}
 
 	if len(decoded.Error) > 0 {
+		if balanceNonceRejected(decoded.Error) {
+			BumpAuthNonce()
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO, "[kraken.Balance] venue error in balance frame", nil,
 		).With("error", decoded.Error))
@@ -119,6 +147,8 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 	if balance.Result == nil {
 		balance.Result = make(map[string]*decimal.Decimal)
 	}
+
+	balance.Normalize()
 
 	if balance.onChange != nil {
 		balance.onChange(balance)
@@ -193,12 +223,64 @@ func (row balanceRow) spendable() (decimal.Decimal, bool) {
 	return decimal.Zero, false
 }
 
+/*
+Normalize rewrites REST ledger codes (ZUSD, XXBT) onto desk names in Result.
+Call after every REST Balance decode so QuoteCash and ToMarket agree.
+*/
+func (balance *Balance) Normalize() {
+	if balance == nil || balance.Result == nil {
+		return
+	}
+
+	next := make(map[string]*decimal.Decimal, len(balance.Result))
+
+	for asset, amount := range balance.Result {
+		if amount == nil {
+			continue
+		}
+
+		key := spotAsset(asset)
+
+		if prev := next[key]; prev != nil {
+			sum := prev.Add(*amount)
+			next[key] = &sum
+			continue
+		}
+
+		value := *amount
+		next[key] = &value
+	}
+
+	balance.Result = next
+}
+
+/*
+QuoteCash is spendable spot capital for quote (USD, …). Nil when missing.
+*/
+func (balance *Balance) QuoteCash(quote string) *decimal.Decimal {
+	if balance == nil || balance.Result == nil || quote == "" {
+		return nil
+	}
+
+	if amount := balance.Result[quote]; amount != nil && amount.Sign() > 0 {
+		return amount
+	}
+
+	if amount := balance.Result[spotAsset(quote)]; amount != nil && amount.Sign() > 0 {
+		return amount
+	}
+
+	return nil
+}
+
 func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Balance)
 
 	if !ok || book == nil || balance == nil {
 		return other
 	}
+
+	balance.Normalize()
 
 	assets := make([]*market.Asset, 0, len(balance.Result))
 
@@ -216,6 +298,28 @@ func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 		"quote":  book.Quote,
 		"assets": assets,
 	}).ToMarket(book)
+}
+
+/*
+spotAsset maps Kraken REST ledger codes onto the desk quote/base names.
+*/
+func spotAsset(asset string) string {
+	switch asset {
+	case "ZUSD", "USD":
+		return "USD"
+	case "ZEUR", "EUR":
+		return "EUR"
+	case "ZGBP", "GBP":
+		return "GBP"
+	case "ZJPY", "JPY":
+		return "JPY"
+	case "XXBT", "XBT", "BTC":
+		return "XBT"
+	case "XETH", "ETH":
+		return "ETH"
+	default:
+		return asset
+	}
 }
 
 func (balance *Balance) FromMarket(other market.MarketType) market.MarketType {

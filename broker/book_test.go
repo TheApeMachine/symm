@@ -213,3 +213,13 @@ func TestBookManagerUpdate(t *testing.T) {
 		So(manager.Get("BTC/USD"), ShouldNotBeNil)
 	})
 }
+
+func TestBookManagerExpect(t *testing.T) {
+	Convey("Expect skips duplicate and empty symbols", t, func() {
+		manager := NewBookManager()
+		manager.Expect([]string{"BTC/USD", "", "BTC/USD", "ETH/USD"})
+
+		So(manager.Pending(), ShouldResemble, []string{"BTC/USD", "ETH/USD"})
+		So(manager.pendingN.Load(), ShouldEqual, int64(2))
+	})
+}

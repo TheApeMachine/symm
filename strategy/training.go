@@ -193,16 +193,14 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 	cut, mutated := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
 
 	if mutated {
-		state := seq.State()
-		client := training.client
-		catalog := training.catalog
-		ctx := training.Context()
-
-		go func() {
-			if err := catalog.Persist(ctx, client, symbol, state); err != nil {
-				training.Error(err)
-			}
-		}()
+		// Persist synchronously: WriteAtPrefix only enqueues, and a goroutine
+		// per mutation could let an older snapshot land after a newer one or
+		// after Flush.
+		if err := training.catalog.Persist(
+			training.Context(), training.client, symbol, seq.State(),
+		); err != nil {
+			training.Error(err)
+		}
 	}
 
 	return &cut

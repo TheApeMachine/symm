@@ -1,9 +1,9 @@
+import type { Position } from "#/collections/types";
 import { filterExploreKeys } from "#/components/learning/explore-path";
+import { asBigInt, asFinite } from "#/lib/format";
+import type { ClosedHistoryEntry } from "#/lib/lifecycle";
 
-export type ClosedHistoryEntry = {
-	stamp: { epoch: bigint; tick: bigint; timestamp: bigint };
-	row: Record<string, unknown>;
-};
+export type { ClosedHistoryEntry };
 
 export type S3ClosedCompact = {
 	kind: "closed";
@@ -21,26 +21,8 @@ export type S3ExploreCompact = {
 
 export type S3PrefixCompact = S3ClosedCompact | S3ExploreCompact;
 
-const asFiniteNumber = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const asBigInt = (value: unknown): bigint => {
-	if (typeof value === "bigint") return value;
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return BigInt(Math.trunc(value));
-	}
-	if (typeof value === "string" && value !== "") {
-		try {
-			return BigInt(value);
-		} catch {
-			return 0n;
-		}
-	}
-	return 0n;
-};
-
 /*
-pathsListingFromEnvelope folds hub WriteJSON {"paths":{…}} into the explore
+pathsListingFromEnvelope folds hub WriteJSON {"pathbook":{…}} into the explore
 compact the cognitive tree already ingests. Thresholds are absolute PathBook
 resistance values — missing keys stay missing (no invented 0.5).
 */
@@ -69,7 +51,7 @@ export const pathsListingFromEnvelope = (
 		for (const [key, raw] of Object.entries(
 			body.thresholds as Record<string, unknown>,
 		)) {
-			const value = asFiniteNumber(raw);
+			const value = asFinite(raw);
 			if (value === null) continue;
 			thresholds[key] = value;
 		}
@@ -157,14 +139,14 @@ export const closedListingFromEnvelope = (
 			continue;
 		}
 
-		const row = entry.row as Record<string, unknown>;
+		const row = entry.row as Position;
 		if (typeof row.id !== "string" || row.id === "") continue;
 
-		// Position JSON has no book field — stamp it from the S3 tier prefix.
-		const stamped =
-			typeof row.book === "string" && row.book !== ""
+		// Position JSON may omit tier_key — stamp it from the S3 tier prefix.
+		const stamped: Position =
+			typeof row.tier_key === "string" && row.tier_key !== ""
 				? row
-				: { ...row, book };
+				: { ...row, tier_key: book };
 
 		entries.push({
 			stamp: {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -27,6 +28,7 @@ token fetches cannot collide; tests construct isolated generators per TempDir.
 */
 type AuthNonce struct {
 	path          string
+	lock          *os.File
 	highWater     atomic.Int64
 	isPersisting  atomic.Bool
 	lastPersistNs atomic.Int64
@@ -41,14 +43,36 @@ type AuthNonce struct {
 /*
 NewAuthNonce seeds a generator from pathDir/kraken-auth-nonce. A missing file
 is the valid zero state; other read or parse failures abort construction so
-authentication cannot proceed on corrupt high-water state.
+authentication cannot proceed on corrupt high-water state. An exclusive lock
+keeps a second process from racing the same key's nonce stream.
 */
 func NewAuthNonce(pathDir string) (*AuthNonce, error) {
+	if err := os.MkdirAll(pathDir, 0o700); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.nonce] failed to create nonce directory",
+			err,
+		))
+	}
+
 	path := filepath.Join(pathDir, "kraken-auth-nonce")
-	highWater, err := loadNonce(path)
+	lock, err := lockNonce(pathDir)
 
 	if err != nil {
 		return nil, err
+	}
+
+	highWater, err := loadNonce(path)
+
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
+	}
+
+	// Legacy path (~/.symm/kraken-auth-nonce) may hold a higher water mark
+	// from older builds; take the max so a migrate cannot rewind Kraken.
+	if legacy, legacyErr := loadLegacyNonce(); legacyErr == nil && legacy > highWater {
+		highWater = legacy
 	}
 
 	seed := time.Now().UnixNano()
@@ -57,8 +81,16 @@ func NewAuthNonce(pathDir string) (*AuthNonce, error) {
 		seed = highWater + 1
 	}
 
-	nonce := &AuthNonce{path: path, clock: func() int64 { return time.Now().UnixNano() }}
+	nonce := &AuthNonce{
+		path:  path,
+		lock:  lock,
+		clock: func() int64 { return time.Now().UnixNano() },
+	}
 	nonce.highWater.Store(seed - 1)
+
+	// Persist the seed immediately so a crash before the first Next cannot
+	// restart behind a token fetch that already left the process.
+	nonce.persistValue(seed-1, true)
 
 	return nonce, nil
 }
@@ -76,9 +108,33 @@ func (nonce *AuthNonce) Next() string {
 		next := max(nonce.clock(), last+1)
 
 		if nonce.highWater.CompareAndSwap(last, next) {
-			nonce.persistValue(next, false)
+			nonce.persistValue(next, true)
 
 			return strconv.FormatInt(next, 10)
+		}
+	}
+}
+
+/*
+Bump raises the high-water above floor (and the clock) after Kraken rejects a
+nonce, then persists. Safe under concurrent Next callers.
+*/
+func (nonce *AuthNonce) Bump(floor int64) {
+	if nonce == nil {
+		return
+	}
+
+	for {
+		last := nonce.highWater.Load()
+		next := max(nonce.clock(), max(last, floor)+1)
+
+		if next <= last {
+			return
+		}
+
+		if nonce.highWater.CompareAndSwap(last, next) {
+			nonce.persistValue(next, true)
+			return
 		}
 	}
 }
@@ -99,6 +155,21 @@ func (nonce *AuthNonce) Err() error {
 }
 
 /*
+Close releases the exclusive nonce lock. The process-wide generator keeps the
+lock for the life of the process; tests call Close before constructing a
+successor in the same directory.
+*/
+func (nonce *AuthNonce) Close() error {
+	if nonce == nil || nonce.lock == nil {
+		return nil
+	}
+
+	err := nonce.lock.Close()
+	nonce.lock = nil
+	return err
+}
+
+/*
 processAuthNonce returns the process-wide generator shared by authenticated
 Live transports. Construction errors prevent REST Nonce wiring and auth.
 */
@@ -115,6 +186,21 @@ func ProcessAuthNonce() (*AuthNonce, error) {
 	})
 
 	return processNonce, processNonceErr
+}
+
+/*
+BumpAuthNonce advances the process generator after an Invalid nonce rejection.
+*/
+func BumpAuthNonce() {
+	nonce, err := ProcessAuthNonce()
+
+	if err != nil || nonce == nil {
+		return
+	}
+
+	// Jump a full second of nanoseconds past both clock and high-water so a
+	// foreign signer that raced ahead cannot keep rejecting us on every tick.
+	nonce.Bump(nonce.clock() + int64(time.Second))
 }
 
 /*
@@ -144,6 +230,44 @@ func nonceDir() (string, error) {
 	}
 
 	return filepath.Join(home, strings.TrimPrefix(dataPath, "~/")), nil
+}
+
+func loadLegacyNonce() (int64, error) {
+	home, err := os.UserHomeDir()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return loadNonce(filepath.Join(home, ".symm", "kraken-auth-nonce"))
+}
+
+/*
+lockNonce takes an exclusive non-blocking flock so two symm processes cannot
+share one API key's nonce stream (the usual Invalid nonce cause).
+*/
+func lockNonce(pathDir string) (*os.File, error) {
+	path := filepath.Join(pathDir, "kraken-auth-nonce.lock")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.nonce] failed to open auth nonce lock",
+			err,
+		))
+	}
+
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = file.Close()
+		return nil, errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"[kraken.nonce] another process holds the auth nonce lock — only one live signer may use this key",
+			err,
+		))
+	}
+
+	return file, nil
 }
 
 /*

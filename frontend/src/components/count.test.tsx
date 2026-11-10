@@ -8,11 +8,11 @@ import { Count } from "./count";
 
 const lot = (
 	symbol: string,
-	book: "paper" | "virtual" | "real" = "paper",
+	tier_key: "paper" | "virtual" | "real" = "paper",
 ): Position => ({
 	id: symbol,
 	symbol,
-	book,
+	tier_key,
 	entry_path: "R01",
 	exit_path: "",
 	opened_at: "2026-10-18T08:00:00Z",

@@ -23,7 +23,8 @@ import (
 const tradeQueueFrames = 256
 
 /*
-Desk fans work across the virtual, paper, and real tiers.
+Desk fans work across the armed tiers. Live-only (market.model real) builds
+the real book alone; paper mode keeps virtual + paper + disarmed real.
 */
 type Desk struct {
 	*runtime.System
@@ -53,6 +54,47 @@ func NewDesk(
 	}
 
 	host := venue.NewKraken(quote)
+	tiers := make(map[TierType]*Tier)
+
+	if system.Cfg.Market.Model == "real" {
+		tiers[TierTypeReal] = NewTier(
+			ctx,
+			TierTypeReal,
+			transports["public"],
+			transports["private"],
+			price,
+			venue.NewKraken(quote),
+			client,
+		)
+	} else {
+		tiers[TierTypeVirtual] = NewTier(
+			ctx,
+			TierTypeVirtual,
+			transports["public"],
+			transports["virtual"],
+			price,
+			venue.NewKraken(quote),
+			client,
+		)
+		tiers[TierTypePaper] = NewTier(
+			ctx,
+			TierTypePaper,
+			transports["public"],
+			transports["paper"],
+			price,
+			venue.NewKraken(quote),
+			client,
+		)
+		tiers[TierTypeReal] = NewTier(
+			ctx,
+			TierTypeReal,
+			transports["public"],
+			transports["private"],
+			price,
+			venue.NewKraken(quote),
+			client,
+		)
+	}
 
 	desk := &Desk{
 		System:   runtime.NewSystem(ctx, "desk"),
@@ -61,35 +103,7 @@ func NewDesk(
 		venue:    host,
 		level3Ch: make(chan *market.Level3, system.Cfg.Market.Level3.RingCapacity),
 		tradeCh:  make(chan *market.Trade, tradeQueueFrames),
-		tiers: map[TierType]*Tier{
-			TierTypeVirtual: NewTier(
-				ctx,
-				TierTypeVirtual,
-				transports["public"],
-				transports["virtual"],
-				price,
-				venue.NewKraken(quote),
-				client,
-			),
-			TierTypePaper: NewTier(
-				ctx,
-				TierTypePaper,
-				transports["public"],
-				transports["paper"],
-				price,
-				venue.NewKraken(quote),
-				client,
-			),
-			TierTypeReal: NewTier(
-				ctx,
-				TierTypeReal,
-				transports["public"],
-				transports["private"],
-				price,
-				venue.NewKraken(quote),
-				client,
-			),
-		},
+		tiers:    tiers,
 	}
 
 	go desk.pumpLevel3()
@@ -231,6 +245,10 @@ Run starts per-tier private ingress and the shared public reader.
 */
 func (desk *Desk) Run() {
 	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
 		go tier.Run()
 	}
 
@@ -289,11 +307,24 @@ func (desk *Desk) Hello() {
 		balances[tier.Type.String()] = tier.wallet.Reading()
 	}
 
-	ui.UI.WriteJSON(map[string]any{
-		"positions_mode": "snapshot",
-		"positions":      positions,
-		"balances":       balances,
-	})
+	payload := map[string]any{
+		"positions": positions,
+		"balances":  balances,
+	}
+
+	// Live-only desk: tell the strip the real book is armed so cash renders.
+	if system.Cfg.Market.Model == "real" {
+		payload["confidence"] = map[string]any{
+			"real_ceiling": true,
+			"real": map[string]any{
+				"active": true,
+				"armed":  true,
+				"halted": false,
+			},
+		}
+	}
+
+	ui.UI.WriteJSON(payload)
 }
 
 /*
@@ -402,6 +433,10 @@ func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	update := market.NewUpdate(symbol, price)
 
 	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
 		tier.Update(update)
 	}
 }
@@ -412,6 +447,10 @@ func (desk *Desk) Apply(executions *market.Execution) {
 	}
 
 	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
 		tier.apply(executions)
 	}
 }
@@ -436,11 +475,25 @@ func (desk *Desk) Enter(
 func (desk *Desk) Exit(
 	tier TierType, position *Position,
 ) error {
-	return desk.tiers[tier].Exit(position)
+	t := desk.tiers[tier]
+
+	if t == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"[desk.Exit] unknown tier",
+			nil,
+		)
+	}
+
+	return t.Exit(position)
 }
 
 func (desk *Desk) Has(symbol string) bool {
 	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
 		if tier.positions.Has(symbol) {
 			return true
 		}

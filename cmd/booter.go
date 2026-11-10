@@ -59,6 +59,7 @@ type Booter struct {
 	persist    *TickPersist
 	store      *store.Client
 	replies    sync.Map
+	credErr    error
 }
 
 func NewBooter(ctx context.Context, name string) *Booter {
@@ -69,24 +70,28 @@ func NewBooter(ctx context.Context, name string) *Booter {
 	// Paper signs with the collector key. Live orders use the main key so
 	// they do not share a nonce stream with a collector process.
 	role := kraken.RoleCollector
+	live := system.Cfg.Market.Model == "real"
 
-	if viper.GetString("market.model") == "real" {
+	if live {
 		role = kraken.RoleMain
 	}
 
+	var credErr error
+
 	if err := kraken.UseCredentials(role); err != nil {
-		errnie.Error(errnie.Err(
+		credErr = errnie.Error(errnie.Err(
 			errnie.Validation, "[booter] kraken credentials unavailable", err,
 		))
+
+		// Live must not boot without RoleMain keys. Paper still logs and
+		// continues — virtual/paper books do not require the private signer.
+		if !live {
+			errnie.Error(credErr)
+			credErr = nil
+		}
 	}
 
 	network.SetPrivateSigner(kraken.SignPrivate)
-
-	// Pyroscope requests mutex/block profile types, but the Go runtime keeps
-	// those samplers off until these rates are set — otherwise Grafana shows
-	// empty lock views for the app.
-	sysruntime.SetMutexProfileFraction(5)
-	sysruntime.SetBlockProfileRate(10_000)
 
 	appName := "symm." + name + ".theapemachine.app"
 
@@ -115,6 +120,10 @@ func NewBooter(ctx context.Context, name string) *Booter {
 			err,
 		))
 	} else {
+		// Enable mutex/block samplers only after the agent is up, at coarse
+		// rates so profiling does not dominate tick latency.
+		sysruntime.SetMutexProfileFraction(100)
+		sysruntime.SetBlockProfileRate(1_000_000)
 		errnie.Info("[booter] pyroscope profiling " + appName)
 	}
 
@@ -125,12 +134,17 @@ func NewBooter(ctx context.Context, name string) *Booter {
 	}
 
 	return &Booter{
-		System: nmruntime.NewSystem(ctx, name, nil),
-		store:  client,
+		System:  nmruntime.NewSystem(ctx, name, nil),
+		store:   client,
+		credErr: credErr,
 	}
 }
 
 func (booter *Booter) Run() error {
+	if booter.credErr != nil {
+		return booter.credErr
+	}
+
 	errnie.Info(fmt.Sprintf(
 		"[booter] symm boot started with %d CPUs", sysruntime.NumCPU(),
 	))
@@ -230,16 +244,34 @@ func (booter *Booter) shutdown() error {
 func (booter *Booter) closeTransports() error {
 	var errs error
 
-	for _, transport := range []any{
-		booter.public, booter.private, booter.paper, booter.virtual,
-	} {
-		if closer, ok := transport.(interface{ Close() error }); ok {
-			if err := closer.Close(); err != nil {
-				errs = errors.Join(errs, errnie.Error(errnie.Err(
-					errnie.IO, "[booter] transport close failed", err,
-				)))
-			}
+	closeOne := func(err error) {
+		if err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] transport close failed", err,
+			)))
 		}
+	}
+
+	if booter.public != nil {
+		if c, ok := booter.public.(interface{ Close() error }); ok {
+			closeOne(c.Close())
+		}
+	}
+
+	if booter.private != nil {
+		if c, ok := booter.private.(interface{ Close() error }); ok {
+			closeOne(c.Close())
+		}
+	}
+
+	if booter.paper != nil {
+		if c, ok := booter.paper.(interface{ Close() error }); ok {
+			closeOne(c.Close())
+		}
+	}
+
+	if booter.virtual != nil {
+		closeOne(booter.virtual.Close())
 	}
 
 	return errs
@@ -248,8 +280,13 @@ func (booter *Booter) closeTransports() error {
 func (booter *Booter) initTransports() error {
 	ctx := booter.Context()
 
-	booter.virtual = network.NewVirtual(ctx)
-	booter.paper = kraken.NewPaper(ctx)
+	// Live-only: no virtual wallet or paper CLI — they race the main key's
+	// nonce stream and open shadow books we do not want armed.
+	if viper.GetString("market.model") != "real" {
+		booter.virtual = network.NewVirtual(ctx)
+		booter.paper = kraken.NewPaper(ctx)
+	}
+
 	booter.public = network.NewWebsocketClient(ctx)
 	booter.private = network.NewWebsocketClient(ctx)
 
@@ -287,19 +324,24 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
-	broker.BindVirtual(booter.virtual, booter.price)
+	if booter.virtual != nil {
+		broker.BindVirtual(booter.virtual, booter.price)
+	}
 
-	booter.desk = broker.NewDesk(
-		ctx,
-		map[string]network.Client{
-			"virtual": booter.virtual,
-			"paper":   booter.paper,
-			"public":  booter.public,
-			"private": booter.private,
-		},
-		booter.price,
-		booter.store,
-	)
+	transports := map[string]network.Client{
+		"public":  booter.public,
+		"private": booter.private,
+	}
+
+	if booter.virtual != nil {
+		transports["virtual"] = booter.virtual
+	}
+
+	if booter.paper != nil {
+		transports["paper"] = booter.paper
+	}
+
+	booter.desk = broker.NewDesk(ctx, transports, booter.price, booter.store)
 
 	ui.UI.RegisterCallback(func() {
 		booter.desk.Hello()
@@ -341,9 +383,9 @@ func (booter *Booter) initPipeline() error {
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
 			}},
-			{Group: "persist", Nodes: []nmruntime.Node{
-				booter.persist,
-			}},
+			// {Group: "persist", Nodes: []nmruntime.Node{
+			// 	booter.persist,
+			// }},
 		},
 	)
 

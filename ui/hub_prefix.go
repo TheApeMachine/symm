@@ -58,10 +58,7 @@ func (entry *closedEntry) read(raw []byte) bool {
 	row, err := data.AttributeOk[map[string]any](raw, "position")
 
 	if err != nil || len(row) == 0 {
-		// Legacy bare Position root (pre-lotBlob envelope).
-		if err := sonic.Unmarshal(raw, &row); err != nil || len(row) == 0 {
-			return false
-		}
+		return false
 	}
 
 	id, _ := row["id"].(string)
@@ -82,10 +79,11 @@ func (entry *closedEntry) read(raw []byte) bool {
 ListPrefix lists object keys under prefix and writes one or more JSON
 envelopes that stay under the websocket max message size.
 
-model/paths → {"paths":{scope,epoch,thresholds}}
+model/paths → {"pathbook":{scope,epoch,thresholds}}
 paper|real|virtual/closed → {"closed":{scope,entries}}
 
 Path leaves are PathBook JSON. Closed lots are JSON with a position object.
+Live sequencer Tokens still publish under "paths" — a different key.
 */
 func (hub *Hub) ListPrefix(prefix string) {
 	if hub.store == nil || prefix == "" {
@@ -151,7 +149,7 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 
 	for _, chunk := range chunkThresholds(thresholds, budget) {
 		hub.WriteJSON(map[string]any{
-			"paths": pathsListing{
+			"pathbook": pathsListing{
 				Scope:      "model/paths",
 				Thresholds: chunk,
 			},
@@ -228,15 +226,7 @@ func closedListingScope(prefix string) string {
 }
 
 func listFrameBudget() int {
-	maxBytes := 4 << 20
-
-	if system.Cfg != nil && system.Cfg.UI != nil && system.Cfg.UI.WebSocket != nil {
-		if configured := system.Cfg.UI.WebSocket.MaxMessageBytes; configured > 0 {
-			maxBytes = configured
-		}
-	}
-
-	return maxBytes * 9 / 10
+	return system.Cfg.UI.WebSocket.MaxMessageBytes * 9 / 10
 }
 
 /*

@@ -571,6 +571,14 @@ export const RadixTreeViz: React.FC<RadixTreeVizProps> = ({
 		};
 	}, [treeData, collapsedIds, projection]);
 
+	// Clear the fit marker when the tree disappears so a later null→data
+	// transition can refit even if the projection did not change.
+	useEffect(() => {
+		if (!treeData) {
+			fittedProjectionRef.current = null;
+		}
+	}, [treeData]);
+
 	// Fit the tree into the viewport on first layout and whenever projection changes.
 	useEffect(() => {
 		if (!svgRef.current || !zoomBehavior.current) return;

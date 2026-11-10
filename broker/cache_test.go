@@ -30,7 +30,6 @@ func TestRestore(t *testing.T) {
 		So(got.Symbol, ShouldEqual, "ETH/USD")
 		So(got.ID, ShouldEqual, "lot-1")
 		So(got.TierKey, ShouldEqual, "virtual")
-		So(got.Book, ShouldEqual, "virtual")
 	})
 }
 
@@ -41,7 +40,7 @@ func TestRestoreNilPnLPct(t *testing.T) {
 			tierKey: "virtual",
 		}
 
-		raw := []byte(`{"id":"lot-3","symbol":"ADA/USD","book":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"1"}}`)
+		raw := []byte(`{"id":"lot-3","symbol":"ADA/USD","tier_key":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"1"}}`)
 
 		got := cache.Restore(raw)
 
@@ -57,7 +56,7 @@ func TestRestoreKeepsClosedAt(t *testing.T) {
 			tierKey: "virtual",
 		}
 
-		raw := []byte(`{"id":"lot-4","symbol":"XRP/USD","book":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","closed_at":"2026-11-03T16:00:00Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"11.73"}}`)
+		raw := []byte(`{"id":"lot-4","symbol":"XRP/USD","tier_key":"virtual","opened_at":"2026-11-03T15:07:12.627877Z","closed_at":"2026-11-03T16:00:00Z","entry_order":{"cl_ord_id":"x","ordertype":"market","type":"buy","volume":"11.73"}}`)
 
 		got := cache.Restore(raw)
 
@@ -77,7 +76,7 @@ func TestRestoreKeepsFlatLotClosed(t *testing.T) {
 		raw := []byte(`{
 			"id":"lot-flat",
 			"symbol":"INIT/USD",
-			"book":"virtual",
+			"tier_key":"virtual",
 			"opened_at":"2026-11-05T09:56:31Z",
 			"closed_at":"2026-11-05T13:19:50Z",
 			"fills":[

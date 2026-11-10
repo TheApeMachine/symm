@@ -12,7 +12,9 @@ func Focus(channel, symbol string, reading any) {
 		return
 	}
 
-	if UI == nil || !UI.Active() {
+	// Skip the nested map when nobody is attached; WriteJSON would
+	// drop it after the alloc.
+	if !UI.Active() {
 		return
 	}
 

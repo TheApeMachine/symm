@@ -64,6 +64,8 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		return nil
 	}
 
+	// First we need to handle all pending exits, which are positions
+	// that have exited via the Stoploss mechanism.
 	for _, tier := range []broker.TierType{
 		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 	} {
@@ -76,6 +78,13 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var wg sync.WaitGroup
 
 	decide := func(decision *runtime.Decision) {
+		// Live desk: stamp every outcome real. Untiered skips otherwise
+		// land on the virtual tab and the REAL rail stays empty.
+		if decision != nil && decision.Tier == "" &&
+			system.Cfg.Market.Model == "real" {
+			decision.Tier = broker.TierTypeReal.String()
+		}
+
 		mu.Lock()
 		envelope.Decide(decision)
 		mu.Unlock()
@@ -86,11 +95,11 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			continue
 		}
 
-		symbol, cut := symbol, cut
 		wg.Go(func() {
 			path := cut.String()
 			var open []*broker.Position
 
+			// Check if we currently have any open positions for this symbol.
 			for _, tt := range []broker.TierType{
 				broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 			} {
@@ -101,6 +110,11 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			learn := system.Cfg.Learning
 			bypass := learn.ResonanceBypass
+
+			// Live orders keep the entry gates; lab bypass is paper/virtual only.
+			if system.Cfg.Market.Model == "real" {
+				bypass = false
+			}
 
 			// Oracle gate after pending exits: block flat symbols that are not
 			// tradable. Open lots still run hold/exit.
@@ -182,10 +196,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			action, resistance, disagreed := model.tree.Load().Predict(*cut)
 			minEnter := learn.MinEnterZ
 
-			bullish := bypass || (enterNet >= minEnter &&
-				holdNet >= minEnter &&
-				exitNet <= holdNet &&
-				risk < minEnter)
+			bullish := bypass || (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
 
 			if disagreed {
 				decide(&runtime.Decision{
@@ -264,9 +275,11 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 /*
-oracleAllows is true when at least one approve is lit and no veto is selected.
-Grid.Observe emits exactly one side of each oracle pair; a selected veto fails
-closed even at zero brightness (tied dormant metrics).
+oracleAllows is true when at least one approve is lit and no lit veto is
+selected. Grid.Observe emits exactly one side of each oracle pair; desk bool
+vetoes are hard brightness 1. Idle metric ties (board / contagion / capacity
+at brightness 0 while kernels are cold) stay out of the way — only a lit
+veto fails closed.
 */
 func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 	approved := false
@@ -278,7 +291,9 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 
 		switch store.Catalog.ByKey(region.Key).Side {
 		case "veto":
-			return false
+			if region.Brightness > 0 {
+				return false
+			}
 		case "approve":
 			if region.Brightness > 0 {
 				approved = true
@@ -393,6 +408,7 @@ func (model *Model) applyAction(
 /*
 enterTiers routes onto virtual / paper / real.
 
+  - real model: one live book; same gate path virtual used for samples
   - virtual: no enter path yet, or resistance above the paper floor, or bypass
   - paper:   enter path found and resistance ≤ paper_eligible_resistance
   - real:    paper rules plus Tier.Unlocked (paper win-rate / edge on real)
@@ -403,6 +419,11 @@ func (model *Model) enterTiers(
 	resistance float64,
 	pathFound, bypass bool,
 ) {
+	if system.Cfg.Market.Model == "real" {
+		model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
+		return
+	}
+
 	floor := system.Cfg.Learning.PaperEligibleResistance
 
 	if bypass || !pathFound || resistance > floor {
@@ -563,7 +584,7 @@ func (model *Model) Exit(position *broker.Position, path string) {
 			return
 		}
 
-		model.desk.Exit(model.bookTier(position), position)
+		model.desk.Exit(model.tierOf(position), position)
 		return
 	}
 
@@ -589,8 +610,8 @@ func (model *Model) Exit(position *broker.Position, path string) {
 	model.dropPending(position)
 }
 
-func (model *Model) bookTier(position *broker.Position) broker.TierType {
-	switch position.Book {
+func (model *Model) tierOf(position *broker.Position) broker.TierType {
+	switch position.TierKey {
 	case broker.TierTypePaper.String():
 		return broker.TierTypePaper
 	case broker.TierTypeReal.String():
@@ -661,5 +682,5 @@ func (model *Model) dropPending(position *broker.Position) {
 		return
 	}
 
-	model.desk.ClearPending(model.bookTier(position), position.Symbol)
+	model.desk.ClearPending(model.tierOf(position), position.Symbol)
 }

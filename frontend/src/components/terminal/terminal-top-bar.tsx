@@ -38,7 +38,7 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const ticks = useSelector(atoms.tickCount, (state) => state);
+	const ticks = useSelector(atoms.tick, (state) => state?.n ?? 0);
 
 	return (
 		<Flex.Column className="items-end gap-px">

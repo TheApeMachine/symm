@@ -71,6 +71,10 @@ func (manager *BookManager) Expect(symbols []string) {
 			continue
 		}
 
+		if _, exists := manager.lanes[symbol]; exists {
+			continue
+		}
+
 		manager.lanes[symbol] = &bookLane{pending: true}
 		pending++
 	}

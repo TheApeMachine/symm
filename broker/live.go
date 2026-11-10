@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -19,6 +20,7 @@ type Live struct {
 	ctx    context.Context
 	token  func(context.Context) (string, error)
 	socket *network.WebsocketClient
+	armed  atomic.Bool
 }
 
 func NewLive(ctx context.Context, private network.Client) *Live {
@@ -39,16 +41,26 @@ func NewLive(ctx context.Context, private network.Client) *Live {
 
 /*
 Arm subscribes balances and executions, and resubscribes after a redial.
+Enter stays blocked until the first successful Subscribe (and again if a
+reconnect Subscribe fails).
 */
 func (live *Live) Arm() error {
 	live.socket.OnReconnect(func() error {
-		return live.Subscribe()
+		if err := live.Subscribe(); err != nil {
+			live.armed.Store(false)
+			return err
+		}
+
+		live.armed.Store(true)
+		return nil
 	})
 
 	if err := live.Subscribe(); err != nil {
+		live.armed.Store(false)
 		return live.socket.SoftDown(err)
 	}
 
+	live.armed.Store(true)
 	return nil
 }
 

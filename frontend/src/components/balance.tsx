@@ -56,9 +56,11 @@ const walletFor = (
 		case "virtual":
 			return wallets.virtual ?? null;
 		case "real":
-			// REAL OFF / no live transport → never fall back to paper's bankroll.
+			// Prefer a live wallet frame when the hub has pushed one. Otherwise
+			// require real_ceiling so a paper desk never paints paper cash here.
+			if (wallets.real) return wallets.real;
 			if (!realLive) return null;
-			return wallets.real ?? null;
+			return null;
 		default:
 			return wallets.paper ?? legacy;
 	}

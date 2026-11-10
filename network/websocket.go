@@ -41,6 +41,11 @@ type WebsocketClient struct {
 	// dialMu serializes ensureReady redials so concurrent Read/Write cannot
 	// open duplicate sockets or race client.conn / backoff.
 	dialMu sync.Mutex
+	// hooking is true while runHook runs. Held only under dialMu; the hook
+	// itself runs unlocked so Subscribe/Write can take writeMu and SoftDown
+	// can drop the socket. Nested ensureReady during a hook must not re-lock
+	// dialMu (deadlock) or nest another dial+hook.
+	hooking bool
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -82,18 +87,30 @@ func (client *WebsocketClient) OnDisconnect(hook func()) {
 
 func (client *WebsocketClient) Open(url string) error {
 	client.url = url
+
+	client.dialMu.Lock()
 	err := client.dialLocked()
 	hook := client.onReconnect
 
 	if err != nil {
+		client.dialMu.Unlock()
 		return err
 	}
 
-	return client.runHook(hook)
+	client.hooking = true
+	client.dialMu.Unlock()
+
+	hookErr := client.runHook(hook)
+
+	client.dialMu.Lock()
+	client.hooking = false
+	client.dialMu.Unlock()
+
+	return hookErr
 }
 
 /*
-runHook runs the reconnect hook outside the client lock. A failure drops the
+runHook runs the reconnect hook outside dialMu. A failure drops the
 connection and grows the backoff so the next Read or Write redials and retries
 the hook (see OnReconnect).
 */
@@ -324,13 +341,23 @@ func (client *WebsocketClient) ensureReady() error {
 	}
 
 	client.dialMu.Lock()
-	defer client.dialMu.Unlock()
 
 	if client.Status() == runtime.READY && client.conn != nil {
+		client.dialMu.Unlock()
 		return nil
 	}
 
+	if client.hooking {
+		client.dialMu.Unlock()
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[network.websocket] reconnect resubscribe in progress",
+			nil,
+		))
+	}
+
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
+	client.dialMu.Unlock()
 
 	select {
 	case <-client.Context().Done():
@@ -338,8 +365,20 @@ func (client *WebsocketClient) ensureReady() error {
 	case <-time.After(wait):
 	}
 
+	client.dialMu.Lock()
+
 	if client.Status() == runtime.READY && client.conn != nil {
+		client.dialMu.Unlock()
 		return nil
+	}
+
+	if client.hooking {
+		client.dialMu.Unlock()
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[network.websocket] reconnect resubscribe in progress",
+			nil,
+		))
 	}
 
 	client.warnOnce("reconnecting after disconnect")
@@ -353,10 +392,21 @@ func (client *WebsocketClient) ensureReady() error {
 				client.backoff = 30 * time.Second
 			}
 		}
+
+		client.dialMu.Unlock()
 		return err
 	}
 
-	return client.runHook(hook)
+	client.hooking = true
+	client.dialMu.Unlock()
+
+	hookErr := client.runHook(hook)
+
+	client.dialMu.Lock()
+	client.hooking = false
+	client.dialMu.Unlock()
+
+	return hookErr
 }
 
 /*

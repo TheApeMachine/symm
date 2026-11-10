@@ -3,14 +3,13 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { atoms, signals } from "#/collections/app";
 import type { Resonance } from "#/collections/envelope";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 import { Value } from "#/types/value";
 import { Flex } from "../ui";
 
-export const vectorSlotTransform = (slot: number, slotCount: number): string =>
+const vectorSlotTransform = (slot: number, slotCount: number): string =>
 	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
 
-export const signedVectorTransform = "scaleY(calc(var(--value, 0) * -1))";
+const signedVectorTransform = "scaleY(calc(var(--value, 0) * -1))";
 
 interface VectorBarStyle extends CSSProperties {
 	"--value": number;
@@ -98,7 +97,9 @@ const layersHaveSignal = (layers: LayerData[] | undefined): boolean =>
 				layer.errorNorm > 0),
 	) ?? false;
 
-export const resonanceHasContent = (data: ResonanceData | undefined): boolean => {
+export const resonanceHasContent = (
+	data: ResonanceData | undefined,
+): boolean => {
 	if (!data) return false;
 
 	if (layersHaveSignal(data.layers)) return true;
@@ -132,8 +133,10 @@ const keepScalar = (
 	return next;
 };
 
-const keepOptional = <T,>(next: T | undefined, prev: T | undefined): T | undefined =>
-	next === undefined ? prev : next;
+const keepOptional = <T,>(
+	next: T | undefined,
+	prev: T | undefined,
+): T | undefined => (next === undefined ? prev : next);
 
 export const mergeResonanceData = (
 	prior: ResonanceData,
@@ -156,7 +159,10 @@ export const mergeResonanceData = (
 			prior.taskRelativePrecision,
 		),
 		taskSkill: keepScalar(patch.taskSkill, prior.taskSkill),
-		supportedHorizon: keepOptional(patch.supportedHorizon, prior.supportedHorizon),
+		supportedHorizon: keepOptional(
+			patch.supportedHorizon,
+			prior.supportedHorizon,
+		),
 		resolvedSteps: keepOptional(patch.resolvedSteps, prior.resolvedSteps),
 		surprise:
 			mode === "workspace"
@@ -250,7 +256,10 @@ const parseResonanceFromRow = (
 	const layersRaw = row.layers;
 	const layers: LayerData[] = Array.isArray(layersRaw)
 		? layersRaw
-				.filter((layer): layer is LayerData => layer != null && typeof layer === "object")
+				.filter(
+					(layer): layer is LayerData =>
+						layer != null && typeof layer === "object",
+				)
 				.map((layer) => ({
 					state: numberArray(layer.state),
 					prediction: numberArray(layer.prediction),
@@ -271,8 +280,7 @@ const parseResonanceFromRow = (
 			typeof row.resolvedSteps === "number" ? row.resolvedSteps : undefined,
 		surprise: typeof row.surprise === "number" ? row.surprise : undefined,
 		energy: typeof row.energy === "number" ? row.energy : undefined,
-		confidence:
-			typeof row.confidence === "number" ? row.confidence : undefined,
+		confidence: typeof row.confidence === "number" ? row.confidence : undefined,
 		calibrated:
 			typeof row.calibrated === "boolean"
 				? row.calibrated
@@ -281,7 +289,9 @@ const parseResonanceFromRow = (
 					: undefined,
 		forwardCurve: numberArray(row.forwardCurve),
 		dynamics:
-			row.dynamics && typeof row.dynamics === "object" && !Array.isArray(row.dynamics)
+			row.dynamics &&
+			typeof row.dynamics === "object" &&
+			!Array.isArray(row.dynamics)
 				? (row.dynamics as Record<string, number>)
 				: {},
 		latent: numberArray(row.latent ?? row.embedding),
@@ -308,7 +318,8 @@ const applyResonanceSuffix = (
 		}
 		if (suffix === "surprise") data.surprise = first;
 		if (suffix === "energy") data.energy = first;
-		if (suffix === "supported_horizon") data.supportedHorizon = Math.trunc(first);
+		if (suffix === "supported_horizon")
+			data.supportedHorizon = Math.trunc(first);
 		if (suffix === "resolved_steps") data.resolvedSteps = Math.trunc(first);
 		if (suffix === "confidence") data.confidence = first;
 		if (suffix === "calibrated") data.calibrated = first >= 1;
@@ -350,7 +361,8 @@ const applyResonanceSuffix = (
 	if (typeof first !== "string") return;
 	if (suffix === "supported_horizon")
 		data.supportedHorizon = Number.parseInt(first, 10);
-	if (suffix === "resolved_steps") data.resolvedSteps = Number.parseInt(first, 10);
+	if (suffix === "resolved_steps")
+		data.resolvedSteps = Number.parseInt(first, 10);
 	if (suffix === "confidence") data.confidence = Number.parseFloat(first);
 	if (suffix === "calibrated") data.calibrated = first === "true";
 };
@@ -399,65 +411,10 @@ export const parseResonanceData = (
 	return resonanceHasContent(finalized) ? finalized : undefined;
 };
 
-/*
-resonanceSeries folds the tick's resonance layers for one symbol into a
-synthetic reading. The store no longer keeps the stream: the workspace frame
-carries every kernel's layers as one batch per tick, and the chart keeps its
-own bounded history of the focus symbol off it.
-*/
-export const RESONANCE_SERIES_LIMIT = 240;
-
-/*
-resonanceLayers yields the tick's resonance layers for one symbol as
-[metric, payload]: the Go Append addressed them
-resonance/<symbol>/<metric> below the frame prefix.
-*/
-/*
-parseResonanceFromWorkspace folds resonance/<scope>/… layers on the workspace
-aggregate tick into the same ResonanceData shape as a dedicated reading frame.
-The backend attaches those scalars with an escaped scope (BTC-USD); the x-ray
-panels keep the dashboard focus symbol (BTC/USD).
-*/
-export const parseResonanceFromWorkspace = (
-	symbol: string,
-	frame: Value | undefined,
-): ResonanceData | undefined => {
-	if (!frame || !symbol) return undefined;
-
-	const data = emptyResonanceData();
-	for (const [suffix, payload] of resonanceLayers(frame, symbol)) {
-		applyResonanceSuffix(data, suffix, payload);
-	}
-
-	const finalized = finalizeResonanceData(data);
-	return resonanceHasContent(finalized) ? finalized : undefined;
-};
-
-export function* resonanceLayers(
-	frame: Value,
-	symbol: string,
-): Generator<[string, unknown]> {
-	const address = `resonance/${symbol.replace(/\//g, "-")}/`;
-
-	for (let i = 0; i < frame.index.length; i++) {
-		const index = frame.index[i];
-		if (!index.startsWith(frame.prefix)) continue;
-
-		const at = index.indexOf(`/${address}`, frame.prefix.length - 1);
-		if (at < 0) continue;
-
-		const payload = tryDecodeJsonBytes(frame.layers[i]);
-		if (payload === undefined) continue;
-
-		yield [index.slice(at + address.length + 1), payload];
-	}
-}
-
 const resonanceAt = (
 	state: Record<string, Resonance>,
 	symbol: string,
-): Resonance | undefined =>
-	state[symbol] ?? state[symbol.replace(/\//g, "-")];
+): Resonance | undefined => state[symbol] ?? state[symbol.replace(/\//g, "-")];
 
 const useArtifact = (): ResonanceData | undefined => {
 	const focus = useSelector(atoms.focus);
@@ -475,9 +432,7 @@ const useArtifact = (): ResonanceData | undefined => {
 			reading as unknown as Record<string, unknown>,
 		);
 		if (fromStore && resonanceHasContent(fromStore)) {
-			next = next
-				? mergeResonanceData(next, fromStore, "full")
-				: fromStore;
+			next = next ? mergeResonanceData(next, fromStore, "full") : fromStore;
 		}
 
 		if (next && !resonanceSnapshotEqual(held.current, next)) {

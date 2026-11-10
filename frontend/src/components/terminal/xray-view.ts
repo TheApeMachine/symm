@@ -18,6 +18,7 @@ import {
 } from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
+import { asFinite } from "#/lib/format";
 import { type Value as ResonanceFrame, Value } from "#/types/value";
 
 export type HawkesMetrics = {
@@ -46,8 +47,6 @@ export type XrayLayer = {
 	error_norm: number | null;
 };
 
-const finite = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
@@ -134,7 +133,7 @@ export const xrayLayersFromResonance = (
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
 		const prediction = numberArray(layer.prediction);
-		const reported = finite(layer.errorNorm ?? layer.error_norm);
+		const reported = asFinite(layer.errorNorm ?? layer.error_norm);
 
 		return {
 			index,
@@ -352,7 +351,7 @@ export const manifoldReading = (
 	return frame;
 };
 
-export const finiteMetric = finite;
+export const finiteMetric = asFinite;
 export const stringMetric = stringValue;
 
 /*

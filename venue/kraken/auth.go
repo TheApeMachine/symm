@@ -3,7 +3,10 @@ package kraken
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -163,9 +166,9 @@ func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
 		}
 	}
 
-	nonce, ok := payload["nonce"].(string)
+	nonce := nonceFromPayload(payload)
 
-	if !ok || nonce == "" {
+	if nonce == "" || nonce == "0" {
 		nonce = next()
 		payload["nonce"] = nonce
 	}
@@ -181,6 +184,37 @@ func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
 	}
 
 	return signed, nonce, nil
+}
+
+/*
+nonceFromPayload reads a body nonce as a string. Numeric placeholders (0)
+from Request() maps must not stick — Kraken would reject them as stale.
+*/
+func nonceFromPayload(payload map[string]any) string {
+	raw, ok := payload["nonce"]
+
+	if !ok || raw == nil {
+		return ""
+	}
+
+	switch value := raw.(type) {
+	case string:
+		return value
+	case float64:
+		if value == 0 {
+			return "0"
+		}
+
+		return strconv.FormatInt(int64(value), 10)
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case json.Number:
+		return value.String()
+	default:
+		return fmt.Sprint(value)
+	}
 }
 
 /*

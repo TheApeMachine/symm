@@ -204,10 +204,6 @@ func (cache *Cache) Restore(raw []byte) *Position {
 		position.TierKey = cache.tierKey
 	}
 
-	if position.Book == "" {
-		position.Book = position.TierKey
-	}
-
 	// Legacy lots predate qty/entry/sold on the wire — replay fills through
 	// Apply so Restore never folds outside the fill path.
 	if position.Qty == nil && len(position.Fills) > 0 {

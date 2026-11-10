@@ -1,25 +1,24 @@
+import type { Position } from "#/collections/types";
 import {
 	decimal,
-	positionReadout,
-	settledOutcome,
+	holdNs,
+	isClosed,
+	pnlFrac,
+	pnlPct,
 } from "#/components/book-readout";
 import {
 	policyEpochFromRow,
 	tapeMarksFromDeskRow,
 } from "#/lib/desk-tape-marks";
-import type { Lifecycle, LifeOutcome, LiveStopState } from "#/lib/lifecycle";
-import { normalizeStoploss } from "#/lib/stoploss";
+import type { Lifecycle, LifeOutcome } from "#/lib/lifecycle";
 
-const bookFromRow = (row: Record<string, unknown>): string => {
-	if (typeof row.book === "string" && row.book !== "") {
-		return row.book;
-	}
+const tierFrom = (pos: Position): string =>
+	typeof pos.tier_key === "string" && pos.tier_key !== ""
+		? pos.tier_key
+		: "paper";
 
-	return "paper";
-};
-
-const stopFieldsFromRow = (
-	row: Record<string, unknown>,
+const stopFields = (
+	pos: Position,
 ): Pick<
 	Lifecycle,
 	| "stop_state"
@@ -31,150 +30,123 @@ const stopFieldsFromRow = (
 	| "exit_trigger"
 	| "official_exit_pct"
 > => {
-	const stop = normalizeStoploss(row.stoploss) as LiveStopState | null;
+	const stop = pos.stoploss ?? null;
 	const exitTrigger =
-		typeof row.exit_trigger === "string" && row.exit_trigger !== ""
-			? row.exit_trigger
+		typeof pos.exit_trigger === "string" && pos.exit_trigger !== ""
+			? pos.exit_trigger
 			: null;
 
 	return {
 		stop_state: stop,
 		policy: null,
-		peak_pct: stop?.peak_pnl ?? null,
-		realized_pct: decimal(row.pnl_pct),
+		peak_pct: stop?.PeakPnLPct ?? null,
+		realized_pct: pnlPct(pos),
 		bars_held: null,
 		pnl_trace: null,
 		exit_trigger: exitTrigger,
-		official_exit_pct: decimal(row.pnl_pct),
+		official_exit_pct: pnlPct(pos),
 	};
 };
 
-export const lifecycleFromDeskOpen = (
-	row: Record<string, unknown>,
-): Lifecycle | null => {
-	if (!row.id) return null;
+export const lifecycleFromDeskOpen = (pos: Position): Lifecycle | null => {
+	if (!pos.id || !pos.opened_at || isClosed(pos)) return null;
 
-	const readout = positionReadout(row);
-	if (readout.openedAt === null) return null;
-	if (readout.closed) return null;
-
-	const mark = readout.mark;
+	const mark = decimal(pos.mark);
+	const qty = decimal(pos.qty) ?? 0;
+	const entry = decimal(pos.entry) ?? 0;
+	const frac = pnlFrac(pos) ?? 0;
 	const live =
 		mark === null
 			? null
 			: {
 					at: new Date().toISOString(),
 					bid: mark,
-					quantity: readout.qty ?? 0,
-					entry_price: readout.entryPrice ?? 0,
-					unrealized:
-						readout.returnPct !== null &&
-						readout.entryPrice !== null &&
-						readout.qty !== null
-							? readout.entryPrice * readout.qty * readout.returnPct
-							: 0,
-					unrealized_return: readout.returnPct ?? 0,
+					quantity: qty,
+					entry_price: entry,
+					unrealized: entry * qty * frac,
+					unrealized_return: frac,
 				};
 
-	const entryPath =
-		typeof row.entry_path === "string" ? row.entry_path : undefined;
-
 	return {
-		id: row.id as string,
-		symbol: row.symbol as string,
+		id: pos.id,
+		symbol: pos.symbol,
 		status: "holding",
-		opened_at: readout.openedAt,
+		opened_at: pos.opened_at,
 		closed_at: null,
-		book: bookFromRow(row),
+		tier_key: tierFrom(pos),
 		desk: true,
 		path_found: false,
-		path: entryPath,
+		path: pos.entry_path || undefined,
 		mark: live,
 		marks: live ? [live] : [],
-		...stopFieldsFromRow(row),
+		...stopFields(pos),
 		events: [
 			{
-				at: readout.openedAt,
+				at: pos.opened_at,
 				kind: "opened",
-				detail: `desk lot opened${entryPath ? ` · ${entryPath}` : ""}`,
+				detail: `desk lot opened${pos.entry_path ? ` · ${pos.entry_path}` : ""}`,
 			},
 		],
 	};
 };
 
-export const lifecycleFromDeskClosed = (
-	row: Record<string, unknown>,
-): Lifecycle | null => {
-	if (!row.id) return null;
-
-	const readout = positionReadout(row);
-	if (
-		!readout.closed ||
-		readout.openedAt === null ||
-		readout.closedAt === null
-	) {
+export const lifecycleFromDeskClosed = (pos: Position): Lifecycle | null => {
+	if (!pos.id || !pos.opened_at || !isClosed(pos) || !pos.closed_at) {
 		return null;
 	}
 
-	const settle = settledOutcome(row);
-	const pnl = readout.returnPct ?? settle?.pnl ?? null;
-	const pnlPct = readout.returnPctDisplay ?? settle?.pnl_pct ?? null;
-	const money = decimal(row.pnl);
+	const frac = pnlFrac(pos);
+	const pct = pnlPct(pos);
+	const money = decimal(pos.pnl);
+	const triggers =
+		pos.outcome_triggers?.filter((t) => typeof t === "string") ?? [];
+	const held = holdNs(pos) ?? 0;
 
 	const outcome =
-		pnl !== null && pnlPct !== null
+		frac !== null && pct !== null
 			? ({
-					pnl,
-					pnl_pct: pnlPct,
+					pnl: frac,
+					pnl_pct: pct,
 					money,
-					hold_ns:
-						settle?.hold_ns ??
-						(readout.closedAt !== null && readout.openedAt !== null
-							? (Date.parse(readout.closedAt) - Date.parse(readout.openedAt)) *
-								1e6
-							: 0),
+					hold_ns: held,
 					expected_hold_ns: null,
-					triggers: settle?.triggers ?? (["desk settle"] as string[]),
+					triggers: triggers.length > 0 ? triggers : (["desk settle"] as string[]),
 				} satisfies LifeOutcome)
 			: null;
 
-	const tape = tapeMarksFromDeskRow(row);
-	const entryPath =
-		typeof row.entry_path === "string" ? row.entry_path : undefined;
-	const triggers = settle?.triggers ?? [];
-	const openDetail = `desk open · tick ${tape?.b ?? "—"}${entryPath ? ` · ${entryPath}` : ""}`;
+	const tape = tapeMarksFromDeskRow(pos);
 	const exitTick = tape?.c;
 	const exitTickText = exitTick === undefined ? "" : ` · tick ${exitTick}`;
 	const closeDetail =
 		triggers.length > 0
 			? `${triggers.join(", ")}${exitTickText}`
-			: pnlPct === null
+			: pct === null
 				? `closed${exitTickText}`
-				: `return ${pnlPct.toFixed(2)}%${exitTickText}`;
+				: `return ${pct.toFixed(2)}%${exitTickText}`;
 
 	return {
-		id: row.id as string,
-		symbol: row.symbol as string,
+		id: pos.id,
+		symbol: pos.symbol,
 		status: "closed",
-		opened_at: readout.openedAt,
-		closed_at: readout.closedAt,
-		book: bookFromRow(row),
+		opened_at: pos.opened_at,
+		closed_at: pos.closed_at,
+		tier_key: tierFrom(pos),
 		desk: true,
 		path_found: false,
-		policy_epoch: policyEpochFromRow(row),
-		path: entryPath,
+		policy_epoch: policyEpochFromRow(pos),
+		path: pos.entry_path || undefined,
 		marks_a: tape?.a ?? null,
 		marks_b: tape?.b ?? null,
 		marks_c: tape?.c ?? null,
-		...stopFieldsFromRow(row),
+		...stopFields(pos),
 		events: [
 			{
-				at: readout.openedAt,
+				at: pos.opened_at,
 				kind: "opened",
-				detail: openDetail,
+				detail: `desk open · tick ${tape?.b ?? "—"}${pos.entry_path ? ` · ${pos.entry_path}` : ""}`,
 			},
 			{
-				at: readout.closedAt,
+				at: pos.closed_at,
 				kind: "closed",
 				detail: closeDetail,
 			},

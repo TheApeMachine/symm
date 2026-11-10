@@ -3,8 +3,10 @@ package broker
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func TestPeakFrac(t *testing.T) {
@@ -61,5 +63,26 @@ func TestBelowPeak(t *testing.T) {
 
 		system.Cfg.Risk.MaxEntryPeakFrac = 1
 		So(price.BelowPeak("Q/USD"), ShouldBeTrue)
+	})
+}
+
+func TestApplyTickerRows(t *testing.T) {
+	Convey("applyTickerRows stores quote volume and peak range", t, func() {
+		price := &Price{normalizer: spot.NewNormalizer()}
+		price.applyTickerRows(map[string]kraken.TickerRow{
+			"AAA/USD": {
+				Last:   []string{"109", "1"},
+				Volume: []string{"10", "500"},
+				VWAP:   []string{"2", "2"},
+				High:   []string{"110", "110"},
+				Low:    []string{"100", "100"},
+				Open:   "100",
+			},
+		})
+
+		So(price.VolumeUSD("AAA/USD"), ShouldEqual, 1000)
+		frac, ok := price.PeakFrac("AAA/USD")
+		So(ok, ShouldBeTrue)
+		So(frac, ShouldAlmostEqual, 0.9, 1e-9)
 	})
 }

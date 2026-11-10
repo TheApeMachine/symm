@@ -1,7 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { positionReadout } from "#/components/book-readout";
+import type { Position } from "#/collections/types";
+import { decimal, isClosed, pnlFrac } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import { formatValue } from "#/components/ui/dom";
 import { Flex } from "#/components/ui/flex";
@@ -98,30 +99,19 @@ const sellMarkers = (
 
 const readPositions = () => positionRows(signals.positions.state);
 
-const selectPositions = (
-	rows: Record<string, unknown>[],
-): PositionCardData[] => {
+const selectPositions = (rows: Position[]): PositionCardData[] => {
 	const result: PositionCardData[] = [];
 
 	for (const currentPosition of rows) {
-		const currentSymbol =
-			typeof currentPosition.symbol === "string" ? currentPosition.symbol : "";
-		if (!currentSymbol) continue;
+		if (!currentPosition.symbol || isClosed(currentPosition)) continue;
 
-		const readout = positionReadout(currentPosition);
-
-		// Closed lots belong to the closed section below, not the open cards.
-		if (readout.closedAt) continue;
-
-		const book =
-			typeof currentPosition.book === "string" && currentPosition.book !== ""
-				? String(currentPosition.book)
+		const tier =
+			typeof currentPosition.tier_key === "string" &&
+			currentPosition.tier_key !== ""
+				? currentPosition.tier_key
 				: "open";
-		const pnlFrac = readout.returnPct ?? 0;
-		const path =
-			typeof currentPosition.entry_path === "string"
-				? currentPosition.entry_path
-				: "—";
+		const frac = pnlFrac(currentPosition) ?? 0;
+		const path = currentPosition.entry_path || "—";
 
 		result.push({
 			capacity: "—",
@@ -129,16 +119,16 @@ const selectPositions = (
 			capacityRatioNum: undefined,
 			budget: path,
 			venuePnl: "—",
-			shadowPnl: formatValue(pnlFrac, "pct"),
-			shadowValue: pnlFrac,
+			shadowPnl: formatValue(frac, "pct"),
+			shadowValue: frac,
 			sells: sellMarkers(undefined),
-			symbol: currentSymbol,
-			status: book,
-			pnl: formatValue(pnlFrac, "pct"),
-			pnlValue: pnlFrac,
-			entryPrice: formatNumber(readout.entryPrice, 6),
-			mark: formatNumber(readout.mark, 6),
-			returnPct: formatValue(pnlFrac, "pct"),
+			symbol: currentPosition.symbol,
+			status: tier,
+			pnl: formatValue(frac, "pct"),
+			pnlValue: frac,
+			entryPrice: formatNumber(decimal(currentPosition.entry), 6),
+			mark: formatNumber(decimal(currentPosition.mark), 6),
+			returnPct: formatValue(frac, "pct"),
 		});
 	}
 
@@ -156,19 +146,18 @@ type ClosedCardData = {
 	sells: SellMarker[];
 };
 
-const selectClosed = (rows: Record<string, unknown>[]): ClosedCardData[] =>
+const selectClosed = (rows: Position[]): ClosedCardData[] =>
 	rows
-		.map((row) => ({ row, readout: positionReadout(row) }))
-		.filter(({ readout }) => readout.closedAt !== null)
-		.map(({ row, readout }, index) => {
-			const pnlFrac = readout.returnPct ?? 0;
+		.filter((row) => isClosed(row))
+		.map((row, index) => {
+			const frac = pnlFrac(row) ?? 0;
 
 			return {
 				key: String(row.id ?? row.symbol ?? index),
-				symbol: String(row.symbol ?? ""),
+				symbol: row.symbol ?? "",
 				venuePnl: "—",
-				shadowPnl: formatValue(pnlFrac, "pct"),
-				shadowValue: pnlFrac,
+				shadowPnl: formatValue(frac, "pct"),
+				shadowValue: frac,
 				sells: sellMarkers(undefined),
 			};
 		})

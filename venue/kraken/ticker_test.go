@@ -37,3 +37,14 @@ func TestParseTickerQuoteVolume(t *testing.T) {
 		So(row.Low24h(), ShouldEqual, 1.80)
 	})
 }
+
+func TestParseTickerUnavailable(t *testing.T) {
+	Convey("venue EService:Unavailable is a rejected ticker", t, func() {
+		rows, err := ParseTicker([]byte(
+			`{"error":["EService:Unavailable"],"result":{}}`,
+		))
+		So(rows, ShouldBeNil)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "EService:Unavailable")
+	})
+}

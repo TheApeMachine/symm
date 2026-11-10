@@ -32,10 +32,13 @@ func TestAuthNonce(t *testing.T) {
 			So(persisted, ShouldBeGreaterThanOrEqualTo, first)
 
 			Convey("and a restart seeds above the persisted high-water", func() {
+				So(nonce.Close(), ShouldBeNil)
+
 				restarted, err := NewAuthNonce(dir)
 				So(err, ShouldBeNil)
 				next, _ := strconv.ParseInt(restarted.Next(), 10, 64)
 				So(next, ShouldBeGreaterThan, persisted)
+				So(restarted.Close(), ShouldBeNil)
 			})
 		})
 
@@ -99,6 +102,18 @@ func TestAuthNonce(t *testing.T) {
 		So(os.WriteFile(filepath.Join(dir, "kraken-auth-nonce"), []byte("nope"), 0o600), ShouldBeNil)
 
 		Convey("construction fails", func() {
+			_, err := NewAuthNonce(dir)
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given an AuthNonce lock already held", t, func() {
+		dir := t.TempDir()
+		first, err := NewAuthNonce(dir)
+		So(err, ShouldBeNil)
+		So(first, ShouldNotBeNil)
+
+		Convey("a second generator is refused", func() {
 			_, err := NewAuthNonce(dir)
 			So(err, ShouldNotBeNil)
 		})

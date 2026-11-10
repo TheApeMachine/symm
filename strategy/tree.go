@@ -342,24 +342,23 @@ func (tree *Tree) persist(path string, decision *runtime.Decision) {
 		return
 	}
 
-	store := tree.store
+	// Marshal before any async handoff: Insert/Ensure share the live pointer,
+	// and Update may replace the leaf while a prior write is still in flight.
+	raw, err := sonic.Marshal(decision)
 
-	go func() {
-		raw, err := sonic.Marshal(decision)
+	if err != nil || len(raw) == 0 {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[tree] error marshalling decision", err,
+		))
 
-		if err != nil || len(raw) == 0 {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[tree] error marshalling decision", err,
-			))
+		return
+	}
 
-			return
-		}
-
-		// model/paths/<tokens>/<enter|hold|exit>.bin
-		store.WriteAtPrefix(
-			"model/paths/"+path+"/"+action.String()+".bin", raw,
-		)
-	}()
+	// WriteAtPrefix only enqueues; keep it on this path so same-key writes
+	// preserve call order into the store queue.
+	tree.store.WriteAtPrefix(
+		"model/paths/"+path+"/"+action.String()+".bin", raw,
+	)
 }
 
 /*

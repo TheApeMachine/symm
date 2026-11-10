@@ -5,27 +5,26 @@ export type Balance = {
 };
 
 /*
-Stoploss state as Go's StoplossState iota (broker/stoploss.go):
-Healthy=0, Armed=1, legacy TakeProfit=2 (folded to Armed), Triggered=3.
+Stoploss mirrors broker.Stoploss JSON (PascalCase tags on the Go struct).
+State is StoplossState iota: Healthy=0, Armed=1, legacy=2, Triggered=3.
 */
-export type StoplossStateCode = 0 | 1 | 2 | 3;
+export type StoplossState = 0 | 1 | 2 | 3;
 
-export type DynamicStoplossState = "Healthy" | "Armed" | "Triggered";
+export const STOPLOSS_HEALTHY = 0;
+export const STOPLOSS_ARMED = 1;
+export const STOPLOSS_TRIGGERED = 3;
 
-/** UI-facing stop telemetry derived from broker.Stoploss JSON. */
-export type DynamicStoploss = {
-	state: DynamicStoplossState;
-	exit_reason?: string;
-	/** Absolute entry drag (percentage points). */
-	friction: number;
-	current_pnl: number;
-	peak_pnl: number;
-	floor_pnl: number;
-	has_floor: boolean;
-	room_pct: number;
-	proximity: number;
-	opened_at?: string;
-	last_peak_time?: string;
+export type Stoploss = {
+	State: StoplossState | number;
+	InitialPnLPct: number;
+	CurrentPnLPct: number;
+	PreviousPnLPct: number;
+	PeakPnLPct: number;
+	FloorPnLPct: number;
+	ArmPnlPct: number;
+	GivebackPnlPct: number;
+	FloorMinPnlPct: number;
+	TightenPerPct: number;
 };
 
 /** Kraken spot OrderRequest as embedded on a desk lot. */
@@ -59,10 +58,7 @@ export type PositionFill = {
 };
 
 /*
-Position mirrors broker.Position JSON. Qty / entry price / fees come from
-entry_order, exit_order, and fills — not duplicated scalars on the lot.
-`book` is the desk ledger (virtual|paper|real), set by the broker on the wire
-and stamped from the S3 tier prefix for closed-history listings.
+Position mirrors broker.Position JSON. Decimals arrive as strings.
 */
 export type Position = {
 	id: string;
@@ -81,13 +77,15 @@ export type Position = {
 	entry_order?: PositionOrder | null;
 	exit_order?: PositionOrder | null;
 	fills?: PositionFill[];
+	qty?: string | number;
+	entry?: string | number;
+	sold?: string | number;
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: string | number;
 	pnl?: string | number;
 	pnl_pct?: string | number;
-	/** Ledger stamp — from S3 scope or unlabeled→paper in onBook. */
-	book?: "paper" | "virtual" | "real" | string;
-	/** Raw broker.Stoploss object — normalize via normalizeStoploss. */
-	stoploss?: Record<string, unknown> | DynamicStoploss;
+	closing?: boolean;
+	tier_key?: "paper" | "virtual" | "real" | string;
+	stoploss?: Stoploss;
 };

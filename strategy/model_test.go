@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"context"
+	"encoding/json"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -10,8 +12,18 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 )
+
+type modelTransportStub struct{}
+
+func (*modelTransportStub) Read(...string) ([]byte, error) { return nil, nil }
+func (*modelTransportStub) Write([]byte) error             { return nil }
+func (*modelTransportStub) Post(string, any) ([]byte, error) {
+	return nil, nil
+}
+func (*modelTransportStub) Watch(string, any, json.Unmarshaler) {}
 
 func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 	Convey("Policy exit does not settle a lot still in loss", t, func() {
@@ -25,7 +37,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		loss := decimal.NewFromFloat(-0.07)
 		lot := &broker.Position{
 			Symbol:    "XLM/USD",
-			Book:      broker.TierTypeVirtual.String(),
+			TierKey:   broker.TierTypeVirtual.String(),
 			EntryPath: "R00/R01",
 			PnLPct:    &loss,
 		}
@@ -56,7 +68,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		thin := decimal.NewFromFloat(0.2)
 		lot := &broker.Position{
 			Symbol:    "XLM/USD",
-			Book:      broker.TierTypeVirtual.String(),
+			TierKey:   broker.TierTypeVirtual.String(),
 			EntryPath: "R00/R01",
 			PnLPct:    &thin,
 		}
@@ -86,7 +98,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		win := decimal.NewFromFloat(0.5)
 		lot := &broker.Position{
 			Symbol:    "XLM/USD",
-			Book:      broker.TierTypeVirtual.String(),
+			TierKey:   broker.TierTypeVirtual.String(),
 			EntryPath: "R00/R01",
 			PnLPct:    &win,
 		}
@@ -159,7 +171,7 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 
 		position := &broker.Position{
 			Symbol:    "AKE/USD",
-			Book:      broker.TierTypeVirtual.String(),
+			TierKey:   broker.TierTypeVirtual.String(),
 			EntryPath: entry,
 			PnL:       &win,
 			PnLPct:    &pnlPct,
@@ -260,18 +272,73 @@ func TestResistanceDelta(t *testing.T) {
 	})
 }
 
+func TestRealModelStampsDecisionTier(t *testing.T) {
+	Convey("live model stamps gate skips onto the real ledger", t, func() {
+		prev := system.Cfg.Market.Model
+		system.Cfg.Market.Model = "real"
+		Reset(func() { system.Cfg.Market.Model = prev })
+
+		desk := broker.NewDesk(context.Background(), map[string]network.Client{
+			"public": &modelTransportStub{},
+		}, nil, nil)
+
+		tree := emptyTree()
+		model := &Model{
+			desk:      desk,
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		cut := runtime.Tokens{
+			{Symbols: []string{"R17"}, Brightness: 1},
+		}
+		envelope := runtime.NewEnvelope(nil)
+		envelope.Paths["BTC/USD"] = &cut
+		envelope.Regions["BTC/USD"] = []*runtime.Region{
+			{Key: 17, Brightness: 0.9}, // lit board_stress veto
+		}
+
+		out := model.Step(envelope)
+		So(out, ShouldNotBeNil)
+
+		got := out.Decisions["BTC/USD/real"]
+		So(got, ShouldNotBeNil)
+		So(got.Tier, ShouldEqual, "real")
+		So(got.Action, ShouldEqual, "skip")
+		So(got.Gate, ShouldEqual, "oracle")
+	})
+}
+
 func TestOracleAllowsFailClosed(t *testing.T) {
-	Convey("Selected zero-brightness veto fails closed", t, func() {
+	Convey("Dormant zero-brightness veto does not block lit desk approves", t, func() {
 		model := &Model{}
 
 		// Metric oracle pair board (17 veto / 18 approve) tied at zero —
-		// Observe emits the veto side.
+		// Observe emits the veto side, but cold kernels are not a hard veto.
 		regions := []*runtime.Region{
 			{Key: 10, Brightness: 1}, // liquid_quote approve
 			{Key: 12, Brightness: 1},
 			{Key: 14, Brightness: 1},
 			{Key: 16, Brightness: 1},
 			{Key: 17, Brightness: 0}, // board_stress veto (dormant tie)
+			{Key: 20, Brightness: 1},
+			{Key: 22, Brightness: 1},
+			{Key: 24, Brightness: 1},
+		}
+
+		So(model.oracleAllows(regions), ShouldBeTrue)
+	})
+
+	Convey("Lit veto fails closed even with lit approves", t, func() {
+		model := &Model{}
+
+		regions := []*runtime.Region{
+			{Key: 10, Brightness: 1},
+			{Key: 12, Brightness: 1},
+			{Key: 14, Brightness: 1},
+			{Key: 16, Brightness: 1},
+			{Key: 17, Brightness: 0.6}, // board_stress lit
 			{Key: 20, Brightness: 1},
 			{Key: 22, Brightness: 1},
 			{Key: 24, Brightness: 1},

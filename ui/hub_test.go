@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -79,51 +78,15 @@ func TestDrainFrames(t *testing.T) {
 	})
 }
 
-func TestQueueFramesDefault(t *testing.T) {
-	Convey("NewHub sizes frameCh from config and falls back to 256", t, func() {
+func TestQueueFramesFromConfig(t *testing.T) {
+	Convey("NewHub sizes frameCh from config", t, func() {
 		prev := system.Cfg.UI.WebSocket.QueueFrames
-		system.Cfg.UI.WebSocket.QueueFrames = 0
+		system.Cfg.UI.WebSocket.QueueFrames = 64
 
 		hub := NewHub(context.Background())
 
 		system.Cfg.UI.WebSocket.QueueFrames = prev
 
-		So(cap(hub.frameCh), ShouldEqual, 256)
-	})
-}
-
-func TestStreamMaps(t *testing.T) {
-	Convey("stream maps survive concurrent start and cancel", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		hub := &Hub{
-			ctx:       ctx,
-			streams:   make(map[string]context.CancelFunc),
-			streamGen: make(map[string]uint64),
-		}
-
-		var wg sync.WaitGroup
-
-		for i := 0; i < 32; i++ {
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				hub.startStream("s3", func(ctx context.Context) {
-					<-ctx.Done()
-				})
-			}()
-
-			go func() {
-				defer wg.Done()
-				hub.cancelStream("s3")
-			}()
-		}
-
-		wg.Wait()
-		cancel()
-
-		hub.streamMu.Lock()
-		So(hub.streams, ShouldNotBeNil)
-		hub.streamMu.Unlock()
+		So(cap(hub.frameCh), ShouldEqual, 64)
 	})
 }

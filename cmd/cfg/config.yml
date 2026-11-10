@@ -60,9 +60,10 @@ kraken:
       secret_env: KRAKEN_API_SECRET
 
 market:
-  # paper uses the simulator. real uses the private websocket and posts
-  # live market entries. Fees come from the account TradeVolume schedule.
-  model: paper
+  # paper: virtual + paper books (real transport disarmed). real: live book
+  # only — entry gates + stoploss, no virtual/paper shadow lots. Fees come
+  # from the account TradeVolume schedule. Needs KRAKEN_API_KEY/SECRET.
+  model: real
   quote_currency: USD
   balance: 200 # No, this is neither a typo nor a test amount. It is the exact amount I 
                # found in my Kraken account, and the only money I am willing to risk.
@@ -193,20 +194,20 @@ risk:
   # still has margin if the book thins. Below instrument minimum → no entry.
   touch_divisor: 3
   # 24h quote-volume floor for the mover pre-filter (USD).
-  min_mover_volume_usd: 25000
+  min_mover_volume_usd: 10000
   # Open-to-last day move floor (%) — liquid-but-flat names stay out.
-  min_mover_change_pct: 1.0
+  min_mover_change_pct: 0.5
   # Max last position in the 24h high–low range (0–1). At/above → peak veto.
-  # 0.5 = top half of the day's range is off-limits. <=0 or >=1 disables.
+  # 0.85 = top 15% of the day's range is off-limits. <=0 or >=1 disables.
   max_entry_peak_frac: 0.5
   # Touch spread cap for mover pre-filter and desk entry (% of mid).
   max_entry_spread_pct: 2.0
   # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
-  max_entry_open_drag_pct: 2.0
+  max_entry_open_drag_pct: 2.5
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
   # Each half of the tape comparison. Last window must beat the one before it.
-  tape_window: 5m
+  tape_window: 15m
   # Quote dollars the last window must clear, on top of beating the prior window.
   min_tape_notional_usd: 100
   # Mid-relative band for bid/ask support cash at entry.

@@ -28,10 +28,10 @@ type Risk struct {
 func NewRisk() *Risk {
 	viper.SetDefault("risk.max_fraction", 0.20)
 	viper.SetDefault("risk.touch_divisor", 3)
-	viper.SetDefault("risk.min_mover_volume_usd", 100_000.0)
+	viper.SetDefault("risk.min_mover_volume_usd", 10_000.0)
 	viper.SetDefault("risk.min_mover_change_pct", 0.5)
 	viper.SetDefault("risk.max_entry_spread_pct", 2.0)
-	viper.SetDefault("risk.max_entry_peak_frac", 0.90)
+	viper.SetDefault("risk.max_entry_peak_frac", 0.85)
 	viper.SetDefault("risk.max_entry_open_drag_pct", 2.5)
 	viper.SetDefault("risk.min_touch_bid_cash", 100.0)
 	viper.SetDefault("risk.tape_window", 10*time.Minute)

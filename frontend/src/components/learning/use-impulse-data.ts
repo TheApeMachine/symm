@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-	atoms,
-	DEFAULT_KERNELS,
-	signals,
-} from "#/collections/app";
+import { atoms, DEFAULT_KERNELS, signals } from "#/collections/app";
 import type { Region } from "#/collections/envelope";
 import {
 	createCanonicalGridNodes,
@@ -11,7 +7,7 @@ import {
 	getCanonicalRegionCounts,
 	REGION_COUNT,
 } from "./grid-pins";
-import { REGION_KEYS, REGIONS } from "./position-health";
+import { REGION_KEYS, REGIONS } from "./regions";
 import type { ImpulseNode } from "./types";
 
 export interface ImpulseDataState {
@@ -45,7 +41,10 @@ const snm = (raw: number): number => {
 };
 
 const regionBrightness = (region: Region): number => {
-	if (typeof region.brightness === "number" && Number.isFinite(region.brightness)) {
+	if (
+		typeof region.brightness === "number" &&
+		Number.isFinite(region.brightness)
+	) {
 		return region.brightness;
 	}
 
@@ -214,11 +213,7 @@ export const useImpulseData = (
 			});
 		};
 
-		const paintSymbol = (
-			next: string,
-			rows: Region[],
-			marketTick: number,
-		) => {
+		const paintSymbol = (next: string, rows: Region[], marketTick: number) => {
 			paintRegions(rows, heldBrightness, heldMembers);
 			heldLitSymbols.current = [next];
 
@@ -258,7 +253,7 @@ export const useImpulseData = (
 				return;
 			}
 
-			const tick = atoms.tickCount.get() || lastPublishedTick.current;
+			const tick = atoms.tick.get()?.n || lastPublishedTick.current;
 			const frames = symbolGridFrames();
 			const frame = frameForFocus(frames);
 
@@ -283,7 +278,7 @@ export const useImpulseData = (
 		});
 		unsubs.push(() => regionsSub.unsubscribe());
 
-		const tickSub = atoms.tickCount.subscribe(() => {
+		const tickSub = atoms.tick.subscribe(() => {
 			updateFromTelemetry();
 		});
 		unsubs.push(() => tickSub.unsubscribe());

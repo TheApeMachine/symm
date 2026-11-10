@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { atoms } from "#/collections/app";
 import { cn } from "#/lib/utils";
 import { sympathyAnchor } from "./grid-pins";
-import { REGION_KEYS, REGIONS } from "./position-health";
+import { REGION_KEYS, REGIONS } from "./regions";
 import type { ImpulseNode } from "./types";
 import { useImpulseData } from "./use-impulse-data";
 
@@ -857,9 +857,7 @@ export const ImpulseMapViz: React.FC<ImpulseMapVizProps> = ({
 							}
 						>
 							Grid regions ·{" "}
-							{litSymbols.length > 0
-								? `${litSymbols.length} sym`
-								: "board"}
+							{litSymbols.length > 0 ? `${litSymbols.length} sym` : "board"}
 						</span>
 						<span className="flex items-center gap-1.5 shrink-0 normal-case tracking-normal">
 							{isPlaying ? (

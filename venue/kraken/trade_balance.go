@@ -95,9 +95,7 @@ func mapDecimal(raw any) *decimal.Decimal {
 }
 
 func (balance *TradeBalance) Request() map[string]any {
-	return map[string]any{
-		"nonce": 0,
-	}
+	return map[string]any{}
 }
 
 func (balance *TradeBalance) OnChange(fn func(market.MarketType)) {
@@ -118,6 +116,10 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 	}
 
 	if len(decoded.Error) > 0 {
+		if balanceNonceRejected(decoded.Error) { // []string
+			BumpAuthNonce()
+		}
+
 		return errnie.Error(errnie.Err(
 			errnie.IO, "[kraken.TradeBalance] venue error in trade-balance frame", nil,
 		).With("error", decoded.Error))
@@ -141,20 +143,12 @@ func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType
 		return other
 	}
 
-	cash := balance.Result.AvailableCash
-
-	if cash == nil {
-		cash = balance.Result.FreeMargin
-	}
-
-	if cash == nil {
-		cash = balance.Result.EquivalentBalance
-	}
-
+	// TradeBalance is equity/margin accounting only. Spot cash for sizing
+	// lives on Balance — never treat equity as spendable here.
 	return market.NewTradeBalance(map[string]any{
 		"equity":         balance.Result.Equity,
 		"unrealized_pnl": balance.Result.UnrealizedPnL,
-		"available_cash": cash,
+		"available_cash": balance.Result.AvailableCash,
 		"free_margin":    balance.Result.FreeMargin,
 	}).ToMarket(book)
 }

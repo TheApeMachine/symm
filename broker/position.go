@@ -25,7 +25,6 @@ type Position struct {
 	Stoploss        *Stoploss               `json:"stoploss,omitempty"`
 	ID              string                  `json:"id"`
 	TierKey         string                  `json:"tier_key,omitempty"`
-	Book            string                  `json:"book,omitempty"`
 	EntryPath       string                  `json:"entry_path"`
 	HoldPaths       []string                `json:"hold_paths,omitempty"`
 	ExitPath        string                  `json:"exit_path"`
@@ -70,7 +69,6 @@ func NewPosition(
 		onSettled: onSettled,
 		ID:        uuid.NewString(),
 		TierKey:   tierKey,
-		Book:      tierKey,
 		Fills:     make([]*market.ExecutionData, 0),
 		Symbol:    symbol,
 		EntryPath: path,

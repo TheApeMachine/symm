@@ -90,6 +90,24 @@ describe("Decisions", () => {
 		expect(markup).not.toContain("virtual sample");
 	});
 
+	it("shows pre-tier gate skips on the selected real book", () => {
+		bookAtom.set("real");
+		signals.decisions.setState(() => ({
+			"BTC/USD": {
+				symbol: "BTC/USD",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				gate: "oracle",
+			},
+		}));
+
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toContain("BTC/USD");
+		expect(markup).toContain("skip");
+		expect(markup).toContain("oracle veto lit");
+	});
+
 	it("paints oracle veto/approve lamps from region brightness", () => {
 		signals.decisions.setState(() => ({
 			"virtual:AAVE/USD": {

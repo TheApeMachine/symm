@@ -5,23 +5,31 @@ import { Circular, type CircularBuffer } from "#/collections/circular";
 import { cognitionStore } from "#/collections/cognition";
 import { confidenceAtom, confidenceFor } from "#/collections/confidence";
 import {
-	closedOnBook,
+	type Position,
+	STOPLOSS_ARMED,
+	STOPLOSS_TRIGGERED,
+} from "#/collections/types";
+import {
+	closedOnTier,
 	countsTowardBookPerformance,
-	onBook,
-	openOnBook,
-	positionReadout,
+	holdNs,
+	isClosed,
+	onTier,
+	openOnTier,
+	pnlFrac,
 } from "#/components/book-readout";
 import {
 	EXPLORE_PRUNE_THRESHOLD,
 	isPathBookKey,
 } from "#/components/learning/explore-path";
+import { asFinite } from "#/lib/format";
 import { trySendCommand } from "#/lib/hub-socket";
 import {
 	deskRowsForStats,
 	ingestDeskClosedLots,
 	requestClosedPositionHistory,
 } from "#/lib/lifecycle";
-import { normalizeStoploss } from "#/lib/stoploss";
+import { stopArmed, stopProximity } from "#/lib/stop-telemetry";
 
 /*
 Longtail samples the path-learning trajectory from live truth the hub already
@@ -287,26 +295,23 @@ export const classifyExit = (trigger: string): keyof Omit<ExitMix, "total"> => {
 	return "other";
 };
 
-export const summarizeBook = (
-	rows: Record<string, unknown>[],
-	book: Book,
-): BookDeskStats => {
-	const onThisBook = rows.filter((row) => onBook(row, book));
-	const settled = closedOnBook(rows, book).filter(
-		(row) => positionReadout(row).returnPct !== null,
+export const summarizeBook = (rows: Position[], book: Book): BookDeskStats => {
+	const onThisBook = rows.filter((row) => onTier(row, book));
+	const settled = closedOnTier(rows, book).filter(
+		(row) => pnlFrac(row) !== null,
 	);
 	const scored = settled.filter((row) =>
 		countsTowardBookPerformance(row, book),
 	);
-	const returns = scored.map((row) => positionReadout(row).returnPct as number);
+	const returns = scored.map((row) => pnlFrac(row) as number);
 	const wins = returns.filter((value) => value > 0).length;
 	const holds = settled
-		.map((row) => positionReadout(row).holdNs)
+		.map((row) => holdNs(row))
 		.filter((value): value is number => value !== null && value > 0);
 
 	return {
 		closed: scored.length,
-		open: openOnBook(onThisBook, book).length,
+		open: openOnTier(onThisBook, book).length,
 		wins,
 		winRate: returns.length > 0 ? wins / returns.length : null,
 		meanReturn: mean(returns),
@@ -317,39 +322,36 @@ export const summarizeBook = (
 };
 
 /*
-summarizeStops folds open-lot DynamicStoploss for one book. Legacy field names
+summarizeStops folds open-lot Stoploss for one book. Legacy field names
 (invalidation / trailing / damage) map onto floor proximity samples so
 longtail history stays compatible. Exit reason maps are not stored here —
 use summarizeExits so samples stay fixed-size.
 */
 export const summarizeStops = (
-	rows: Record<string, unknown>[],
+	rows: Position[],
 	book: Book,
 ): OpenLotTelemetry => {
-	const open = rows.filter(
-		(row) => onBook(row, book) && !positionReadout(row).closed,
-	);
+	const open = rows.filter((row) => onTier(row, book) && !isClosed(row));
 	const proximitySamples: number[] = [];
 	let armed = 0;
 	let maxProximity = 0;
 	let withState = 0;
 
 	for (const row of open) {
-		const stoploss = normalizeStoploss(row.stoploss);
+		const stoploss = row.stoploss;
 		if (!stoploss) continue;
 		withState += 1;
 
-		const proximity = stoploss.proximity;
+		const proximity = stopProximity(stoploss);
+		const armedFloor =
+			stoploss.State === STOPLOSS_ARMED ||
+			stoploss.State === STOPLOSS_TRIGGERED;
 
-		if (stoploss.has_floor && proximity > 0) {
+		if (armedFloor && proximity > 0) {
 			proximitySamples.push(proximity);
 		}
 
-		const rowArmed =
-			stoploss.state === "Armed" ||
-			stoploss.state === "Triggered" ||
-			proximity >= 0.7;
-		if (rowArmed) armed += 1;
+		if (stopArmed(stoploss) || proximity >= 0.7) armed += 1;
 		if (proximity > maxProximity) maxProximity = proximity;
 	}
 
@@ -363,22 +365,12 @@ export const summarizeStops = (
 	};
 };
 
-export const summarizeExits = (
-	rows: Record<string, unknown>[],
-	book: Book,
-): ExitMix => {
+export const summarizeExits = (rows: Position[], book: Book): ExitMix => {
 	const mix = emptyExitMix();
-	const closed = closedOnBook(rows, book);
+	const closed = closedOnTier(rows, book);
 
 	for (const row of closed) {
-		const triggers: string[] = [];
-		if (Array.isArray(row.outcome_triggers)) {
-			for (const trigger of row.outcome_triggers) {
-				if (typeof trigger === "string" && trigger !== "") {
-					triggers.push(trigger);
-				}
-			}
-		}
+		const triggers: string[] = [...(row.outcome_triggers ?? [])];
 		if (
 			triggers.length === 0 &&
 			typeof row.exit_trigger === "string" &&
@@ -649,7 +641,7 @@ export const buildInsights = (
 		insights.push({
 			id: "paths",
 			title: "Path book",
-			body: "model/paths has not listed yet. Request S3 prefix model/paths or wait for a live paths envelope.",
+			body: "model/paths has not listed yet. Request S3 prefix model/paths or wait for a pathbook envelope.",
 			tone: "neutral",
 		});
 	} else {
@@ -849,13 +841,7 @@ const maybeRecordLongtailSample = () => {
 let recorderHandle: number | null = null;
 let historyBuffer: CircularBuffer<LongtailSample> | null = null;
 
-const finiteOrNull = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const countOrZero = (value: unknown): number => {
-	const count = finiteOrNull(value);
-	return count === null ? 0 : count;
-};
+const countOrZero = (value: unknown): number => asFinite(value) ?? 0;
 
 const bookFromHistory = (value: unknown): BookDeskStats | null => {
 	if (!value || typeof value !== "object") return null;
@@ -864,11 +850,11 @@ const bookFromHistory = (value: unknown): BookDeskStats | null => {
 		closed: countOrZero(row.closed),
 		open: countOrZero(row.open),
 		wins: countOrZero(row.wins),
-		winRate: finiteOrNull(row.winRate),
-		meanReturn: finiteOrNull(row.meanReturn),
-		medianReturn: finiteOrNull(row.medianReturn),
-		worstReturn: finiteOrNull(row.worstReturn),
-		avgHoldNs: finiteOrNull(row.avgHoldNs),
+		winRate: asFinite(row.winRate),
+		meanReturn: asFinite(row.meanReturn),
+		medianReturn: asFinite(row.medianReturn),
+		worstReturn: asFinite(row.worstReturn),
+		avgHoldNs: asFinite(row.avgHoldNs),
 	};
 };
 
@@ -876,11 +862,11 @@ const pathsFromHistory = (value: unknown): PathBookSnapshot => {
 	if (!value || typeof value !== "object") return emptyPaths();
 	const row = value as Record<string, unknown>;
 	return {
-		developed: finiteOrNull(row.developed),
-		promoted: finiteOrNull(row.promoted),
-		meanResistance: finiteOrNull(row.meanResistance ?? row.meanThreshold),
-		added: finiteOrNull(row.added),
-		removed: finiteOrNull(row.removed),
+		developed: asFinite(row.developed),
+		promoted: asFinite(row.promoted),
+		meanResistance: asFinite(row.meanResistance ?? row.meanThreshold),
+		added: asFinite(row.added),
+		removed: asFinite(row.removed),
 	};
 };
 
@@ -892,7 +878,7 @@ const policyFromHistory = (value: unknown): PolicySnapshot => {
 	return {
 		checks,
 		hits,
-		hitRate: finiteOrNull(row.hitRate) ?? (checks > 0 ? hits / checks : null),
+		hitRate: asFinite(row.hitRate) ?? (checks > 0 ? hits / checks : null),
 	};
 };
 
@@ -912,19 +898,19 @@ const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
 	if (!value || typeof value !== "object") return emptyStops();
 	const row = value as Record<string, unknown>;
 	return {
-		open: finiteOrNull(row.open),
-		invalidation: finiteOrNull(row.invalidation),
-		trailing: finiteOrNull(row.trailing),
-		damage: finiteOrNull(row.damage),
-		armed: finiteOrNull(row.armed),
-		maxProximity: finiteOrNull(row.maxProximity),
+		open: asFinite(row.open),
+		invalidation: asFinite(row.invalidation),
+		trailing: asFinite(row.trailing),
+		damage: asFinite(row.damage),
+		armed: asFinite(row.armed),
+		maxProximity: asFinite(row.maxProximity),
 	};
 };
 
 const historySample = (value: unknown): LongtailSample | null => {
 	if (!value || typeof value !== "object") return null;
 	const row = value as Record<string, unknown>;
-	const at = finiteOrNull(row.at);
+	const at = asFinite(row.at);
 	const paper = bookFromHistory(row.paper);
 	const virtual = bookFromHistory(row.virtual);
 	const real = bookFromHistory(row.real) ?? emptyBookStats();
@@ -944,12 +930,12 @@ const historySample = (value: unknown): LongtailSample | null => {
 		paper,
 		virtual,
 		real,
-		paperWin: finiteOrNull(row.paperWin),
-		paperEdge: finiteOrNull(row.paperEdge),
-		realWin: finiteOrNull(row.realWin),
-		realEdge: finiteOrNull(row.realEdge),
-		realArmed: finiteOrNull(row.realArmed),
-		eligibleResistance: finiteOrNull(row.eligibleResistance) ?? 0.2,
+		paperWin: asFinite(row.paperWin),
+		paperEdge: asFinite(row.paperEdge),
+		realWin: asFinite(row.realWin),
+		realEdge: asFinite(row.realEdge),
+		realArmed: asFinite(row.realArmed),
+		eligibleResistance: asFinite(row.eligibleResistance) ?? 0.2,
 		paths: pathsFromHistory(row.paths ?? row.training),
 		policy: policyFromHistory(row.policy),
 		exits: {
@@ -1012,20 +998,19 @@ Replaces only an empty or warmup-only window — never a live series.
 export const seedFromClosedLots = () => {
 	if (!windowIsWarmupOnly(chartWindow.values())) return false;
 
-	const rows = deskRowsForStats().filter((row) => positionReadout(row).closed);
+	const rows = deskRowsForStats().filter((row) => isClosed(row));
 	if (rows.length < 2) return false;
 
 	const dated = rows
 		.map((row) => {
-			const closedAt = positionReadout(row).closedAt;
-			const at = closedAt ? Date.parse(closedAt) : Number.NaN;
+			const at = row.closed_at ? Date.parse(row.closed_at) : Number.NaN;
 			return { row, at: Number.isFinite(at) ? at : 0 };
 		})
 		.sort((a, b) => a.at - b.at);
 
 	const step = Math.max(1, Math.ceil(dated.length / CHART_SAMPLES));
 	const samples: LongtailSample[] = [];
-	const cumulative: Record<string, unknown>[] = [];
+	const cumulative: Position[] = [];
 
 	for (let i = 0; i < dated.length; i++) {
 		cumulative.push(dated[i].row);
@@ -1070,20 +1055,13 @@ topExitTriggers returns up to EXIT_TRIGGER_CAP reasons for the selected book,
 sorted by count. Used by the rail — not stored inside samples.
 */
 export const topExitTriggers = (
-	rows: Record<string, unknown>[],
+	rows: Position[],
 	book: Book,
 ): Array<{ trigger: string; count: number }> => {
 	const counts = new Map<string, number>();
 
-	for (const row of closedOnBook(rows, book)) {
-		const triggers: string[] = [];
-		if (Array.isArray(row.outcome_triggers)) {
-			for (const trigger of row.outcome_triggers) {
-				if (typeof trigger === "string" && trigger !== "") {
-					triggers.push(trigger);
-				}
-			}
-		}
+	for (const row of closedOnTier(rows, book)) {
+		const triggers: string[] = [...(row.outcome_triggers ?? [])];
 		if (
 			triggers.length === 0 &&
 			typeof row.exit_trigger === "string" &&

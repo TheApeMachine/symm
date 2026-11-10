@@ -33,7 +33,7 @@ export const EXIT_TRIGGER_LABEL: Record<string, string> = {
 	"ratcheted trailing stop": "TRAIL",
 	"damaged recovery ratcheted stop": "TRAIL",
 	"move expired": "EXPIRE",
-	// DynamicStoploss exit reasons (prefix match via formatExitTrigger).
+	// Stoploss exit reasons (prefix match via formatExitTrigger).
 	"maximum loss reached": "MAX LOSS",
 	"maximum holding time reached": "MAX HOLD",
 	"dynamic floor reached": "FLOOR",

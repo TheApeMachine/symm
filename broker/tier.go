@@ -116,7 +116,7 @@ func NewTier(
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle, client,
 	)
-	tier.wallet = NewWallet(host)
+	tier.wallet = NewWallet(host, tier.positions)
 
 	// Virtual wallet is process-local; reopen credits base for S3 open lots
 	// before the balance prime so settle can sell.
@@ -130,7 +130,9 @@ func NewTier(
 
 	if host != nil {
 		host.Balance().OnChange(func(frame market.MarketType) {
-			if tier.Type == TierTypePaper && tier.price != nil && tier.price.balance != nil {
+			// BookIntact / CanSize size through price.balance; keep it
+			// on the same spot ledger Enter spends (not paper-only).
+			if tier.price != nil && tier.price.balance != nil {
 				frame.ToMarket(tier.price.balance)
 			}
 
@@ -168,17 +170,14 @@ func NewTier(
 		}
 	}
 
-	// Virtual and paper serve the balance paths themselves. Real signs the
-	// same REST calls and also folds the private balances channel.
+	// Virtual and paper poll their private transports. Live gets a one-shot
+	// REST prime for Balance + TradeBalance (Allocate + wallet strip), then
+	// Live.Arm keeps Balance fresh on the private websocket — no REST Watch,
+	// which raced the nonce stream every five seconds.
 	if host != nil && tier.private != nil &&
-		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper || tier.live != nil) {
+		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper) {
 		balanceURL := system.Cfg.WebSocket.Endpoints.Balance
 		tradeBalanceURL := system.Cfg.WebSocket.Endpoints.TradeBalance
-
-		if tier.live != nil {
-			balanceURL = tier.live.BalanceURL()
-			tradeBalanceURL = tier.live.TradeBalanceURL()
-		}
 
 		tier.private.Watch(
 			balanceURL,
@@ -191,20 +190,11 @@ func NewTier(
 			host.TradeBalance(),
 		)
 
-		// Prime once so Allocate / wallet see cash before the first Watch tick.
-		if raw, err := tier.private.Post(
-			balanceURL,
-			host.Balance().Request(),
-		); err == nil {
-			_ = json.Unmarshal(raw, host.Balance())
-		}
+		tier.primeWallet(balanceURL, tradeBalanceURL)
+	}
 
-		if raw, err := tier.private.Post(
-			tradeBalanceURL,
-			host.TradeBalance().Request(),
-		); err == nil {
-			_ = json.Unmarshal(raw, host.TradeBalance())
-		}
+	if host != nil && tier.live != nil {
+		tier.primeWallet(tier.live.BalanceURL(), tier.live.TradeBalanceURL())
 	}
 
 	tier.Recalculate()
@@ -265,11 +255,120 @@ func (tier *Tier) apply(executions *market.Execution) {
 }
 
 /*
+primeWallet loads spot Balance and TradeBalance once over signed REST.
+Spot Balance is the only capital Allocate may spend.
+*/
+func (tier *Tier) primeWallet(balanceURL, tradeBalanceURL string) {
+	if tier.private == nil || tier.venue == nil {
+		return
+	}
+
+	if err := tier.loadSpotBalance(balanceURL); err != nil {
+		errnie.Error(err)
+	}
+
+	tb, ok := tier.venue.TradeBalance().(*kraken.TradeBalance)
+
+	if ok && tb != nil {
+		if raw, err := tier.private.Post(tradeBalanceURL, tb.Request()); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "[broker.tier] trade-balance prime failed", err,
+			))
+		} else if err := json.Unmarshal(raw, tb); err != nil {
+			errnie.Error(err)
+		}
+	}
+
+	tier.publishLedger(nil)
+}
+
+/*
+loadSpotBalance POSTs private Balance into *kraken.Balance and normalizes keys.
+*/
+func (tier *Tier) loadSpotBalance(balanceURL string) error {
+	bal, ok := tier.venue.Balance().(*kraken.Balance)
+
+	if !ok || bal == nil {
+		return errnie.Err(
+			errnie.Internal,
+			"[broker.tier] spot balance host is not a kraken.Balance",
+			nil,
+		)
+	}
+
+	raw, err := tier.private.Post(balanceURL, bal.Request())
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[broker.tier] spot balance prime failed", err,
+		))
+	}
+
+	if err := json.Unmarshal(raw, bal); err != nil {
+		return errnie.Error(err)
+	}
+
+	bal.Normalize()
+
+	quote := system.Cfg.Market.QuoteCurrency
+
+	if bal.QuoteCash(quote) == nil {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.tier] spot balance prime returned no "+quote,
+			nil,
+		)
+	}
+
+	if tier.price != nil && tier.price.balance != nil {
+		bal.ToMarket(tier.price.balance)
+	}
+
+	return nil
+}
+
+/*
+spotWallet builds the Allocate wallet from spot Balance only.
+*/
+func (tier *Tier) spotWallet() (*market.Balance, error) {
+	quote := system.Cfg.Market.QuoteCurrency
+	wallet := market.NewBalance(map[string]any{
+		"quote":  quote,
+		"assets": []*market.Asset{},
+	})
+
+	if tier.venue == nil {
+		return wallet, errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.tier] venue not wired",
+			nil,
+		)
+	}
+
+	tier.venue.Balance().ToMarket(wallet)
+
+	if cash := wallet.Cash(quote); cash == nil || cash.Sign() <= 0 {
+		return wallet, errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.tier] no spot "+quote+" — refusing to size",
+			nil,
+		)
+	}
+
+	return wallet, nil
+}
+
+/*
 publishLedger fans positions and this tier's wallet reading to the hub.
+Wallet updates publish even with no open lots so live cash appears at boot.
 */
 func (tier *Tier) publishLedger(positions map[string]*Position) {
-	if ui.UI == nil || !ui.UI.Active() || len(positions) == 0 {
+	if ui.UI == nil || !ui.UI.Active() {
 		return
+	}
+
+	if positions == nil {
+		positions = map[string]*Position{}
 	}
 
 	ui.UI.WriteJSON(map[string]any{
@@ -355,15 +454,22 @@ func (tier *Tier) ok() bool {
 }
 
 /*
-Unlocked: virtual and paper always. Real needs paper win-rate above 50% and
-edge above 0. Once real has history it must stay there too; after it slips,
-paper has to lose that proof and earn it again before real entries resume.
+Unlocked: virtual and paper always. Live-only (market.model real) skips the
+paper proof — entries are gated upstream and exit on stoploss. Otherwise real
+needs paper win-rate above 50% and edge above 0. Once real has history it must
+stay there too; after it slips, paper has to lose that proof and earn it again
+before real entries resume.
 */
 func (tier *Tier) Unlocked(paper *Tier) bool {
 	tier.gateMu.Lock()
 	defer tier.gateMu.Unlock()
 
 	if tier.Type != TierTypeReal {
+		tier.unlocked = true
+		return true
+	}
+
+	if system.Cfg.Market.Model == "real" {
 		tier.unlocked = true
 		return true
 	}
@@ -432,12 +538,11 @@ func (tier *Tier) noteHalt(paperOK bool) {
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
-	if tier.Type == TierTypeReal && tier.live == nil {
-		return errnie.Err(
-			errnie.Forbidden,
-			"[broker.Tier.Enter] real transport not armed",
-			nil,
-		)
+	if tier.Type == TierTypeReal &&
+		(tier.live == nil || !tier.live.armed.Load()) {
+		return errnie.Error(errnie.Err(
+			errnie.Forbidden, "[broker.Tier.Enter] real transport not armed", nil,
+		))
 	}
 
 	tier.gateMu.Lock()
@@ -445,11 +550,10 @@ func (tier *Tier) Enter(
 	tier.gateMu.Unlock()
 
 	if !unlocked {
-		return errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Forbidden,
-			"[broker.Tier.Enter] tier not unlocked",
-			nil,
-		)
+			"[broker.Tier.Enter] tier not unlocked", nil,
+		))
 	}
 
 	if tier.positions.Has(symbol) {
@@ -460,15 +564,10 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	// Size from this tier's venue wallet (virtual/paper/real all keep one).
-	var wallet *market.Balance
+	wallet, err := tier.spotWallet()
 
-	if tier.venue != nil {
-		wallet = market.NewBalance(map[string]any{
-			"quote":  system.Cfg.Market.QuoteCurrency,
-			"assets": []*market.Asset{},
-		})
-		tier.venue.Balance().ToMarket(wallet)
+	if err != nil {
+		return errnie.Error(err)
 	}
 
 	qty, err := tier.price.Allocate(symbol, wallet)
@@ -648,12 +747,9 @@ func (tier *Tier) Send(position *Position, action string) error {
 	tier.inflight.Store(reqID, sent)
 
 	if err := tier.private.Write(buf); err != nil {
-		tier.inflight.Delete(reqID)
-
-		if action == "enter" {
-			tier.positions.Drop(position.Symbol)
-		}
-
+		// Keep lot + inflight: Write may have delivered the frame. Dropping
+		// here orphans venue fills; reject ack still dropRejected, late
+		// trade prints still Apply.
 		if errnie.IsNotAcceptable(err) {
 			return err
 		}
@@ -768,6 +864,8 @@ func (tier *Tier) Recalculate() {
 
 /*
 Run owns the private ingress for this tier. Public frames are read once on Desk.
+Live arms the balances channel, then reloads spot Balance over REST so Enter
+has real USD before any websocket snapshot race.
 */
 func (tier *Tier) Run() {
 	if tier.private == nil || tier.venue == nil {
@@ -776,9 +874,16 @@ func (tier *Tier) Run() {
 
 	if tier.live != nil {
 		if err := tier.live.Arm(); err != nil {
+			// armed stays false — Enter refuses until OnReconnect Subscribe.
 			errnie.Error(errnie.Err(
 				errnie.IO, "[broker.Tier] private subscribe failed", err,
 			))
+		}
+
+		if err := tier.loadSpotBalance(tier.live.BalanceURL()); err != nil {
+			errnie.Error(err)
+		} else {
+			tier.publishLedger(nil)
 		}
 	}
 

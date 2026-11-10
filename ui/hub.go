@@ -58,31 +58,31 @@ type Hub struct {
 	commit         atomic.Value
 	store          *store.Client
 	ownStore       bool
-	streamMu       sync.Mutex
-	streams        map[string]context.CancelFunc
-	streamGen      map[string]uint64
-	nextStream     uint64
 }
 
 /*
-UseStore wires the shared object-store client. Prefer this over a second
-store.Client so the hub does not spawn another ants upload/download pool.
+UseStore wires the shared object-store client from Booter. Replaces any
+hub-owned client opened at NewHub so the process keeps one S3 pool.
 */
 func (hub *Hub) UseStore(client *store.Client) {
+	if client == nil {
+		return
+	}
+
+	if hub.ownStore && hub.store != nil && hub.store != client {
+		_ = hub.store.Close()
+	}
+
 	hub.store = client
 	hub.ownStore = false
 }
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
+The hub opens its own S3 client immediately — the dashboard connects during
+boot, before Booter.UseStore, and must already answer prefix fetches.
 */
 func NewHub(ctx context.Context) *Hub {
-	frames := system.Cfg.UI.WebSocket.QueueFrames
-
-	if frames <= 0 {
-		frames = 256
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
@@ -96,12 +96,11 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		frameCh:   make(chan []byte, frames),
+		frameCh:   make(chan []byte, system.Cfg.UI.WebSocket.QueueFrames),
 		callbacks: make([]func(), 0),
+		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		ownStore:  true,
 	}
-
-	hub.streams = make(map[string]context.CancelFunc)
-	hub.streamGen = make(map[string]uint64)
 
 	hub.routes = NewRoutes(hub)
 
@@ -232,7 +231,7 @@ Write enqueues one frame without blocking. A full buffer drops the oldest.
 p must be a fresh buffer.
 */
 func (hub *Hub) Write(p []byte) (int, error) {
-	if len(p) == 0 || !hub.active() {
+	if len(p) == 0 || !hub.Active() {
 		return len(p), nil
 	}
 
@@ -296,7 +295,7 @@ func (hub *Hub) pump() {
 				continue
 			}
 
-			err := conn.WriteMessage(websocket.BinaryMessage, p)
+			err := conn.WriteMessage(websocket.TextMessage, p)
 
 			if err != nil {
 				hub.retireConnection(conn, err, len(p))
@@ -309,7 +308,7 @@ func (hub *Hub) pump() {
 WriteJSON marshals one envelope object and fans it to the dashboard.
 */
 func (hub *Hub) WriteJSON(frame map[string]any) {
-	if frame == nil || !hub.active() {
+	if frame == nil || !hub.Active() {
 		return
 	}
 
@@ -327,17 +326,15 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 }
 
 /*
-Active reports whether a dashboard is attached. Publishers that build a frame
-per tick check it to skip the serialization entirely when nobody is listening.
-*/
-/*
-active reports whether a frame should be enqueued: a live connection, or one
+Active reports whether a frame should be enqueued: a live connection, or one
 established within the grace window. The window covers the sliver between a
 connection being accepted and its dashboard's first read, where a concurrently
 produced tick would otherwise be dropped and a freshly-attached dashboard would
 show no metrics until the next symbol-bearing tick.
+Publishers that build a frame per tick check it to skip serialization when
+nobody is listening.
 */
-func (hub *Hub) active() bool {
+func (hub *Hub) Active() bool {
 	if hub.connected.Load() && hub.conn.Load() != nil {
 		return true
 	}
@@ -351,80 +348,11 @@ func (hub *Hub) active() bool {
 	return time.Since(time.Unix(0, since)) < 5*time.Second
 }
 
-func (hub *Hub) Active() bool {
-	return hub.active()
-}
-
 /*
 RegisterCallback registers a callback to be called when a new websocket connection is established.
 */
 func (hub *Hub) RegisterCallback(callback func()) {
 	hub.callbacks = append(hub.callbacks, callback)
-}
-
-func (hub *Hub) cancelStream(kind string) {
-	hub.streamMu.Lock()
-	cancel := hub.streams[kind]
-	delete(hub.streams, kind)
-	hub.streamMu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-}
-
-func (hub *Hub) startStream(kind string, run func(context.Context)) {
-	hub.streamMu.Lock()
-
-	prev := hub.streams[kind]
-
-	ctx, cancel := context.WithCancel(hub.ctx)
-	hub.nextStream++
-	gen := hub.nextStream
-	hub.streams[kind] = cancel
-	hub.streamGen[kind] = gen
-
-	hub.streamMu.Unlock()
-
-	if prev != nil {
-		prev()
-	}
-
-	go func() {
-		run(ctx)
-
-		hub.streamMu.Lock()
-		defer hub.streamMu.Unlock()
-
-		if hub.streamGen[kind] == gen {
-			delete(hub.streams, kind)
-			delete(hub.streamGen, kind)
-		}
-	}()
-}
-
-func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
-	if hub.store == nil || prefix == "" {
-		return
-	}
-
-	hub.startStream(kind, func(ctx context.Context) {
-		for raw := range hub.store.Stream(ctx, prefix) {
-			if len(raw) == 0 {
-				continue
-			}
-
-			hub.Write(raw)
-		}
-
-		if ctx.Err() != nil {
-			return
-		}
-
-		if done != nil {
-			done()
-		}
-	})
 }
 
 /*
@@ -471,9 +399,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		}
 
 		delete(patch, "type")
-		if system.Cfg != nil && system.Cfg.Risk != nil {
-			system.Cfg.Risk.Apply(patch)
-		}
+		system.Cfg.Risk.Apply(patch)
 	case "resonance":
 		var patch map[string]any
 		if err := sonic.Unmarshal(payload, &patch); err != nil {
@@ -485,9 +411,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		}
 
 		delete(patch, "type")
-		if system.Cfg != nil && system.Cfg.Learning != nil {
-			system.Cfg.Learning.ApplyResonance(patch)
-		}
+		system.Cfg.Learning.ApplyResonance(patch)
 	case "hindsight":
 	case "s3":
 		if request.Prefix == "" {
@@ -506,21 +430,9 @@ func (hub *Hub) handleCommand(payload []byte) error {
 			))
 		}
 
-		hub.cancelStream("s3")
-
-		// One aggregated frame for large prefix listings (trie books, closed lots).
-		// model/paths matches with or without a trailing slash: the S3 key is
-		// always "model/paths/<tokens>/<action>.bin" but the dashboard may send
-		// either form.
-		if strings.HasPrefix(request.Prefix, "model/paths") ||
-			strings.HasPrefix(request.Prefix, "paper/closed") ||
-			strings.HasPrefix(request.Prefix, "real/closed") ||
-			strings.HasPrefix(request.Prefix, "virtual/closed") {
-			hub.ListPrefix(request.Prefix)
-			break
-		}
-
-		hub.streamPrefix("s3", request.Prefix, nil)
+		// Aggregated envelopes for trie books and closed lots. ListPrefix
+		// warns and no-ops on unsupported prefixes.
+		hub.ListPrefix(request.Prefix)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -564,18 +476,9 @@ func (hub *Hub) Run() error {
 }
 
 /*
-Close stops streams, drains the hub store, and shuts the HTTP server.
+Close drains the hub store and shuts the HTTP server.
 */
 func (hub *Hub) Close() error {
-	hub.streamMu.Lock()
-
-	for kind, cancel := range hub.streams {
-		cancel()
-		delete(hub.streams, kind)
-	}
-
-	hub.streamMu.Unlock()
-
 	var errs error
 
 	// Only close a store this hub created. Shared clients are owned by Booter.

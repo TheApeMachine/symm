@@ -421,13 +421,13 @@ func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 
 	switch entity {
 	case "balances":
-		virtual.mu.Lock()
-		wallet := virtual.wallet
-		virtual.mu.Unlock()
-
 		out := kraken.NewBalance()
 		out.Channel = "balances"
-		out.FromMarket(market.NewBalance(wallet))
+
+		virtual.mu.Lock()
+		out.FromMarket(market.NewBalance(virtual.wallet))
+		virtual.mu.Unlock()
+
 		return out.MarshalJSON()
 
 	case "tradebalance":

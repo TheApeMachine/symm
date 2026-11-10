@@ -36,7 +36,14 @@ var (
 	decimalThree       = decimal.NewFromInt(3)
 )
 
-const tickerRefresh = time.Minute
+const (
+	tickerRefresh    = time.Minute
+	tickerBackoffMax = 15 * time.Minute
+	// tickerBatchSize is how many desk symbols one poll cycle covers.
+	// Kraken's unfiltered Ticker (and often multi-pair) returns
+	// EService:Unavailable; we request a slice and fall back to singles.
+	tickerBatchSize = 32
+)
 
 /*
 EntryFill is a complete buy against the ask book at admission time.
@@ -51,12 +58,13 @@ Price answers book questions with fills. A last trade is not a price.
 */
 type Price struct {
 	*runtime.System
-	Instrument *Instrument
-	Books      *BookManager
-	ticker     sync.Map
-	balance    *market.Balance
-	normalizer *spot.Normalizer
-	tape       *Tape
+	Instrument   *Instrument
+	Books        *BookManager
+	ticker       sync.Map
+	balance      *market.Balance
+	normalizer   *spot.Normalizer
+	tape         *Tape
+	tickerCursor int
 }
 
 type tickerSnap struct {
@@ -89,7 +97,10 @@ func NewPrice(
 		return nil
 	}
 
-	price.refreshTicker()
+	if err := price.refreshTicker(); err != nil {
+		errnie.Warn("[price] initial ticker refresh failed", "err", err)
+	}
+
 	price.pollTicker()
 	price.Transition(runtime.READY)
 
@@ -156,22 +167,97 @@ func (price *Price) BelowPeak(symbol string) bool {
 	return frac < cap
 }
 
-func (price *Price) refreshTicker() {
+/*
+refreshTicker updates a round-robin slice of desk symbols. The unfiltered
+public Ticker is currently rejected with EService:Unavailable; multi-pair
+often is too, so fetchTicker falls back to one pair at a time.
+*/
+func (price *Price) refreshTicker() error {
+	symbols := price.Instrument.Symbols()
+
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	n := tickerBatchSize
+
+	if n > len(symbols) {
+		n = len(symbols)
+	}
+
+	batch := make([]string, 0, n)
+	start := price.tickerCursor
+
+	for i := range n {
+		batch = append(batch, symbols[(start+i)%len(symbols)])
+	}
+
+	price.tickerCursor = (start + n) % len(symbols)
+
+	return price.fetchTicker(batch)
+}
+
+func (price *Price) fetchTicker(pairs []string) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+
+	params := map[string]string{"assetVersion": "1"}
+
+	if len(pairs) == 1 {
+		params["pair"] = pairs[0]
+	} else {
+		params["pair"] = strings.Join(pairs, ",")
+	}
+
 	response, err := network.NewREST().Get(
 		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.Ticker,
-		map[string]string{"assetVersion": "1"},
+		params,
 	)
+
 	if err != nil {
-		errnie.Warn("[price] ticker poll failed", "err", err)
-		return
+		return err
 	}
 
 	rows, err := kraken.ParseTicker(response.Body())
+
 	if err != nil {
-		errnie.Warn("[price] ticker parse failed", "err", err)
-		return
+		if len(pairs) == 1 {
+			return err
+		}
+
+		// Multi-pair Unavailable → same pairs one at a time.
+		return price.fetchTickerSingles(pairs)
 	}
 
+	price.applyTickerRows(rows)
+	return nil
+}
+
+func (price *Price) fetchTickerSingles(pairs []string) error {
+	var first error
+	ok := 0
+
+	for _, pair := range pairs {
+		if err := price.fetchTicker([]string{pair}); err != nil {
+			if first == nil {
+				first = err
+			}
+
+			continue
+		}
+
+		ok++
+	}
+
+	if ok == 0 {
+		return first
+	}
+
+	return nil
+}
+
+func (price *Price) applyTickerRows(rows map[string]kraken.TickerRow) {
 	for pair, row := range rows {
 		symbol := pair
 
@@ -190,18 +276,38 @@ func (price *Price) refreshTicker() {
 	}
 }
 
+/*
+pollTicker refreshes every minute. Hard failures back off up to
+tickerBackoffMax so a dark public Ticker does not WARN every tick.
+*/
 func (price *Price) pollTicker() {
 	go func() {
-		ticker := time.NewTicker(tickerRefresh)
-		defer ticker.Stop()
+		wait := tickerRefresh
 
 		for {
 			select {
 			case <-price.Context().Done():
 				return
-			case <-ticker.C:
-				price.refreshTicker()
+			case <-time.After(wait):
 			}
+
+			if err := price.refreshTicker(); err != nil {
+				next := 2 * wait
+
+				if next > tickerBackoffMax {
+					next = tickerBackoffMax
+				}
+
+				errnie.Warn(
+					"[price] ticker refresh failed",
+					"err", err,
+					"retry_in", next.String(),
+				)
+				wait = next
+				continue
+			}
+
+			wait = tickerRefresh
 		}
 	}()
 }
@@ -763,6 +869,8 @@ func (price *Price) Allocate(
 		).With(
 			"symbol", symbol,
 			"quote", pair.Quote,
+			"wallet_quote", wallet.Quote,
+			"why", "no spendable quote cash in wallet",
 		))
 	}
 
@@ -795,7 +903,6 @@ func (price *Price) Allocate(
 	fee := price.Fee(symbol)
 
 	if fee == nil {
-		why := "taker fee unknown"
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"[price] allocate failed",
@@ -803,7 +910,7 @@ func (price *Price) Allocate(
 		).With(
 			"symbol", symbol,
 			"quote", pair.Quote,
-			"why", why,
+			"why", "taker fee unknown",
 		))
 	}
 

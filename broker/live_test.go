@@ -9,6 +9,29 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+func TestLiveEnterRequiresArmed(t *testing.T) {
+	Convey("real Enter refuses until Live.Arm succeeds", t, func() {
+		live := &Live{}
+		tier := &Tier{
+			Type:      TierTypeReal,
+			live:      live,
+			unlocked:  true,
+			positions: NewCache(context.Background(), "real", nil, nil, nil, nil),
+		}
+
+		err := tier.Enter("BTC/USD", "path", true)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "real transport not armed")
+
+		live.armed.Store(true)
+
+		// Armed but no venue — past the arm gate into sizing.
+		err = tier.Enter("BTC/USD", "path", true)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldNotContainSubstring, "real transport not armed")
+	})
+}
+
 func TestLiveSeal(t *testing.T) {
 	Convey("Seal attaches the session token and a numeric order quantity", t, func() {
 		live := &Live{

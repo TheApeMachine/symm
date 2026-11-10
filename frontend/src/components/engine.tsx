@@ -20,7 +20,7 @@ const Row = ({
 export const Engine = () => {
 	const online = useSelector(atoms.online, (state) => state === "ONLINE");
 	const phase = useSelector(atoms.phase, (state) => state);
-	const seq = useSelector(atoms.tickCount, (state) => state);
+	const seq = useSelector(atoms.tick, (state) => state?.n ?? 0);
 	const cand = useSelector(atoms.candidates, (state) => state);
 	const open = useSelector(atoms.positionCount, (state) => state);
 
