@@ -36,17 +36,22 @@ type Instrument struct {
 	quote     string
 	symbols   []string
 	auth      *kraken.Auth
+	excluded  []string
+	level3URL string
 }
 
-// Level3 wires book stale marking and per-socket ingress for SubscribeBooks.
+/*
+Level3 passes desk-owned hooks into Instrument so stale marking and socket read
+loops stay in broker/desk, not inside the instrument runtime type.
+*/
 type Level3 struct {
 	Stale  func([]string)
 	Reader func(*network.WebsocketClient)
 }
 
 /*
-NewInstrument creates the market-instrument registry
-used by subscriptions and order validation.
+NewInstrument blocks startup on the instrument snapshot because every later step
+(subscribe, fee load, order mins) depends on that single channel payload.
 */
 func NewInstrument(
 	ctx context.Context, public network.Client,
@@ -59,6 +64,8 @@ func NewInstrument(
 		symbols:   []string{},
 		quote:     system.Cfg.Market.QuoteCurrency,
 		auth:      kraken.NewAuth(),
+		excluded:  append([]string(nil), system.Cfg.Market.Instrument.Excluded...),
+		level3URL: system.Cfg.WebSocket.Endpoints.Level3,
 	}
 
 	instrument.System = runtime.NewSystem(
@@ -67,14 +74,16 @@ func NewInstrument(
 
 	instrument.Transition(runtime.BUSY)
 
-	if err := OpenWS(public, system.Cfg.WebSocket.Endpoints.Public); err != nil {
-		instrument.Error(errnie.Err(
-			errnie.IO,
-			"[instrument] public websocket open failed",
-			err,
-		))
+	if ws, ok := public.(*network.WebsocketClient); ok && ws != nil {
+		if err := ws.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
+			instrument.Error(errnie.Err(
+				errnie.IO,
+				"[instrument] public websocket open failed",
+				err,
+			))
 
-		return instrument
+			return instrument
+		}
 	}
 
 	message, err := kraken.NewInstrumentSubscription().MarshalJSON()
@@ -173,9 +182,13 @@ func (instrument *Instrument) seedSnapshot(subscribe []byte) error {
 	}
 }
 
+/*
+cachePair filters snapshot pairs to configured quote and exclusions before L3
+and trade subscribe frames are built — non-online pairs never hit the wire.
+*/
 func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {
 	if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(
-		system.Cfg.Market.Instrument.Excluded, pair.Base,
+		instrument.excluded, pair.Base,
 	) {
 		return
 	}
@@ -187,11 +200,15 @@ func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {
 	instrument.cache.Store(pair.Symbol, pair)
 }
 
+/*
+Cache injects pairs without a live instrument channel so desk tests and
+PaperBook can size orders without mocking the full ws snapshot loop.
+*/
 func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
 		if pair.Quote != instrument.quote ||
 			pair.Status != "online" ||
-			slices.Contains(system.Cfg.Market.Instrument.Excluded, pair.Base) {
+			slices.Contains(instrument.excluded, pair.Base) {
 			continue
 		}
 
@@ -201,7 +218,8 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 }
 
 /*
-Pairs returns the cached instrument values.
+Pairs walks the sync.Map because normalizer seeding and Allow lists need the full
+online universe, not just the symbol string slice order.
 */
 func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	pairs := make([]kraken.InstrumentPair, 0)
@@ -220,7 +238,11 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	return pairs
 }
 
-// NormalizerFor builds a spot normalizer from the instrument snapshot.
+/*
+NormalizerFor seeds Kraken's spot.Normalizer from the desk instrument cache so
+Price can round Allocate to lot steps and resolve REST pair keys (TradeVolume,
+Balance assets, ticker rows) onto ws symbols — the SDK has no hook into Instrument.
+*/
 func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 	normalizer := spot.NewNormalizer()
 
@@ -243,12 +265,20 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 			tick, _ = sdkdecimal.NewFromString(pair.TickSize.String())
 		}
 
+		lotDecimals := int(pair.QtyPrecision)
+
+		if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
+			if exp := pair.QtyIncrement.Exponent(); exp < 0 {
+				lotDecimals = int(-exp)
+			}
+		}
+
 		update.NewPairs[pair.Base+pair.Quote] = spot.AssetPair{
 			WSName:        pair.Symbol,
 			Base:          pair.Base,
 			Quote:         pair.Quote,
 			PairDecimals:  pair.PricePrecision,
-			LotDecimals:   pair.QtyPrecision,
+			LotDecimals:   lotDecimals,
 			LotMultiplier: 1,
 			TickSize:      tick,
 		}
@@ -259,7 +289,8 @@ func NormalizerFor(instrument *Instrument) *spot.Normalizer {
 }
 
 /*
-Has reports whether the instrument is in the cached universe.
+Has guards Allocate and tier enter — symbols outside the quote filter must fail
+before a socket subscription exists.
 */
 func (instrument *Instrument) Has(symbol string) bool {
 	_, ok := instrument.cache.Load(symbol)
@@ -267,7 +298,33 @@ func (instrument *Instrument) Has(symbol string) bool {
 }
 
 /*
-Pair returns the cached instrument value for the symbol.
+SpotOpen is true when the pair is in the cache with Kraken status online — spot
+market and limit orders allowed. Cancel-only, post-only, and delisted pairs are
+not managed on REAL.
+*/
+func (instrument *Instrument) SpotOpen(symbol string) bool {
+	if instrument == nil || symbol == "" {
+		return false
+	}
+
+	raw, ok := instrument.cache.Load(symbol)
+
+	if !ok {
+		return false
+	}
+
+	pair, ok := raw.(kraken.InstrumentPair)
+
+	if !ok {
+		return false
+	}
+
+	return strings.EqualFold(pair.Status, "online")
+}
+
+/*
+Pair is the sizing source of QtyMin, CostMin, and increments; missing entries
+log and return empty struct so callers fail loudly on bad symbols.
 */
 func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 	value, ok := instrument.cache.Load(symbol)
@@ -290,7 +347,7 @@ level3FrameSize is how many symbols one subscribe frame may carry: Kraken's
 level3 subscription-rate budget per rate window divided by the rate-counter
 cost of one symbol at depth (5 at 10, 25 at 100, 100 at 1000).
 */
-func level3FrameSize(depth int) (int, error) {
+func level3FrameSize(depth, budget int) (int, error) {
 	cost := map[int]int{10: 5, 100: 25, 1000: 100}[depth]
 
 	if cost == 0 {
@@ -300,8 +357,6 @@ func level3FrameSize(depth int) (int, error) {
 			nil,
 		)
 	}
-
-	budget := system.Cfg.Market.Level3.RateLimit
 
 	if budget < cost {
 		return 0, errnie.Err(
@@ -332,7 +387,7 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 	}
 
 	depth := system.Cfg.Market.Level3.Depth
-	frameSize, err := level3FrameSize(depth)
+	frameSize, err := level3FrameSize(depth, system.Cfg.Market.Level3.RateLimit)
 
 	if err != nil {
 		return instrument.Error(err)
@@ -410,10 +465,10 @@ func (instrument *Instrument) UnsubscribeLevel3(write func([]byte) error, batch 
 SubscribeBooks opens the Level3 sockets for the online quote universe and
 issues their paced subscriptions. Level3 runs on its own authenticated socket
 per batch of 200 symbols and feeds the BookManager only; it is the upstream
-that must be seeded before the trade firehose (SubscribeTrades) is opened. A failed resubscribe after a reconnect is logged and
-returned to the socket, which drops the connection and redials with backoff
-until a resubscribe succeeds; the batch's books stay stale meanwhile. It never
-halts the instrument.
+that must be seeded before the trade firehose (SubscribeTrades) is opened. 
+A failed resubscribe after a reconnect is logged and returned to the socket, 
+which drops the connection and redials with backoff until a resubscribe 
+succeeds; the batch's books stay stale meanwhile. It never halts the instrument.
 */
 func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 	errnie.Info("[instrument] subscribing to level3 books")
@@ -441,7 +496,7 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 
 		l3Client := network.NewWebsocketClient(instrument.System.Context())
 
-		if err := l3Client.Open(system.Cfg.WebSocket.Endpoints.Level3); err != nil {
+		if err := l3Client.Open(instrument.level3URL); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 open failed for "+batchKey,
@@ -649,6 +704,10 @@ func (instrument *Instrument) Unsubscribe() error {
 	return nil
 }
 
+/*
+Symbols clones so TradeVolume fee fetch and chunk subscribe cannot mutate the
+canonical list built during snapshot ingest.
+*/
 func (instrument *Instrument) Symbols() []string {
 	return slices.Clone(instrument.symbols)
 }
@@ -662,12 +721,17 @@ func (instrument *Instrument) WebSocketToken(ctx context.Context) (string, error
 }
 
 /*
-TakerFee is the account's taker rate for the symbol, in percent.
+TakerFee is the account rate from TradeVolume, not the venue default — FeeNet
+and Allocate budgets would lie if this table were empty.
 */
 func (instrument *Instrument) TakerFee(symbol string) *decimal.Decimal {
 	return instrument.fee(instrument.takerFees, symbol)
 }
 
+/*
+fee shares one lookup path for fee tables stored on Instrument without exporting
+the sync.Map or duplicating symbol→decimal parsing at every call site.
+*/
 func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decimal {
 	if table == nil || symbol == "" {
 		return nil

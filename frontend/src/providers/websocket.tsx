@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
+import type { Position } from "#/collections/types";
 import {
 	ensureLongtailRecorder,
 	requestLongtailSources,
@@ -13,10 +14,8 @@ import {
 	sendFocus,
 	sendRoute,
 } from "#/lib/hub-socket";
-import {
-	requestClosedPositionHistory,
-	resetClosedHistoryRequest,
-} from "#/lib/lifecycle";
+import { resetClosedHistoryRequest } from "#/lib/lifecycle";
+import { dropClosedTwins, mergePositionBook } from "#/lib/position-book";
 
 export { sendCommand, sendRoute } from "#/lib/hub-socket";
 
@@ -42,6 +41,23 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 			continue;
 		}
 
+		if (
+			key === "positions" &&
+			value &&
+			typeof value === "object" &&
+			!Array.isArray(value)
+		) {
+			const tier = typeof payload.tier === "string" ? payload.tier : "";
+
+			store.setState((prev: Record<string, Position> | null) =>
+				mergePositionBook(prev, value as Record<string, Position>, {
+					snapshot: payload.positions_snapshot === true,
+					tier,
+				}),
+			);
+			continue;
+		}
+
 		// Symbol-grouped metrics: merge {symbol: reading} into the store.
 		if (value && typeof value === "object" && !Array.isArray(value)) {
 			store.setState((prev: Record<string, unknown> | null) => ({
@@ -57,6 +73,9 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 export const WsFeed = () => {
 	useEffect(() => {
 		ensureLongtailRecorder();
+		signals.positions.setState((prev: Record<string, Position> | null) =>
+			dropClosedTwins(prev ?? {}),
+		);
 
 		connectHub(`${hubWsUrl()}/ws`, {
 			onEnvelope: applyEnvelope,
@@ -68,7 +87,6 @@ export const WsFeed = () => {
 					signals.positions.setState(() => ({}));
 					resetClosedHistoryRequest();
 					resetLongtailSourcesRequest();
-					requestClosedPositionHistory();
 					requestLongtailSources();
 				}
 			},

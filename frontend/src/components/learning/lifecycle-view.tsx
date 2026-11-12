@@ -603,7 +603,12 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 					<Flex.Row align="center" gap={2}>
 						<Badge size="xs" variant={trialVariant(verdict)} label={verdict} />
 						<span className="text-[10px] uppercase tracking-wider text-(--f4)">
-							{life.tier_key === "virtual" ? "virtual" : "paper"} settle
+							{life.tier_key === "virtual"
+								? "virtual"
+								: life.tier_key === "real"
+									? "real"
+									: "paper"}{" "}
+							settle
 						</span>
 					</Flex.Row>
 					{money !== null && money !== undefined ? (
@@ -763,7 +768,8 @@ export const LifecycleView = () => {
 			return rightAt - leftAt;
 		});
 	const perf = view.performance;
-	const name = book === "virtual" ? "virtual" : "paper";
+	const name =
+		book === "virtual" ? "virtual" : book === "real" ? "real" : "paper";
 	const active =
 		lifecycles.find((life) => life.id === selected) ?? lifecycles[0];
 

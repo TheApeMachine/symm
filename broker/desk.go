@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
@@ -18,7 +20,10 @@ import (
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
-// Trade pump is drop-oldest; Level3 uses configured backpressure capacity.
+/*
+tradeQueueFrames caps trade latency: full ring drops oldest prints so pumpTrade
+never blocks the public reader; L3 instead blocks because gaps corrupt books.
+*/
 const tradeQueueFrames = 256
 
 /*
@@ -37,11 +42,29 @@ type Desk struct {
 	l3Symbols []string
 }
 
+/*
+NewDesk picks tier wiring from market.model so callers do not duplicate the
+live-only vs virtual+paper+disarmed-real matrix at every boot site.
+*/
 func NewDesk(
 	ctx context.Context,
 	transports map[string]network.Client,
 	price *Price,
 	client *store.Client,
+) *Desk {
+	return DeskFor(ctx, transports, price, client, system.Cfg.Market.Model == "real")
+}
+
+/*
+DeskFor is the explicit market.mode hook tests use; it also seeds price.balance
+so paper tiers size from the same ledger object Enter spends.
+*/
+func DeskFor(
+	ctx context.Context,
+	transports map[string]network.Client,
+	price *Price,
+	client *store.Client,
+	live bool,
 ) *Desk {
 	quote := system.Cfg.Market.QuoteCurrency
 
@@ -55,18 +78,21 @@ func NewDesk(
 	host := venue.NewKraken(quote)
 	tiers := make(map[TierType]*Tier)
 
-	if system.Cfg.Market.Model == "real" {
-		tiers[TierTypeReal] = NewTier(
+	if live {
+		// Live book: positions and balances come from the exchange only.
+		real := NewTier(
 			ctx,
 			TierTypeReal,
 			transports["public"],
 			transports["private"],
 			price,
 			venue.NewKraken(quote),
-			client,
+			nil,
 		)
+		real.live = true
+		tiers[TierTypeReal] = real
 	} else {
-		tiers[TierTypeVirtual] = NewTier(
+		virtual := NewTier(
 			ctx,
 			TierTypeVirtual,
 			transports["public"],
@@ -75,7 +101,8 @@ func NewDesk(
 			venue.NewKraken(quote),
 			client,
 		)
-		tiers[TierTypePaper] = NewTier(
+		virtual.live = false
+		paper := NewTier(
 			ctx,
 			TierTypePaper,
 			transports["public"],
@@ -84,7 +111,8 @@ func NewDesk(
 			venue.NewKraken(quote),
 			client,
 		)
-		tiers[TierTypeReal] = NewTier(
+		paper.live = false
+		real := NewTier(
 			ctx,
 			TierTypeReal,
 			transports["public"],
@@ -93,6 +121,10 @@ func NewDesk(
 			venue.NewKraken(quote),
 			client,
 		)
+		real.live = false
+		tiers[TierTypeVirtual] = virtual
+		tiers[TierTypePaper] = paper
+		tiers[TierTypeReal] = real
 	}
 
 	desk := &Desk{
@@ -134,7 +166,8 @@ func (desk *Desk) enqueueLevel3(book *market.Level3) {
 }
 
 /*
-pumpLevel3 applies queued Level3 snapshots in order on one worker.
+pumpLevel3 serializes book apply and Refresh so concurrent L3 batches do not
+reorder deltas and leave crossed or checksum-diverged state mid-frame.
 */
 func (desk *Desk) pumpLevel3() {
 	for {
@@ -185,7 +218,8 @@ func (desk *Desk) enqueueTrade(trade *market.Trade) {
 }
 
 /*
-pumpTrade marks lots and fans the workspace tick from queued trades in order.
+pumpTrade keeps tape uptake and strategy ticks off the public Read thread so
+slow marks cannot stall websocket ingress and drop trades.
 */
 func (desk *Desk) pumpTrade() {
 	for {
@@ -203,7 +237,8 @@ func (desk *Desk) pumpTrade() {
 }
 
 /*
-OnTrade registers the workspace tick sink for public trade frames.
+OnTrade decouples signals from desk internals — cmd wires the workspace consumer
+without desk importing strategy packages.
 */
 func (desk *Desk) OnTrade(fn func(*market.Trade)) {
 	desk.onTrade = fn
@@ -233,14 +268,34 @@ func (desk *Desk) Feed(buf []byte) {
 }
 
 /*
-Start begins per-tier private ingress and the shared public reader.
+OpenPrivate is separated from Run so boot can finish instrument/L3 before
+executions and add_order share one authenticated private socket.
+*/
+func (desk *Desk) OpenPrivate() error {
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.Type != TierTypeReal {
+			continue
+		}
+
+		if err := tier.OpenPrivate(); err != nil {
+			return errnie.Error(err)
+		}
+	}
+
+	return nil
+}
+
+/*
+Start launches Run in the background after OpenPrivate wired sockets — boot
+calls Flush/Hello synchronously before ingress goroutines race fills.
 */
 func (desk *Desk) Start() {
 	go desk.Run()
 }
 
 /*
-Run starts per-tier private ingress and the shared public reader.
+Run multiplexes one public Read into the shared venue decoder; each tier still
+owns its private Read loop for executions and balances.
 */
 func (desk *Desk) Run() {
 	for _, tier := range desk.tiers {
@@ -276,7 +331,19 @@ func (desk *Desk) Run() {
 	}
 }
 
+/*
+Hello is the operator-facing book: balance changes and history sync call it so
+the hub stays consistent without every tier mutating UI directly.
+*/
 func (desk *Desk) Hello() {
+	ui.UI.WriteJSON(desk.helloFrame())
+}
+
+/*
+helloFrame recomputes marks before JSON so UI lines match what kickExit sees;
+it also merges exchangeClosed trips absent from the tier cache.
+*/
+func (desk *Desk) helloFrame() map[string]any {
 	positions := make(map[string]*Position)
 	balances := make(map[string]any)
 
@@ -294,48 +361,32 @@ func (desk *Desk) Hello() {
 				continue
 			}
 
-			if position.ClosedAt == nil {
-				mark := position.Mark
-
-				if mark == nil {
-					if desk.price == nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"[desk.Hello] price is not wired",
-							nil,
-						), "symbol", position.Symbol)
-						continue
-					}
-
-					mark = desk.price.TouchBid(position.Symbol)
-
-					if mark == nil {
-						errnie.Error(errnie.Err(
-							errnie.UnprocessableContent,
-							"[desk.Hello] no touch bid for "+position.Symbol,
-							nil,
-						))
-						continue
-					}
-				}
-
-				if err := position.Update(mark); err != nil {
-					errnie.Error(err)
-				}
-			}
-
 			positions[position.ID] = position
 		}
 
-		if tier.venue != nil {
-			balances[tier.Type.String()] = tier.venue.Balance()
+		if tier.Type == TierTypeReal {
+			tier.exchangeClosed.Range(func(_, value any) bool {
+				position := value.(*Position)
+
+				if position == nil || position.ID == "" {
+					return true
+				}
+
+				positions[position.ID] = position
+
+				return true
+			})
+		}
+
+		if reading := tier.balanceReading(); reading != nil {
+			balances[tier.Type.String()] = reading
 		}
 	}
 
-	ui.UI.WriteJSON(map[string]any{
+	return map[string]any{
 		"positions": positions,
 		"balances":  balances,
-	})
+	}
 }
 
 /*
@@ -363,6 +414,9 @@ func (desk *Desk) Flush() error {
 	return errs
 }
 
+/*
+Update records tape flow and marks open lots from the executable bid, not the print.
+*/
 func (desk *Desk) Update(trades []*market.TradeData) {
 	for _, trade := range trades {
 		if trade == nil {
@@ -384,11 +438,6 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		mark := desk.price.TouchBid(trade.Symbol)
 
 		if mark == nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[desk.Update] no touch bid for "+trade.Symbol,
-				nil,
-			))
 			continue
 		}
 
@@ -396,6 +445,10 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 	}
 }
 
+/*
+Refresh marks on bid moves without waiting for a trade print — otherwise stoploss
+would lag when the book reprices in a quiet market.
+*/
 func (desk *Desk) Refresh(symbols []string) {
 	for _, symbol := range symbols {
 		if symbol == "" || desk.price == nil {
@@ -408,6 +461,10 @@ func (desk *Desk) Refresh(symbols []string) {
 	}
 }
 
+/*
+mark skips idle symbols so pumpLevel3 does not publish ledger noise for the
+entire subscribed universe on every L3 delta.
+*/
 func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	if symbol == "" || price == nil {
 		return
@@ -430,6 +487,10 @@ func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
 	}
 }
 
+/*
+Apply must touch every tier because paper and real sockets differ but symbol
+keys collide — one execution frame might belong to any armed lane's submit.
+*/
 func (desk *Desk) Apply(executions *market.Execution) {
 	if executions == nil {
 		return
@@ -444,6 +505,10 @@ func (desk *Desk) Apply(executions *market.Execution) {
 	}
 }
 
+/*
+Enter is the desk entrypoint so strategy does not pick transports or Unlocked
+logic — wrong tier wiring would send real orders without paper proof.
+*/
 func (desk *Desk) Enter(
 	symbol string, path string, tt TierType, pathFound bool,
 ) error {
@@ -461,6 +526,10 @@ func (desk *Desk) Enter(
 	return tier.Enter(symbol, path, pathFound)
 }
 
+/*
+Exit routes policy exits through the tier that holds the cache row so Send uses
+the correct private socket and fill matching stays on that lane's positions.
+*/
 func (desk *Desk) Exit(
 	tier TierType, position *Position,
 ) error {
@@ -477,6 +546,10 @@ func (desk *Desk) Exit(
 	return t.Exit(position)
 }
 
+/*
+Has is the fast guard inside mark/Refresh — multi-tier paper+real may share
+symbols but only tiers with open lots need Update work.
+*/
 func (desk *Desk) Has(symbol string) bool {
 	for _, tier := range desk.tiers {
 		if tier == nil || tier.positions == nil {
@@ -491,6 +564,38 @@ func (desk *Desk) Has(symbol string) bool {
 	return false
 }
 
+/*
+AwaitingFill lets strategy defer path learning until Apply owns qty — acting on
+a submitted-but-unfilled lot would attribute fills to the wrong policy epoch.
+*/
+func (desk *Desk) AwaitingFill(symbol string) bool {
+	if symbol == "" {
+		return false
+	}
+
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
+		for _, position := range tier.positions.Submitted(symbol) {
+			if position == nil {
+				continue
+			}
+
+			if position.Qty == nil || position.Qty.Sign() <= 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+/*
+Positions exposes filled opens to strategy without Submitted noise from pending
+enters still awaiting venue buy prints.
+*/
 func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
 		tier := desk.tiers[tier]
@@ -508,7 +613,8 @@ func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
 }
 
 /*
-Pending yields stoploss-settled lots waiting for the model to record an exit path.
+Pending holds flat sells until the model records exit_path — Remove ran but
+learning still needs the lot handle for attribution before ClearPending.
 */
 func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
@@ -527,7 +633,8 @@ func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 }
 
 /*
-ClearPending drops a settled lot after the model has attributed its exit path.
+ClearPending frees pending map memory and lets the symbol re-enter after the
+model finished writing exit_path into its tables.
 */
 func (desk *Desk) ClearPending(tier TierType, symbol string) {
 	if t := desk.tiers[tier]; t != nil {
@@ -535,6 +642,10 @@ func (desk *Desk) ClearPending(tier TierType, symbol string) {
 	}
 }
 
+/*
+CanSize is the cheap pre-check before model work — it reuses Allocate so Observe
+and enter share one sizing truth.
+*/
 func (desk *Desk) CanSize(symbol string) bool {
 	if symbol == "" || desk.price == nil {
 		return false
@@ -544,10 +655,104 @@ func (desk *Desk) CanSize(symbol string) bool {
 	return qty != nil && qty.Sign() > 0
 }
 
+/*
+BookStale surfaces instrument disconnect to strategy before Observe spends CPU
+on a book that will never pass BookIntact.
+*/
 func (desk *Desk) BookStale(symbol string) bool {
 	if desk.price == nil || desk.price.Books == nil {
 		return true
 	}
 
 	return desk.price.Books.StaleSymbol(symbol)
+}
+
+/*
+PaperBook stands up a deterministic L3 snapshot and three tiers without Kraken
+so broker tests exercise fill paths without credentials or ws replay.
+*/
+func PaperBook(ctx context.Context, symbol string, transport network.Client) (*Desk, *Price) {
+	qtyMin := decimal.RequireFromString("0.01")
+	step := decimal.RequireFromString("0.01")
+	costMin := decimal.RequireFromString("1")
+	fee := decimal.NewFromFloat(0.26)
+
+	base, quote, _ := strings.Cut(symbol, "/")
+	if quote == "" {
+		quote = "USD"
+	}
+
+	instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}, quote: quote}
+	instrument.cache.Store(symbol, kraken.InstrumentPair{
+		Symbol: symbol, Base: base, Quote: quote, Status: "online",
+		QtyMin: &qtyMin, CostMin: &costMin, QtyIncrement: &step, TickSize: &step,
+	})
+	instrument.takerFees.Store(symbol, &fee)
+
+	books := NewBookManager()
+	bidPx := decimal.NewFromInt(100)
+	bidQty := decimal.NewFromInt(50)
+	askPx := decimal.NewFromInt(101)
+	askQty := decimal.NewFromInt(50)
+
+	books.Update(&market.Level3{
+		Type: "snapshot",
+		Data: []*market.Level3Data{{
+			Symbol: symbol,
+			Bids: []*market.Level3Order{{
+				LimitPrice: &bidPx,
+				OrderQty:   &bidQty,
+			}},
+			Asks: []*market.Level3Order{{
+				LimitPrice: &askPx,
+				OrderQty:   &askQty,
+			}},
+		}},
+	})
+
+	cash := decimal.NewFromInt(100_000)
+	wallet := market.NewBalance(map[string]any{
+		"quote": "USD",
+		"assets": []*market.Asset{
+			market.NewAsset(nil, "USD", cash, decimal.Zero, cash),
+		},
+	})
+
+	host := venue.NewKraken(quote)
+	host.Balance().(*kraken.Balance).Result = map[string]*decimal.Decimal{quote: &cash}
+
+	price := &Price{
+		Instrument: instrument,
+		Books:      books,
+		ticker:     market.NewTicker(nil),
+		tape:       NewTape(),
+		balance:    wallet,
+		normalizer: NormalizerFor(instrument),
+		venue:      host,
+	}
+	price.bindRisk()
+
+	desk := AssembledDesk(price, map[TierType]*Tier{
+		TierTypeVirtual: AssembledTier(ctx, TierTypeVirtual, price, host, transport),
+		TierTypePaper:   AssembledTier(ctx, TierTypePaper, price, host, transport),
+		TierTypeReal:    AssembledTier(ctx, TierTypeReal, price, host, transport),
+	})
+
+	return desk, price
+}
+
+/*
+PaperDesk drops the Price return when tests only assert routing, not sizing math.
+*/
+func PaperDesk(ctx context.Context, symbol string, transport network.Client) *Desk {
+	desk, _ := PaperBook(ctx, symbol, transport)
+
+	return desk
+}
+
+/*
+AssembledDesk wires tiers for cross-package tests without live transports.
+*/
+func AssembledDesk(price *Price, tiers map[TierType]*Tier) *Desk {
+	return &Desk{price: price, tiers: tiers}
 }

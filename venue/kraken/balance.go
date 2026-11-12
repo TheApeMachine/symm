@@ -11,6 +11,10 @@ import (
 	"github.com/theapemachine/nomagique/market"
 )
 
+/*
+Balance is private ws/REST cash keyed by Kraken asset codes — broker tier ledger
+reads spendable spot via Normalize and ToMarket, not TradeBalance equity.
+*/
 type Balance struct {
 	Channel  string                      `json:"channel,omitempty"`
 	Error    []any                       `json:"error"`
@@ -18,6 +22,9 @@ type Balance struct {
 	onChange func(market.MarketType)
 }
 
+/*
+NewBalance prepares an empty Result map for the first REST poll or ws snapshot.
+*/
 func NewBalance() *Balance {
 	return &Balance{
 		Result: make(map[string]*decimal.Decimal),
@@ -53,11 +60,18 @@ func NewBalanceFromMap(model map[string]any) json.Marshaler {
 	return out
 }
 
+/*
+Request is the unsigned private REST body; SignPrivate owns the nonce.
+*/
 func (balance *Balance) Request() map[string]any {
 	// Signer owns the nonce; a placeholder here used to stick as "0".
 	return map[string]any{}
 }
 
+/*
+balanceNonceRejected detects Invalid nonce in nested Kraken error frames so
+UnmarshalJSON can BumpAuthNonce before surfacing the frame error.
+*/
 func balanceNonceRejected(errs ...any) bool {
 	for _, entry := range errs {
 		switch value := entry.(type) {
@@ -81,21 +95,33 @@ func balanceNonceRejected(errs ...any) bool {
 	return false
 }
 
+/*
+OnChange registers broker desk wiring after each decode completes fold/Normalize.
+*/
 func (balance *Balance) OnChange(fn func(market.MarketType)) {
 	balance.onChange = fn
 }
 
+/*
+MarshalJSON aliases Balance so onChange is omitted from REST cache payloads.
+*/
 func (balance *Balance) MarshalJSON() ([]byte, error) {
 	type alias Balance
 	return sonic.Marshal((*alias)(balance))
 }
 
+/*
+balanceWallet is one wallet slice inside a private balances ws row.
+*/
 type balanceWallet struct {
 	Type    string          `json:"type"`
 	ID      string          `json:"id"`
 	Balance decimal.Decimal `json:"balance"`
 }
 
+/*
+balanceRow is one asset line on the private balances channel before fold().
+*/
 type balanceRow struct {
 	Asset      string          `json:"asset"`
 	Balance    decimal.Decimal `json:"balance"`
@@ -105,6 +131,9 @@ type balanceRow struct {
 	WalletID   string          `json:"wallet_id"`
 }
 
+/*
+balanceFrame is the wire envelope for REST and ws balance decodes.
+*/
 type balanceFrame struct {
 	Channel string                      `json:"channel"`
 	Type    string                      `json:"type"`
@@ -113,6 +142,10 @@ type balanceFrame struct {
 	Data    []balanceRow                `json:"data"`
 }
 
+/*
+UnmarshalJSON folds ws snapshots into Result, bumps nonce on rejection, then
+fires OnChange so tier sizing sees normalized desk asset names.
+*/
 func (balance *Balance) UnmarshalJSON(data []byte) error {
 	var decoded balanceFrame
 
@@ -239,7 +272,7 @@ func (balance *Balance) Normalize() {
 			continue
 		}
 
-		key := spotAsset(asset)
+		key := SpotAsset(asset)
 
 		if prev := next[key]; prev != nil {
 			sum := prev.Add(*amount)
@@ -290,7 +323,7 @@ func (balance *Balance) AssetAmount(asset string) (*decimal.Decimal, bool) {
 		return &value, true
 	}
 
-	if key := spotAsset(asset); key != asset {
+	if key := SpotAsset(asset); key != asset {
 		if amount := balance.Result[key]; amount != nil {
 			value := *amount
 			return &value, true
@@ -300,6 +333,9 @@ func (balance *Balance) AssetAmount(asset string) (*decimal.Decimal, bool) {
 	return nil, false
 }
 
+/*
+ToMarket projects spendable Result rows into nomagique Balance for desk QuoteCash.
+*/
 func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Balance)
 
@@ -328,9 +364,10 @@ func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 }
 
 /*
-spotAsset maps Kraken REST ledger codes onto the desk quote/base names.
+SpotAsset maps Kraken REST ledger codes onto desk quote/base names so sizing
+and hub JSON agree across REST and ws balance paths.
 */
-func spotAsset(asset string) string {
+func SpotAsset(asset string) string {
 	switch asset {
 	case "ZUSD", "USD":
 		return "USD"
@@ -349,6 +386,9 @@ func spotAsset(asset string) string {
 	}
 }
 
+/*
+FromMarket copies nomagique Balance assets back into Result for paper round-trips.
+*/
 func (balance *Balance) FromMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Balance)
 

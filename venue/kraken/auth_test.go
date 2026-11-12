@@ -75,3 +75,26 @@ func TestAuthTokenReuse(t *testing.T) {
 		})
 	})
 }
+
+func TestSignPrivateURLRejectsForeignHost(t *testing.T) {
+	Convey("SignPrivateURL only signs Kraken REST", t, func() {
+		_, _, _, err := SignPrivateURL("https://example.com/0/private/Balance", map[string]any{})
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "private post host")
+	})
+}
+
+func TestSignPrivateRequiresCredentials(t *testing.T) {
+	Convey("SignPrivate fails when no role credentials are selected", t, func() {
+		prev := processCredentials.Load()
+		processCredentials.Store(nil)
+		Reset(func() {
+			if prev != nil {
+				processCredentials.Store(prev)
+			}
+		})
+
+		_, _, _, err := SignPrivate("/0/private/Balance", map[string]any{})
+		So(err, ShouldNotBeNil)
+	})
+}

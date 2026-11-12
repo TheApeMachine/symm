@@ -51,7 +51,7 @@ read fills one closed lot from a stored JSON object.
 Missing epoch, tick, and timestamp stay zero.
 */
 func (entry *closedEntry) read(raw []byte) bool {
-	if entry == nil || len(raw) == 0 {
+	if len(raw) == 0 {
 		return false
 	}
 

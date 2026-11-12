@@ -31,6 +31,9 @@ type Order struct {
 	onChange func(market.MarketType)
 }
 
+/*
+NewOrder prepares the add_order decoder venue.Read routes by method name.
+*/
 func NewOrder() *Order {
 	return &Order{
 		Method: "add_order",
@@ -59,21 +62,33 @@ func NewOrderFromMap(model map[string]any) json.Marshaler {
 	return out
 }
 
+/*
+Request names add_order for private websocket routing; params come from AddOrderRequest.
+*/
 func (order *Order) Request() map[string]any {
 	return map[string]any{
 		"method": "add_order",
 	}
 }
 
+/*
+OnChange wires desk pending-order maps after each ack decode.
+*/
 func (order *Order) OnChange(fn func(market.MarketType)) {
 	order.onChange = fn
 }
 
+/*
+MarshalJSON aliases Order so onChange stays off the wire.
+*/
 func (order *Order) MarshalJSON() ([]byte, error) {
 	type alias Order
 	return sonic.Marshal((*alias)(order))
 }
 
+/*
+UnmarshalJSON preserves onChange and notifies desk on each add_order response.
+*/
 func (order *Order) UnmarshalJSON(data []byte) error {
 	type alias Order
 	var decoded alias
@@ -93,6 +108,9 @@ func (order *Order) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+ToMarket projects ack fields into nomagique OrderAck for tier pending correlation.
+*/
 func (order *Order) ToMarket(other market.MarketType) market.MarketType {
 	ack, ok := other.(*market.OrderAck)
 
@@ -113,6 +131,9 @@ func (order *Order) ToMarket(other market.MarketType) market.MarketType {
 	return out.ToMarket(ack)
 }
 
+/*
+FromMarket copies nomagique OrderAck back for paper replay.
+*/
 func (order *Order) FromMarket(other market.MarketType) market.MarketType {
 	ack, ok := other.(*market.OrderAck)
 
@@ -131,6 +152,9 @@ func (order *Order) FromMarket(other market.MarketType) market.MarketType {
 	return order
 }
 
+/*
+AddOrderRequest is the ws v2 add_order payload desk and paper both emit.
+*/
 type AddOrderRequest struct {
 	Token   string `json:"token"`
 	Pair    string `json:"symbol"`

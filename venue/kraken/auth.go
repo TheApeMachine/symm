@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -24,6 +25,17 @@ the subscription and the private stream (executions, balances) goes dark.
 */
 const TokenReuse = 10 * time.Minute
 
+/*
+PrivateRESTMu serializes every signed spot REST call in the process,
+including the SDK path used for websockets tokens and network.Post — nonce
+and HMAC must not interleave across goroutines on the same API key.
+*/
+var PrivateRESTMu sync.Mutex
+
+/*
+Auth caches websockets tokens young enough for private subscribe after
+reconnect; token fetch goes through authenticated REST behind PrivateRESTMu.
+*/
 type Auth struct {
 	mu       sync.Mutex
 	token    string
@@ -32,8 +44,27 @@ type Auth struct {
 	fetch    func() (string, error)
 }
 
+/*
+NewAuth wires default wall clock and live token fetch for production sockets.
+*/
 func NewAuth() *Auth {
 	return &Auth{now: time.Now, fetch: fetchWebSocketsToken}
+}
+
+/*
+SeedToken pins a young websockets token (tests only) so private subscribe
+tests skip REST token round-trips.
+*/
+func (auth *Auth) SeedToken(token string) {
+	if auth == nil || token == "" {
+		return
+	}
+
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+
+	auth.token = token
+	auth.issuedAt = auth.now()
 }
 
 /*
@@ -141,6 +172,38 @@ func SignPrivate(requestURI string, body any) (key, signature string, signed []b
 	return keys.key, signature, signed, nil
 }
 
+/*
+SignPrivateURL signs a POST to the configured Kraken REST URL (path+query for
+the signature) so network.Client can reuse SignPrivate without duplicating host checks.
+*/
+func SignPrivateURL(postURL string, body any) (key, signature string, signed []byte, err error) {
+	parsed, err := url.Parse(postURL)
+
+	if err != nil {
+		return "", "", nil, errnie.Err(errnie.Validation, "[kraken.auth] url is invalid", err)
+	}
+
+	if parsed.Host != "api.kraken.com" {
+		return "", "", nil, errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] private post host "+parsed.Host,
+			nil,
+		)
+	}
+
+	requestURI := parsed.Path
+
+	if parsed.RawQuery != "" {
+		requestURI += "?" + parsed.RawQuery
+	}
+
+	return SignPrivate(requestURI, body)
+}
+
+/*
+bodyWithNonce merges caller JSON with a strictly increasing nonce unless the
+body already carries a non-zero nonce — placeholders from Request() must not stick.
+*/
 func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
 	payload := map[string]any{}
 
@@ -276,7 +339,14 @@ func (auth *Auth) Token(ctx context.Context) (string, error) {
 	return token, nil
 }
 
+/*
+fetchWebSocketsToken holds PrivateRESTMu for the full SDK GetWebSocketsToken
+call so nonce and signing cannot race paper or balance polls.
+*/
 func fetchWebSocketsToken() (string, error) {
+	PrivateRESTMu.Lock()
+	defer PrivateRESTMu.Unlock()
+
 	restClient, err := NewAuthenticatedREST()
 
 	if err != nil {

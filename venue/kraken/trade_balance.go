@@ -30,20 +30,33 @@ type TradeBalanceResult struct {
 	UnexecutedValue   *decimal.Decimal `json:"uv,omitempty"`
 }
 
+/*
+TradeBalance is private REST/ws account summary — tier hub reads equity and
+unrealized here; spendable spot remains on Balance only.
+*/
 type TradeBalance struct {
 	Error    []string           `json:"error"`
 	Result   TradeBalanceResult `json:"result"`
 	onChange func(market.MarketType)
 }
 
+/*
+NewTradeBalance prepares an empty wrapper before the first TradeBalance poll.
+*/
 func NewTradeBalance() *TradeBalance {
 	return &TradeBalance{}
 }
 
+/*
+NewTradeBalanceFromMap adapts paper CLI status JSON into the live wire shape.
+*/
 func NewTradeBalanceFromMap(model map[string]any) json.Marshaler {
 	return &TradeBalance{Result: tradeBalanceFromMap(model)}
 }
 
+/*
+tradeBalanceFromMap maps paper ledger fields onto Kraken TradeBalanceResult slots.
+*/
 func tradeBalanceFromMap(model map[string]any) TradeBalanceResult {
 	equity := mapDecimal(model["current_value"])
 	unrealized := mapDecimal(model["unrealized_pnl"])
@@ -76,6 +89,9 @@ func tradeBalanceFromMap(model map[string]any) TradeBalanceResult {
 	return result
 }
 
+/*
+mapDecimal tolerates CLI float/string decimals without failing paper status polls.
+*/
 func mapDecimal(raw any) *decimal.Decimal {
 	switch value := raw.(type) {
 	case float64:
@@ -94,19 +110,34 @@ func mapDecimal(raw any) *decimal.Decimal {
 	}
 }
 
+/*
+Request names ZUSD base for Kraken spot trade-balance summary REST.
+*/
 func (balance *TradeBalance) Request() map[string]any {
-	return map[string]any{}
+	// Kraken Spot REST: base asset for the summary (default ZUSD).
+	return map[string]any{
+		"asset": "ZUSD",
+	}
 }
 
+/*
+OnChange wires tier exchange equity display after each decode.
+*/
 func (balance *TradeBalance) OnChange(fn func(market.MarketType)) {
 	balance.onChange = fn
 }
 
+/*
+MarshalJSON aliases TradeBalance so onChange stays off cached REST payloads.
+*/
 func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
 	type alias TradeBalance
 	return sonic.Marshal((*alias)(balance))
 }
 
+/*
+UnmarshalJSON bumps nonce on rejection and notifies tier after Result decodes.
+*/
 func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 	type alias TradeBalance
 	var decoded alias
@@ -136,6 +167,9 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+ToMarket projects equity fields into nomagique TradeBalance without treating equity as cash.
+*/
 func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.TradeBalance)
 
@@ -153,6 +187,9 @@ func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType
 	}).ToMarket(book)
 }
 
+/*
+FromMarket copies hub trade-balance back for paper round-trips.
+*/
 func (balance *TradeBalance) FromMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.TradeBalance)
 

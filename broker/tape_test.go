@@ -8,63 +8,84 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
-func TestTapeUptake(t *testing.T) {
-	Convey("quote dollars in the last window versus the window before", t, func() {
-		tape := NewTape()
-		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+func TestTape(t *testing.T) {
+	Convey("Setup", t, func() {
+		base := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 		window := system.Cfg.Risk.TapeWindow
 
-		tape.Note("Q/USD", 40, now.Add(-window-time.Minute))
-		tape.Note("Q/USD", 200, now.Add(-time.Minute))
+		cases := []struct {
+			name         string
+			seed         func(*Tape)
+			symbol       string
+			at           time.Time
+			wantRecent   float64
+			wantPrior    float64
+		}{
+			{
+				name: "quote dollars in recent versus prior window",
+				seed: func(tape *Tape) {
+					tape.Note("Q/USD", 40, base.Add(-window-time.Minute))
+					tape.Note("Q/USD", 200, base.Add(-time.Minute))
+				},
+				symbol:     "Q/USD",
+				at:         base,
+				wantRecent: 200,
+				wantPrior:  40,
+			},
+			{
+				name: "minute buckets split at the window boundary",
+				seed: func(tape *Tape) {
+					tape.Note("Q/USD", 10, base.Add(-window+time.Minute))
+					tape.Note("Q/USD", 7, base.Add(-window-time.Minute))
+					tape.Note("Q/USD", 3, base.Add(-2*window+time.Minute))
+					tape.Note("Q/USD", 99, base.Add(-2*window-time.Minute))
+				},
+				symbol:     "Q/USD",
+				at:         base,
+				wantRecent: 10,
+				wantPrior:  10,
+			},
+			{
+				name: "dust notes and missing symbols are zero",
+				seed: func(tape *Tape) {
+					tape.Note("Q/USD", 0, base)
+					tape.Note("", 80, base)
+					tape.Note("Q/USD", 80, time.Time{})
+				},
+				symbol:     "Q/USD",
+				at:         base,
+				wantRecent: 0,
+				wantPrior:  0,
+			},
+			{
+				name: "stale slots drop once the ring wraps",
+				seed: func(tape *Tape) {
+					tape.Note("Q/USD", 5, base.Add(-3*window))
+					tape.Note("Q/USD", 8, base.Add(-time.Minute))
+				},
+				symbol:     "Q/USD",
+				at:         base,
+				wantRecent: 8,
+				wantPrior:  0,
+			},
+		}
 
-		recent, prior := tape.Uptake("Q/USD", now)
-		So(recent, ShouldEqual, 200)
-		So(prior, ShouldEqual, 40)
-	})
+		for _, tc := range cases {
+			Convey("When "+tc.name, func() {
+				tape := NewTape()
+				tc.seed(tape)
 
-	Convey("minute buckets split at the window boundary", t, func() {
-		tape := NewTape()
-		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-		window := system.Cfg.Risk.TapeWindow
+				recent, prior := tape.Uptake(tc.symbol, tc.at)
+				So(recent, ShouldEqual, tc.wantRecent)
+				So(prior, ShouldEqual, tc.wantPrior)
+			})
+		}
 
-		// Inside recent: one minute after the prior/recent split.
-		tape.Note("Q/USD", 10, now.Add(-window+time.Minute))
-		// Inside prior: one minute before that split.
-		tape.Note("Q/USD", 7, now.Add(-window-time.Minute))
-		tape.Note("Q/USD", 3, now.Add(-2*window+time.Minute))
-		tape.Note("Q/USD", 99, now.Add(-2*window-time.Minute))
-
-		recent, prior := tape.Uptake("Q/USD", now)
-		So(recent, ShouldEqual, 10)
-		So(prior, ShouldEqual, 10)
-	})
-
-	Convey("an empty prior window is zero, and dust notes are ignored", t, func() {
-		tape := NewTape()
-		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-
-		tape.Note("Q/USD", 0, now)
-		tape.Note("", 80, now)
-		tape.Note("Q/USD", 80, time.Time{})
-
-		recent, prior := tape.Uptake("Q/USD", now)
-		So(recent, ShouldEqual, 0)
-		So(prior, ShouldEqual, 0)
-
-		quiet, before := tape.Uptake("MISSING/USD", now)
-		So(quiet, ShouldEqual, 0)
-		So(before, ShouldEqual, 0)
-	})
-
-	Convey("stale minute slots are ignored once the ring wraps", t, func() {
-		tape := NewTape()
-		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
-
-		tape.Note("Q/USD", 5, now.Add(-3*system.Cfg.Risk.TapeWindow))
-		tape.Note("Q/USD", 8, now.Add(-time.Minute))
-
-		recent, prior := tape.Uptake("Q/USD", now)
-		So(recent, ShouldEqual, 8)
-		So(prior, ShouldEqual, 0)
+		Convey("When the symbol was never noted", func() {
+			tape := NewTape()
+			recent, prior := tape.Uptake("MISSING/USD", base)
+			So(recent, ShouldEqual, 0)
+			So(prior, ShouldEqual, 0)
+		})
 	})
 }

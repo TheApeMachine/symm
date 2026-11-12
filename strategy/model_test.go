@@ -25,6 +25,24 @@ func (*modelTransportStub) Post(string, any) ([]byte, error) {
 }
 func (*modelTransportStub) Watch(string, any, json.Unmarshaler) {}
 
+type modelSnapClient struct {
+	frame []byte
+}
+
+func (client *modelSnapClient) Read(...string) ([]byte, error) { return client.frame, nil }
+
+func (client *modelSnapClient) Write([]byte) error { return nil }
+
+func (client *modelSnapClient) Post(string, any) ([]byte, error) { return nil, nil }
+
+func (client *modelSnapClient) Watch(string, any, json.Unmarshaler) {}
+
+func modelPaperDesk(t *testing.T, symbol string) *broker.Desk {
+	t.Helper()
+
+	return broker.PaperDesk(context.Background(), symbol, &modelTransportStub{})
+}
+
 func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 	Convey("Policy exit does not settle a lot still in loss", t, func() {
 		tree := emptyTree()
@@ -272,21 +290,74 @@ func TestResistanceDelta(t *testing.T) {
 	})
 }
 
+func paperPromotedTree() *Tree {
+	tree := emptyTree()
+
+	for path, decision := range map[string]*runtime.Decision{
+		"R06.R00":                 leaf(ActionEnter, 0.15),
+		"R06.R00/R07.R01":         leaf(ActionEnter, 0.15),
+		"R06.R00/R07.R01/R08.R02": leaf(ActionEnter, 0.15),
+		"R07.R01":                 leaf(ActionHold, 0.15),
+		"R07.R01/R08.R02":         leaf(ActionHold, 0.15),
+		"R07.R01/R08.R02/R09.R03": leaf(ActionHold, 0.15),
+		"R08.R01":                 leaf(ActionExit, 0.15),
+		"R08.R01/R09.R02":         leaf(ActionExit, 0.15),
+		"R08.R01/R09.R02/R10.R03": leaf(ActionExit, 0.15),
+	} {
+		put(tree, path, decision)
+	}
+
+	return tree
+}
+
+func TestModelStepEnterPastOracle(t *testing.T) {
+	Convey("paper model reaches tree enter past dormant oracle vetoes", t, func() {
+		tree := paperPromotedTree()
+
+		symbol := "BTC/USD"
+		desk := modelPaperDesk(t, symbol)
+
+		model := &Model{
+			desk:      desk,
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		cut := tokensAt("R06.R00/R07.R01/R08.R02", 1)
+		envelope := runtime.NewEnvelope(nil)
+		envelope.Paths[symbol] = &cut
+		envelope.Regions[symbol] = []*runtime.Region{
+			{Key: 10, Brightness: 1},
+			{Key: 12, Brightness: 1},
+			{Key: 14, Brightness: 1},
+			{Key: 16, Brightness: 1},
+			{Key: 17, Brightness: 0},
+		}
+		envelope.Resonance[symbol] = model.bypassReading(system.Cfg.Learning)
+
+		out := model.Step(envelope)
+		got := out.Decisions[symbol+"/paper"]
+		So(got, ShouldNotBeNil)
+		So(got.Action, ShouldEqual, "enter")
+		So(got.Gate, ShouldBeBlank)
+		So(got.Path, ShouldContainSubstring, "R06")
+		So(desk.Has(symbol), ShouldBeTrue)
+	})
+}
+
 func TestRealModelStampsDecisionTier(t *testing.T) {
 	Convey("live model stamps gate skips onto the real ledger", t, func() {
-		prev := system.Cfg.Market.Model
-		system.Cfg.Market.Model = "real"
-		Reset(func() { system.Cfg.Market.Model = prev })
-
-		desk := broker.NewDesk(context.Background(), map[string]network.Client{
+		desk := broker.DeskFor(context.Background(), map[string]network.Client{
 			"public": &modelTransportStub{},
-		}, nil, nil)
+		}, nil, nil, true)
 
 		tree := emptyTree()
 		model := &Model{
 			desk:      desk,
 			tree:      &atomic.Pointer[Tree]{},
 			resetPath: func(string) {},
+			live:      true,
 		}
 		model.tree.Store(tree)
 

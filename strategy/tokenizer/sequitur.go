@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+/*
+rulePrefix marks internal rule symbols in the linked list so terminals like R08
+cannot collide with encoded rule references during digram indexing.
+*/
 const rulePrefix = "\x00rule:"
 
 /*
@@ -13,10 +17,16 @@ Symbol is one terminal string (e.g. R08) or an internal rule reference (#rule:N)
 */
 type Symbol string
 
+/*
+ruleSymbol encodes rule refs in the linked list without colliding with terminal Rxx strings.
+*/
 func ruleSymbol(id int) Symbol {
 	return Symbol(rulePrefix + strconv.Itoa(id))
 }
 
+/*
+ruleID decodes internal rule markers for Tail display and nested expansion.
+*/
 func ruleID(sym Symbol) (int, bool) {
 	raw := string(sym)
 	if !strings.HasPrefix(raw, rulePrefix) {
@@ -79,6 +89,10 @@ type Sequitur struct {
 	lastKind string
 }
 
+/*
+NewSequitur builds an empty circular root list — rules map starts empty until
+Analyze promotes repeated digrams online.
+*/
 func NewSequitur() *Sequitur {
 	sentinel := &Node{}
 	sentinel.Next = sentinel
@@ -163,7 +177,7 @@ func (sequitur *Sequitur) Tail(n int) []string {
 }
 
 /*
-Symbols is how many distinct symbols the grammar holds, rules included.
+Symbols counts rules plus root diversity — MDL and UI use it as grammar complexity proxy.
 */
 func (sequitur *Sequitur) Symbols() int {
 	return len(sequitur.rules) + 1
@@ -209,7 +223,8 @@ func (sequitur *Sequitur) RootSequence() []string {
 }
 
 /*
-TerminalNames flattens rule into terminal token strings (e.g. R08, R07).
+TerminalNames expands nested rules to Rxx leaves so grid resonance can attribute
+story features to the observe regions inside an M-rule path segment.
 */
 func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {
 	if rule == nil || rule.Head == nil {
@@ -222,6 +237,9 @@ func (sequitur *Sequitur) TerminalNames(rule *Rule) []string {
 	return names
 }
 
+/*
+collectTerminalNames walks nested M-rules to Rxx leaves for resonance/feature expansion.
+*/
 func (sequitur *Sequitur) collectTerminalNames(rule *Rule, names *[]string) {
 	for node := rule.Head.Next; node != rule.Head; node = node.Next {
 		if id, ok := ruleID(node.Val); ok {
@@ -234,7 +252,10 @@ func (sequitur *Sequitur) collectTerminalNames(rule *Rule, names *[]string) {
 	}
 }
 
-// TerminalsForRef expands a root symbol (R01 or M1) into region terminals.
+/*
+TerminalsForRef expands M-rules for grid/feature lookups — callers pass path cut
+segments (R01 or M1) and need the underlying observe region keys.
+*/
 func (sequitur *Sequitur) TerminalsForRef(ref string) []string {
 	if ref == "" {
 		return nil
@@ -329,6 +350,9 @@ func (sequitur *Sequitur) RuleViews() []RuleView {
 	return views
 }
 
+/*
+ruleDepth measures nested rule chains for RuleView — dashboard sorts by structural depth.
+*/
 func (sequitur *Sequitur) ruleDepth(id int, stack map[int]bool) int {
 	if stack[id] {
 		return 1
@@ -359,12 +383,15 @@ func (sequitur *Sequitur) ruleDepth(id int, stack map[int]bool) int {
 }
 
 /*
-RuleCount returns the number of discovered grammar rules.
+RuleCount exposes production cardinality for tests and dashboard badges.
 */
 func (sequitur *Sequitur) RuleCount() int {
 	return len(sequitur.rules)
 }
 
+/*
+appendNode links a new terminal or rule ref at the root tail before digram check runs.
+*/
 func (sequitur *Sequitur) appendNode(n *Node) {
 	last := sequitur.sentinel.Prev
 
@@ -374,6 +401,9 @@ func (sequitur *Sequitur) appendNode(n *Node) {
 	sequitur.sentinel.Prev = n
 }
 
+/*
+isSentinel guards digram logic against the circular list head.
+*/
 func (sequitur *Sequitur) isSentinel(n *Node) bool {
 	return n == nil || n == sequitur.sentinel
 }
@@ -416,6 +446,9 @@ func (sequitur *Sequitur) check(n *Node) *Rule {
 	return nil
 }
 
+/*
+reduce mints a new rule when the same digram appears twice non-overlapping — core Sequitur promotion.
+*/
 func (sequitur *Sequitur) reduce(
 	newOccur, firstOccur *Node, d [2]Symbol,
 ) *Rule {
@@ -450,6 +483,9 @@ func (sequitur *Sequitur) reduce(
 	return rule
 }
 
+/*
+substitute replaces a digram with a rule symbol and shrinks root length — must forget digram indexes first.
+*/
 func (sequitur *Sequitur) substitute(n *Node, id int) {
 	if n == nil || n.Next == nil || n.Next.Next == nil {
 		return
@@ -472,9 +508,10 @@ func (sequitur *Sequitur) substitute(n *Node, id int) {
 	}
 }
 
-// forgetNode drops digram-index entries that start at n or at n.Prev.
-// Only an entry that still points at that node is removed, so a digram
-// indexed elsewhere keeps its first occurrence.
+/*
+forgetNode drops digram-index entries anchored at n so substitute does not leave
+stale first-occurrence pointers that block future promotions.
+*/
 func (sequitur *Sequitur) forgetNode(n *Node) {
 	if sequitur.isSentinel(n) {
 		return
@@ -495,6 +532,10 @@ func (sequitur *Sequitur) forgetNode(n *Node) {
 	}
 }
 
+/*
+checkAdjacencies re-runs digram checks around a substitution site — replacements
+create fresh digrams that may themselves become rules.
+*/
 func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {
 	if !sequitur.isSentinel(a) && !sequitur.isSentinel(a.Prev) {
 		sequitur.check(a.Prev)
@@ -510,12 +551,17 @@ func (sequitur *Sequitur) checkAdjacencies(a, b *Node) {
 	}
 }
 
-// Sentence drops the current root and keeps the rules. The next letter starts
-// a new phrase with the same rule ids.
+/*
+Sentence clears the root after an MDL boundary while keeping productions — next
+regime tokens start a fresh phrase that may reuse M-rules discovered earlier.
+*/
 func (sequitur *Sequitur) Sentence() {
 	sequitur.clearRootLocked()
 }
 
+/*
+clearRootLocked resets digram indexes and length without discarding rules — shared by Sentence and RestoreRoot.
+*/
 func (sequitur *Sequitur) clearRootLocked() {
 	sequitur.sentinel.Next = sequitur.sentinel
 	sequitur.sentinel.Prev = sequitur.sentinel
@@ -525,6 +571,9 @@ func (sequitur *Sequitur) clearRootLocked() {
 	sequitur.lastKind = ""
 }
 
+/*
+displayRuleID parses M1-style display ids from persisted grammar state.
+*/
 func displayRuleID(symbol string) (int, bool) {
 	if len(symbol) < 2 || symbol[0] != 'M' {
 		return 0, false
@@ -536,6 +585,9 @@ func displayRuleID(symbol string) (int, bool) {
 	return id, true
 }
 
+/*
+parseDisplay converts persisted display symbols back into internal list values.
+*/
 func parseDisplay(symbol string) Symbol {
 	if id, ok := displayRuleID(symbol); ok {
 		return ruleSymbol(id)
@@ -543,7 +595,10 @@ func parseDisplay(symbol string) Symbol {
 	return Symbol(symbol)
 }
 
-// Learn copies one rule into this grammar so a restart replays digrams the same way.
+/*
+Learn installs a saved production before RestoreRoot — rediscovery would assign
+different rule ids and break stable M1 references in persisted path cuts.
+*/
 func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
 	if id <= 0 || len(symbols) == 0 {
 		return
@@ -584,7 +639,10 @@ func (sequitur *Sequitur) Learn(id, count int, symbols []string) {
 	}
 }
 
-// RestoreRoot installs a saved sentence without discovering new rules.
+/*
+RestoreRoot rebuilds digram first-occurrence indexes for a saved root — avoids
+re-running Analyze which would fork rule ids on boot.
+*/
 func (sequitur *Sequitur) RestoreRoot(symbols []string) {
 	sequitur.clearRootLocked()
 

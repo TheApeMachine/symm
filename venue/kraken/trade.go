@@ -11,6 +11,10 @@ import (
 	"github.com/theapemachine/nomagique/market"
 )
 
+/*
+Trade is the public trade websocket tape signal disruptors attach to — distinct
+from private Execution fills on the desk tier.
+*/
 type Trade struct {
 	Channel  string      `json:"channel"`
 	Type     string      `json:"type"`
@@ -18,6 +22,9 @@ type Trade struct {
 	onChange func(market.MarketType)
 }
 
+/*
+TradeData is one print on the public trade channel.
+*/
 type TradeData struct {
 	Symbol    string          `json:"symbol"`
 	Side      string          `json:"side"`
@@ -28,6 +35,9 @@ type TradeData struct {
 	Timestamp time.Time       `json:"timestamp"`
 }
 
+/*
+NewTrade prepares empty Data for the first public trade snapshot.
+*/
 func NewTrade() *Trade {
 	return &Trade{
 		Channel: "trade",
@@ -36,6 +46,9 @@ func NewTrade() *Trade {
 	}
 }
 
+/*
+Request is the public subscribe envelope for the trade channel.
+*/
 func (trade *Trade) Request() map[string]any {
 	return map[string]any{
 		"method": "subscribe",
@@ -45,15 +58,24 @@ func (trade *Trade) Request() map[string]any {
 	}
 }
 
+/*
+OnChange wires runtime envelope trade after each public decode.
+*/
 func (trade *Trade) OnChange(fn func(market.MarketType)) {
 	trade.onChange = fn
 }
 
+/*
+MarshalJSON aliases Trade so onChange stays off the wire.
+*/
 func (trade *Trade) MarshalJSON() ([]byte, error) {
 	type alias Trade
 	return sonic.Marshal((*alias)(trade))
 }
 
+/*
+UnmarshalJSON preserves onChange and notifies disruptor pipeline after Data fills.
+*/
 func (trade *Trade) UnmarshalJSON(data []byte) error {
 	type alias Trade
 	var decoded alias
@@ -77,6 +99,9 @@ func (trade *Trade) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+ToMarket projects prints into nomagique Trade for envelope fan-out.
+*/
 func (trade *Trade) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Trade)
 
@@ -101,6 +126,9 @@ func (trade *Trade) ToMarket(other market.MarketType) market.MarketType {
 	return market.NewTrade(trade.Channel, trade.Type, rows).ToMarket(book)
 }
 
+/*
+FromMarket copies nomagique trade rows back for cache replay.
+*/
 func (trade *Trade) FromMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Trade)
 
@@ -132,12 +160,18 @@ func (trade *Trade) FromMarket(other market.MarketType) market.MarketType {
 	return trade
 }
 
+/*
+TradeVolumeInput is Kraken fee-tier volume accounting inputs on TradeVolume REST.
+*/
 type TradeVolumeInput struct {
 	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
 	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`
 	DomainFuturesVolume30D string `json:"domain_futures_volume_30d"`
 }
 
+/*
+TradeVolumeFee is per-pair fee schedule row inside TradeVolume REST.
+*/
 type TradeVolumeFee struct {
 	Fee               *decimal.Decimal `json:"fee"`
 	Minfee            *decimal.Decimal `json:"minfee"`
@@ -148,6 +182,9 @@ type TradeVolumeFee struct {
 	Nextfuturesvolume string           `json:"nextfuturesvolume"`
 }
 
+/*
+TradeVolumeTier is one maker/taker tier threshold on the fee schedule.
+*/
 type TradeVolumeTier struct {
 	MakerFee            *decimal.Decimal `json:"maker_fee"`
 	TakerFee            *decimal.Decimal `json:"taker_fee"`
@@ -157,12 +194,18 @@ type TradeVolumeTier struct {
 	MinAssetsOnPlatform string           `json:"min_assets_on_platform,omitempty"`
 }
 
+/*
+TradeVolumeSchedule groups tiers for one pair class on TradeVolume REST.
+*/
 type TradeVolumeSchedule struct {
 	Pair  string            `json:"pair"`
 	Class string            `json:"class"`
 	Tiers []TradeVolumeTier `json:"tiers"`
 }
 
+/*
+TradeVolumeResult is the decoded TradeVolume REST payload for fee estimation.
+*/
 type TradeVolumeResult struct {
 	Currency   string                    `json:"currency"`
 	AssetClass string                    `json:"asset_class"`
@@ -173,11 +216,17 @@ type TradeVolumeResult struct {
 	Schedules  []TradeVolumeSchedule     `json:"schedules"`
 }
 
+/*
+TradeVolume is the Kraken REST envelope wrapping TradeVolumeResult.
+*/
 type TradeVolume struct {
 	Error  []any             `json:"error"`
 	Result TradeVolumeResult `json:"result"`
 }
 
+/*
+ParseTradeVolume validates REST trade volume responses before desk fee math.
+*/
 func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
 	tradeVolume := &TradeVolume{}
 
@@ -208,11 +257,17 @@ func ParseTradeVolume(buf []byte) (*TradeVolumeResult, error) {
 	return &tradeVolume.Result, nil
 }
 
+/*
+TradeVolumeRequest names pairs for fee_schedule on private TradeVolume REST.
+*/
 type TradeVolumeRequest struct {
 	Pair        string `json:"pair"`
 	FeeSchedule bool   `json:"fee_schedule"`
 }
 
+/*
+NewTradeVolumeRequest joins symbols for one Kraken TradeVolume query.
+*/
 func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
 	return &TradeVolumeRequest{
 		Pair:        strings.Join(symbols, ","),
@@ -220,21 +275,33 @@ func NewTradeVolumeRequest(symbols []string) *TradeVolumeRequest {
 	}
 }
 
+/*
+MarshalJSON aliases TradeVolumeRequest for signed REST bodies.
+*/
 func (request *TradeVolumeRequest) MarshalJSON() ([]byte, error) {
 	type alias TradeVolumeRequest
 	return sonic.Marshal((*alias)(request))
 }
 
+/*
+TradeSubscription is the public ws subscribe envelope for trade prints.
+*/
 type TradeSubscription struct {
 	Method string                  `json:"method"`
 	Params TradeSubscriptionParams `json:"params"`
 }
 
+/*
+TradeSubscriptionParams lists symbols on the trade channel subscribe.
+*/
 type TradeSubscriptionParams struct {
 	Channel string   `json:"channel"`
 	Symbol  []string `json:"symbol"`
 }
 
+/*
+NewTradeSubscription builds public trade subscribe for signal ingress.
+*/
 func NewTradeSubscription(symbols []string) TradeSubscription {
 	return TradeSubscription{
 		Method: "subscribe",
@@ -245,6 +312,9 @@ func NewTradeSubscription(symbols []string) TradeSubscription {
 	}
 }
 
+/*
+NewTradeUnsubscription drops symbols from the public trade socket.
+*/
 func NewTradeUnsubscription(symbols []string) TradeSubscription {
 	return TradeSubscription{
 		Method: "unsubscribe",
@@ -255,6 +325,9 @@ func NewTradeUnsubscription(symbols []string) TradeSubscription {
 	}
 }
 
+/*
+MarshalJSON aliases TradeSubscription for dial-time sonic encode.
+*/
 func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
 	type alias TradeSubscription
 	return sonic.Marshal((*alias)(&subscription))

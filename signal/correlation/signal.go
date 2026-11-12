@@ -11,12 +11,20 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Correlation disruptor stage — outcomes land on envelope.Correlation and
+Map() feeds logic/resonance Features (herd_score, peak_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	sample  *algorithm.CohortSample
 	process *equation.Cohort
 }
 
+/*
+NewSignal is tape-only — Correlation builds cross-symbol or print statistics without
+a book callback on the hot path.
+*/
 func NewSignal(ctx context.Context) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "correlation"),
@@ -26,8 +34,8 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each ready outcome lands on the envelope.
+Step fans cohort sampling per print — herd/peak need continuous cohort updates, and
+ineligible rows still publish so resonance does not stall on missing Map() labels.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (

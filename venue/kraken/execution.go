@@ -11,6 +11,10 @@ import (
 	"github.com/theapemachine/nomagique/market"
 )
 
+/*
+Execution is the private executions websocket feed broker.Position consumes;
+paper synthesizes the same channel shape from CLI history and fill events.
+*/
 type Execution struct {
 	Channel  string          `json:"channel"`
 	Type     string          `json:"type"`
@@ -19,6 +23,9 @@ type Execution struct {
 	onChange func(market.MarketType)
 }
 
+/*
+ExecutionData is one fill or order lifecycle row on the executions channel.
+*/
 type ExecutionData struct {
 	OrderID       string           `json:"order_id"`
 	ClientOrderID string           `json:"cl_ord_id"`
@@ -42,11 +49,18 @@ type ExecutionData struct {
 	Fees          []ExecutionFee   `json:"fees"`
 }
 
+/*
+ExecutionFee is venue fee breakdown on a single execution row.
+*/
 type ExecutionFee struct {
 	Asset string  `json:"asset"`
 	Qty   float64 `json:"qty"`
 }
 
+/*
+NewExecution prepares subscribe defaults with snap_orders and snap_trades so
+reconnect replays open orders before new fills arrive.
+*/
 func NewExecution() *Execution {
 	return &Execution{
 		Channel: "executions",
@@ -66,6 +80,10 @@ func NewExecutionFromMap(model map[string]any) json.Marshaler {
 	return executionFromEvent(model)
 }
 
+/*
+executionFromHistory maps paper CLI history into a snapshot executions frame
+so tier ledger sync matches live snap_trades on reconnect.
+*/
 func executionFromHistory(model map[string]any) *Execution {
 	history, _ := NewTradesHistoryFromMap(model).(*TradesHistoryResult)
 	data := make([]ExecutionData, 0)
@@ -81,7 +99,7 @@ func executionFromHistory(model map[string]any) *Execution {
 				LastQty:     trade.Volume,
 				LastPrice:   trade.Price,
 				Cost:        trade.Cost,
-				Timestamp:   trade.Time,
+				Timestamp:   time.Unix(int64(trade.Time), 0).UTC(),
 				OrderStatus: "filled",
 				CumQty:      trade.Volume,
 				CumCost:     trade.Cost,
@@ -114,6 +132,9 @@ func executionFromHistory(model map[string]any) *Execution {
 	}
 }
 
+/*
+executionFromEvent maps one paper CLI fill/cancel event into an executions update.
+*/
 func executionFromEvent(model map[string]any) *Execution {
 	var execType string
 	var orderStatus string
@@ -233,6 +254,9 @@ func executionFromEvent(model map[string]any) *Execution {
 	}
 }
 
+/*
+Request is the authenticated private subscribe envelope for executions.
+*/
 func (execution *Execution) Request() map[string]any {
 	return map[string]any{
 		"method": "subscribe",
@@ -244,15 +268,24 @@ func (execution *Execution) Request() map[string]any {
 	}
 }
 
+/*
+OnChange wires broker desk ingestion after each executions decode.
+*/
 func (execution *Execution) OnChange(fn func(market.MarketType)) {
 	execution.onChange = fn
 }
 
+/*
+MarshalJSON aliases Execution so onChange stays off the wire.
+*/
 func (execution *Execution) MarshalJSON() ([]byte, error) {
 	type alias Execution
 	return sonic.Marshal((*alias)(execution))
 }
 
+/*
+UnmarshalJSON preserves onChange and notifies desk after Data is normalized.
+*/
 func (execution *Execution) UnmarshalJSON(data []byte) error {
 	type alias Execution
 	var decoded alias
@@ -276,6 +309,9 @@ func (execution *Execution) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+ToMarket projects fills into nomagique Execution for broker.Position folding.
+*/
 func (execution *Execution) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Execution)
 
@@ -316,6 +352,9 @@ func (execution *Execution) ToMarket(other market.MarketType) market.MarketType 
 	}).ToMarket(book)
 }
 
+/*
+FromMarket copies nomagique execution rows back for paper/cache round-trips.
+*/
 func (execution *Execution) FromMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Execution)
 

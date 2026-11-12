@@ -1,5 +1,9 @@
 package broker
 
+/*
+StoplossState is persisted on Position JSON; legacy wire values must keep stable
+numeric ids across restores.
+*/
 type StoplossState int
 
 const (
@@ -30,7 +34,8 @@ type Stoploss struct {
 }
 
 /*
-NewStoploss initializes a new stoploss with the given PnL percentage.
+NewStoploss seeds Initial/Peak from first mark so armed trailing starts from
+observed PnL, not zero, after enter fills.
 */
 func NewStoploss(PnLPct float64) *Stoploss {
 	return &Stoploss{
@@ -138,7 +143,8 @@ func (stoploss *Stoploss) trailArmed() {
 }
 
 /*
-Triggered reports whether the stoploss has fired.
+Triggered is the latch dischargeStoploss checks — after fire, updates are ignored
+so repeated marks cannot re-enter Armed or spam onSettled.
 */
 func (stoploss *Stoploss) Triggered() bool {
 	return stoploss.State == StoplossTriggered

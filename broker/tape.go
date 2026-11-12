@@ -7,6 +7,9 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+/*
+symbolTape is per-symbol so tape uptake on BTC does not serialize on ETH prints.
+*/
 type symbolTape struct {
 	mu           sync.Mutex
 	buckets      []float64
@@ -21,10 +24,17 @@ type Tape struct {
 	symbols sync.Map // map[string]*symbolTape
 }
 
+/*
+NewTape is lazy per symbol — most of the universe never prints during a session.
+*/
 func NewTape() *Tape {
 	return &Tape{}
 }
 
+/*
+newSymbolTape keeps two windows of buckets because BookIntact compares recent
+uptake against the equal prior window, not a single rolling sum.
+*/
 func newSymbolTape() *symbolTape {
 	n := 2 * int(system.Cfg.Risk.TapeWindow/time.Minute)
 
@@ -34,6 +44,9 @@ func newSymbolTape() *symbolTape {
 	}
 }
 
+/*
+lane defers allocation until first trade so silent symbols pay no tape storage.
+*/
 func (tape *Tape) lane(symbol string) *symbolTape {
 	if raw, ok := tape.symbols.Load(symbol); ok {
 		return raw.(*symbolTape)
@@ -68,7 +81,8 @@ func (tape *Tape) Note(symbol string, quote float64, at time.Time) {
 }
 
 /*
-Uptake sums quote dollars in [now-window, now] and the equal window before it.
+Uptake is the BookIntact gate: rising quote flow must beat the prior window,
+not just absolute notional, to reject dead tapes.
 */
 func (tape *Tape) Uptake(symbol string, now time.Time) (recent, prior float64) {
 	raw, ok := tape.symbols.Load(symbol)

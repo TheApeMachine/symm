@@ -2,13 +2,19 @@ package tokenizer
 
 import "maps"
 
+/*
+symbolHistogramState is the JSON form of dist for MDLState persistence.
+*/
 type symbolHistogramState struct {
 	Counts   map[uint32]int `json:"counts"`
 	Total    int            `json:"total"`
 	Distinct int            `json:"distinct"`
 }
 
-// MDLState is segmenter memory restored before the next grammar symbol.
+/*
+MDLState is serializable segmenter memory — Restore must rebuild dist before the
+next symbol or boundary search starts from an empty histogram.
+*/
 type MDLState struct {
 	Stream   []uint32             `json:"stream"`
 	Offset   int                  `json:"offset"`
@@ -18,6 +24,9 @@ type MDLState struct {
 	LastGain float64              `json:"last_gain"`
 }
 
+/*
+State snapshots stream, vocab, and dist for GrammarCatalog Persist after each MDL cut.
+*/
 func (mdl *MDL) State() MDLState {
 	return MDLState{
 		Stream:   append([]uint32(nil), mdl.stream...),
@@ -29,6 +38,9 @@ func (mdl *MDL) State() MDLState {
 	}
 }
 
+/*
+Restore replays a persisted segmenter without re-running Analyze history.
+*/
 func (mdl *MDL) Restore(state MDLState) {
 	mdl.stream = append([]uint32(nil), state.Stream...)
 	mdl.offset = state.Offset
@@ -47,6 +59,9 @@ func (mdl *MDL) Restore(state MDLState) {
 	mdl.lastGain = state.LastGain
 }
 
+/*
+cloneVocab deep-copies vocab on export so persisted state does not alias live maps.
+*/
 func cloneVocab(vocab map[string]uint32) map[string]uint32 {
 	if len(vocab) == 0 {
 		return make(map[string]uint32)
@@ -58,6 +73,9 @@ func cloneVocab(vocab map[string]uint32) map[string]uint32 {
 	return out
 }
 
+/*
+histogramSnapshot serializes dist without exposing private histogram fields to JSON tags elsewhere.
+*/
 func histogramSnapshot(hist *symbolHistogram) symbolHistogramState {
 	if hist == nil {
 		return symbolHistogramState{Counts: make(map[uint32]int)}
@@ -75,6 +93,9 @@ func histogramSnapshot(hist *symbolHistogram) symbolHistogramState {
 	}
 }
 
+/*
+histogramFrom rebuilds dist after Restore for continued boundary search.
+*/
 func histogramFrom(state symbolHistogramState) *symbolHistogram {
 	hist := newSymbolHistogram()
 	hist.total = state.Total

@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -272,27 +274,71 @@ func (client *WebsocketClient) Watch(
 	}
 
 	go func() {
-		rest := NewREST()
-		ticker := time.NewTicker(5 * time.Second)
+		interval := 5 * time.Second
+		private := strings.Contains(url, "/private/")
+
+		if private {
+			interval = 15 * time.Second
+		}
+
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+
+		backoff := time.Duration(0)
+
+		poll := func() {
+			if backoff > 0 {
+				select {
+				case <-client.Context().Done():
+					return
+				case <-time.After(backoff):
+				}
+			}
+
+			raw, err := client.Post(url, body)
+
+			if err != nil {
+				errnie.Error(err)
+				return
+			}
+
+			if len(raw) == 0 {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[network.websocket] empty post response", nil,
+				))
+				return
+			}
+
+			if err := dest.UnmarshalJSON(raw); err != nil {
+				errnie.Error(err)
+				return
+			}
+
+			if errs := kraken.VenueErrors(raw); len(errs) > 0 {
+				if kraken.RateLimited(errs...) {
+					if backoff == 0 {
+						backoff = 15 * time.Second
+					} else if backoff < 60*time.Second {
+						backoff *= 2
+					}
+
+					return
+				}
+			}
+
+			backoff = 0
+		}
+
+		if !private {
+			poll()
+		}
 
 		for {
 			select {
 			case <-client.Context().Done():
 				return
 			case <-ticker.C:
-			}
-
-			resp, err := rest.Post(url, body)
-
-			if err != nil || resp == nil {
-				continue
-			}
-
-			err = json.Unmarshal(resp.Body(), dest)
-
-			if err != nil {
-				errnie.Error(err)
+				poll()
 			}
 		}
 	}()
@@ -333,11 +379,11 @@ func (client *WebsocketClient) ensureReady() error {
 	}
 
 	if client.url == "" {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation,
 			"[network.websocket] not open",
 			nil,
-		))
+		)
 	}
 
 	client.dialMu.Lock()

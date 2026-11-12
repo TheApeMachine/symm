@@ -12,12 +12,20 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Pumpdump disruptor stage — outcomes land on envelope.Pumpdump and
+Map() feeds logic/resonance Features (compression, exhaustion) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books *broker.Book
 	algo  *equation.Ignition
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Pumpdump labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System: runtime.NewSystem(ctx, "pumpdump"),
@@ -26,6 +34,11 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+Ignition uses touch bid/ask with print for enter/exit compression features.
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup

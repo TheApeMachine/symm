@@ -17,8 +17,9 @@ import (
 )
 
 /*
-Model is the main strategy engine, which is responsible for making
-decisions based on the current state of the market.
+Model turns each tick's path cut into desk enter/hold/exit decisions and only
+mutates the resistance tree on settled lots — fills and gates stay ahead of
+learning so bad sends do not train the path book.
 */
 type Model struct {
 	*runtime.System
@@ -27,11 +28,12 @@ type Model struct {
 	store     *store.Client
 	tree      *atomic.Pointer[Tree]
 	resetPath func(string)
+	live      bool
 }
 
 /*
-NewModel initializes a new model with the given context, desk, price,
-and reset path function. It also initializes the tree and the store.
+NewModel swaps the path tree via atomic.Pointer so S3 reload and Step never
+race on the same radix; resetPath clears grammar when tree actions consume a cut.
 */
 func NewModel(
 	ctx context.Context,
@@ -47,6 +49,7 @@ func NewModel(
 		store:     client,
 		tree:      &atomic.Pointer[Tree]{},
 		resetPath: resetPath,
+		live:      system.Cfg.Market.Model == "real",
 	}
 
 	tree := NewTree(ctx, "model/paths/", client)
@@ -56,8 +59,9 @@ func NewModel(
 }
 
 /*
-Step is the main entry point for the model. It takes an envelope and returns
-a new envelope. This makes it compatible with the LMAX Disruptor pipeline.
+Step drains stoploss pending exits first, then decides per symbol in parallel:
+oracle/resonance/story gates, tree Predict, tier routing — decisions land on
+the envelope for cmd and the hub without calling the broker on blocked paths.
 */
 func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
@@ -80,8 +84,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	decide := func(decision *runtime.Decision) {
 		// Live desk: stamp every outcome real. Untiered skips otherwise
 		// land on the virtual tab and the REAL rail stays empty.
-		if decision != nil && decision.Tier == "" &&
-			system.Cfg.Market.Model == "real" {
+		if decision != nil && decision.Tier == "" && model.live {
 			decision.Tier = broker.TierTypeReal.String()
 		}
 
@@ -112,7 +115,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			bypass := learn.ResonanceBypass
 
 			// Live orders keep the entry gates; lab bypass is paper/virtual only.
-			if system.Cfg.Market.Model == "real" {
+			if model.live {
 				bypass = false
 			}
 
@@ -304,6 +307,11 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 	return approved
 }
 
+/*
+applyAction handles explicit tree leaves (enter/hold/exit) — story bullishness
+and min profit still gate so an exit leaf cannot flatten underwater lots or
+enter against a bearish forward curve.
+*/
 func (model *Model) applyAction(
 	decide func(*runtime.Decision),
 	symbol, path string,
@@ -419,7 +427,18 @@ func (model *Model) enterTiers(
 	resistance float64,
 	pathFound, bypass bool,
 ) {
-	if system.Cfg.Market.Model == "real" {
+	if model.desk != nil && model.desk.AwaitingFill(symbol) {
+		decide(&runtime.Decision{
+			Symbol: symbol,
+			Action: "skip",
+			Reason: "awaiting entry fill",
+			Gate:   "tier",
+			Path:   path,
+		})
+		return
+	}
+
+	if model.live {
 		model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
 		return
 	}
@@ -435,6 +454,10 @@ func (model *Model) enterTiers(
 	model.tryEnter(decide, symbol, path, broker.TierTypeReal, true, "real enter")
 }
 
+/*
+tryEnter is the single desk.Enter choke point so blocked tiers emit structured
+Decision rows (gate tier) instead of silent no-ops in the disruptor log.
+*/
 func (model *Model) tryEnter(
 	decide func(*runtime.Decision),
 	symbol, path string,
@@ -463,6 +486,10 @@ func (model *Model) tryEnter(
 	})
 }
 
+/*
+gateReason builds human skip text for resonance vetoes — UI and replay need which
+threshold failed without re-deriving curve math from raw envelope fields.
+*/
 func (model *Model) gateReason(
 	rez map[string]float64,
 	supported int,
@@ -494,6 +521,10 @@ func (model *Model) gateReason(
 	return "resonance gate"
 }
 
+/*
+bypassReading fabricates a bullish calibrated resonance map for lab tiers only —
+live model forces bypass off so paper shortcuts never reach REAL rails.
+*/
 func (model *Model) bypassReading(learn *system.Learning) map[string]float64 {
 	dims := len(resonance.Features)
 	supported := max(learn.MinSupportedHorizon, 1)
@@ -521,6 +552,11 @@ func (model *Model) bypassReading(learn *system.Learning) map[string]float64 {
 	return rez
 }
 
+/*
+exitCut picks the path attributed to a stoploss settle: live cut if still lit,
+else ExitPath/HoldPaths, and refuses EntryPath so pending exit does not train
+on the opening grammar sentence.
+*/
 func (model *Model) exitCut(
 	envelope *runtime.Envelope,
 	symbol string,
@@ -544,13 +580,21 @@ func (model *Model) exitCut(
 		}
 	}
 
-	if pending != nil && (path == "" || path == pending.EntryPath) {
+	if pending != nil && path == "" {
+		return ""
+	}
+
+	if pending != nil && pending.ClosedAt == nil && path == pending.EntryPath {
 		return ""
 	}
 
 	return path
 }
 
+/*
+Hold records the latest non-entry path for outcome attribution — one hold path
+per lot so tree training sees the path in force when stoploss later fires.
+*/
 func (model *Model) Hold(position *broker.Position, path string) {
 	if position == nil || path == "" || path == position.EntryPath {
 		return
@@ -563,12 +607,24 @@ func (model *Model) Hold(position *broker.Position, path string) {
 	position.HoldPaths = []string{path}
 }
 
+/*
+Exit arms broker sells before tree Update on pending lots — resistance moves
+only after ClosedAt so rejects and repeated marks cannot train on ghost exits.
+*/
 func (model *Model) Exit(position *broker.Position, path string) {
-	if position == nil || path == "" || path == position.EntryPath {
+	if position == nil {
 		return
 	}
 
 	settled := position.ClosedAt != nil
+
+	if path == "" || (!settled && path == position.EntryPath) {
+		if settled {
+			model.dropPending(position)
+		}
+
+		return
+	}
 
 	// Train only on realized fills. Policy exits arm the broker first; marking
 	// the tree before the order fills poisoned resistance on rejects and
@@ -610,6 +666,10 @@ func (model *Model) Exit(position *broker.Position, path string) {
 	model.dropPending(position)
 }
 
+/*
+tierOf maps cache tier_key back to desk routes for Exit/ClearPending — wrong
+tier would send paper sells down the real socket or drop pending too early.
+*/
 func (model *Model) tierOf(position *broker.Position) broker.TierType {
 	switch position.TierKey {
 	case broker.TierTypePaper.String():
@@ -657,6 +717,10 @@ func (model *Model) resistanceDelta(position *broker.Position) float64 {
 	return -step * timeWeight * pnlWeight
 }
 
+/*
+holdDuration clamps negative or missing clocks so resistance credit for quick
+wins does not explode when OpenedAt/ClosedAt are partial on exchange imports.
+*/
 func (model *Model) holdDuration(position *broker.Position, halfLifeSec float64) time.Duration {
 	if position.OpenedAt.IsZero() {
 		return time.Duration(halfLifeSec * float64(time.Second))
@@ -677,6 +741,10 @@ func (model *Model) holdDuration(position *broker.Position, halfLifeSec float64)
 	return hold
 }
 
+/*
+dropPending releases the desk pending slot after tree training consumed the lot —
+until then strategy must still see the position for exit_path attribution.
+*/
 func (model *Model) dropPending(position *broker.Position) {
 	if model.desk == nil || position == nil {
 		return

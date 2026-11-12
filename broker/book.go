@@ -16,7 +16,9 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
-// Book is the historical name signals/boot still use for BookManager.
+/*
+Book is the historical alias signals and boot still use for BookManager.
+*/
 type Book = BookManager
 
 /*
@@ -42,6 +44,10 @@ type BookManager struct {
 	onInvalid func([]string)
 }
 
+/*
+NewBookManager exists so boot can register Expect/Wait before the first L3
+frame; pending counts and the seeded signal live here rather than in Price.
+*/
 func NewBookManager() *BookManager {
 	return &BookManager{
 		lanes:  make(map[string]*bookLane),
@@ -59,6 +65,10 @@ func (manager *BookManager) OnInvalid(fn func([]string)) {
 	manager.onInvalid = fn
 }
 
+/*
+Expect marks each subscribed symbol pending so startup can block: Allocate and
+TouchBid must not run on an empty or partial book after subscribe.
+*/
 func (manager *BookManager) Expect(symbols []string) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
@@ -82,6 +92,10 @@ func (manager *BookManager) Expect(symbols []string) {
 	manager.pendingN.Store(pending)
 }
 
+/*
+Wait is the boot gate after SubscribeBooks — strategy should not enter until
+every Expect'd symbol has applied its first snapshot or sizing lies.
+*/
 func (manager *BookManager) Wait(timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
@@ -106,6 +120,9 @@ func (manager *BookManager) Wait(timeout time.Duration) error {
 	}
 }
 
+/*
+Pending feeds Wait timeouts and error text listing which symbols never seeded.
+*/
 func (manager *BookManager) Pending() []string {
 	manager.mu.RLock()
 	type pendingLane struct {
@@ -137,6 +154,10 @@ func (manager *BookManager) Pending() []string {
 	return out
 }
 
+/*
+lookup avoids inventing lanes on read: a missing key must stay "not seeded",
+not flip to an empty book that passed BookIntact checks.
+*/
 func (manager *BookManager) lookup(symbol string) *bookLane {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
@@ -144,6 +165,10 @@ func (manager *BookManager) lookup(symbol string) *bookLane {
 	return manager.lanes[symbol]
 }
 
+/*
+lane creates on write because resubscribe and invalidation can deliver deltas
+before boot called Expect for that symbol.
+*/
 func (manager *BookManager) lane(symbol string) *bookLane {
 	if lane := manager.lookup(symbol); lane != nil {
 		return lane
@@ -162,6 +187,10 @@ func (manager *BookManager) lane(symbol string) *bookLane {
 	return lane
 }
 
+/*
+Update applies L3 under per-symbol locks so one checksum failure does not stall
+the whole universe; invalid symbols trigger instrument resubscribe.
+*/
 func (manager *BookManager) Update(level3 *market.Level3) {
 	if level3 == nil {
 		return
@@ -228,6 +257,10 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 	}
 }
 
+/*
+clearPending bumps pendingN and pings seeded so Wait can wake without scanning
+all lanes on every delta frame.
+*/
 func (manager *BookManager) clearPending(lane *bookLane) {
 	if !lane.pending {
 		return
@@ -238,7 +271,8 @@ func (manager *BookManager) clearPending(lane *bookLane) {
 }
 
 /*
-diverged is true when the venue checksum misses or the book is crossed.
+diverged forces invalidation instead of serving a book that fails Kraken's
+checksum or shows an impossible touch — continuing would poison Allocate and marks.
 */
 func (manager *BookManager) diverged(book *market.Book, checksum int) bool {
 	if book == nil {
@@ -260,6 +294,10 @@ func (manager *BookManager) diverged(book *market.Book, checksum int) bool {
 	return result == nil || !result.Match
 }
 
+/*
+applyOrder maps Kraken L3 rows into nomagique deltas; delete events keep stale
+qty so the book actually drops levels the venue only flags via event=delete.
+*/
 func (manager *BookManager) applyOrder(
 	book *market.Book,
 	side market.SideKind,
@@ -291,6 +329,10 @@ func (manager *BookManager) applyOrder(
 	})
 }
 
+/*
+Get exposes the book pointer for tests; production marks use Book so depth walks
+do not hold the lane lock across Price.Allocate.
+*/
 func (manager *BookManager) Get(symbol string) *market.Book {
 	lane := manager.lookup(symbol)
 	if lane == nil {
@@ -303,6 +345,10 @@ func (manager *BookManager) Get(symbol string) *market.Book {
 	return lane.book
 }
 
+/*
+Book is the hot-path reader: callback releases the lane lock before ask/bid walks
+so L3 writers on other symbols are not blocked for the whole Allocate.
+*/
 func (manager *BookManager) Book(symbol string, read func(*market.Book)) {
 	lane := manager.lookup(symbol)
 	if lane == nil {
@@ -319,6 +365,10 @@ func (manager *BookManager) Book(symbol string, read func(*market.Book)) {
 	read(lane.book)
 }
 
+/*
+BlockReason turns pending/stale/nil into Allocate's "why" string instead of a
+generic book failure.
+*/
 func (manager *BookManager) BlockReason(symbol string) string {
 	if symbol == "" {
 		return "symbol is empty"
@@ -347,6 +397,10 @@ func (manager *BookManager) BlockReason(symbol string) string {
 	return ""
 }
 
+/*
+StaleSymbol gates Desk.BookStale and BookIntact so disconnects stop entries before
+marks use a book the socket no longer feeds.
+*/
 func (manager *BookManager) StaleSymbol(symbol string) bool {
 	lane := manager.lookup(symbol)
 	if lane == nil {
@@ -359,6 +413,10 @@ func (manager *BookManager) StaleSymbol(symbol string) bool {
 	return lane.stale || lane.book == nil
 }
 
+/*
+Stale is wired from Instrument OnDisconnect so marks and sizing halt until
+ResubscribeLevel3 delivers a fresh snapshot.
+*/
 func (manager *BookManager) Stale(symbols []string) {
 	for _, symbol := range symbols {
 		if symbol == "" {
@@ -373,6 +431,10 @@ func (manager *BookManager) Stale(symbols []string) {
 	}
 }
 
+/*
+All iterates seeded books for tests and desk helpers that need a universe sweep
+without knowing the symbol list ahead of time.
+*/
 func (manager *BookManager) All() iter.Seq[*market.Book] {
 	return func(yield func(*market.Book) bool) {
 		manager.mu.RLock()

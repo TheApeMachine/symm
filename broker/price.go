@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -17,6 +18,10 @@ import (
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
+/*
+Direction selects which side consume walks and whether afterFee adds or subtracts
+taker — BUY lifts asks, SELL hits bids.
+*/
 type Direction string
 
 const (
@@ -39,16 +44,39 @@ Price answers book questions with fills. A last trade is not a price.
 */
 type Price struct {
 	*runtime.System
-	Instrument *Instrument
-	Books      *BookManager
-	ticker     *market.Ticker
-	venue      market.Venue
-	public     network.Client
-	balance    *market.Balance
-	normalizer *spot.Normalizer
-	tape       *Tape
+	Instrument      *Instrument
+	Books           *BookManager
+	ticker          *market.Ticker
+	venue           market.Venue
+	public          network.Client
+	balance         *market.Balance
+	normalizer      *spot.Normalizer
+	tape            *Tape
+	peakFrac        float64
+	backingBand     float64
+	minTouchBidCash float64
+	minBackingRatio float64
+	minTapeNotional float64
 }
 
+/*
+queryTradeVolume is swappable so price tests avoid live REST while production
+still uses the shared network client for fee bootstrap.
+*/
+var queryTradeVolume = func(url string, body any) ([]byte, error) {
+	resp, err := network.NewREST().Post(url, body)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Body(), nil
+}
+
+/*
+NewPrice refuses to construct if TradeVolume fails — downstream FeeNet and
+Allocate would silently use wrong economics without account taker rates.
+*/
 func NewPrice(
 	ctx context.Context,
 	books *BookManager,
@@ -71,6 +99,7 @@ func NewPrice(
 		normalizer: normalizer,
 		tape:       NewTape(),
 	}
+	price.bindRisk()
 
 	if !price.loadFees() {
 		return nil
@@ -95,6 +124,10 @@ func NewPrice(
 	return price
 }
 
+/*
+SetTicker bypasses ws ticker when tests need BelowPeak/CloseMark fallback without
+running the full public Watch loop.
+*/
 func (price *Price) SetTicker(row *market.TickerData) {
 	if row == nil {
 		return
@@ -103,10 +136,178 @@ func (price *Price) SetTicker(row *market.TickerData) {
 	price.ticker.Set(row.Symbol, row)
 }
 
+/*
+ResolveDeskSymbol bridges TradesHistory and Balance compact names to ws symbols
+used as cache keys — mismatches here invent ghost or missing exchange lots.
+*/
+func (price *Price) ResolveDeskSymbol(pair string) string {
+	if pair == "" {
+		return ""
+	}
+
+	quote := system.Cfg.Market.QuoteCurrency
+
+	if strings.Contains(pair, "/") {
+		if !strings.HasSuffix(pair, "/"+quote) {
+			return ""
+		}
+
+		base, found := strings.CutSuffix(pair, "/"+quote)
+		if !found || base == "" {
+			return ""
+		}
+
+		if mapped := price.SymbolForBase(base, quote); mapped != "" {
+			return mapped
+		}
+
+		return pair
+	}
+
+	if price.normalizer != nil {
+		if desk := price.normalizer.Name(pair); desk != "" && strings.Contains(desk, "/") {
+			if strings.HasSuffix(desk, "/"+quote) {
+				if mapped := price.SymbolForBase(strings.TrimSuffix(desk, "/"+quote), quote); mapped != "" {
+					return mapped
+				}
+
+				return desk
+			}
+		}
+
+		if info, err := price.normalizer.PairInfo(pair); err == nil &&
+			info != nil && info.WSName != "" {
+			if strings.HasSuffix(info.WSName, "/"+quote) {
+				return info.WSName
+			}
+		}
+	}
+
+	if price.Instrument == nil {
+		return ""
+	}
+
+	for _, row := range price.Instrument.Pairs() {
+		if pair == row.Base+row.Quote {
+			return row.Symbol
+		}
+
+		compact := strings.ReplaceAll(row.Symbol, "/", "")
+
+		if strings.EqualFold(pair, compact) {
+			return row.Symbol
+		}
+
+		if alt := krakenAltName(row.Base, row.Quote); strings.EqualFold(pair, alt) {
+			return row.Symbol
+		}
+	}
+
+	return ""
+}
+
+/*
+SymbolForBase turns ledger asset codes into pairs for history admit when REST
+names omit the slash or use alternate base spellings.
+*/
+func (price *Price) SymbolForBase(base, quote string) string {
+	if base == "" || quote == "" || price.Instrument == nil {
+		return ""
+	}
+
+	for _, row := range price.Instrument.Pairs() {
+		if !assetMatches(row.Base, base) {
+			continue
+		}
+
+		if assetMatches(row.Quote, quote) {
+			return row.Symbol
+		}
+	}
+
+	return ""
+}
+
+/*
+DeskSymbolForLedgerAsset skips quote cash and maps hold assets to pairs so
+spotUSDHolds can line up TradesHistory legs with Balance rows.
+*/
+func (price *Price) DeskSymbolForLedgerAsset(asset string) string {
+	if price == nil || asset == "" {
+		return ""
+	}
+
+	quote := system.Cfg.Market.QuoteCurrency
+
+	if asset == quote || kraken.SpotAsset(asset) == quote {
+		return ""
+	}
+
+	if sym := price.SymbolForBase(kraken.SpotAsset(asset), quote); sym != "" {
+		return sym
+	}
+
+	if price.normalizer != nil {
+		base := price.normalizer.Name(asset)
+
+		if base != "" && !strings.Contains(base, "/") {
+			if sym := price.SymbolForBase(base, quote); sym != "" {
+				return sym
+			}
+		}
+	}
+
+	return price.ResolveDeskSymbol(strings.ToUpper(asset + quote))
+}
+
+/*
+assetMatches equates XXBT with XBT because instrument cache and Balance use
+different Kraken spellings for the same spendable asset.
+*/
+func assetMatches(code, want string) bool {
+	if code == want {
+		return true
+	}
+
+	return strings.EqualFold(krakenCompactAsset(code), want)
+}
+
+/*
+krakenAltName is the REST pair fallback when normalizer.PairInfo misses during
+ResolveDeskSymbol scans over instrument pairs.
+*/
+func krakenAltName(base, quote string) string {
+	return krakenCompactAsset(base) + krakenCompactAsset(quote)
+}
+
+/*
+krakenCompactAsset aligns websocket and REST asset spellings before suffix
+comparisons in historyPairForDesk and assetMatches.
+*/
+func krakenCompactAsset(code string) string {
+	if strings.HasPrefix(code, "XX") {
+		return code[1:]
+	}
+
+	if strings.HasPrefix(code, "X") || strings.HasPrefix(code, "Z") {
+		return code[1:]
+	}
+
+	return code
+}
+
+/*
+VolumeUSD defers to ticker not tape because signals want venue-published 24h
+stats, not the desk's rolling minute buckets.
+*/
 func (price *Price) VolumeUSD(symbol string) float64 {
 	return price.ticker.VolumeUSD(symbol)
 }
 
+/*
+ChangePct is ticker-sourced for signal features; trade prints would double-count
+intra-day moves the ticker already aggregates.
+*/
 func (price *Price) ChangePct(symbol string) float64 {
 	return price.ticker.ChangePct(symbol)
 }
@@ -131,11 +332,23 @@ func (price *Price) PeakFrac(symbol string) (float64, bool) {
 }
 
 /*
+bindRisk snapshots system.Cfg risk knobs once so BookIntact and Allocate do not
+hit the global config struct on every symbol tick.
+*/
+func (price *Price) bindRisk() {
+	price.peakFrac = system.Cfg.Risk.MaxEntryPeakFrac
+	price.backingBand = system.Cfg.Risk.BackingBandFrac
+	price.minTouchBidCash = system.Cfg.Risk.MinTouchBidCash
+	price.minBackingRatio = system.Cfg.Risk.MinBackingRatio
+	price.minTapeNotional = system.Cfg.Risk.MinTapeNotionalUSD
+}
+
+/*
 BelowPeak is true when last sits under max_entry_peak_frac of the 24h range.
 Disabled when the cap is <=0 or >=1. Missing range data vetoes while enabled.
 */
 func (price *Price) BelowPeak(symbol string) bool {
-	cap := system.Cfg.Risk.MaxEntryPeakFrac
+	cap := price.peakFrac
 
 	if cap <= 0 || cap >= 1 {
 		return true
@@ -151,7 +364,8 @@ func (price *Price) BelowPeak(symbol string) bool {
 }
 
 /*
-NoteTrade records one print's quote dollars on the entry tape.
+NoteTrade feeds BookIntact tape uptake — prints alone are too noisy per tick, so
+we aggregate quote dollars per minute before comparing recent vs prior windows.
 */
 func (price *Price) NoteTrade(trade *market.TradeData) {
 	if trade == nil {
@@ -164,16 +378,25 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 		at = time.Now()
 	}
 
+	if price.tape == nil {
+		return
+	}
+
 	price.tape.Note(trade.Symbol, trade.Price.Mul(trade.Qty).InexactFloat64(), at)
 }
 
 /*
-TapeUptake is recent vs prior window quote notional for the entry gate.
+TapeUptake is the strategy-facing export of tape windows — BookIntact wants both
+windows, not the raw bucket ring.
 */
 func (price *Price) TapeUptake(symbol string, now time.Time) (recent, prior float64) {
 	return price.tape.Uptake(symbol, now)
 }
 
+/*
+applyTicker rekeys ws pair ids through normalizer.Name so ticker rows align with
+instrument ws symbols used everywhere else on the desk.
+*/
 func (price *Price) applyTicker(frame market.MarketType) {
 	if frame == nil {
 		return
@@ -197,6 +420,10 @@ func (price *Price) applyTicker(frame market.MarketType) {
 	}
 }
 
+/*
+loadFees must run before READY because default fee tables would bias BookIntact
+open-drag and every FeeNet settle on this API key's actual taker tier.
+*/
 func (price *Price) loadFees() bool {
 	symbols := price.Instrument.Symbols()
 
@@ -207,15 +434,8 @@ func (price *Price) loadFees() bool {
 		return false
 	}
 
-	if err := price.normalizer.Use(spot.NewREST()); err != nil {
-		price.Error(errnie.Err(
-			errnie.IO, "[price] asset pairs required before trade volume fees", err,
-		))
-		return false
-	}
-
-	response, err := network.NewREST().Post(
-		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.TradeVolume,
+	raw, err := queryTradeVolume(
+		system.Cfg.WebSocket.Endpoints.TradeVolume,
 		kraken.NewTradeVolumeRequest(symbols),
 	)
 
@@ -224,7 +444,7 @@ func (price *Price) loadFees() bool {
 		return false
 	}
 
-	volume, err := kraken.ParseTradeVolume(response.Body())
+	volume, err := kraken.ParseTradeVolume(raw)
 
 	if err != nil {
 		price.Error(err)
@@ -261,7 +481,10 @@ func (price *Price) loadFees() bool {
 	return ok
 }
 
-// Fee is the taker fee in percent (0.40 means 0.40%). Nil means unknown.
+/*
+Fee returns nil when unknown so callers fail closed — sizing and friction must
+not assume a default taker when TradeVolume missed a symbol.
+*/
 func (price *Price) Fee(symbol string) *decimal.Decimal {
 	if fee := price.Instrument.TakerFee(symbol); fee != nil {
 		return fee
@@ -306,7 +529,8 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.
 }
 
 /*
-TouchBidCash is quote notional on the top three bid levels.
+TouchBidCash approximates near-touch exit liquidity — top three levels bound how
+fast a desk lot could be monetized without walking deep bids.
 */
 func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 	if symbol == "" {
@@ -344,7 +568,10 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 	return cash, true
 }
 
-// SpreadPct is the book's own relative bid-ask spread in percent.
+/*
+SpreadPct uses the managed book spread, not ticker last — Observe wants
+microstructure at decision time, not delayed public stats.
+*/
 func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 	var spread *decimal.Decimal
 
@@ -375,11 +602,6 @@ func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
 	fee := price.Fee(symbol)
 
 	if fee == nil {
-		errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"[price] friction failed",
-			nil,
-		).With("symbol", symbol, "why", "taker fee unknown"))
 		return nil, false
 	}
 
@@ -475,7 +697,10 @@ func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) 
 	return pct, true
 }
 
-// PnLPct is fee-net round-trip profit as a percent of entry cost.
+/*
+PnLPct is the close-now probe EntryCloseNowPnLPct uses — same MarkClose fee
+netting as open marks without duplicating the walk logic at call sites.
+*/
 func (price *Price) PnLPct(
 	symbol string,
 	quantity, entry *decimal.Decimal,
@@ -489,6 +714,10 @@ func (price *Price) PnLPct(
 	return pct
 }
 
+/*
+ExitVWAP exposes only the walk price for callers that compute PnL elsewhere and
+must not double-run MarkClose's fee leg math.
+*/
 func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
 	vwap, _, _, _ := price.MarkClose(symbol, quantity, nil)
 	return vwap
@@ -550,7 +779,10 @@ func (price *Price) MarkClose(
 	return
 }
 
-// TouchAsk is the best ask when the book is crossed-ready.
+/*
+TouchAsk refuses crossed or empty books so signals do not treat a stale ask as
+executable when the touch is invalid.
+*/
 func (price *Price) TouchAsk(symbol string) *decimal.Decimal {
 	var ask *decimal.Decimal
 
@@ -570,7 +802,28 @@ func (price *Price) TouchAsk(symbol string) *decimal.Decimal {
 	return ask
 }
 
-// TouchBid is the best bid when the book is crossed-ready.
+/*
+CloseMark is the bid used to fee-net an open long: level3 touch, else public last.
+*/
+func (price *Price) CloseMark(symbol string) *decimal.Decimal {
+	if mark := price.TouchBid(symbol); mark != nil {
+		return mark
+	}
+
+	row := price.ticker.Of(symbol)
+
+	if row != nil && row.Last > 0 {
+		m := decimal.NewFromFloat(row.Last)
+		return &m
+	}
+
+	return nil
+}
+
+/*
+TouchBid is the mark for longs — trade prints are not exit prices; marks and
+stoploss must use the bid the desk could actually hit.
+*/
 func (price *Price) TouchBid(symbol string) *decimal.Decimal {
 	var bid *decimal.Decimal
 
@@ -590,7 +843,10 @@ func (price *Price) TouchBid(symbol string) *decimal.Decimal {
 	return bid
 }
 
-// FillAsk is the ask-side VWAP for qty. Nil when the book cannot fill.
+/*
+FillAsk wraps EntryCost for local tier fillsEnter — nil means the book cannot
+honor the Enter volume before we fabricate an Apply print.
+*/
 func (price *Price) FillAsk(symbol string, qty *decimal.Decimal) *decimal.Decimal {
 	entryPx, _, err := price.EntryCost(symbol, qty)
 
@@ -601,7 +857,10 @@ func (price *Price) FillAsk(symbol string, qty *decimal.Decimal) *decimal.Decima
 	return entryPx
 }
 
-// EntryCost walks the asks for quantity and returns book VWAP and fee amount.
+/*
+EntryCost separates executable VWAP from fee leg for probes that need both
+open-drag (close-now) and cash budgeting without a full Allocate pass.
+*/
 func (price *Price) EntryCost(
 	symbol string,
 	quantity *decimal.Decimal,
@@ -674,6 +933,17 @@ func (price *Price) Allocate(
 		wallet = price.balance
 	}
 
+	if price.Instrument != nil && !price.Instrument.Has(symbol) {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With(
+			"symbol", symbol,
+			"why", "symbol not in instrument universe",
+		)
+	}
+
 	if wallet == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -689,7 +959,7 @@ func (price *Price) Allocate(
 	raw := wallet.Cash(pair.Quote)
 
 	if raw == nil {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"[price] allocate failed",
 			nil,
@@ -697,7 +967,7 @@ func (price *Price) Allocate(
 			"symbol", symbol,
 			"quote", pair.Quote,
 			"why", "no spendable quote cash in wallet",
-		))
+		)
 	}
 
 	cash, err := decimal.NewFromString(raw.String())
@@ -729,7 +999,7 @@ func (price *Price) Allocate(
 	fee := price.Fee(symbol)
 
 	if fee == nil {
-		return nil, errnie.Error(errnie.Err(
+		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"[price] allocate failed",
 			nil,
@@ -737,7 +1007,7 @@ func (price *Price) Allocate(
 			"symbol", symbol,
 			"quote", pair.Quote,
 			"why", "taker fee unknown",
-		))
+		)
 	}
 
 	budget := cash.Mul(
@@ -835,7 +1105,10 @@ func (price *Price) Allocate(
 	)
 }
 
-// sizeBuy lifts asks under touchCap and grossBudget, then trims until fees fit budget.
+/*
+sizeBuy implements the risk caps inside Allocate: touch-divisor limits impact,
+then fee-inclusive trim so Send never exceeds spendable quote after taker.
+*/
 func (price *Price) sizeBuy(
 	managed *market.Book,
 	symbol string,
@@ -924,7 +1197,10 @@ func (price *Price) sizeBuy(
 	return nil, nil, fail
 }
 
-// venueFill snaps qty to the instrument step and re-walks so gross matches.
+/*
+venueFill re-walks after lot rounding because Kraken rejects off-step qty — the
+post-format book walk must match the volume we will actually send.
+*/
 func (price *Price) venueFill(
 	managed *market.Book,
 	symbol string,
@@ -961,7 +1237,10 @@ func (price *Price) venueFill(
 	return next, nextGross, ""
 }
 
-// consume fills maxQty from the book; maxGross (if set) also caps quote spent.
+/*
+consume is the shared depth walk for buy and sell; maxGross bounds quote spend
+during sizing, while exit walks require full depth to mark honestly.
+*/
 func (price *Price) consume(
 	managed *market.Book,
 	maxQty, maxGross *decimal.Decimal,
@@ -1030,7 +1309,8 @@ func (price *Price) consume(
 }
 
 /*
-BuyCost is quote paid after taker fee on a buy notional.
+BuyCost grosses up buys for MarkClose fee-net PnL — entry spend includes taker
+on the entry leg only.
 */
 func (price *Price) BuyCost(symbol string, gross *decimal.Decimal) *decimal.Decimal {
 	fee := price.Fee(symbol)
@@ -1043,7 +1323,8 @@ func (price *Price) BuyCost(symbol string, gross *decimal.Decimal) *decimal.Deci
 }
 
 /*
-SellProceeds is quote received after taker fee on a sell notional.
+SellProceeds nets down sells for MarkClose — exit proceeds use taker on the
+sell leg, paired with BuyCost for round-trip PnL.
 */
 func (price *Price) SellProceeds(symbol string, gross *decimal.Decimal) *decimal.Decimal {
 	fee := price.Fee(symbol)
@@ -1056,7 +1337,8 @@ func (price *Price) SellProceeds(symbol string, gross *decimal.Decimal) *decimal
 }
 
 /*
-FeeNetRoundTrip is fee-net PnL and percent from entry/exit prices at quantity.
+FeeNetRoundTrip is how Apply stamps closed lots and how exchange history
+finalizeClosedLot aligns with symm-managed settle economics.
 */
 func (price *Price) FeeNetRoundTrip(
 	symbol string,
@@ -1083,6 +1365,10 @@ func (price *Price) FeeNetRoundTrip(
 	return &p, &pPct
 }
 
+/*
+afterFee keeps fee direction in one place so BuyCost/SellProceeds and sizing
+trim share the same sign convention as Kraken's percent fee display.
+*/
 func (price *Price) afterFee(
 	amount, fee *decimal.Decimal,
 	direction Direction,
@@ -1109,7 +1395,7 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 		return 0, false
 	}
 
-	band := system.Cfg.Risk.BackingBandFrac
+	band := price.backingBand
 
 	price.Books.Book(symbol, func(managed *market.Book) {
 		if !bookReady(managed) {
@@ -1139,7 +1425,10 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 	return ratio, ok
 }
 
-// sideCash sums quote notional along one book side inside [lo, hi].
+/*
+sideCash measures liquidity near mid for BackingRatio — only notional inside
+the band counts, not the full depth subscription.
+*/
 func sideCash(
 	start *market.Level,
 	bids bool,
@@ -1174,6 +1463,10 @@ func sideCash(
 	return total
 }
 
+/*
+bookReady vetoes spread, touch, and walk helpers when checksum passed but the
+touch is crossed — otherwise Friction and marks lie.
+*/
 func bookReady(managed *market.Book) bool {
 	if managed == nil {
 		return false
@@ -1187,6 +1480,10 @@ func bookReady(managed *market.Book) bool {
 	return bid.Price.Cmp(*ask.Price) < 0
 }
 
+/*
+toSymm bridges normalizer output into desk decimals without letting SDK mutability
+leak into Position JSON and cache blobs.
+*/
 func toSymm(raw *sdkdecimal.Decimal) *decimal.Decimal {
 	if raw == nil {
 		return nil
@@ -1200,6 +1497,10 @@ func toSymm(raw *sdkdecimal.Decimal) *decimal.Decimal {
 	return &parsed
 }
 
+/*
+toSDK is the inverse bridge for FormatSize input — shopspring remains canonical
+in broker, SDK only at the formatting boundary.
+*/
 func toSDK(value *decimal.Decimal) (*sdkdecimal.Decimal, error) {
 	if value == nil {
 		return nil, nil
@@ -1208,6 +1509,10 @@ func toSDK(value *decimal.Decimal) (*sdkdecimal.Decimal, error) {
 	return sdkdecimal.NewFromString(value.String())
 }
 
+/*
+formatSize prevents add_order reject on qty_increment — Allocate calls this on
+touch cap and every budget trim step.
+*/
 func (price *Price) formatSize(symbol string, value *decimal.Decimal) (*decimal.Decimal, error) {
 	if price.normalizer == nil || value == nil {
 		return value, nil
@@ -1224,4 +1529,38 @@ func (price *Price) formatSize(symbol string, value *decimal.Decimal) (*decimal.
 	}
 
 	return toSymm(sized), nil
+}
+
+/*
+BookIntact is the book-oracle input for Observe: cash, backing, tape uptake,
+and close-now vs open-drag. Spread and peak are separate Observe args.
+*/
+func (price *Price) BookIntact(symbol string) bool {
+	minCash := price.minTouchBidCash
+	cash, ok := price.TouchBidCash(symbol)
+
+	if !ok || cash == nil || cash.InexactFloat64() < minCash {
+		return false
+	}
+
+	ratio, ok := price.BackingRatio(symbol)
+
+	if !ok || ratio < price.minBackingRatio {
+		return false
+	}
+
+	recent, prior := price.TapeUptake(symbol, time.Now())
+	floor := price.minTapeNotional
+
+	if recent < floor || recent <= prior {
+		return false
+	}
+
+	closeNow, ok := price.EntryCloseNowPnLPct(symbol)
+
+	if !ok || closeNow == nil {
+		return false
+	}
+
+	return closeNow.InexactFloat64() >= -price.OpenDragCap(symbol)
 }

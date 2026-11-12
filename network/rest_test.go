@@ -52,8 +52,6 @@ func TestRESTPrivateSignatureMatchesBody(t *testing.T) {
 		t.Fatalf("credentials: %v", err)
 	}
 
-	SetPrivateSigner(kraken.SignPrivate)
-
 	key, signature, signed, err := kraken.SignPrivate("/0/private/AddOrder", map[string]string{
 		"pair":      "XBTUSD",
 		"type":      "buy",

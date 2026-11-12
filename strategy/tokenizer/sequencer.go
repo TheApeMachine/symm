@@ -17,6 +17,9 @@ type Sequencer struct {
 	sentenceBreak bool
 }
 
+/*
+NewSequencer pairs a fresh Sequitur with MDL — Training owns one per symbol map key.
+*/
 func NewSequencer() *Sequencer {
 	return &Sequencer{
 		grammar: NewSequitur(),
@@ -24,6 +27,10 @@ func NewSequencer() *Sequencer {
 	}
 }
 
+/*
+Reset clears the live sentence and lastEmitted after model resetPath without
+dropping learned rules — next Step starts a new phrase using existing M-rules.
+*/
 func (sequencer *Sequencer) Reset() {
 	sequencer.lastEmitted = ""
 	sequencer.sentenceBreak = false
@@ -86,6 +93,10 @@ func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) (Toke
 	return sequencer.cut(brightness), true
 }
 
+/*
+cut projects grammar Tail into runtime.Tokens with brightness only on the tail
+segment — Model.Predict compares Last().Brightness against tree resistance.
+*/
 func (sequencer *Sequencer) cut(tailBrightness float64) Tokens {
 	segments := sequencer.grammar.Tail(system.Cfg.Learning.MaxPathLength)
 	tokens := NewTokens()
@@ -102,7 +113,10 @@ func (sequencer *Sequencer) cut(tailBrightness float64) Tokens {
 	return tokens
 }
 
-// SequencerState is one grammar + MDL stream (persisted).
+/*
+SequencerState is everything needed to resume path grammar after restart — root,
+rules, MDL segmenter, and lastEmitted dedupe guard.
+*/
 type SequencerState struct {
 	LastEmitted string     `json:"last_emitted"`
 	Root        []string   `json:"root"`
@@ -110,6 +124,10 @@ type SequencerState struct {
 	MDL         MDLState   `json:"mdl"`
 }
 
+/*
+State exports grammar and MDL for GrammarCatalog — called synchronously on mutation
+so queued store writes cannot reorder older snapshots ahead of newer cuts.
+*/
 func (sequencer *Sequencer) State() SequencerState {
 	return SequencerState{
 		LastEmitted: sequencer.lastEmitted,
@@ -119,6 +137,9 @@ func (sequencer *Sequencer) State() SequencerState {
 	}
 }
 
+/*
+Restore replays Learn/RestoreRoot instead of rediscovering rules from scratch.
+*/
 func (sequencer *Sequencer) Restore(state SequencerState) {
 	restoreGrammar(sequencer.grammar, state.Root, state.Rules)
 	sequencer.mdl.Restore(state.MDL)
@@ -126,6 +147,10 @@ func (sequencer *Sequencer) Restore(state SequencerState) {
 	sequencer.sentenceBreak = false
 }
 
+/*
+restoreGrammar loads productions before root so digram indexes exist when the
+sentence is reinstalled — order matches Persist round-trip from Sequencer.State.
+*/
 func restoreGrammar(grammar *Sequitur, root []string, rules []RuleView) {
 	for _, view := range rules {
 		grammar.Learn(view.ID, view.Count, view.Symbols)

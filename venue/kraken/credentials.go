@@ -29,6 +29,10 @@ type credentials struct {
 	secret string
 }
 
+/*
+processCredentials holds the singleton role selected at startup — auth and nonce
+must not read a different key mid-process.
+*/
 var processCredentials atomic.Pointer[credentials]
 
 /*
@@ -56,6 +60,10 @@ func UseCredentials(role string) error {
 	return nil
 }
 
+/*
+credentialEnv resolves one env var name from config and refuses empty values so
+collector and main never cross-wire API keys.
+*/
 func credentialEnv(role, field string) (string, error) {
 	name := strings.TrimSpace(viper.GetString("kraken.credentials." + role + "." + field))
 

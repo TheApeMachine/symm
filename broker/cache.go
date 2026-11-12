@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sync"
 	"time"
 
@@ -11,19 +12,40 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/system"
 )
 
+/*
+cacheBacking isolates Tier from store.Client so paper caches and tests inject an
+in-memory backend without dragging S3 into unit tests.
+*/
+type cacheBacking interface {
+	WriteAtPrefix(key string, value []byte) (int, error)
+	DeletePrefix(prefix string) error
+	Stream(ctx context.Context, prefix string) iter.Seq[[]byte]
+}
+
+/*
+Cache splits open vs closed lanes because a lot stays under open/ through
+Closing until exit fills land — desk logic and object keys must match that seam.
+*/
 type Cache struct {
 	*runtime.System
 	tierKey   string
-	store     *store.Client
+	store     cacheBacking
 	transport network.Client
 	price     *Price
 	onSettled func(*Position)
 	open      *sync.Map
 	closed    *sync.Map
+	archive   *sync.Map
+	live      bool
 }
 
+/*
+NewCache restores paper/virtual lots after restart; live tiers skip store bootstrap
+because exchange history re-admits positions from the venue ledger.
+*/
 func NewCache(
 	ctx context.Context,
 	tierKey string,
@@ -32,19 +54,36 @@ func NewCache(
 	onSettled func(*Position),
 	client *store.Client,
 ) *Cache {
+	var backing cacheBacking
+	if client != nil {
+		backing = client
+	}
+
 	cache := &Cache{
 		System:    runtime.NewSystem(ctx, "cache"),
 		tierKey:   tierKey,
-		store:     client,
+		store:     backing,
 		transport: transport,
 		price:     price,
 		onSettled: onSettled,
 		open:      &sync.Map{},
 		closed:    &sync.Map{},
+		archive:   &sync.Map{},
+		live:      system.Cfg.Market.Model == "real",
 	}
 
-	if cache.store == nil {
-		return cache
+	cache.bootstrapFromStore()
+
+	return cache
+}
+
+/*
+bootstrapFromStore replays S3 prefixes on boot so paper tiers resume mid-trade;
+orphan flat open blobs get promoted to closed so they are not re-armed for exit.
+*/
+func (cache *Cache) bootstrapFromStore() {
+	if cache.store == nil || cache.live {
+		return
 	}
 
 	for buf := range cache.store.Stream(cache.Context(), fmt.Sprintf("%s/open/", cache.tierKey)) {
@@ -81,21 +120,7 @@ func NewCache(
 			continue
 		}
 
-		// Unfinished open-prefix settle: clear ClosedAt so mark can finish
-		// exit, but keep Closing/ExitTick so a late fill and resend work.
-		position.ClosedAt = nil
-
-		if position.Stoploss == nil {
-			pnlPct := 0.0
-
-			if position.PnLPct != nil {
-				pnlPct, _ = position.PnLPct.Float64()
-			}
-
-			position.Stoploss = NewStoploss(pnlPct)
-		}
-
-		cache.open.Store(position.Symbol, position)
+		cache.adoptOpenLot(position)
 	}
 
 	for buf := range cache.store.Stream(cache.Context(), fmt.Sprintf("%s/closed/", cache.tierKey)) {
@@ -107,12 +132,77 @@ func NewCache(
 
 		cache.keepClosed(position)
 	}
-
-	return cache
 }
 
+/*
+All merges lanes for hub/Hello: Forward needs every archived id, while desk
+enter/exit only cares about the latest open key per symbol.
+*/
 func (cache *Cache) All(symbols ...string) []*Position {
-	return append(cache.Open(symbols...), cache.Closed(symbols...)...)
+	positions := append(cache.Open(symbols...), cache.Closed(symbols...)...)
+	seen := make(map[string]struct{}, len(positions))
+
+	for _, position := range positions {
+		if position != nil && position.ID != "" {
+			seen[position.ID] = struct{}{}
+		}
+	}
+
+	if cache.tierKey != TierTypeReal.String() {
+		cache.archive.Range(func(_, value any) bool {
+			position := value.(*Position)
+
+			if position == nil || position.ID == "" {
+				return true
+			}
+
+			if _, dup := seen[position.ID]; dup {
+				return true
+			}
+
+			positions = append(positions, position)
+			seen[position.ID] = struct{}{}
+
+			return true
+		})
+	}
+
+	return positions
+}
+
+/*
+RememberClosed keeps every settled trip by id for the hub and Forward tab.
+The closed lane still holds the latest lot per symbol for desk logic.
+*/
+func (cache *Cache) Archived(id string) *Position {
+	if cache == nil || id == "" {
+		return nil
+	}
+
+	raw, ok := cache.archive.Load(id)
+
+	if !ok {
+		return nil
+	}
+
+	return raw.(*Position)
+}
+
+/*
+RememberClosed keeps each settled trip in archive (non-real) while closed lane
+holds only the newest lot per symbol for tier logic.
+*/
+func (cache *Cache) RememberClosed(position *Position) {
+	if cache == nil || position == nil || position.ID == "" ||
+		position.ClosedAt == nil {
+		return
+	}
+
+	if cache.tierKey != TierTypeReal.String() {
+		cache.archive.Store(position.ID, position)
+	}
+
+	cache.keepClosed(position)
 }
 
 /*
@@ -130,12 +220,16 @@ func (cache *Cache) Submitted(symbols ...string) []*Position {
 	return cache.list(cache.open, true, false, symbols...)
 }
 
+/*
+Closed feeds Unlocked stats and late fill matching — sells may arrive after Remove.
+*/
 func (cache *Cache) Closed(symbols ...string) []*Position {
 	return cache.list(cache.closed, false, false, symbols...)
 }
 
 /*
-lotBlob is the S3 / DuckDB / UI envelope around a Position.
+lotBlob carries tick/epoch metadata around JSON so restores pick policy ordering
+and Forward can sort trips without inferring time from fill text.
 */
 type lotBlob struct {
 	Epoch     uint64    `json:"epoch"`
@@ -144,6 +238,10 @@ type lotBlob struct {
 	Position  *Position `json:"position"`
 }
 
+/*
+encodeLot wraps tick/epoch timestamps so restored lots sort and replay in policy
+order, not just raw JSON of Position.
+*/
 func encodeLot(position *Position) ([]byte, error) {
 	blob := lotBlob{
 		Epoch:    position.PolicyEpoch,
@@ -165,6 +263,32 @@ func encodeLot(position *Position) ([]byte, error) {
 	}
 
 	return sonic.Marshal(blob)
+}
+
+/*
+adoptOpenLot readies a restored live lot for the open lane after open-prefix load.
+Restore alone does not seed stoploss — callers that rehydrate desk state call this.
+*/
+func (cache *Cache) adoptOpenLot(position *Position) {
+	if position == nil || position.Symbol == "" {
+		return
+	}
+
+	// Unfinished open-prefix settle: clear ClosedAt so mark can finish
+	// exit, but keep Closing/ExitTick so a late fill and resend work.
+	position.ClosedAt = nil
+
+	if position.Stoploss == nil {
+		pnlPct := 0.0
+
+		if position.PnLPct != nil {
+			pnlPct, _ = position.PnLPct.Float64()
+		}
+
+		position.Stoploss = NewStoploss(pnlPct)
+	}
+
+	cache.open.Store(position.Symbol, position)
 }
 
 /*
@@ -210,15 +334,19 @@ func (cache *Cache) Restore(raw []byte) *Position {
 		closedAt := position.ClosedAt
 		position.Closing = false
 		position.ClosedAt = nil
+		settled := cache.onSettled
+		position.onSettled = nil
 
 		for _, fill := range fills {
 			if fill == nil {
 				continue
 			}
 
+			sanitizeFillForReplay(fill)
 			position.Apply(*fill)
 		}
 
+		position.onSettled = settled
 		position.Closing = closing
 
 		if closedAt != nil {
@@ -261,6 +389,10 @@ func (cache *Cache) keepClosed(position *Position) {
 	}
 }
 
+/*
+Has is the enter mutex: one symbol may not get a second lot until Remove clears
+the open key (including lots with ClosedAt set but exit fills in flight).
+*/
 func (cache *Cache) Has(symbol string) bool {
 	// Still under open (including ClosedAt claimed while settle Sends) occupies
 	// the symbol. Remove is the only path into closed.
@@ -268,6 +400,10 @@ func (cache *Cache) Has(symbol string) bool {
 	return ok
 }
 
+/*
+Add is idempotent on restore — it refuses to overwrite a live open lot unless
+the incumbent already claimed ClosedAt during settle.
+*/
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 	if symbol == "" || position == nil {
 		return true
@@ -292,6 +428,18 @@ func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 }
 
 /*
+SetOpen is the history-sync path: TradesHistory admission replaces the exchange
+lot in place without a full Remove/Add dance.
+*/
+func (cache *Cache) SetOpen(symbol string, position *Position) {
+	if symbol == "" || position == nil {
+		return
+	}
+
+	cache.open.Store(symbol, position)
+}
+
+/*
 Save writes the full lot (orders, fills, mark, pnl, stoploss) to S3.
 
 Lots already under closed/ (or settled and no longer open) update the closed
@@ -299,7 +447,7 @@ object and retire any open/ orphan — exit fills after Remove must not recreate
 an open key with a second mark pass.
 */
 func (cache *Cache) Save(position *Position) error {
-	if position == nil || position.ID == "" {
+	if position == nil || position.ID == "" || cache.store == nil {
 		return nil
 	}
 
@@ -332,6 +480,10 @@ func (cache *Cache) SaveAsync(position *Position) {
 	}()
 }
 
+/*
+writeLot prevents exit fills after Remove from recreating open/ — settled lots
+must only touch closed/ and delete the open orphan.
+*/
 func (cache *Cache) writeLot(
 	position *Position,
 	symbol, id string,
@@ -365,11 +517,19 @@ func (cache *Cache) writeLot(
 	return nil
 }
 
+/*
+hasLot ties store writes to the in-memory pointer so a stale Save for an old lot
+cannot clobber a newer open position on the same symbol.
+*/
 func (cache *Cache) hasLot(lane *sync.Map, symbol string, position *Position) bool {
 	raw, ok := lane.Load(symbol)
 	return ok && raw.(*Position) == position
 }
 
+/*
+Remove is the settle handoff: stoploss fired, flat in Apply — open lane retires
+and object store moves open/ → closed/.
+*/
 func (cache *Cache) Remove(symbol string) bool {
 	raw, ok := cache.open.LoadAndDelete(symbol)
 
@@ -378,7 +538,7 @@ func (cache *Cache) Remove(symbol string) bool {
 	}
 
 	loaded := raw.(*Position)
-	cache.closed.Store(symbol, loaded)
+	cache.RememberClosed(loaded)
 
 	if err := cache.move(loaded); err != nil {
 		errnie.Error(err)
@@ -387,6 +547,10 @@ func (cache *Cache) Remove(symbol string) bool {
 	return true
 }
 
+/*
+Drop is for rejected enters and failed upserts — it must not touch closed/
+history or the tier would lose PnL stats.
+*/
 func (cache *Cache) Drop(symbol string) {
 	if symbol == "" {
 		return
@@ -404,6 +568,10 @@ func (cache *Cache) Drop(symbol string) {
 	}
 }
 
+/*
+move makes S3 match memory after settle; a crash between write and delete must not
+leave two authoritative copies of the same lot id.
+*/
 func (cache *Cache) move(position *Position) error {
 	if position == nil || position.ID == "" || cache.store == nil {
 		return nil
@@ -433,6 +601,10 @@ func (cache *Cache) move(position *Position) error {
 	return nil
 }
 
+/*
+list separates Open (filled only) from Submitted so Tier.Update never marks lots
+still awaiting their first buy print.
+*/
 func (cache *Cache) list(
 	lane *sync.Map,
 	skipClosedAt, filledOnly bool,

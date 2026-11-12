@@ -33,8 +33,8 @@ system:
       public: "wss://ws.kraken.com/v2"
       private: "wss://ws-auth.kraken.com/v2"
       level3: "wss://ws-l3.kraken.com/v2"
-      tradevolume: "/0/private/TradeVolume"
-      ticker: "/0/public/Ticker"
+      tradevolume: "https://api.kraken.com/0/private/TradeVolume"
+      ticker: "https://api.kraken.com/0/public/Ticker"
     # How often a session sends its keepalive. A half-open connection — one
     # side gone without a close, as when a mobile link drops out of reception —
     # is invisible to a socket that only reads. The periodic write is what
@@ -162,6 +162,8 @@ market:
       - ADA
       - DOT
       - LINK
+      # Cancel-only on Kraken — spot bag may exist but must not be a desk open.
+      - ARC
   l3_depth: 10
   # Kraken's standard L3 subscription-rate budget. Depth determines the cost
   # per symbol, so websocket batches are derived from this value.

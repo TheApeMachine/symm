@@ -7,7 +7,6 @@ import (
 
 	"github.com/gofiber/contrib/v3/websocket"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/system"
 )
 
 func TestWriteDropOldest(t *testing.T) {
@@ -79,13 +78,8 @@ func TestDrainFrames(t *testing.T) {
 }
 
 func TestQueueFramesFromConfig(t *testing.T) {
-	Convey("NewHub sizes frameCh from config", t, func() {
-		prev := system.Cfg.UI.WebSocket.QueueFrames
-		system.Cfg.UI.WebSocket.QueueFrames = 64
-
-		hub := NewHub(context.Background())
-
-		system.Cfg.UI.WebSocket.QueueFrames = prev
+	Convey("newHub sizes frameCh from the queue argument", t, func() {
+		hub := newHub(context.Background(), 64)
 
 		So(cap(hub.frameCh), ShouldEqual, 64)
 	})

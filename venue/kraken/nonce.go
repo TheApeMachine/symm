@@ -232,6 +232,9 @@ func nonceDir() (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(dataPath, "~/")), nil
 }
 
+/*
+loadLegacyNonce reads the pre-data-path high-water so migration never rewinds Kraken.
+*/
 func loadLegacyNonce() (int64, error) {
 	home, err := os.UserHomeDir()
 
@@ -310,6 +313,10 @@ func loadNonce(path string) (int64, error) {
 	return value, nil
 }
 
+/*
+persistValue throttles disk writes but always persists on force or every 128th nonce
+so a crash cannot reuse a stale high-water after a live sign.
+*/
 func (nonce *AuthNonce) persistValue(value int64, force bool) {
 	now := time.Now().UnixNano()
 

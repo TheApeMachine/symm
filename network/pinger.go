@@ -13,13 +13,14 @@ import (
 
 type Pinger struct {
 	*runtime.System
-	client *WebsocketClient
-	mu     sync.Mutex
-	stop   chan struct{}
+	client   *WebsocketClient
+	mu       sync.Mutex
+	stop     chan struct{}
+	interval time.Duration
 }
 
 func NewPinger(ctx context.Context, client *WebsocketClient) *Pinger {
-	pinger := &Pinger{client: client}
+	pinger := &Pinger{client: client, interval: system.Cfg.WebSocket.PingInterval}
 	pinger.System = runtime.NewSystem(ctx, "network.pinger", pinger)
 	return pinger
 }
@@ -57,7 +58,7 @@ func (pinger *Pinger) Stop() {
 }
 
 func (pinger *Pinger) loop(stop <-chan struct{}) {
-	interval := system.Cfg.WebSocket.PingInterval
+	interval := pinger.interval
 
 	// system.websocket.ping_interval has its default in system; a
 	// non-positive value is a broken config, not a reason to pick another.

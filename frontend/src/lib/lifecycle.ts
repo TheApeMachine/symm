@@ -608,7 +608,6 @@ export const useLifecycles = (): Snapshot => {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		ensureDeskLifecycleFeed();
-		requestClosedPositionHistory();
 	}, []);
 
 	return useSyncExternalStore(

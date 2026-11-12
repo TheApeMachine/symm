@@ -14,6 +14,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Toxicity disruptor stage — outcomes land on envelope.Toxicity and
+Map() feeds logic/resonance Features (vacuum_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -21,6 +25,10 @@ type Signal struct {
 	process *equation.BookQuality
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Toxicity labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "toxicity"),
@@ -31,8 +39,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; book and trade evidence
-feed BookQuality, and each ready outcome lands on the envelope.
+Step pairs book shape with trade impact — vacuum_score is capacity veto input;
+neutral readings still publish so featureScorer can finish the toxicity labels.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (

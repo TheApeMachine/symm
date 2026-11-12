@@ -227,16 +227,21 @@ func (virtual *Virtual) Watch(
 			case <-ticker.C:
 			}
 
-			response, err := virtual.Post(url, body)
+			raw, err := virtual.Post(url, body)
 
 			if err != nil {
 				errnie.Error(err)
 				continue
 			}
 
-			err = json.Unmarshal(response, dest)
+			if len(raw) == 0 {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[network.virtual] empty post response", nil,
+				))
+				continue
+			}
 
-			if err != nil {
+			if err := dest.UnmarshalJSON(raw); err != nil {
 				errnie.Error(err)
 			}
 		}

@@ -15,8 +15,16 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+bookflowHistory is the Bookflow sample depth — long enough for thin/loaded to
+see pressure shift across ticks without unbounded allocator growth per symbol.
+*/
 const bookflowHistory = 128
 
+/*
+Signal is the DepthFlow disruptor stage — outcomes land on envelope.DepthFlow and
+Map() feeds logic/resonance Features (thin_score, loaded_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books      *broker.Book
@@ -25,6 +33,10 @@ type Signal struct {
 	process    *equation.Bookflow
 }
 
+/*
+NewSignal needs L3 books and instrument ticks so depth snapshots align with
+venue qty steps — without both, depthflow cannot publish the labels resonance expects.
+*/
 func NewSignal(
 	ctx context.Context,
 	books *broker.Book,
@@ -52,8 +64,8 @@ func NewSignal(
 }
 
 /*
-Step processes every trade entry of the tick's frame; book and trade pressure
-feed Bookflow, and each ready outcome lands on the envelope.
+Step snapshots full depth per print then folds trades — thin vs loaded are hold
+features; partial publishes keep resonance from waiting on a quiet symbol.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (

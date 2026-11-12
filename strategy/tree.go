@@ -14,6 +14,10 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
+/*
+Action names the leaf kind stored on path decisions — separate from runtime
+Decision.Action strings so Predict can disagree-check enter/hold/exit leaves.
+*/
 type Action string
 
 const (
@@ -23,11 +27,17 @@ const (
 	ActionExit  Action = "exit"
 )
 
-// seedResistance is the desk baseline for a brand-new leaf.
+/*
+seedResistance seeds unexplored paths at ThresholdStart so cold explore still
+faces a brightness bar without inheriting zero and firing on first flicker.
+*/
 func seedResistance() float64 {
 	return system.Cfg.Learning.ThresholdStart
 }
 
+/*
+NewAction normalizes persisted decision.Action and S3 filenames into typed leaves.
+*/
 func NewAction(action string) Action {
 	switch action {
 	case "enter":
@@ -41,6 +51,9 @@ func NewAction(action string) Action {
 	}
 }
 
+/*
+String writes the leaf filename segment (enter/hold/exit) for tree.persist keys.
+*/
 func (action Action) String() string {
 	return string(action)
 }
@@ -56,6 +69,10 @@ type Tree struct {
 	store  *store.Client
 }
 
+/*
+NewTree hydrates the radix from model/paths/ on boot — first writer wins per
+path so duplicate action blobs from crashed Ensure races do not clobber leaves.
+*/
 func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -124,8 +141,9 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 }
 
 /*
-Predict returns the agreed action and average resistance under the cut.
-disagreed is true when matching leaves name different actions.
+Predict walks the path prefix: leaves must agree on action, tail brightness must
+beat mean resistance, and disagreements or >0.8 leaves prune — otherwise explore
+returns ActionNone without poisoning the tree on ambiguous grammar.
 */
 func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	min := system.Cfg.Learning.MinPathLength
@@ -204,7 +222,8 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 }
 
 /*
-Update applies a settled ±delta to every decision under path.
+Update nudges resistance along the whole path prefix after a settled lot proves
+or disproves the grammar — Ensure seeds once; repeat exits must not reset leaves.
 */
 func (tree *Tree) Update(path string, delta float64) {
 	if path == "" || strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
@@ -297,7 +316,10 @@ func (tree *Tree) Ensure(path string, action Action) {
 	tree.persist(path, decision)
 }
 
-// clampResistance keeps a loaded leaf inside the configured band.
+/*
+clampResistance pins restored S3 leaves inside ThresholdFloor/Ceil so a corrupt
+blob cannot brick Predict with resistance above tail brightness forever.
+*/
 func clampResistance(value float64) float64 {
 	floor := system.Cfg.Learning.ThresholdFloor
 	ceil := system.Cfg.Learning.ThresholdCeil
@@ -313,6 +335,10 @@ func clampResistance(value float64) float64 {
 	return value
 }
 
+/*
+Delete drops a path from memory and object storage when Predict prunes overheated
+leaves (resistance > 0.8) that would otherwise veto exploration permanently.
+*/
 func (tree *Tree) Delete(path string) {
 	if path == "" {
 		return
@@ -331,6 +357,10 @@ func (tree *Tree) Delete(path string) {
 	}
 }
 
+/*
+persist snapshots each leaf to model/paths/{path}/{action}.bin synchronously —
+async marshal would let Update replace a leaf while an older write still queues.
+*/
 func (tree *Tree) persist(path string, decision *runtime.Decision) {
 	if tree.store == nil || decision == nil || path == "" {
 		return

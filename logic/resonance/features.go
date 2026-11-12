@@ -29,6 +29,11 @@ var Features = []Feature{
 	{"liquidity", "depth_score"},
 }
 
+/*
+storyFeatureCount, oracleFirst, and oraclePairs partition the forward curve —
+story nets use the first nine features; oracle approve/veto pairs follow in
+ForwardStoryNets without re-listing Features order at every call site.
+*/
 const (
 	storyFeatureCount = 9
 	oracleFirst       = 9
@@ -36,8 +41,9 @@ const (
 )
 
 /*
-ForwardStoryNets folds the task head into Enter/Hold/Exit nets plus board /
-contagion / capacity approve lifts and veto risk.
+ForwardStoryNets is the Model story contract — enter/hold/exit nets sum opposing
+features from resonance.Features, then oracle approve/veto pairs adjust nets so
+grid brightness becomes tradability without hardcoding observe rules in strategy.
 */
 func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet, risk float64, ok bool) {
 	if len(curve) < storyFeatureCount {

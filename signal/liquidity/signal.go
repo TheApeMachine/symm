@@ -13,6 +13,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Liquidity disruptor stage — outcomes land on envelope.Liquidity and
+Map() feeds logic/resonance Features (scarcity_score, depth_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -20,6 +24,10 @@ type Signal struct {
 	process *equation.Depth
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Liquidity labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "liquidity"),
@@ -29,6 +37,11 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup

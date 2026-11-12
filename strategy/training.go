@@ -16,7 +16,8 @@ import (
 )
 
 /*
-Training handles the grid observations, and sequence state management.
+Training turns each tick's observe metrics into per-symbol region vectors and
+path cuts on the envelope — Model consumes Paths/Regions but does not own grammar.
 */
 type Training struct {
 	*runtime.System
@@ -29,7 +30,8 @@ type Training struct {
 }
 
 /*
-NewTraining initializes a new training engine.
+NewTraining restores per-symbol sequencers from object storage at boot so path
+cuts survive restarts before the first grid tick mutates grammar.
 */
 func NewTraining(
 	ctx context.Context,
@@ -55,8 +57,8 @@ func NewTraining(
 }
 
 /*
-Step is the main entry point for the training engine. It takes an envelope and
-returns a new envelope. This makes it compatible with the LMAX Disruptor pipeline.
+Step fans Observe per symbol with desk/book gates wired in, then writes Regions
+and Paths — downstream Model never calls the grid directly on the hot path.
 */
 func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
@@ -124,7 +126,8 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 /*
-Sequencer returns the sequencer for the given symbol.
+Sequencer keeps one grammar stream per symbol so BTC path learning does not
+cross-contaminate ETH regime sequences on the same envelope tick.
 */
 func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	if symbol == "" {
@@ -136,7 +139,8 @@ func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 }
 
 /*
-restoreSequencer restores the sequencer for the given symbol and state.
+restoreSequencer is the GrammarCatalog callback — replays persisted root/rules/MDL
+without running Sequitur discovery so boot matches last shutdown cut.
 */
 func (training *Training) restoreSequencer(symbol string, state tokenizer.SequencerState) {
 	if symbol == "" {
@@ -149,7 +153,8 @@ func (training *Training) restoreSequencer(symbol string, state tokenizer.Sequen
 }
 
 /*
-ResetSequencer resets the sequencer for the given symbol.
+ResetSequencer clears grammar after a model resetPath — persists immediately so
+a crash after reset does not resurrect the old sentence on next boot.
 */
 func (training *Training) ResetSequencer(symbol string) {
 	loaded, ok := training.sequencers.Load(symbol)
@@ -169,7 +174,8 @@ func (training *Training) ResetSequencer(symbol string) {
 }
 
 /*
-stepCut steps the sequencer from the brightest published action region.
+stepCut picks the winning action region (keys ≤8) and feeds its brightness into
+Sequencer.Step — only action regions advance the path, not veto/metric tiles.
 */
 func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
 	var action *runtime.Region

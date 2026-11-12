@@ -14,17 +14,9 @@ import (
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	var dials atomic.Int32
 	upgrader := gorilla.Upgrader{}
 
@@ -71,13 +63,6 @@ func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
 }
 
 func TestWebsocketOnReconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 	var hooks atomic.Int32
 
@@ -123,13 +108,6 @@ func TestWebsocketOnReconnectHook(t *testing.T) {
 }
 
 func TestWebsocketReconnectHookSurvivesSoftDown(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -191,13 +169,6 @@ func TestWebsocketReconnectHookSurvivesSoftDown(t *testing.T) {
 }
 
 func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,13 +234,6 @@ func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
 }
 
 func TestWebsocketOnDisconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,13 +274,6 @@ func TestWebsocketOnDisconnectHook(t *testing.T) {
 }
 
 func TestWebsocketWriteSerializesConcurrentWriters(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

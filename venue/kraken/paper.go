@@ -26,6 +26,9 @@ func RestPath(raw string) string {
 	return raw
 }
 
+/*
+commandMap routes paper entity names to native kraken CLI argv for each private channel.
+*/
 var commandMap = map[string][]string{
 	"balances":     {"balance", "--verbose"},
 	"executions":   {"history", "--verbose"},
@@ -33,6 +36,9 @@ var commandMap = map[string][]string{
 	"tradebalance": {"status", "--verbose"},
 }
 
+/*
+typeMap rebuilds live wire types from CLI JSON so venue.Read and broker desk see identical shapes.
+*/
 var typeMap = map[string]func(model map[string]any) json.Marshaler{
 	"balances":     NewBalanceFromMap,
 	"executions":   NewExecutionFromMap,
@@ -41,6 +47,9 @@ var typeMap = map[string]func(model map[string]any) json.Marshaler{
 	"tradebalance": NewTradeBalanceFromMap,
 }
 
+/*
+restMap keys private REST paths to paper entities for Watch/Post balance polls.
+*/
 var restMap = map[string]string{
 	"/0/private/Balance":      "balances",
 	"/0/private/TradeBalance": "tradebalance",
@@ -58,6 +67,9 @@ type Paper struct {
 	notify chan struct{}
 }
 
+/*
+NewPaper starts the lock-free queue transport network.Client uses for paper tier.
+*/
 func NewPaper(ctx context.Context) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -77,6 +89,10 @@ func (paper *Paper) Close() error {
 	return nil
 }
 
+/*
+Read blocks until a CLI response frame is queued or ctx is cancelled — same
+contract as live websocket Read for broker ingress.
+*/
 func (paper *Paper) Read(keys ...string) ([]byte, error) {
 	for {
 		if buf, ok := paper.queue.Dequeue(); ok {
@@ -172,6 +188,9 @@ func (paper *Paper) Write(message []byte) error {
 	return nil
 }
 
+/*
+signal coalesces wakeups so one blocked Read drains the whole queue batch.
+*/
 func (paper *Paper) signal() {
 	select {
 	case paper.notify <- struct{}{}:
@@ -206,6 +225,9 @@ func (paper *Paper) enqueueFill(model map[string]any, clOrdID string) {
 	paper.signal()
 }
 
+/*
+Watch polls paper Post on an interval into dest — mirrors live REST Watch for Balance sync.
+*/
 func (paper *Paper) Watch(
 	url string,
 	body any,
@@ -242,12 +264,25 @@ func (paper *Paper) Watch(
 	}()
 }
 
-func (paper *Paper) execute(entity string, command ...string) (map[string]any, error) {
+/*
+paperCommandFunc abstracts CLI execution so tests can stub without forking kraken.
+*/
+type paperCommandFunc func(ctx context.Context, entity string, command ...string) (map[string]any, error)
+
+/*
+runPaperCommand is the production CLI backend; tests replace this hook.
+*/
+var runPaperCommand paperCommandFunc = execPaperCommand
+
+/*
+execPaperCommand runs kraken paper and returns JSON stdout as a generic map.
+*/
+func execPaperCommand(ctx context.Context, entity string, command ...string) (map[string]any, error) {
 	input := []string{"paper"}
 	input = append(input, command...)
 	input = append(input, "--output", "json")
 
-	cmd := exec.CommandContext(paper.ctx, "kraken", input...)
+	cmd := exec.CommandContext(ctx, "kraken", input...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -293,6 +328,13 @@ func (paper *Paper) execute(entity string, command ...string) (map[string]any, e
 	}
 
 	return model, nil
+}
+
+/*
+execute forwards to runPaperCommand under paper ctx for cancellation on Close.
+*/
+func (paper *Paper) execute(entity string, command ...string) (map[string]any, error) {
+	return runPaperCommand(paper.ctx, entity, command...)
 }
 
 /*

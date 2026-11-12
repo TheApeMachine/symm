@@ -16,12 +16,18 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/proxy"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
+
+// Sonic is frozen once at startup so dashboard frames reuse JIT encoders.
+var Sonic = sonic.Config{
+	EncodeNullForInfOrNan: true,
+}.Froze()
 
 var UI *Hub
 
@@ -48,7 +54,6 @@ type Hub struct {
 	err            error
 	app            *fiber.App
 	listenAddr     string
-	routes         *Routes
 	frameCh        chan []byte
 	pumpOnce       sync.Once
 	conn           atomic.Pointer[websocket.Conn]
@@ -83,6 +88,10 @@ The hub opens its own S3 client immediately — the dashboard connects during
 boot, before Booter.UseStore, and must already answer prefix fetches.
 */
 func NewHub(ctx context.Context) *Hub {
+	return newHub(ctx, system.Cfg.UI.WebSocket.QueueFrames)
+}
+
+func newHub(ctx context.Context, queueFrames int) *Hub {
 	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
@@ -96,13 +105,11 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		frameCh:   make(chan []byte, system.Cfg.UI.WebSocket.QueueFrames),
+		frameCh:   make(chan []byte, queueFrames),
 		callbacks: make([]func(), 0),
 		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
 		ownStore:  true,
 	}
-
-	hub.routes = NewRoutes(hub)
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). Permit loopback origins on any port
@@ -125,7 +132,7 @@ func NewHub(ctx context.Context) *Hub {
 		AllowPrivateNetwork: true,
 	}))
 
-	hub.routes.Register()
+	hub.registerRoutes()
 
 	return hub
 }
@@ -326,13 +333,36 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 }
 
 /*
+PrimeGrace opens the attach window without a socket so a test can read
+WriteJSON off the frame queue. The returned function restores the prior flags.
+*/
+func (hub *Hub) PrimeGrace() func() {
+	prevConnected := hub.connected.Load()
+	prevSince := hub.connectedSince.Load()
+	hub.connected.Store(false)
+	hub.connectedSince.Store(time.Now().UnixNano())
+
+	return func() {
+		hub.connected.Store(prevConnected)
+		hub.connectedSince.Store(prevSince)
+	}
+}
+
+/*
+NextFrame takes one queued dashboard payload, if any.
+*/
+func (hub *Hub) NextFrame() ([]byte, bool) {
+	select {
+	case buf := <-hub.frameCh:
+		return append([]byte(nil), buf...), true
+	default:
+		return nil, false
+	}
+}
+
+/*
 Active reports whether a frame should be enqueued: a live connection, or one
-established within the grace window. The window covers the sliver between a
-connection being accepted and its dashboard's first read, where a concurrently
-produced tick would otherwise be dropped and a freshly-attached dashboard would
-show no metrics until the next symbol-bearing tick.
-Publishers that build a frame per tick check it to skip serialization when
-nobody is listening.
+established within the grace window.
 */
 func (hub *Hub) Active() bool {
 	if hub.connected.Load() && hub.conn.Load() != nil {
@@ -501,4 +531,58 @@ func (hub *Hub) Close() error {
 	}
 
 	return errs
+}
+
+func (hub *Hub) registerRoutes() {
+	policy := proxy.DefaultSecurityPolicy()
+	policy.AllowPrivateIPs = true
+	proxy.WithSecurityPolicy(policy)
+
+	hub.app.Use("/ws", func(reqCtx fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(reqCtx) {
+			reqCtx.Locals("allowed", true)
+			return reqCtx.Next()
+		}
+
+		return fiber.ErrUpgradeRequired
+	})
+
+	hub.app.Get("/ws", hub.wsHandler())
+
+	hub.app.Post("/workbench/query", func(reqCtx fiber.Ctx) error {
+		targetURL := system.Cfg.Workbench.URL
+		origin := reqCtx.Get("Origin")
+
+		if err := proxy.Do(reqCtx, targetURL); err != nil {
+			return fiber.NewError(
+				fiber.StatusServiceUnavailable,
+				"workbench service unavailable — start standalone workbench with 'make workbench'",
+			)
+		}
+
+		if origin != "" {
+			reqCtx.Set("Access-Control-Allow-Origin", origin)
+			reqCtx.Set("Vary", "Origin")
+		}
+
+		return nil
+	})
+}
+
+/*
+Focus writes one dashboard frame {"channel":{symbol: reading}} for the focused
+symbol so the hub queue is not flooded by the full universe each tick.
+*/
+func Focus(channel, symbol string, reading any) {
+	if reading == nil || channel == "" || !types.Allows(symbol) {
+		return
+	}
+
+	if !UI.Active() {
+		return
+	}
+
+	UI.WriteJSON(map[string]any{
+		channel: map[string]any{symbol: reading},
+	})
 }

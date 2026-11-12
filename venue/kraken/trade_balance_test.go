@@ -9,6 +9,30 @@ import (
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
+func TestTradeBalanceRESTUnmarshal(t *testing.T) {
+	Convey("REST TradeBalance decodes Kraken e and n fields", t, func() {
+		raw := []byte(`{
+			"error":[],
+			"result":{
+				"eb":"140.9725",
+				"tb":"141.5225",
+				"m":"0.0000",
+				"n":"-1.5500",
+				"c":"72.0900",
+				"v":"70.5400",
+				"e":"139.9725",
+				"mf":"139.9725"
+			}
+		}`)
+
+		tb := kraken.NewTradeBalance()
+
+		So(tb.UnmarshalJSON(raw), ShouldBeNil)
+		So(tb.Result.Equity.String(), ShouldEqual, "139.9725")
+		So(tb.Result.UnrealizedPnL.String(), ShouldEqual, "-1.55")
+	})
+}
+
 func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
 	Convey("Given a valid kraken.TradeBalanceResult and wallet", t, func() {
 		unrealized, _ := decimal.NewFromString("-0.32")

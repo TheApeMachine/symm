@@ -60,7 +60,7 @@ Apply patches live risk floors from a dashboard gate-lab command.
 Unknown keys are ignored; only finite values land.
 */
 func (risk *Risk) Apply(patch map[string]any) {
-	if risk == nil || len(patch) == 0 {
+	if len(patch) == 0 {
 		return
 	}
 

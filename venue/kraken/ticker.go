@@ -25,29 +25,47 @@ type TickerRow struct {
 	Open   string   `json:"o"`
 }
 
+/*
+Ticker is public REST /0/public/Ticker decoded for strategy volume and range gates.
+*/
 type Ticker struct {
 	Error    []any                `json:"error"`
 	Result   map[string]TickerRow `json:"result"`
 	onChange func(market.MarketType)
 }
 
+/*
+NewTicker prepares an empty Result map before the first REST poll.
+*/
 func NewTicker() *Ticker {
 	return &Ticker{Result: make(map[string]TickerRow)}
 }
 
+/*
+OnChange wires desk Price reference stats after each ticker decode.
+*/
 func (ticker *Ticker) OnChange(fn func(market.MarketType)) {
 	ticker.onChange = fn
 }
 
+/*
+Request is empty — pair list is bound on the REST client URL, not this body.
+*/
 func (ticker *Ticker) Request() map[string]any {
 	return map[string]any{}
 }
 
+/*
+MarshalJSON aliases Ticker so onChange stays off cached REST payloads.
+*/
 func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 	type alias Ticker
 	return sonic.Marshal((*alias)(ticker))
 }
 
+/*
+UnmarshalJSON rejects empty or erroreous REST frames before firing OnChange.
+*/
 func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	type alias Ticker
 	var decoded alias
@@ -91,6 +109,9 @@ func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+/*
+ToMarket projects 24h stats into nomagique Ticker for broker.Price gates.
+*/
 func (ticker *Ticker) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Ticker)
 
@@ -114,6 +135,9 @@ func (ticker *Ticker) ToMarket(other market.MarketType) market.MarketType {
 	return market.NewTicker(rows).ToMarket(book)
 }
 
+/*
+FromMarket is a no-op identity — ticker is REST-sourced, not desk-owned state.
+*/
 func (ticker *Ticker) FromMarket(other market.MarketType) market.MarketType {
 	if _, ok := other.(*market.Ticker); !ok || ticker == nil {
 		return ticker
@@ -122,6 +146,9 @@ func (ticker *Ticker) FromMarket(other market.MarketType) market.MarketType {
 	return ticker
 }
 
+/*
+ParseTicker is a helper for collectors that only need Result rows without OnChange.
+*/
 func ParseTicker(buf []byte) (map[string]TickerRow, error) {
 	ticker := NewTicker()
 
@@ -132,6 +159,9 @@ func ParseTicker(buf []byte) (map[string]TickerRow, error) {
 	return ticker.Result, nil
 }
 
+/*
+QuoteVolume24h estimates USD notional from 24h base volume and VWAP indices.
+*/
 func (row TickerRow) QuoteVolume24h() float64 {
 	base := atIndex(row.Volume, 1)
 	vwap := atIndex(row.VWAP, 1)
@@ -143,6 +173,9 @@ func (row TickerRow) QuoteVolume24h() float64 {
 	return base * vwap
 }
 
+/*
+ChangePct is today's open vs last trade for momentum gates.
+*/
 func (row TickerRow) ChangePct() float64 {
 	open := parseFloat(row.Open)
 	last := row.LastTrade()
@@ -154,10 +187,24 @@ func (row TickerRow) ChangePct() float64 {
 	return (last - open) / open * 100
 }
 
+/*
+LastTrade reads touch price index 0 on Kraken's c array.
+*/
 func (row TickerRow) LastTrade() float64 { return atIndex(row.Last, 0) }
-func (row TickerRow) High24h() float64   { return atIndex(row.High, 1) }
-func (row TickerRow) Low24h() float64    { return atIndex(row.Low, 1) }
 
+/*
+High24h reads the 24h high slot on Kraken's h array.
+*/
+func (row TickerRow) High24h() float64 { return atIndex(row.High, 1) }
+
+/*
+Low24h reads the 24h low slot on Kraken's l array.
+*/
+func (row TickerRow) Low24h() float64 { return atIndex(row.Low, 1) }
+
+/*
+atIndex safely parses one string slot from Kraken's paired ticker arrays.
+*/
 func atIndex(vals []string, i int) float64 {
 	if i < 0 || i >= len(vals) {
 		return 0
@@ -166,6 +213,9 @@ func atIndex(vals []string, i int) float64 {
 	return parseFloat(vals[i])
 }
 
+/*
+parseFloat tolerates empty Kraken ticker strings as zero for gate math.
+*/
 func parseFloat(raw string) float64 {
 	if raw == "" {
 		return 0

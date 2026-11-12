@@ -6,6 +6,9 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+/*
+Instrument is the ws instrument snapshot channel for pair metadata at boot.
+*/
 type Instrument struct {
 	Channel string `json:"channel"`
 	Type    string `json:"type"`
@@ -14,6 +17,9 @@ type Instrument struct {
 	} `json:"data"`
 }
 
+/*
+NewInstrument decodes one instrument frame for sizing rules before L3 subscribe.
+*/
 func NewInstrument(buf []byte) *Instrument {
 	instrument := &Instrument{}
 
@@ -50,15 +56,24 @@ type InstrumentPair struct {
 	QtyMin             *decimal.Decimal `json:"qty_min"`
 }
 
+/*
+InstrumentSubscription is the public ws subscribe envelope for instrument.
+*/
 type InstrumentSubscription struct {
 	Method string                       `json:"method"`
 	Params InstrumentSubscriptionParams `json:"params"`
 }
 
+/*
+InstrumentSubscriptionParams names the instrument channel on subscribe.
+*/
 type InstrumentSubscriptionParams struct {
 	Channel string `json:"channel"`
 }
 
+/*
+NewInstrumentSubscription builds the default instrument subscribe frame.
+*/
 func NewInstrumentSubscription() InstrumentSubscription {
 	return InstrumentSubscription{
 		Method: "subscribe",
@@ -68,6 +83,9 @@ func NewInstrumentSubscription() InstrumentSubscription {
 	}
 }
 
+/*
+MarshalJSON aliases InstrumentSubscription for sonic encode at dial time.
+*/
 func (subscription InstrumentSubscription) MarshalJSON() ([]byte, error) {
 	type alias InstrumentSubscription
 	return sonic.Marshal((*alias)(&subscription))

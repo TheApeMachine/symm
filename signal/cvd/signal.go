@@ -13,6 +13,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the CVD disruptor stage — outcomes land on envelope.CVD and
+Map() feeds logic/resonance Features (starvation) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -20,6 +24,10 @@ type Signal struct {
 	process *equation.Flow
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — CVD labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "cvd"),
@@ -30,8 +38,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol flow state is
-keyed by the entry's symbol and each ready outcome lands on the envelope.
+Step ties each trade to L3 mid — starvation is flow vs touch, not raw CVD on
+prints alone, so the metric matches exit-side pressure in the forward story.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (

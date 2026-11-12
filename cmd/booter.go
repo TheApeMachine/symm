@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grafana/pyroscope-go"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -61,6 +60,7 @@ type Booter struct {
 	store      *store.Client
 	replies    sync.Map
 	credErr    error
+	live       bool
 }
 
 func NewBooter(ctx context.Context, name string) *Booter {
@@ -92,41 +92,39 @@ func NewBooter(ctx context.Context, name string) *Booter {
 		}
 	}
 
-	network.SetPrivateSigner(kraken.SignPrivate)
+	// appName := "symm." + name + ".theapemachine.app"
 
-	appName := "symm." + name + ".theapemachine.app"
+	// _, err := pyroscope.Start(pyroscope.Config{
+	// 	ApplicationName: appName,
+	// 	ServerAddress:   "http://localhost:4040",
+	// 	Logger:          nil,
+	// 	ProfileTypes: []pyroscope.ProfileType{
+	// 		pyroscope.ProfileCPU,
+	// 		pyroscope.ProfileAllocObjects,
+	// 		pyroscope.ProfileAllocSpace,
+	// 		pyroscope.ProfileInuseObjects,
+	// 		pyroscope.ProfileInuseSpace,
+	// 		pyroscope.ProfileGoroutines,
+	// 		pyroscope.ProfileMutexCount,
+	// 		pyroscope.ProfileMutexDuration,
+	// 		pyroscope.ProfileBlockCount,
+	// 		pyroscope.ProfileBlockDuration,
+	// 	},
+	// })
 
-	_, err := pyroscope.Start(pyroscope.Config{
-		ApplicationName: appName,
-		ServerAddress:   "http://localhost:4040",
-		Logger:          nil,
-		ProfileTypes: []pyroscope.ProfileType{
-			pyroscope.ProfileCPU,
-			pyroscope.ProfileAllocObjects,
-			pyroscope.ProfileAllocSpace,
-			pyroscope.ProfileInuseObjects,
-			pyroscope.ProfileInuseSpace,
-			pyroscope.ProfileGoroutines,
-			pyroscope.ProfileMutexCount,
-			pyroscope.ProfileMutexDuration,
-			pyroscope.ProfileBlockCount,
-			pyroscope.ProfileBlockDuration,
-		},
-	})
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"[booter] error starting pyroscope profiler",
-			err,
-		))
-	} else {
-		// Enable mutex/block samplers only after the agent is up, at coarse
-		// rates so profiling does not dominate tick latency.
-		sysruntime.SetMutexProfileFraction(100)
-		sysruntime.SetBlockProfileRate(1_000_000)
-		errnie.Info("[booter] pyroscope profiling " + appName)
-	}
+	// if err != nil {
+	// 	errnie.Error(errnie.Err(
+	// 		errnie.IO,
+	// 		"[booter] error starting pyroscope profiler",
+	// 		err,
+	// 	))
+	// } else {
+	// 	// Enable mutex/block samplers only after the agent is up, at coarse
+	// 	// rates so profiling does not dominate tick latency.
+	// 	sysruntime.SetMutexProfileFraction(100)
+	// 	sysruntime.SetBlockProfileRate(1_000_000)
+	// 	errnie.Info("[booter] pyroscope profiling " + appName)
+	// }
 
 	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
 
@@ -138,6 +136,7 @@ func NewBooter(ctx context.Context, name string) *Booter {
 		System:  nmruntime.NewSystem(ctx, name, nil),
 		store:   client,
 		credErr: credErr,
+		live:    live,
 	}
 }
 
@@ -171,6 +170,12 @@ func (booter *Booter) Run() error {
 	if err := booter.seedBooks(); err != nil {
 		return err
 	}
+
+	if err := booter.desk.OpenPrivate(); err != nil {
+		return errnie.Err(errnie.IO, "[booter] private websocket open failed", err)
+	}
+
+	booter.desk.Start()
 
 	if err := booter.openFirehose(); err != nil {
 		return err
@@ -283,7 +288,7 @@ func (booter *Booter) initTransports() error {
 
 	// Live-only: no virtual wallet or paper CLI — they race the main key's
 	// nonce stream and open shadow books we do not want armed.
-	if system.Cfg.Market.Model != "real" {
+	if !booter.live {
 		booter.virtual = network.NewVirtual(ctx)
 		booter.paper = kraken.NewPaper(ctx)
 	}
@@ -307,7 +312,16 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
-	booter.normalizer = broker.NormalizerFor(booter.instrument)
+	booter.normalizer = spot.NewNormalizer()
+
+	if err := booter.normalizer.Use(spot.NewREST()); err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"[booter] Kraken public Assets/AssetPairs seed failed",
+			err,
+		)
+	}
+
 	booter.book = broker.NewBookManager()
 
 	booter.price = broker.NewPrice(
@@ -410,7 +424,6 @@ func (booter *Booter) initPipeline() error {
 		booter.workspace.Step(tick)
 	})
 
-	booter.desk.Start()
 	return nil
 }
 

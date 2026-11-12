@@ -14,6 +14,10 @@ import (
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Morphology disruptor stage — outcomes land on envelope.Morphology and
+Map() feeds logic/resonance Features (ask_vacuum) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -21,6 +25,10 @@ type Signal struct {
 	process *equation.Morphology
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Morphology labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "morphology"),
@@ -30,6 +38,11 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
