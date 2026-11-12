@@ -40,6 +40,12 @@ system:
     # is invisible to a socket that only reads. The periodic write is what
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
+    # Public Ticker REST poll. Kraken's unfiltered (and often multi-pair)
+    # Ticker returns EService:Unavailable, so each cycle covers a slice of
+    # desk symbols and hard failures back off up to ticker_backoff_max.
+    ticker_refresh: 1m
+    ticker_backoff_max: 15m
+    ticker_batch_size: 32
 
 resonance:
   # The resonance solver's pace and layer depth for the per-symbol coder.

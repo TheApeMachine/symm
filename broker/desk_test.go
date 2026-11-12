@@ -15,7 +15,7 @@ import (
 
 func TestDeskUpdateNotesTape(t *testing.T) {
 	Convey("a trade's quote dollars land on the price tape", t, func() {
-		price := &Price{tape: NewTape()}
+		price := &Price{Books: NewBookManager(), tape: NewTape()}
 		desk := &Desk{price: price}
 		at := time.Now()
 
@@ -26,7 +26,7 @@ func TestDeskUpdateNotesTape(t *testing.T) {
 			Timestamp: at,
 		}})
 
-		recent, prior := price.tape.Uptake("AAA/USD", at)
+		recent, prior := price.TapeUptake("AAA/USD", at)
 		So(recent, ShouldEqual, 250)
 		So(prior, ShouldEqual, 0)
 	})

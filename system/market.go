@@ -29,6 +29,7 @@ Level3 is the venue book tape and subscription surface.
 */
 type Level3 struct {
 	Depth            int
+	RateLimit        int
 	RingCapacity     int
 	Record           bool
 	RecordFlushBytes int
@@ -52,6 +53,7 @@ func NewMarket() *Market {
 	// with cmd/cfg/config.yml (market.l3_depth) so the execution reducer can
 	// read the authoritative subscription depth without guessing.
 	viper.SetDefault("market.l3_depth", 10)
+	viper.SetDefault("market.l3_rate_limit", 200)
 	viper.SetDefault("market.l3_ring_capacity", 8192)
 	viper.SetDefault("market.level3.record", true)
 	viper.SetDefault("market.level3.record_flush_bytes", 4<<20)
@@ -70,6 +72,7 @@ func NewMarket() *Market {
 		},
 		Level3: &Level3{
 			Depth:            viper.GetInt("market.l3_depth"),
+			RateLimit:        viper.GetInt("market.l3_rate_limit"),
 			RingCapacity:     viper.GetInt("market.l3_ring_capacity"),
 			Record:           viper.GetBool("market.level3.record"),
 			RecordFlushBytes: viper.GetInt("market.level3.record_flush_bytes"),

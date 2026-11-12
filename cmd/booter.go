@@ -33,6 +33,7 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -282,7 +283,7 @@ func (booter *Booter) initTransports() error {
 
 	// Live-only: no virtual wallet or paper CLI — they race the main key's
 	// nonce stream and open shadow books we do not want armed.
-	if viper.GetString("market.model") != "real" {
+	if system.Cfg.Market.Model != "real" {
 		booter.virtual = network.NewVirtual(ctx)
 		booter.paper = kraken.NewPaper(ctx)
 	}
@@ -314,6 +315,8 @@ func (booter *Booter) initMarket() error {
 		booter.book,
 		booter.instrument,
 		booter.normalizer,
+		venue.NewKraken(system.Cfg.Market.QuoteCurrency),
+		booter.public,
 	)
 
 	if booter.price.Status() != nmruntime.READY {
@@ -322,10 +325,6 @@ func (booter *Booter) initMarket() error {
 			"[booter] initial price fees are not ready",
 			nil,
 		)
-	}
-
-	if booter.virtual != nil {
-		broker.BindVirtual(booter.virtual, booter.price)
 	}
 
 	transports := map[string]network.Client{

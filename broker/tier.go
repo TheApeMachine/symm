@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"iter"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -56,28 +55,9 @@ type Tier struct {
 	private   network.Client
 	price     *Price
 	venue     market.Venue
-	wallet    *Wallet
 	positions *Cache
 	pending   *sync.Map
-	inflight  sync.Map
-	savedAt   sync.Map
-	reqSeq    atomic.Int64
-	live      *Live
-	gateMu    sync.Mutex
 	unlocked  bool
-	halted    bool
-	sawOK     bool
-	broke     bool
-	reprieve  bool
-}
-
-/*
-submission is one add_order waiting on a venue ack, keyed by req_id.
-*/
-type submission struct {
-	position *Position
-	action   string
-	reqID    int64
 }
 
 func NewTier(
@@ -104,29 +84,9 @@ func NewTier(
 		pending: &sync.Map{},
 	}
 
-	if tt == TierTypeReal && private != nil {
-		tier.live = NewLive(ctx, private)
-
-		if tier.live == nil {
-			tier.private = nil
-			private = nil
-		}
-	}
-
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle, client,
 	)
-	tier.wallet = NewWallet(host, tier.positions)
-
-	// Virtual wallet is process-local; reopen credits base for S3 open lots
-	// before the balance prime so settle can sell.
-	if tt == TierTypeVirtual {
-		if virtual, ok := private.(*network.Virtual); ok {
-			for _, position := range tier.positions.Open() {
-				position.Restock(virtual)
-			}
-		}
-	}
 
 	if host != nil {
 		host.Balance().OnChange(func(frame market.MarketType) {
@@ -144,57 +104,36 @@ func NewTier(
 		})
 
 		host.Execution().OnChange(func(frame market.MarketType) {
-			book := &market.Execution{}
-			frame.ToMarket(book)
-			tier.apply(book)
+			execution := &market.Execution{}
+			frame.ToMarket(execution)
+			tier.apply(execution)
 		})
 
 		if book, ok := host.(*venue.Kraken); ok && book.Order() != nil {
 			book.Order().OnChange(func(frame market.MarketType) {
 				order, ok := frame.(*kraken.Order)
 
-				if !ok || order == nil {
+				if !ok || order == nil || order.Success {
 					return
 				}
 
-				tier.ack(order)
+				tier.rejectOrder(order)
 			})
 		}
 	}
 
-	if tier.live != nil {
-		if err := OpenWS(tier.private, system.Cfg.WebSocket.Endpoints.Private); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[broker.Tier] private websocket open failed", err,
-			))
-		}
-	}
-
-	// Virtual and paper poll their private transports. Live gets a one-shot
-	// REST prime for Balance + TradeBalance (Allocate + wallet strip), then
-	// Live.Arm keeps Balance fresh on the private websocket — no REST Watch,
-	// which raced the nonce stream every five seconds.
-	if host != nil && tier.private != nil &&
-		(tier.Type == TierTypeVirtual || tier.Type == TierTypePaper) {
-		balanceURL := system.Cfg.WebSocket.Endpoints.Balance
-		tradeBalanceURL := system.Cfg.WebSocket.Endpoints.TradeBalance
-
+	if tier.private != nil && host != nil {
 		tier.private.Watch(
-			balanceURL,
+			system.Cfg.WebSocket.Endpoints.Balance,
 			host.Balance().Request(),
 			host.Balance(),
 		)
+
 		tier.private.Watch(
-			tradeBalanceURL,
+			system.Cfg.WebSocket.Endpoints.TradeBalance,
 			host.TradeBalance().Request(),
 			host.TradeBalance(),
 		)
-
-		tier.primeWallet(balanceURL, tradeBalanceURL)
-	}
-
-	if host != nil && tier.live != nil {
-		tier.primeWallet(tier.live.BalanceURL(), tier.live.TradeBalanceURL())
 	}
 
 	tier.Recalculate()
@@ -255,112 +194,7 @@ func (tier *Tier) apply(executions *market.Execution) {
 }
 
 /*
-primeWallet loads spot Balance and TradeBalance once over signed REST.
-Spot Balance is the only capital Allocate may spend.
-*/
-func (tier *Tier) primeWallet(balanceURL, tradeBalanceURL string) {
-	if tier.private == nil || tier.venue == nil {
-		return
-	}
-
-	if err := tier.loadSpotBalance(balanceURL); err != nil {
-		errnie.Error(err)
-	}
-
-	tb, ok := tier.venue.TradeBalance().(*kraken.TradeBalance)
-
-	if ok && tb != nil {
-		if raw, err := tier.private.Post(tradeBalanceURL, tb.Request()); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[broker.tier] trade-balance prime failed", err,
-			))
-		} else if err := json.Unmarshal(raw, tb); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	tier.publishLedger(nil)
-}
-
-/*
-loadSpotBalance POSTs private Balance into *kraken.Balance and normalizes keys.
-*/
-func (tier *Tier) loadSpotBalance(balanceURL string) error {
-	bal, ok := tier.venue.Balance().(*kraken.Balance)
-
-	if !ok || bal == nil {
-		return errnie.Err(
-			errnie.Internal,
-			"[broker.tier] spot balance host is not a kraken.Balance",
-			nil,
-		)
-	}
-
-	raw, err := tier.private.Post(balanceURL, bal.Request())
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO, "[broker.tier] spot balance prime failed", err,
-		))
-	}
-
-	if err := json.Unmarshal(raw, bal); err != nil {
-		return errnie.Error(err)
-	}
-
-	bal.Normalize()
-
-	quote := system.Cfg.Market.QuoteCurrency
-
-	if bal.QuoteCash(quote) == nil {
-		return errnie.Err(
-			errnie.UnprocessableContent,
-			"[broker.tier] spot balance prime returned no "+quote,
-			nil,
-		)
-	}
-
-	if tier.price != nil && tier.price.balance != nil {
-		bal.ToMarket(tier.price.balance)
-	}
-
-	return nil
-}
-
-/*
-spotWallet builds the Allocate wallet from spot Balance only.
-*/
-func (tier *Tier) spotWallet() (*market.Balance, error) {
-	quote := system.Cfg.Market.QuoteCurrency
-	wallet := market.NewBalance(map[string]any{
-		"quote":  quote,
-		"assets": []*market.Asset{},
-	})
-
-	if tier.venue == nil {
-		return wallet, errnie.Err(
-			errnie.UnprocessableContent,
-			"[broker.tier] venue not wired",
-			nil,
-		)
-	}
-
-	tier.venue.Balance().ToMarket(wallet)
-
-	if cash := wallet.Cash(quote); cash == nil || cash.Sign() <= 0 {
-		return wallet, errnie.Err(
-			errnie.UnprocessableContent,
-			"[broker.tier] no spot "+quote+" — refusing to size",
-			nil,
-		)
-	}
-
-	return wallet, nil
-}
-
-/*
-publishLedger fans positions and this tier's wallet reading to the hub.
-Wallet updates publish even with no open lots so live cash appears at boot.
+publishLedger fans positions and this tier's balance to the hub.
 */
 func (tier *Tier) publishLedger(positions map[string]*Position) {
 	if ui.UI == nil || !ui.UI.Active() {
@@ -371,12 +205,27 @@ func (tier *Tier) publishLedger(positions map[string]*Position) {
 		positions = map[string]*Position{}
 	}
 
+	balances := map[string]any{}
+
+	if tier.venue != nil {
+		balances[tier.Type.String()] = tier.venue.Balance()
+	}
+
 	ui.UI.WriteJSON(map[string]any{
 		"positions": positions,
-		"balances": map[string]any{
-			tier.Type.String(): tier.wallet.Reading(),
-		},
+		"balances":  balances,
 	})
+}
+
+/*
+fillReport keeps trade prints. Status-only execution events are not fills.
+*/
+func (tier *Tier) fillReport(execution *market.ExecutionData) bool {
+	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
+		return false
+	}
+
+	return execution.ExecType == "" || execution.ExecType == "trade"
 }
 
 func (tier *Tier) Hello() {
@@ -390,9 +239,29 @@ func (tier *Tier) Hello() {
 		// Closed lots are frozen snapshots — do not re-mark them.
 		if position.ClosedAt == nil {
 			mark := position.Mark
-			if mark == nil && tier.price != nil {
+
+			if mark == nil {
+				if tier.price == nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[tier.Hello] price is not wired",
+						nil,
+					), "symbol", position.Symbol)
+					continue
+				}
+
 				mark = tier.price.TouchBid(position.Symbol)
+
+				if mark == nil {
+					errnie.Error(errnie.Err(
+						errnie.UnprocessableContent,
+						"[tier.Hello] no touch bid for "+position.Symbol,
+						nil,
+					))
+					continue
+				}
 			}
+
 			if err := position.Update(mark); err != nil {
 				errnie.Error(err)
 			}
@@ -413,14 +282,7 @@ func (tier *Tier) Update(data *market.Update) {
 			continue
 		}
 
-		last, _ := tier.savedAt.Load(position.ID)
-		savedAt, _ := last.(time.Time)
-
-		if savedAt.IsZero() || time.Since(savedAt) > 30*time.Second {
-			tier.savedAt.Store(position.ID, time.Now())
-			tier.positions.SaveAsync(position)
-		}
-
+		tier.positions.SaveAsync(position)
 		touched[position.ID] = position
 	}
 
@@ -461,9 +323,6 @@ stay there too; after it slips, paper has to lose that proof and earn it again
 before real entries resume.
 */
 func (tier *Tier) Unlocked(paper *Tier) bool {
-	tier.gateMu.Lock()
-	defer tier.gateMu.Unlock()
-
 	if tier.Type != TierTypeReal {
 		tier.unlocked = true
 		return true
@@ -476,34 +335,21 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 
 	paperOK := paper != nil && paper.ok()
 
-	if tier.halted {
-		tier.noteHalt(paperOK)
-		return tier.unlocked
-	}
-
 	if !paperOK {
 		tier.unlocked = false
-		tier.reprieve = false
 		return false
 	}
 
 	if !tier.unlocked {
-		if !tier.virgin() && !tier.ok() && !tier.reprieve {
-			tier.halted = true
-			tier.noteHalt(paperOK)
+		if !tier.virgin() && !tier.ok() {
 			return tier.unlocked
 		}
 
 		tier.unlocked = true
-		tier.reprieve = false
 		return true
 	}
 
-	if !tier.virgin() && !tier.ok() && !tier.reprieve {
-		tier.halted = true
-		tier.sawOK = paperOK
-		tier.broke = false
-		tier.reprieve = false
+	if !tier.virgin() && !tier.ok() {
 		tier.unlocked = false
 		return false
 	}
@@ -512,44 +358,10 @@ func (tier *Tier) Unlocked(paper *Tier) bool {
 	return true
 }
 
-/*
-noteHalt keeps a failed real shut until paper goes cold and proves again.
-Caller must hold gateMu.
-*/
-func (tier *Tier) noteHalt(paperOK bool) {
-	if paperOK && tier.broke {
-		tier.halted = false
-		tier.broke = false
-		tier.sawOK = false
-		tier.reprieve = !tier.virgin() && !tier.ok()
-		tier.unlocked = true
-		return
-	}
-
-	if paperOK {
-		tier.sawOK = true
-	} else if tier.sawOK {
-		tier.broke = true
-	}
-
-	tier.unlocked = false
-}
-
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
-	if tier.Type == TierTypeReal &&
-		(tier.live == nil || !tier.live.armed.Load()) {
-		return errnie.Error(errnie.Err(
-			errnie.Forbidden, "[broker.Tier.Enter] real transport not armed", nil,
-		))
-	}
-
-	tier.gateMu.Lock()
-	unlocked := tier.unlocked
-	tier.gateMu.Unlock()
-
-	if !unlocked {
+	if !tier.unlocked {
 		return errnie.Error(errnie.Err(
 			errnie.Forbidden,
 			"[broker.Tier.Enter] tier not unlocked", nil,
@@ -564,12 +376,7 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	wallet, err := tier.spotWallet()
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
+	wallet := tier.spotBalance()
 	qty, err := tier.price.Allocate(symbol, wallet)
 
 	if err != nil || qty == nil || qty.Sign() <= 0 {
@@ -672,10 +479,8 @@ func (tier *Tier) Exit(
 	}
 
 	if err := tier.Send(position, "exit"); err != nil {
-		position.mu.Lock()
-		position.Closing = false
-		position.ExitTick = 0
-		position.mu.Unlock()
+		// Keep Closing: Write may have delivered the sell. Clearing here
+		// allows a second Send while the first fill is in flight.
 		return errnie.Error(err)
 	}
 
@@ -687,7 +492,30 @@ func (tier *Tier) Exit(
 	return nil
 }
 
+/*
+spotBalance copies the venue ledger into a market.Balance for Allocate/Enter.
+*/
+func (tier *Tier) spotBalance() *market.Balance {
+	quote := system.Cfg.Market.QuoteCurrency
+	wallet := market.NewBalance(map[string]any{
+		"quote":  quote,
+		"assets": []*market.Asset{},
+	})
+
+	if tier.venue != nil {
+		tier.venue.Balance().ToMarket(wallet)
+	}
+
+	return wallet
+}
+
 func (tier *Tier) Send(position *Position, action string) error {
+	if action == "exit" {
+		position.mu.Lock()
+		position.ensureExitOrder()
+		position.mu.Unlock()
+	}
+
 	order := position.EntryOrder
 
 	if action == "exit" {
@@ -698,21 +526,32 @@ func (tier *Tier) Send(position *Position, action string) error {
 		return nil
 	}
 
-	reqID := tier.reqSeq.Add(1)
-
-	msg := map[string]any{
-		"method": "add_order",
-		"req_id": reqID,
-		"params": map[string]any{
-			"symbol":     position.Symbol,
-			"side":       order.Type,
-			"order_type": order.OrderType,
-			"order_qty":  order.Volume,
-			"cl_ord_id":  order.ClOrdId,
-		},
+	params := map[string]any{
+		"symbol":     position.Symbol,
+		"side":       order.Type,
+		"order_type": order.OrderType,
+		"order_qty":  json.Number(order.Volume),
+		"cl_ord_id":  order.ClOrdId,
 	}
 
-	buf, err := sonic.Marshal(msg)
+	if tier.Type == TierTypeReal && tier.price != nil && tier.price.Instrument != nil {
+		token, err := tier.price.Instrument.WebSocketToken(tier.ctx)
+
+		if err != nil {
+			if action == "enter" {
+				tier.positions.Drop(position.Symbol)
+			}
+
+			return errnie.Error(err)
+		}
+
+		params["token"] = token
+	}
+
+	buf, err := sonic.Marshal(map[string]any{
+		"method": "add_order",
+		"params": params,
+	})
 
 	if err != nil {
 		if action == "enter" {
@@ -726,38 +565,66 @@ func (tier *Tier) Send(position *Position, action string) error {
 		)
 	}
 
-	sent := &submission{
-		position: position,
-		action:   action,
-		reqID:    reqID,
-	}
-
-	if tier.live != nil {
-		buf, err = tier.live.Seal(buf)
-
-		if err != nil {
-			if action == "enter" {
-				tier.positions.Drop(position.Symbol)
-			}
-
-			return errnie.Error(err)
-		}
-	}
-
-	tier.inflight.Store(reqID, sent)
-
 	if err := tier.private.Write(buf); err != nil {
-		// Keep lot + inflight: Write may have delivered the frame. Dropping
-		// here orphans venue fills; reject ack still dropRejected, late
-		// trade prints still Apply.
-		if errnie.IsNotAcceptable(err) {
-			return err
-		}
-
+		// Keep the lot: Write may have delivered. Fills still Apply by cl_ord_id.
 		return errnie.Error(err)
 	}
 
 	return nil
+}
+
+/*
+rejectOrder matches a failed add_order to the lot by cl_ord_id on Entry/ExitOrder.
+*/
+func (tier *Tier) rejectOrder(order *kraken.Order) {
+	clOrdID := order.Result.ClOrdID
+
+	if clOrdID == "" {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable, "[broker.tier] order rejected without cl_ord_id", nil,
+		).With("reason", order.Error))
+		return
+	}
+
+	for _, position := range tier.positions.Submitted() {
+		if position == nil {
+			continue
+		}
+
+		position.mu.Lock()
+
+		switch {
+		case position.EntryOrder != nil && position.EntryOrder.ClOrdId == clOrdID:
+			filled := position.Qty != nil && position.Qty.Sign() > 0
+			position.mu.Unlock()
+
+			if filled {
+				errnie.Error(errnie.Err(
+					errnie.NotAcceptable, "[broker.tier] entry rejected after fill", nil,
+				).With("symbol", position.Symbol, "reason", order.Error))
+				tier.Hello()
+				return
+			}
+
+			tier.positions.Drop(position.Symbol)
+			errnie.Error(errnie.Err(
+				errnie.NotAcceptable, "[broker.Tier] entry rejected", nil,
+			).With("symbol", position.Symbol, "reason", order.Error))
+			tier.Hello()
+			return
+
+		case position.ExitOrder != nil && position.ExitOrder.ClOrdId == clOrdID:
+			position.ExitOrder.ClOrdId = ""
+			position.mu.Unlock()
+
+			errnie.Error(errnie.Err(
+				errnie.NotAcceptable, "[broker.tier] exit rejected", nil,
+			).With("symbol", position.Symbol, "reason", order.Error))
+			return
+		}
+
+		position.mu.Unlock()
+	}
 }
 
 func (tier *Tier) settle(position *Position) {
@@ -776,22 +643,6 @@ func (tier *Tier) settle(position *Position) {
 
 	// Closing armed — send the exit and stay open until Apply flats the lot.
 	if err := tier.Send(position, "exit"); err != nil {
-		if errnie.IsNotFound(err) {
-			now := time.Now().UTC()
-			position.mu.Lock()
-			position.ClosedAt = &now
-			position.mu.Unlock()
-			tier.positions.Remove(position.Symbol)
-			tier.Recalculate()
-			tier.pending.Store(position.Symbol, position)
-			return
-		}
-
-		position.mu.Lock()
-		position.Closing = false
-		position.ExitTick = 0
-		position.mu.Unlock()
-
 		errnie.Error(err)
 		return
 	}
@@ -840,51 +691,14 @@ func (tier *Tier) Recalculate() {
 
 	tier.WinRate = float64(wins) / float64(count)
 	tier.Edge = totalReturn / float64(count)
-
-	tier.gateMu.Lock()
-	tier.reprieve = false
-
-	if tier.Type != TierTypeReal {
-		tier.gateMu.Unlock()
-		return
-	}
-
-	if tier.ok() {
-		tier.halted = false
-		tier.gateMu.Unlock()
-		return
-	}
-
-	tier.halted = true
-	tier.sawOK = false
-	tier.broke = false
-	tier.unlocked = false
-	tier.gateMu.Unlock()
 }
 
 /*
 Run owns the private ingress for this tier. Public frames are read once on Desk.
-Live arms the balances channel, then reloads spot Balance over REST so Enter
-has real USD before any websocket snapshot race.
 */
 func (tier *Tier) Run() {
 	if tier.private == nil || tier.venue == nil {
 		return
-	}
-
-	if tier.live != nil {
-		if err := tier.live.Arm(); err != nil {
-			// armed stays false — Enter refuses until OnReconnect Subscribe.
-			errnie.Error(errnie.Err(
-				errnie.IO, "[broker.Tier] private subscribe failed", err,
-			))
-		}
-
-		if err := tier.loadSpotBalance(tier.live.BalanceURL()); err != nil {
-			errnie.Error(err)
-		} else {
-			tier.publishLedger(nil)
-		}
 	}
 
 	// Resend exits for lots restored mid-close once private ingress is up.
@@ -912,103 +726,5 @@ func (tier *Tier) Run() {
 		}
 
 		tier.venue.Read(buf)
-		tier.notePrivate(buf)
 	}
-}
-
-/*
-fillReport keeps trade prints. Status-only execution events are not fills.
-*/
-func (tier *Tier) fillReport(execution *market.ExecutionData) bool {
-	if execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
-		return false
-	}
-
-	return execution.ExecType == "" || execution.ExecType == "trade"
-}
-
-func (tier *Tier) ack(order *kraken.Order) {
-	if order == nil {
-		return
-	}
-
-	if order.Success {
-		if order.ReqID != 0 {
-			tier.inflight.Delete(order.ReqID)
-		}
-
-		return
-	}
-
-	tier.reject(order.ReqID, order.Error)
-}
-
-func (tier *Tier) reject(reqID int64, reason string) {
-	if reqID == 0 {
-		errnie.Error(errnie.Err(
-			errnie.NotAcceptable, "[broker.Tier] order rejected without req_id", nil,
-		).With("reason", reason))
-
-		return
-	}
-
-	value, ok := tier.inflight.LoadAndDelete(reqID)
-
-	if !ok {
-		return
-	}
-
-	tier.dropRejected(value.(*submission), reason)
-}
-
-func (tier *Tier) dropRejected(sent *submission, reason string) {
-	if sent == nil || sent.position == nil {
-		return
-	}
-
-	position := sent.position
-
-	if sent.action == "exit" {
-		position.mu.Lock()
-		position.Closing = false
-		position.ExitTick = 0
-		position.mu.Unlock()
-
-		errnie.Error(errnie.Err(
-			errnie.NotAcceptable, "[broker.Tier] exit rejected", nil,
-		).With("symbol", position.Symbol, "reason", reason))
-
-		return
-	}
-
-	tier.positions.Drop(position.Symbol)
-
-	errnie.Error(errnie.Err(
-		errnie.NotAcceptable, "[broker.Tier] entry rejected", nil,
-	).With("symbol", position.Symbol, "reason", reason))
-
-	tier.Hello()
-}
-
-/*
-notePrivate logs a rejected private subscription. Order rejects take ack.
-*/
-func (tier *Tier) notePrivate(buf []byte) {
-	var head struct {
-		Method  string `json:"method"`
-		Success *bool  `json:"success"`
-		Error   string `json:"error"`
-	}
-
-	if err := sonic.Unmarshal(buf, &head); err != nil {
-		return
-	}
-
-	if head.Method != "subscribe" || head.Success == nil || *head.Success {
-		return
-	}
-
-	errnie.Error(errnie.Err(
-		errnie.IO, "[broker.Tier] private subscribe rejected", nil,
-	).With("error", head.Error))
 }

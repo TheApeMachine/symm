@@ -16,22 +16,23 @@ func TestTapeUptake(t *testing.T) {
 
 		tape.Note("Q/USD", 40, now.Add(-window-time.Minute))
 		tape.Note("Q/USD", 200, now.Add(-time.Minute))
-		tape.Note("Q/USD", 5, now.Add(time.Second))
 
 		recent, prior := tape.Uptake("Q/USD", now)
 		So(recent, ShouldEqual, 200)
 		So(prior, ShouldEqual, 40)
 	})
 
-	Convey("a print on the window edge counts in the recent window only", t, func() {
+	Convey("minute buckets split at the window boundary", t, func() {
 		tape := NewTape()
 		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 		window := system.Cfg.Risk.TapeWindow
 
-		tape.Note("Q/USD", 10, now.Add(-window))
-		tape.Note("Q/USD", 7, now.Add(-window-time.Nanosecond))
-		tape.Note("Q/USD", 3, now.Add(-2*window))
-		tape.Note("Q/USD", 99, now.Add(-2*window-time.Nanosecond))
+		// Inside recent: one minute after the prior/recent split.
+		tape.Note("Q/USD", 10, now.Add(-window+time.Minute))
+		// Inside prior: one minute before that split.
+		tape.Note("Q/USD", 7, now.Add(-window-time.Minute))
+		tape.Note("Q/USD", 3, now.Add(-2*window+time.Minute))
+		tape.Note("Q/USD", 99, now.Add(-2*window-time.Minute))
 
 		recent, prior := tape.Uptake("Q/USD", now)
 		So(recent, ShouldEqual, 10)
@@ -55,14 +56,12 @@ func TestTapeUptake(t *testing.T) {
 		So(before, ShouldEqual, 0)
 	})
 
-	Convey("prints older than two windows are dropped on the next note", t, func() {
+	Convey("stale minute slots are ignored once the ring wraps", t, func() {
 		tape := NewTape()
-		now := time.Now()
+		now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 
 		tape.Note("Q/USD", 5, now.Add(-3*system.Cfg.Risk.TapeWindow))
-		tape.Note("Q/USD", 8, now)
-
-		So(len(tape.prints["Q/USD"]), ShouldEqual, 1)
+		tape.Note("Q/USD", 8, now.Add(-time.Minute))
 
 		recent, prior := tape.Uptake("Q/USD", now)
 		So(recent, ShouldEqual, 8)

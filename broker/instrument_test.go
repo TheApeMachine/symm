@@ -11,8 +11,8 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -176,8 +176,9 @@ func TestInstrumentSnapshotWithPeers(t *testing.T) {
 
 func TestLevel3FrameSize(t *testing.T) {
 	Convey("Given Kraken's standard level3 subscription-rate budget", t, func() {
-		viper.Set("market.l3_rate_limit", 200)
-		defer viper.Set("market.l3_rate_limit", nil)
+		prev := system.Cfg.Market.Level3.RateLimit
+		system.Cfg.Market.Level3.RateLimit = 200
+		Reset(func() { system.Cfg.Market.Level3.RateLimit = prev })
 
 		Convey("A frame carries only as many symbols as the budget pays for", func() {
 			size, err := level3FrameSize(100)

@@ -7,65 +7,97 @@ import (
 	"github.com/theapemachine/symm/system"
 )
 
-type tapePrint struct {
-	at    time.Time
-	quote float64
+type symbolTape struct {
+	mu           sync.Mutex
+	buckets      []float64
+	bucketMinute []int64
 }
 
-// Tape keeps quote notional so entry can compare the last window with the one before it.
+/*
+Tape keeps per-symbol 1-minute quote-notional buckets so entry can compare
+the last risk.tape_window with the equal window before it.
+*/
 type Tape struct {
-	mu     sync.Mutex
-	prints map[string][]tapePrint
+	symbols sync.Map // map[string]*symbolTape
 }
 
 func NewTape() *Tape {
-	return &Tape{prints: map[string][]tapePrint{}}
+	return &Tape{}
 }
 
-// Note records one print's quote dollars and drops anything older than two windows.
+func newSymbolTape() *symbolTape {
+	n := 2 * int(system.Cfg.Risk.TapeWindow/time.Minute)
+
+	return &symbolTape{
+		buckets:      make([]float64, n),
+		bucketMinute: make([]int64, n),
+	}
+}
+
+func (tape *Tape) lane(symbol string) *symbolTape {
+	if raw, ok := tape.symbols.Load(symbol); ok {
+		return raw.(*symbolTape)
+	}
+
+	raw, _ := tape.symbols.LoadOrStore(symbol, newSymbolTape())
+	return raw.(*symbolTape)
+}
+
+/*
+Note adds quote dollars to the print's minute bucket.
+*/
 func (tape *Tape) Note(symbol string, quote float64, at time.Time) {
 	if symbol == "" || quote <= 0 || at.IsZero() {
 		return
 	}
 
-	tape.mu.Lock()
-	defer tape.mu.Unlock()
+	lane := tape.lane(symbol)
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
 
-	cutoff := at.Add(-2 * system.Cfg.Risk.TapeWindow)
-	kept := tape.prints[symbol][:0]
+	n := int64(len(lane.buckets))
+	minute := at.Unix() / 60
+	idx := minute % n
 
-	for _, print := range tape.prints[symbol] {
-		if print.at.Before(cutoff) {
-			continue
-		}
-
-		kept = append(kept, print)
+	if lane.bucketMinute[idx] != minute {
+		lane.bucketMinute[idx] = minute
+		lane.buckets[idx] = 0
 	}
 
-	tape.prints[symbol] = append(kept, tapePrint{at: at, quote: quote})
+	lane.buckets[idx] += quote
 }
 
-// Uptake sums quote dollars in [now-window, now] and the equal window before it.
+/*
+Uptake sums quote dollars in [now-window, now] and the equal window before it.
+*/
 func (tape *Tape) Uptake(symbol string, now time.Time) (recent, prior float64) {
-	tape.mu.Lock()
-	defer tape.mu.Unlock()
+	raw, ok := tape.symbols.Load(symbol)
 
-	window := system.Cfg.Risk.TapeWindow
-	recentStart := now.Add(-window)
-	priorStart := now.Add(-2 * window)
+	if !ok {
+		return 0, 0
+	}
 
-	for _, print := range tape.prints[symbol] {
-		if print.at.After(now) {
-			continue
+	lane := raw.(*symbolTape)
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
+
+	n := int64(len(lane.buckets))
+	window := int64(system.Cfg.Risk.TapeWindow / time.Minute)
+	current := now.Unix() / 60
+
+	for i := int64(0); i < window; i++ {
+		recentMinute := current - i
+		idx := recentMinute % n
+
+		if lane.bucketMinute[idx] == recentMinute {
+			recent += lane.buckets[idx]
 		}
 
-		if !print.at.Before(recentStart) {
-			recent += print.quote
-			continue
-		}
+		priorMinute := current - window - i
+		priorIdx := priorMinute % n
 
-		if !print.at.Before(priorStart) {
-			prior += print.quote
+		if lane.bucketMinute[priorIdx] == priorMinute {
+			prior += lane.buckets[priorIdx]
 		}
 	}
 

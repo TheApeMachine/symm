@@ -24,7 +24,7 @@ func (price *Price) BookIntact(symbol string) bool {
 		return false
 	}
 
-	recent, prior := price.tape.Uptake(symbol, time.Now())
+	recent, prior := price.TapeUptake(symbol, time.Now())
 	floor := system.Cfg.Risk.MinTapeNotionalUSD
 
 	if recent < floor || recent <= prior {
@@ -37,23 +37,5 @@ func (price *Price) BookIntact(symbol string) bool {
 		return false
 	}
 
-	cap := system.Cfg.Risk.MaxEntryOpenDragPct
-
-	if budget, ok := price.OpenDragBudgetPct(symbol); ok && budget != nil {
-		if b := budget.InexactFloat64(); b > 0 && b < cap {
-			cap = b
-		}
-	}
-
-	if fee := price.Fee(symbol); fee != nil {
-		if rate := fee.InexactFloat64(); rate > 0 {
-			feeFloor := 2 * rate
-
-			if cap < feeFloor {
-				cap = feeFloor
-			}
-		}
-	}
-
-	return closeNow.InexactFloat64() >= -cap
+	return closeNow.InexactFloat64() >= -price.OpenDragCap(symbol)
 }

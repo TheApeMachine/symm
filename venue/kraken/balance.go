@@ -258,19 +258,46 @@ func (balance *Balance) Normalize() {
 QuoteCash is spendable spot capital for quote (USD, …). Nil when missing.
 */
 func (balance *Balance) QuoteCash(quote string) *decimal.Decimal {
-	if balance == nil || balance.Result == nil || quote == "" {
+	return balance.AssetCash(quote)
+}
+
+/*
+AssetCash is spendable spot capital for an asset code (USD, PEPE, …).
+Nil when missing or non-positive.
+*/
+func (balance *Balance) AssetCash(asset string) *decimal.Decimal {
+	amount, ok := balance.AssetAmount(asset)
+
+	if !ok || amount == nil || amount.Sign() <= 0 {
 		return nil
 	}
 
-	if amount := balance.Result[quote]; amount != nil && amount.Sign() > 0 {
-		return amount
+	return amount
+}
+
+/*
+AssetAmount returns the ledger amount for asset (may be zero) and whether the
+key is present. Missing means the desk has not seen that asset yet — not the
+same as a known zero balance.
+*/
+func (balance *Balance) AssetAmount(asset string) (*decimal.Decimal, bool) {
+	if balance == nil || balance.Result == nil || asset == "" {
+		return nil, false
 	}
 
-	if amount := balance.Result[spotAsset(quote)]; amount != nil && amount.Sign() > 0 {
-		return amount
+	if amount := balance.Result[asset]; amount != nil {
+		value := *amount
+		return &value, true
 	}
 
-	return nil
+	if key := spotAsset(asset); key != asset {
+		if amount := balance.Result[key]; amount != nil {
+			value := *amount
+			return &value, true
+		}
+	}
+
+	return nil, false
 }
 
 func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,17 +102,16 @@ func TestHasKeepsOpenClosedAt(t *testing.T) {
 		cache := &Cache{
 			System:  runtime.NewSystem(context.Background(), "cache"),
 			tierKey: "virtual",
-			positions: map[string]map[string]*Position{
-				"open": {
-					"XRP/USD": {Symbol: "XRP/USD", ClosedAt: &now},
-				},
-				"closed": {},
-			},
+			open:    &sync.Map{},
+			closed:  &sync.Map{},
 		}
+		cache.open.Store("XRP/USD", &Position{Symbol: "XRP/USD", ClosedAt: &now})
 
 		So(cache.Has("XRP/USD"), ShouldBeTrue)
-		So(cache.positions["open"]["XRP/USD"], ShouldNotBeNil)
-		So(cache.positions["closed"]["XRP/USD"], ShouldBeNil)
+
+		_, stillOpen := cache.open.Load("XRP/USD")
+		_, moved := cache.closed.Load("XRP/USD")
+		So(stillOpen, ShouldBeTrue)
+		So(moved, ShouldBeFalse)
 	})
 }
-

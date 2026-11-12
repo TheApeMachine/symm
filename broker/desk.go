@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"iter"
-	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
@@ -281,6 +280,10 @@ func (desk *Desk) Hello() {
 	positions := make(map[string]*Position)
 	balances := make(map[string]any)
 
+	if real := desk.tiers[TierTypeReal]; real != nil {
+		real.Unlocked(desk.tiers[TierTypePaper])
+	}
+
 	for _, tier := range desk.tiers {
 		if tier == nil {
 			continue
@@ -293,9 +296,29 @@ func (desk *Desk) Hello() {
 
 			if position.ClosedAt == nil {
 				mark := position.Mark
-				if mark == nil && desk.price != nil {
+
+				if mark == nil {
+					if desk.price == nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"[desk.Hello] price is not wired",
+							nil,
+						), "symbol", position.Symbol)
+						continue
+					}
+
 					mark = desk.price.TouchBid(position.Symbol)
+
+					if mark == nil {
+						errnie.Error(errnie.Err(
+							errnie.UnprocessableContent,
+							"[desk.Hello] no touch bid for "+position.Symbol,
+							nil,
+						))
+						continue
+					}
 				}
+
 				if err := position.Update(mark); err != nil {
 					errnie.Error(err)
 				}
@@ -304,27 +327,15 @@ func (desk *Desk) Hello() {
 			positions[position.ID] = position
 		}
 
-		balances[tier.Type.String()] = tier.wallet.Reading()
-	}
-
-	payload := map[string]any{
-		"positions": positions,
-		"balances":  balances,
-	}
-
-	// Live-only desk: tell the strip the real book is armed so cash renders.
-	if system.Cfg.Market.Model == "real" {
-		payload["confidence"] = map[string]any{
-			"real_ceiling": true,
-			"real": map[string]any{
-				"active": true,
-				"armed":  true,
-				"halted": false,
-			},
+		if tier.venue != nil {
+			balances[tier.Type.String()] = tier.venue.Balance()
 		}
 	}
 
-	ui.UI.WriteJSON(payload)
+	ui.UI.WriteJSON(map[string]any{
+		"positions": positions,
+		"balances":  balances,
+	})
 }
 
 /*
@@ -358,62 +369,40 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 			continue
 		}
 
-		if desk.price != nil {
-			at := trade.Timestamp
-
-			if at.IsZero() {
-				at = time.Now()
-			}
-
-			quote := trade.Price.Mul(trade.Qty).InexactFloat64()
-			desk.price.tape.Note(trade.Symbol, quote, at)
+		if desk.price == nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[desk.Update] price is not wired",
+				nil,
+			), "symbol", trade.Symbol)
+			continue
 		}
 
-		// Longs mark on the executable bid, never the print. Aggressive
-		// buys print the ask and would inflate Peak before an L3 bid mark.
-		var price *decimal.Decimal
+		desk.price.NoteTrade(trade)
 
-		if desk.price != nil && desk.price.Books != nil {
-			desk.price.Books.Book(trade.Symbol, func(managed *market.Book) {
-				if managed == nil || managed.BestBid() == nil || managed.BestBid().Price == nil {
-					return
-				}
+		// Longs mark on the executable bid, never the print.
+		mark := desk.price.TouchBid(trade.Symbol)
 
-				price = managed.BestBid().Price
-			})
+		if mark == nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[desk.Update] no touch bid for "+trade.Symbol,
+				nil,
+			))
+			continue
 		}
 
-		if price == nil {
-			p := trade.Price
-			price = &p
-		}
-
-		desk.mark(trade.Symbol, price)
+		desk.mark(trade.Symbol, mark)
 	}
 }
 
 func (desk *Desk) Refresh(symbols []string) {
 	for _, symbol := range symbols {
-		if symbol == "" {
+		if symbol == "" || desk.price == nil {
 			continue
 		}
 
-		var price *decimal.Decimal
-
-		desk.price.Books.Book(symbol, func(managed *market.Book) {
-			if managed == nil {
-				return
-			}
-
-			bid := managed.BestBid()
-			if bid == nil || bid.Price == nil {
-				return
-			}
-
-			price = bid.Price
-		})
-
-		if price != nil {
+		if price := desk.price.TouchBid(symbol); price != nil {
 			desk.mark(symbol, price)
 		}
 	}

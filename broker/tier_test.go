@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestTierUnlocked(t *testing.T) {
 		So(real.Unlocked(paper), ShouldBeFalse)
 	})
 
-	Convey("a failed real stays shut until paper loses the proof and earns it again", t, func() {
+	Convey("a failed real stays shut while paper still holds", t, func() {
 		prev := system.Cfg.Market.Model
 		system.Cfg.Market.Model = "paper"
 		Reset(func() { system.Cfg.Market.Model = prev })
@@ -72,96 +73,34 @@ func TestTierUnlocked(t *testing.T) {
 		real.WinRate = 0.4
 		So(real.Unlocked(paper), ShouldBeFalse)
 		So(real.Unlocked(paper), ShouldBeFalse)
+	})
 
-		paper.Edge = -1
-		So(real.Unlocked(paper), ShouldBeFalse)
-
-		paper.Edge = 1
-		So(real.Unlocked(paper), ShouldBeTrue)
-		So(real.Unlocked(paper), ShouldBeTrue)
+	Convey("live-only Unlocked keeps real open after a losing Recalculate", t, func() {
+		prev := system.Cfg.Market.Model
+		system.Cfg.Market.Model = "real"
+		Reset(func() { system.Cfg.Market.Model = prev })
 
 		loss := decimal.NewFromInt(-2)
 		closed := time.Now()
-		real.positions = &Cache{
-			positions: map[string]map[string]*Position{
-				"open": {},
-				"closed": {
-					"AAA/USD": {
-						Symbol:   "AAA/USD",
-						ClosedAt: &closed,
-						PnLPct:   &loss,
-					},
-				},
-			},
+		cache := &Cache{open: &sync.Map{}, closed: &sync.Map{}}
+		cache.closed.Store("AAA/USD", &Position{
+			Symbol:   "AAA/USD",
+			ClosedAt: &closed,
+			PnLPct:   &loss,
+		})
+		real := &Tier{
+			Type:      TierTypeReal,
+			unlocked:  true,
+			positions: cache,
 		}
 
 		real.Recalculate()
-		So(real.unlocked, ShouldBeFalse)
-		So(real.halted, ShouldBeTrue)
-		So(real.Unlocked(paper), ShouldBeFalse)
+		So(real.Unlocked(nil), ShouldBeTrue)
 	})
 }
 
-func TestWalletReadingUsesSpotCash(t *testing.T) {
-	Convey("Wallet cash is spot Balance USD; flat equity equals cash", t, func() {
-		host := venue.NewKraken("USD")
-		spot := decimal.NewFromInt(200)
-		stale := decimal.NewFromInt(1000)
-
-		host.Balance().(*kraken.Balance).Result = map[string]*decimal.Decimal{
-			"USD": &spot,
-		}
-		// Stale TradeBalance must not drive the strip.
-		host.TradeBalance().FromMarket(market.NewTradeBalance(map[string]any{
-			"equity":         &stale,
-			"unrealized_pnl": &stale,
-		}))
-
-		cache := NewCache(context.Background(), "real", nil, nil, nil, nil)
-		reading := NewWallet(host, cache).Reading()
-		So(reading["cash"], ShouldEqual, 200)
-		So(reading["unrealized"], ShouldEqual, 0)
-		So(reading["equity"], ShouldEqual, 200)
-	})
-}
-
-func TestWalletReadingSumsOpenLotPnL(t *testing.T) {
-	Convey("unrealized and equity track open lots, not TradeBalance", t, func() {
-		host := venue.NewKraken("USD")
-		cash := decimal.NewFromInt(130)
-		host.Balance().(*kraken.Balance).Result = map[string]*decimal.Decimal{
-			"USD": &cash,
-		}
-
-		cache := NewCache(context.Background(), "real", nil, nil, nil, nil)
-		loss := decimal.NewFromFloat(-0.68)
-		qty := decimal.NewFromInt(1)
-		entry := decimal.NewFromInt(33)
-		cache.Add("FIL/USD", &Position{
-			Symbol: "FIL/USD",
-			Qty:    &qty,
-			Entry:  &entry,
-			PnL:    &loss,
-		}, true)
-
-		reading := NewWallet(host, cache).Reading()
-		So(reading["cash"], ShouldEqual, 130)
-		So(reading["unrealized"], ShouldAlmostEqual, -0.68, 1e-9)
-		// cash + entry*qty + pnl
-		So(reading["equity"], ShouldAlmostEqual, 162.32, 1e-9)
-	})
-}
-
-func TestSpotWalletRefusesEmptyLedger(t *testing.T) {
-	Convey("spotWallet errors when USD is missing", t, func() {
-		tier := &Tier{venue: venue.NewKraken("USD")}
-		_, err := tier.spotWallet()
-		So(err, ShouldNotBeNil)
-	})
-}
-
-func TestRealBalanceSyncsDeskWallet(t *testing.T) {
-	Convey("real spot Balance fills price.balance for BookIntact sizing", t, func() {
+func TestSpotBalanceCopiesVenueLedger(t *testing.T) {
+	Convey("spotBalance copies venue Balance into a market.Balance", t, func() {
 		host := venue.NewKraken("USD")
 		price := &Price{
 			balance: market.NewBalance(map[string]any{
@@ -171,12 +110,6 @@ func TestRealBalanceSyncsDeskWallet(t *testing.T) {
 		}
 		tier := &Tier{Type: TierTypeReal, price: price, venue: host}
 
-		host.Balance().OnChange(func(frame market.MarketType) {
-			if tier.price != nil && tier.price.balance != nil {
-				frame.ToMarket(tier.price.balance)
-			}
-		})
-
 		usd := decimal.NewFromInt(200)
 		host.Balance().(*kraken.Balance).Result = map[string]*decimal.Decimal{
 			"ZUSD": &usd,
@@ -185,24 +118,7 @@ func TestRealBalanceSyncsDeskWallet(t *testing.T) {
 		host.Balance().ToMarket(price.balance)
 
 		So(price.balance.Cash("USD").String(), ShouldEqual, "200")
-
-		wallet, err := tier.spotWallet()
-		So(err, ShouldBeNil)
-		So(wallet.Cash("USD").String(), ShouldEqual, "200")
-	})
-}
-
-func TestWalletReadingKeepsZeroCash(t *testing.T) {
-	Convey("fully deployed cash stays at zero", t, func() {
-		prevBal := system.Cfg.Market.Balance
-		system.Cfg.Market.Balance = 200
-		Reset(func() { system.Cfg.Market.Balance = prevBal })
-
-		host := venue.NewKraken("USD")
-		cache := NewCache(context.Background(), "real", nil, nil, nil, nil)
-		reading := NewWallet(host, cache).Reading()
-		So(reading["cash"], ShouldEqual, 0)
-		So(reading["equity"], ShouldEqual, 0)
+		So(tier.spotBalance().Cash("USD").String(), ShouldEqual, "200")
 	})
 }
 
@@ -226,7 +142,7 @@ func TestFillReportKeepsTrades(t *testing.T) {
 }
 
 func TestSendWriteErrorKeepsLot(t *testing.T) {
-	Convey("Write failure keeps the open lot and inflight for late fills", t, func() {
+	Convey("Write failure keeps the open lot for late fills by cl_ord_id", t, func() {
 		tier := &Tier{
 			positions: NewCache(context.Background(), "real", nil, nil, nil, nil),
 			private:   &writeFailClient{},
@@ -246,13 +162,6 @@ func TestSendWriteErrorKeepsLot(t *testing.T) {
 		err := tier.Send(pos, "enter")
 		So(err, ShouldNotBeNil)
 		So(tier.positions.Has(pos.Symbol), ShouldBeTrue)
-
-		pending := 0
-		tier.inflight.Range(func(_, _ any) bool {
-			pending++
-			return true
-		})
-		So(pending, ShouldEqual, 1)
 	})
 }
 
@@ -262,5 +171,5 @@ func (*writeFailClient) Read(...string) ([]byte, error) { return nil, nil }
 func (*writeFailClient) Write([]byte) error {
 	return errnie.Err(errnie.IO, "write failed", nil)
 }
-func (*writeFailClient) Post(string, any) ([]byte, error) { return nil, nil }
+func (*writeFailClient) Post(string, any) ([]byte, error)    { return nil, nil }
 func (*writeFailClient) Watch(string, any, json.Unmarshaler) {}

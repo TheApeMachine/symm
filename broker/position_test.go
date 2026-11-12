@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
@@ -60,7 +61,7 @@ func TestPositionUpdatePrefersBookPnL(t *testing.T) {
 		So(pos.PnLPct.IsZero(), ShouldBeTrue)
 	})
 
-	Convey("Update prices the lot when the book walk fails", t, func() {
+	Convey("Update errors when the book cannot mark the lot", t, func() {
 		books := NewBookManager()
 		fee := decimal.Zero
 		instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}}
@@ -78,12 +79,7 @@ func TestPositionUpdatePrefersBookPnL(t *testing.T) {
 		pos.Entry = &entry
 
 		mark := decimal.RequireFromString("98")
-		So(pos.Update(&mark), ShouldBeNil)
-
-		So(pos.Mark.String(), ShouldEqual, "98")
-		So(pos.PnL, ShouldNotBeNil)
-		pnl, _ := pos.PnL.Float64()
-		So(pnl, ShouldBeLessThan, 0)
+		So(pos.Update(&mark), ShouldNotBeNil)
 	})
 
 	Convey("Update errors when the lot was never filled", t, func() {
@@ -202,5 +198,60 @@ func TestOversellDoesNotDiluteExit(t *testing.T) {
 		second, _ := pos.PnL.Float64()
 		So(second, ShouldAlmostEqual, first, 1e-12)
 		So(second, ShouldBeGreaterThan, 0)
+	})
+}
+
+func TestEnsureExitOrderUsesLiveQty(t *testing.T) {
+	Convey("exit volume tracks filled Qty, not the intended enter size", t, func() {
+		qty := decimal.RequireFromString("0.5")
+		pos := &Position{
+			Qty: &qty,
+			ExitOrder: &spot.OrderRequest{
+				ClOrdId:   "old",
+				OrderType: "market",
+				Type:      "sell",
+				Volume:    "1.0",
+			},
+		}
+
+		pos.mu.Lock()
+		pos.ensureExitOrder()
+		pos.mu.Unlock()
+
+		So(pos.ExitOrder.Volume, ShouldEqual, "0.5")
+		So(pos.ExitOrder.ClOrdId, ShouldEqual, "old")
+	})
+}
+
+func TestApplyFlatsWithoutClosing(t *testing.T) {
+	Convey("a sell that flats the lot archives even if Closing was cleared", t, func() {
+		fee := decimal.Zero
+		instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}}
+		instrument.takerFees.Store("FIL/USD", &fee)
+
+		settled := false
+		pos := &Position{
+			Symbol:    "FIL/USD",
+			price:     &Price{Instrument: instrument, Books: NewBookManager()},
+			onSettled: func(*Position) { settled = true },
+		}
+
+		buyQty := decimal.RequireFromString("1")
+		buyPx := decimal.RequireFromString("2")
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy", LastQty: &buyQty, LastPrice: &buyPx, ExecType: "trade",
+		})
+
+		So(pos.Closing, ShouldBeFalse)
+
+		sellQty := decimal.RequireFromString("1")
+		sellPx := decimal.RequireFromString("1.9")
+		pos.Apply(market.ExecutionData{
+			ExecID: "s1", Side: "sell", LastQty: &sellQty, LastPrice: &sellPx, ExecType: "trade",
+		})
+
+		So(pos.Flat(), ShouldBeTrue)
+		So(pos.ClosedAt, ShouldNotBeNil)
+		So(settled, ShouldBeTrue)
 	})
 }

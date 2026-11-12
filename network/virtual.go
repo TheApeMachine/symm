@@ -1,73 +1,72 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/url"
+	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bytedance/sonic"
-	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue/kraken"
 	"golang.design/x/lockfree/lf"
 )
 
-var virtualREST = map[string]string{
+/*
+RestPath returns the URL path for REST map lookups. Full URLs and bare paths
+both resolve to the map keys.
+*/
+func RestPath(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil && parsed.Path != "" {
+		return parsed.Path
+	}
+
+	return raw
+}
+
+var commandMap = map[string][]string{
+	"balances":     {"balance", "--verbose"},
+	"executions":   {"history", "--verbose"},
+	"history":      {"history", "--verbose"},
+	"tradebalance": {"status", "--verbose"},
+}
+
+var typeMap = map[string]func(model map[string]any) json.Marshaler{
+	"balances":     kraken.NewBalanceFromMap,
+	"executions":   kraken.NewExecutionFromMap,
+	"add_order":    kraken.NewOrderFromMap,
+	"history":      kraken.NewTradesHistoryFromMap,
+	"tradebalance": kraken.NewTradeBalanceFromMap,
+}
+
+var restMap = map[string]string{
 	"/0/private/Balance":      "balances",
 	"/0/private/TradeBalance": "tradebalance",
 }
 
 /*
-Fills prices virtual market orders from the live book.
-*/
-type Fills interface {
-	FillAsk(symbol string, qty *decimal.Decimal) *decimal.Decimal
-	FillBid(symbol string, qty *decimal.Decimal) *decimal.Decimal
-}
-
-/*
-QuoteSettle applies desk fee math to a fill's gross quote notional.
-Buy returns fee-inclusive debit; sell returns fee-net credit. feeAmt is the
-taker dollars. Wired from broker via Price.afterFee — Virtual does not own fees.
-*/
-type QuoteSettle func(symbol string, gross decimal.Decimal, buy bool) (cash, feeAmt decimal.Decimal)
-
-/*
-Virtual is an in-process private Client so the virtual tier speaks the same
-Read/Write/Post surface as paper and live.
+Virtual is the simulated private spot websocket. It shells out to the native
+`kraken paper` CLI so the venue ledger owns balances and fills. Same Read/Write
+envelopes as Live — the private ingress cannot tell them apart.
 */
 type Virtual struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	queue  *lf.Queue[[]byte]
 	notify chan struct{}
-	mu     sync.Mutex
-	wallet map[string]any
-	fills  Fills
-	settle QuoteSettle
 }
 
 func NewVirtual(ctx context.Context) *Virtual {
 	ctx, cancel := context.WithCancel(ctx)
-	quote := system.Cfg.Market.QuoteCurrency
-	cash := decimal.NewFromInt(int64(system.Cfg.Market.Balance))
 
 	return &Virtual{
 		ctx:    ctx,
 		cancel: cancel,
 		queue:  lf.NewQueue[[]byte](),
 		notify: make(chan struct{}, 1),
-		wallet: map[string]any{
-			"quote": quote,
-			"assets": []*market.Asset{
-				market.NewAsset(nil, quote, cash, decimal.Zero, cash),
-			},
-		},
 	}
 }
 
@@ -77,24 +76,6 @@ Close cancels the virtual private transport so blocked Reads return.
 func (virtual *Virtual) Close() error {
 	virtual.cancel()
 	return nil
-}
-
-/*
-UseFills wires the book pricer used by add_order fills.
-*/
-func (virtual *Virtual) UseFills(fills Fills) {
-	virtual.mu.Lock()
-	virtual.fills = fills
-	virtual.mu.Unlock()
-}
-
-/*
-UseQuoteSettle wires fee-adjusted quote cash (broker Price.afterFee).
-*/
-func (virtual *Virtual) UseQuoteSettle(settle QuoteSettle) {
-	virtual.mu.Lock()
-	virtual.settle = settle
-	virtual.mu.Unlock()
 }
 
 func (virtual *Virtual) Read(keys ...string) ([]byte, error) {
@@ -111,397 +92,119 @@ func (virtual *Virtual) Read(keys ...string) ([]byte, error) {
 	}
 }
 
+/*
+Write routes the same subscription and order envelopes used by live through
+the paper CLI under simulator latency, then queues the response frame.
+*/
 func (virtual *Virtual) Write(message []byte) error {
 	request := map[string]any{}
 
 	if err := sonic.Unmarshal(message, &request); err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "failed to unmarshal virtual request", err,
+			errnie.Validation, "failed to unmarshal paper request", err,
 		))
 	}
 
 	method, _ := request["method"].(string)
-
-	switch method {
-	case "subscribe":
-		return virtual.subscribe(request)
-	case "add_order":
-		return virtual.addOrder(request)
-	default:
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.Write] no adapter", nil,
-		), "entity", method)
-	}
-}
-
-func (virtual *Virtual) subscribe(request map[string]any) error {
+	entity := method
 	params, _ := request["params"].(map[string]any)
-	channel, _ := params["channel"].(string)
+	var clOrdID string
 
-	switch channel {
-	case "balances":
-		return virtual.enqueueBalances()
-	case "executions":
-		return virtual.enqueue(&kraken.Execution{
-			Channel: "executions",
-			Type:    "snapshot",
-			Data:    make([]kraken.ExecutionData, 0),
-		})
-	default:
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.Write] no adapter", nil,
-		), "entity", channel)
+	if method == "subscribe" {
+		entity, _ = params["channel"].(string)
 	}
-}
 
-func (virtual *Virtual) addOrder(request map[string]any) error {
-	params, _ := request["params"].(map[string]any)
+	command := commandMap[entity]
 
-	if params == nil {
+	if entity == "add_order" {
+		raw, err := sonic.Marshal(params)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		var req kraken.AddOrderRequest
+
+		if err := sonic.Unmarshal(raw, &req); err != nil {
+			return errnie.Error(err)
+		}
+
+		clOrdID = req.ClOrdId
+		command = req.Command()
+	}
+
+	if command == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.addOrder] missing params", nil,
+			errnie.Validation, "[kraken.Virtual.Write] no virtual command", nil,
+		), "entity", entity)
+	}
+
+	model, err := virtual.execute(entity, append([]string(nil), command...)...)
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal, "failed to execute paper command", err,
 		))
 	}
 
-	symbol, _ := params["symbol"].(string)
-	side, _ := params["side"].(string)
-	qtyRaw, _ := params["order_qty"].(string)
-	clOrdID, _ := params["cl_ord_id"].(string)
-	side = strings.ToLower(side)
+	build := typeMap[entity]
 
-	if symbol == "" || (side != "buy" && side != "sell") || qtyRaw == "" {
+	if build == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.addOrder] bad params", nil,
-		), "symbol", symbol, "side", side)
+			errnie.Validation, "[kraken.Paper.Write] no adapter for entity", nil,
+		), "entity", entity)
 	}
 
-	qty, err := decimal.NewFromString(qtyRaw)
+	buf, err := build(model).MarshalJSON()
 
-	if err != nil || qty.Sign() <= 0 {
+	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.addOrder] bad order_qty", err,
-		), "order_qty", qtyRaw)
-	}
-
-	virtual.mu.Lock()
-	fills := virtual.fills
-	settle := virtual.settle
-	virtual.mu.Unlock()
-
-	if fills == nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotAcceptable, "[network.Virtual.addOrder] fills not wired", nil,
+			errnie.Internal, "failed to marshal paper response", err,
 		))
 	}
 
-	var px *decimal.Decimal
+	virtual.queue.Enqueue(buf)
+	virtual.signal()
 
-	if side == "buy" {
-		px = fills.FillAsk(symbol, &qty)
-	} else {
-		px = fills.FillBid(symbol, &qty)
-	}
-
-	if px == nil || px.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound, "[network.Virtual.addOrder] no book price", nil,
-		), "symbol", symbol, "side", side)
-	}
-
-	gross := qty.Mul(*px)
-	cash := gross
-	feeAmt := decimal.Zero
-
-	if settle != nil {
-		cash, feeAmt = settle(symbol, gross, side == "buy")
-	}
-
-	now := time.Now().UTC()
-	orderID := "V-" + uuid.NewString()
-
-	if err := virtual.applyFill(side, symbol, qty, cash); err != nil {
-		return errnie.Error(err)
-	}
-
-	frame := &kraken.Execution{
-		Channel: "executions",
-		Type:    "update",
-		Data: []kraken.ExecutionData{{
-			OrderID:       orderID,
-			ClientOrderID: clOrdID,
-			ExecID:        orderID + "-1",
-			ExecType:      "trade",
-			Symbol:        symbol,
-			Side:          side,
-			LastQty:       decimalPtr(qty),
-			LastPrice:     decimalPtr(*px),
-			Cost:          decimalPtr(gross),
-			OrderType:     "market",
-			Timestamp:     now,
-			OrderStatus:   "filled",
-			CumQty:        decimalPtr(qty),
-			CumCost:       decimalPtr(gross),
-			AvgPrice:      decimalPtr(*px),
-			FeeUsdEquiv:   decimalPtr(feeAmt),
-		}},
-	}
-
-	if err := virtual.enqueue(frame); err != nil {
-		return errnie.Error(err)
-	}
-
-	return virtual.enqueueBalances()
-}
-
-func (virtual *Virtual) applyFill(
-	side, symbol string,
-	qty, cost decimal.Decimal,
-) error {
-	virtual.mu.Lock()
-	defer virtual.mu.Unlock()
-
-	quote, _ := virtual.wallet["quote"].(string)
-
-	if quote == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.applyFill] missing quote", nil,
-		))
-	}
-
-	base := symbol
-
-	if i := strings.IndexByte(symbol, '/'); i > 0 {
-		base = symbol[:i]
-	}
-
-	cash := virtual.asset(quote)
-	lot := virtual.asset(base)
-
-	if side == "buy" {
-		if cash.Capital.Cmp(cost) < 0 {
-			// Soft denial — do not ERROR-log.
-			return errnie.Err(
-				errnie.NotAcceptable,
-				"[network.Virtual.applyFill] insufficient cash",
-				nil,
-			).With("need", cost.String(), "have", cash.Capital.String())
-		}
-
-		cash.Capital = cash.Capital.Sub(cost)
-		cash.Equity = cash.Capital
-		// Capital is base qty; Equity is quote cost basis for TradeBalance.
-		lot.Capital = lot.Capital.Add(qty)
-		lot.Equity = lot.Equity.Add(cost)
-	} else {
-		if lot.Capital.Cmp(qty) < 0 {
-			return errnie.Err(
-				errnie.NotAcceptable,
-				"[network.Virtual.applyFill] insufficient base",
-				nil,
-			).With("need", qty.String(), "have", lot.Capital.String())
-		}
-
-		prev := lot.Capital
-		lot.Capital = lot.Capital.Sub(qty)
-
-		if prev.Sign() > 0 && lot.Equity.Sign() > 0 {
-			basis := lot.Equity.Mul(qty).Div(prev)
-			lot.Equity = lot.Equity.Sub(basis)
-		}
-
-		if lot.Capital.Sign() <= 0 {
-			lot.Capital = decimal.Zero
-			lot.Equity = decimal.Zero
-		}
-
-		cash.Capital = cash.Capital.Add(cost)
-		cash.Equity = cash.Capital
+	if entity == "add_order" {
+		virtual.enqueueFill(model, clOrdID)
 	}
 
 	return nil
 }
 
-/*
-Restock credits base for an S3-restored open lot and debits quote by cost so
-Allocate does not treat starting cash as still fully free.
-*/
-func (virtual *Virtual) Restock(symbol string, qty, cost decimal.Decimal) {
-	if qty.Sign() <= 0 {
-		return
-	}
-
-	virtual.mu.Lock()
-	defer virtual.mu.Unlock()
-
-	base := symbol
-
-	if i := strings.IndexByte(symbol, '/'); i > 0 {
-		base = symbol[:i]
-	}
-
-	lot := virtual.asset(base)
-	lot.Capital = lot.Capital.Add(qty)
-
-	if cost.Sign() <= 0 {
-		return
-	}
-
-	lot.Equity = lot.Equity.Add(cost)
-
-	quote, _ := virtual.wallet["quote"].(string)
-
-	if quote == "" {
-		return
-	}
-
-	cash := virtual.asset(quote)
-
-	if cash.Capital.Cmp(cost) < 0 {
-		cost = cash.Capital
-	}
-
-	cash.Capital = cash.Capital.Sub(cost)
-	cash.Equity = cash.Capital
-}
-
-func (virtual *Virtual) asset(symbol string) *market.Asset {
-	assets, _ := virtual.wallet["assets"].([]*market.Asset)
-
-	for _, asset := range assets {
-		if asset != nil && asset.Symbol == symbol {
-			return asset
-		}
-	}
-
-	out := market.NewAsset(nil, symbol, decimal.Zero, decimal.Zero, decimal.Zero)
-	virtual.wallet["assets"] = append(assets, out)
-
-	return out
-}
-
-func (virtual *Virtual) enqueueBalances() error {
-	out := kraken.NewBalance()
-	out.Channel = "balances"
-
-	virtual.mu.Lock()
-	book := market.NewBalance(virtual.wallet)
-	out.FromMarket(book)
-	virtual.mu.Unlock()
-
-	return virtual.enqueue(out)
-}
-
-func (virtual *Virtual) enqueue(frame json.Marshaler) error {
-	buf, err := frame.MarshalJSON()
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	virtual.queue.Enqueue(buf)
-
+func (virtual *Virtual) signal() {
 	select {
 	case virtual.notify <- struct{}{}:
 	default:
 	}
-
-	return nil
-}
-
-func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
-	_ = body
-
-	entity, ok := virtualREST[kraken.RestPath(url)]
-
-	if !ok {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.Post] unsupported path", nil,
-		), "url", url)
-	}
-
-	switch entity {
-	case "balances":
-		out := kraken.NewBalance()
-		out.Channel = "balances"
-
-		virtual.mu.Lock()
-		out.FromMarket(market.NewBalance(virtual.wallet))
-		virtual.mu.Unlock()
-
-		return out.MarshalJSON()
-
-	case "tradebalance":
-		out := kraken.NewTradeBalance()
-		cash, unrealized, equity := virtual.tradeBalance()
-		out.FromMarket(market.NewTradeBalance(map[string]any{
-			"equity":         equity,
-			"unrealized_pnl": unrealized,
-			"available_cash": cash,
-			"free_margin":    cash,
-		}))
-		return out.MarshalJSON()
-
-	default:
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "[network.Virtual.Post] unsupported entity", nil,
-		), "entity", entity)
-	}
 }
 
 /*
-tradeBalance is quote cash plus fee-net bid marks of open lots.
+enqueueFill queues the trade report behind the order ack so ingress can fold it.
 */
-func (virtual *Virtual) tradeBalance() (cash, unrealized, equity *decimal.Decimal) {
-	virtual.mu.Lock()
-	defer virtual.mu.Unlock()
+func (virtual *Virtual) enqueueFill(model map[string]any, clOrdID string) {
+	exec, ok := kraken.NewExecutionFromMap(model).(*kraken.Execution)
 
-	quote, _ := virtual.wallet["quote"].(string)
-	assets, _ := virtual.wallet["assets"].([]*market.Asset)
-	fills := virtual.fills
-	settle := virtual.settle
-
-	cashAmt := decimal.Zero
-	pnlAmt := decimal.Zero
-	equityAmt := decimal.Zero
-
-	for _, asset := range assets {
-		if asset == nil {
-			continue
-		}
-
-		if asset.Symbol == quote {
-			cashAmt = asset.Capital
-			equityAmt = equityAmt.Add(asset.Capital)
-			continue
-		}
-
-		cost := asset.Equity
-		qty := asset.Capital
-		value := cost
-
-		if fills != nil && qty.Sign() > 0 && quote != "" {
-			pair := asset.Symbol + "/" + quote
-			bid := fills.FillBid(pair, &qty)
-
-			if bid != nil && bid.Sign() > 0 {
-				gross := qty.Mul(*bid)
-				net := gross
-
-				if settle != nil {
-					net, _ = settle(pair, gross, false)
-				}
-
-				value = net
-			}
-		}
-
-		pnl := value.Sub(cost)
-		asset.PnL = pnl
-		pnlAmt = pnlAmt.Add(pnl)
-		equityAmt = equityAmt.Add(value)
+	if !ok || !exec.Tradable() {
+		return
 	}
 
-	return decimalPtr(cashAmt), decimalPtr(pnlAmt), decimalPtr(equityAmt)
+	for i := range exec.Data {
+		if exec.Data[i].ClientOrderID == "" {
+			exec.Data[i].ClientOrderID = clOrdID
+		}
+	}
+
+	raw, err := exec.MarshalJSON()
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	virtual.queue.Enqueue(raw)
+	virtual.signal()
 }
 
 func (virtual *Virtual) Watch(
@@ -540,7 +243,79 @@ func (virtual *Virtual) Watch(
 	}()
 }
 
-func decimalPtr(value decimal.Decimal) *decimal.Decimal {
-	out := value
-	return &out
+func (virtual *Virtual) execute(entity string, command ...string) (map[string]any, error) {
+	input := []string{"paper"}
+	input = append(input, command...)
+	input = append(input, "--output", "json")
+
+	cmd := exec.CommandContext(virtual.ctx, "kraken", input...)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	stdout, err := cmd.Output()
+
+	if err != nil {
+		details := strings.TrimSpace(stderr.String())
+
+		if details == "" {
+			details = strings.TrimSpace(string(stdout))
+		}
+
+		if details == "" {
+			details = err.Error()
+		}
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"kraken virtual "+entity+" command failed: "+details,
+			err,
+		))
+	}
+
+	model := map[string]any{}
+
+	if err := sonic.Unmarshal(stdout, &model); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[kraken.Virtual.execute] failed to unmarshal response",
+			err,
+		), "entity", entity)
+	}
+
+	if errCategory, ok := model["error"].(string); ok && errCategory != "" {
+		message, _ := model["message"].(string)
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.Virtual.execute] virtual command rejected",
+			nil,
+		), "message", message)
+	}
+
+	return model, nil
+}
+
+/*
+Post serves the same private REST paths as Live, via the paper CLI.
+Balance polls return the venue Balance observation for Client.Watch.
+*/
+func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
+	_ = body
+
+	entity, ok := restMap[RestPath(url)]
+
+	if !ok {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation, "[kraken.Virtual.Post] unsupported path", nil,
+		), "url", url)
+	}
+
+	model, err := virtual.execute(entity, commandMap[entity]...)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	return typeMap[entity](model).MarshalJSON()
 }

@@ -14,6 +14,7 @@ type Kraken struct {
 	trade        *kraken.Trade
 	execution    *kraken.Execution
 	order        *kraken.Order
+	ticker       *kraken.Ticker
 }
 
 func NewKraken(_ string) *Kraken {
@@ -24,6 +25,7 @@ func NewKraken(_ string) *Kraken {
 		trade:        kraken.NewTrade(),
 		execution:    kraken.NewExecution(),
 		order:        kraken.NewOrder(),
+		ticker:       kraken.NewTicker(),
 	}
 }
 
@@ -56,7 +58,7 @@ func (venue *Kraken) Book() market.MarketType {
 }
 
 func (venue *Kraken) Ticker() market.MarketType {
-	return nil
+	return venue.ticker
 }
 
 /*

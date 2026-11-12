@@ -11,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -57,13 +58,14 @@ func TestAllocateRespectsCashBudget(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(qty, ShouldNotBeNil)
 
-		fill, err := fixture.price.EntryCost(fixture.symbol, qty)
+		entryPx, entryFee, err := fixture.price.EntryCost(fixture.symbol, qty)
 		So(err, ShouldBeNil)
-		So(fill, ShouldNotBeNil)
+		So(entryPx, ShouldNotBeNil)
+		So(entryFee, ShouldNotBeNil)
 
 		// budget = 1000 * 0.20 = 200. Entry fee is quote paid on top of gross.
-		gross := fill.EntryPrice.Mul(*qty)
-		total := gross.Add(*fill.EntryFee)
+		gross := entryPx.Mul(*qty)
+		total := gross.Add(*entryFee)
 		budget := decimal.NewFromFloat(200)
 
 		So(total.Cmp(budget), ShouldBeLessThanOrEqualTo, 0)
@@ -121,31 +123,24 @@ func TestAllocateFailsWithoutFee(t *testing.T) {
 	})
 }
 
-func TestFeeSymbolMapsTradeVolumeKey(t *testing.T) {
-	Convey("TradeVolume fee keys map onto websocket symbols without alias mis-splits", t, func() {
+func TestLoadFeesMapsTradeVolumeKey(t *testing.T) {
+	Convey("TradeVolume fee keys map onto websocket symbols via normalizer", t, func() {
 		xrp := "XRP/USD"
-		gala := "GALA/USD"
 
 		instrument := &Instrument{
 			cache:     &sync.Map{},
 			takerFees: &sync.Map{},
-			symbols:   []string{xrp, gala},
+			symbols:   []string{xrp},
 		}
 		instrument.cache.Store(xrp, kraken.InstrumentPair{
 			Symbol: xrp, Base: "XRP", Quote: "USD", Status: "online",
-		})
-		instrument.cache.Store(gala, kraken.InstrumentPair{
-			Symbol: gala, Base: "GALA", Quote: "USD", Status: "online",
 		})
 
 		normalizer := spot.NewNormalizer()
 		normalizer.Update(&spot.AssetsManagerUpdate{
 			NewAssets: map[string]spot.AssetInfo{
-				"XRP":  {AltName: "XRP"},
-				"GALA": {AltName: "GALA"},
-				"GAL":  {AltName: "GAL"},
-				"USD":  {AltName: "USD"},
-				"AUSD": {AltName: "AUSD"},
+				"XRP": {AltName: "XRP"},
+				"USD": {AltName: "USD"},
 			},
 			OldAssets: map[string]spot.AssetInfo{
 				"XXRP": {AltName: "XRP"},
@@ -154,9 +149,6 @@ func TestFeeSymbolMapsTradeVolumeKey(t *testing.T) {
 			NewPairs: map[string]spot.AssetPair{
 				"XRP/USD": {
 					AltName: "XRPUSD", WSName: "XRP/USD", Base: "XRP", Quote: "USD",
-				},
-				"GALA/USD": {
-					AltName: "GALAUSD", WSName: "GALA/USD", Base: "GALA", Quote: "USD",
 				},
 			},
 			OldPairs: map[string]spot.AssetPair{
@@ -167,16 +159,13 @@ func TestFeeSymbolMapsTradeVolumeKey(t *testing.T) {
 		})
 
 		price := &Price{Instrument: instrument, normalizer: normalizer}
-
-		So(price.feeSymbol("XXRPZUSD"), ShouldEqual, xrp)
-		So(price.feeSymbol("XRPUSD"), ShouldEqual, xrp)
-		So(price.feeSymbol(xrp), ShouldEqual, xrp)
-		// Desk-first compact match wins even when alias search is ambiguous.
-		So(price.feeSymbol("GALAUSD"), ShouldEqual, gala)
-
 		fee := decimal.NewFromFloat(0.26)
-		price.Instrument.RememberFee(price.feeSymbol("XXRPZUSD"), &fee)
-		So(price.Fee(xrp), ShouldNotBeNil)
+
+		symbol := price.normalizer.Name("XXRPZUSD")
+		So(symbol, ShouldEqual, xrp)
+		So(price.Instrument.Has(symbol), ShouldBeTrue)
+
+		price.Instrument.takerFees.Store(symbol, &fee)
 		So(price.Fee(xrp).String(), ShouldEqual, "0.26")
 	})
 }
@@ -282,12 +271,11 @@ func TestPnLPctRoundTripExact(t *testing.T) {
 
 		qty := decimal.NewFromInt(10)
 		entry := decimal.NewFromInt(100)
-		fee := decimal.NewFromFloat(1.0)
 
 		// cost = 1000 * 1.01 = 1010
 		// sell through bid 100: gross exit 1000, net 990
 		// pnl pct = (990-1010)/1010 * 100
-		pct := fixture.price.PnLPct(fixture.symbol, &qty, &entry, &fee)
+		pct := fixture.price.PnLPct(fixture.symbol, &qty, &entry)
 		So(pct, ShouldNotBeNil)
 		So(pct.InexactFloat64(), ShouldAlmostEqual, (990.0-1010.0)/1010.0*100.0, 1e-9)
 	})
@@ -309,10 +297,10 @@ func TestEntryCostMatchesAskWalk(t *testing.T) {
 		})
 
 		qty := decimal.NewFromInt(2)
-		fill, err := fixture.price.EntryCost(fixture.symbol, &qty)
+		entryPx, entryFee, err := fixture.price.EntryCost(fixture.symbol, &qty)
 		So(err, ShouldBeNil)
-		So(fill.EntryPrice.String(), ShouldEqual, "100")
-		So(fill.EntryFee.InexactFloat64(), ShouldAlmostEqual, 1.6, 1e-9)
+		So(entryPx.String(), ShouldEqual, "100")
+		So(entryFee.InexactFloat64(), ShouldAlmostEqual, 1.6, 1e-9)
 	})
 }
 
@@ -355,12 +343,10 @@ func TestCloseNowPartialDepthMarksDown(t *testing.T) {
 
 		qty := decimal.NewFromInt(10)
 		entry := decimal.NewFromInt(100)
-		fee := decimal.Zero
 
-		_, _, pnl, _ := fixture.price.closeNow(fixture.symbol, &qty, &entry, &fee)
+		_, _, pnl, _ := fixture.price.MarkClose(fixture.symbol, &qty, &entry)
 		So(pnl, ShouldNotBeNil)
 		// Available exit 100; full entry cost 1000 → pnl -900.
-		// Touch-fallback would have marked the whole lot at 100 → pnl 0.
 		So(pnl.InexactFloat64(), ShouldAlmostEqual, -900.0, 1e-9)
 	})
 }
@@ -520,9 +506,117 @@ func newPriceFixture(t *testing.T, cfg priceFixture) priceFixture {
 	cfg.price = &Price{
 		Instrument: instrument,
 		Books:      books,
+		ticker:     market.NewTicker(nil),
 		balance:    wallet,
-		normalizer: spot.NewNormalizer(),
 	}
 
 	return cfg
+}
+
+func TestPeakFrac(t *testing.T) {
+	Convey("PeakFrac places last in the 24h high–low range", t, func() {
+		price := &Price{ticker: market.NewTicker(nil)}
+		price.SetTicker(&market.TickerData{
+			Symbol: "Q/USD", VolumeUSD: 100_000, ChangePct: 2.0,
+			High24h: 110, Low24h: 100, Last: 109,
+		})
+
+		frac, ok := price.PeakFrac("Q/USD")
+		So(ok, ShouldBeTrue)
+		So(frac, ShouldAlmostEqual, 0.9, 1e-9)
+	})
+
+	Convey("PeakFrac fails when the range is flat or missing", t, func() {
+		price := &Price{ticker: market.NewTicker(nil)}
+		price.SetTicker(&market.TickerData{
+			Symbol: "Q/USD", VolumeUSD: 100_000,
+			High24h: 100, Low24h: 100, Last: 100,
+		})
+
+		_, ok := price.PeakFrac("Q/USD")
+		So(ok, ShouldBeFalse)
+	})
+}
+
+func TestBelowPeak(t *testing.T) {
+	Convey("BelowPeak respects max_entry_peak_frac", t, func() {
+		prev := system.Cfg.Risk.MaxEntryPeakFrac
+		system.Cfg.Risk.MaxEntryPeakFrac = 0.90
+		Reset(func() { system.Cfg.Risk.MaxEntryPeakFrac = prev })
+
+		price := &Price{ticker: market.NewTicker(nil)}
+
+		Convey("It approves when last is under the cap", func() {
+			price.SetTicker(&market.TickerData{
+				Symbol: "Q/USD", VolumeUSD: 100_000, ChangePct: 2.0,
+				High24h: 110, Low24h: 100, Last: 108,
+			})
+			So(price.BelowPeak("Q/USD"), ShouldBeTrue)
+		})
+
+		Convey("It vetoes when last is at or above the cap", func() {
+			price.SetTicker(&market.TickerData{
+				Symbol: "Q/USD", VolumeUSD: 100_000, ChangePct: 2.0,
+				High24h: 110, Low24h: 100, Last: 109,
+			})
+			So(price.BelowPeak("Q/USD"), ShouldBeFalse)
+		})
+
+		Convey("It vetoes when range data is missing", func() {
+			So(price.BelowPeak("MISSING/USD"), ShouldBeFalse)
+		})
+	})
+
+	Convey("BelowPeak is disabled when the cap is out of (0,1)", t, func() {
+		prev := system.Cfg.Risk.MaxEntryPeakFrac
+		Reset(func() { system.Cfg.Risk.MaxEntryPeakFrac = prev })
+
+		price := &Price{ticker: market.NewTicker(nil)}
+		price.SetTicker(&market.TickerData{
+			Symbol: "Q/USD", VolumeUSD: 100_000, ChangePct: 2.0,
+			High24h: 110, Low24h: 100, Last: 110,
+		})
+
+		system.Cfg.Risk.MaxEntryPeakFrac = 0
+		So(price.BelowPeak("Q/USD"), ShouldBeTrue)
+
+		system.Cfg.Risk.MaxEntryPeakFrac = 1
+		So(price.BelowPeak("Q/USD"), ShouldBeTrue)
+	})
+}
+
+func TestApplyTickerViaVenue(t *testing.T) {
+	Convey("applyTicker stores quote volume and peak range through the venue", t, func() {
+		host := venue.NewKraken("USD")
+		price := &Price{
+			ticker:     market.NewTicker(nil),
+			venue:      host,
+			normalizer: spot.NewNormalizer(),
+		}
+
+		raw := []byte(`{
+			"error": [],
+			"result": {
+				"AAA/USD": {
+					"a": ["109","1","1.000"],
+					"b": ["108","1","1.000"],
+					"c": ["109","1"],
+					"v": ["10","500"],
+					"p": ["2","2"],
+					"t": [1, 2],
+					"l": ["100","100"],
+					"h": ["110","110"],
+					"o": "100"
+				}
+			}
+		}`)
+
+		So(host.Ticker().UnmarshalJSON(raw), ShouldBeNil)
+		price.applyTicker(host.Ticker())
+
+		So(price.VolumeUSD("AAA/USD"), ShouldEqual, 1000)
+		frac, ok := price.PeakFrac("AAA/USD")
+		So(ok, ShouldBeTrue)
+		So(frac, ShouldAlmostEqual, 0.9, 1e-9)
+	})
 }

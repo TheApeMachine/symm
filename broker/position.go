@@ -49,8 +49,8 @@ type Position struct {
 	PnL             *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct          *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	Closing         bool                    `json:"closing,omitempty"`
-	// TreeApplied is set after Model.Exit trains resistance for this lot.
-	TreeApplied bool `json:"-"`
+	ExitAttempts    int                     `json:"exit_attempts,omitempty"`
+	TreeApplied     bool                    `json:"-"`
 }
 
 func NewPosition(
@@ -101,15 +101,6 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		), "symbol", position.Symbol)
 	}
 
-	if position.price == nil {
-		position.mu.Unlock()
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[position.Update] missi	ng price",
-			nil,
-		), "symbol", position.Symbol)
-	}
-
 	if position.Qty == nil || position.Qty.Sign() <= 0 ||
 		position.Entry == nil || position.Entry.Sign() <= 0 {
 		position.mu.Unlock()
@@ -122,12 +113,6 @@ func (position *Position) Update(price *decimal.Decimal) error {
 
 	position.Mark = price
 
-	fee := position.price.Fee(position.Symbol)
-	if fee == nil {
-		zero := decimal.Zero
-		fee = &zero
-	}
-
 	now := time.Now().UTC()
 	position.UpdatedAt = &now
 
@@ -136,13 +121,14 @@ func (position *Position) Update(price *decimal.Decimal) error {
 	symbol := position.Symbol
 	qty := *position.Qty
 	entry := *position.Entry
-	feeVal := *fee
 	pricer := position.price
 	position.mu.Unlock()
 
-	vwap, room, bookPnL, bookPnLPct := pricer.closeNow(
-		symbol, &qty, &entry, &feeVal,
-	)
+	var vwap, room, bookPnL, bookPnLPct *decimal.Decimal
+
+	if pricer != nil {
+		vwap, room, bookPnL, bookPnLPct = pricer.MarkClose(symbol, &qty, &entry)
+	}
 
 	position.mu.Lock()
 
@@ -151,27 +137,19 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		return nil
 	}
 
-	if vwap != nil {
-		position.ExitVWAP = vwap
-	}
-
-	position.ExitRoom = room
-
-	if bookPnL != nil {
-		position.PnL = bookPnL
-		position.PnLPct = bookPnLPct
-	} else {
-		position.feeNetPnL(position.Entry, position.Qty, price, &feeVal)
-	}
-
-	if position.PnLPct == nil {
+	if vwap == nil || bookPnL == nil || bookPnLPct == nil {
 		position.mu.Unlock()
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"[position.Update] no pnl for "+position.Symbol,
+			"[position.Update] book mark failed for "+position.Symbol,
 			nil,
 		))
 	}
+
+	position.ExitVWAP = vwap
+	position.ExitRoom = room
+	position.PnL = bookPnL
+	position.PnLPct = bookPnLPct
 
 	if position.Closing {
 		position.mu.Unlock()
@@ -262,43 +240,6 @@ func (position *Position) Enter(path string, qty *decimal.Decimal, wallet *marke
 }
 
 /*
-Restock credits a virtual wallet for a lot reopened from S3 (fresh process has
-quote cash only). Uses open Qty/Entry only.
-*/
-func (position *Position) Restock(virtual *network.Virtual) {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	qty := position.Qty
-	entry := position.Entry
-
-	if qty == nil || qty.Sign() <= 0 {
-		return
-	}
-
-	cost := decimal.Zero
-
-	if entry != nil && entry.Sign() > 0 {
-		gross := qty.Mul(*entry)
-		cost = gross
-
-		if position.price != nil {
-			fee := position.price.Fee(position.Symbol)
-			if fee == nil {
-				zero := decimal.Zero
-				fee = &zero
-			}
-
-			if net := position.price.afterFee(&gross, fee, BUY); net != nil {
-				cost = *net
-			}
-		}
-	}
-
-	virtual.Restock(position.Symbol, *qty, cost)
-}
-
-/*
 Owns reports whether this execution belongs to the lot's entry or exit order.
 */
 func (position *Position) Owns(execution market.ExecutionData) bool {
@@ -317,79 +258,6 @@ func (position *Position) Owns(execution market.ExecutionData) bool {
 	}
 
 	return false
-}
-
-// feeNetPnL sets fee-net PnL from an explicit exit price.
-func (position *Position) feeNetPnL(
-	entry, qty, exit, fee *decimal.Decimal,
-) {
-	if entry == nil || entry.Sign() <= 0 ||
-		qty == nil || qty.Sign() <= 0 ||
-		exit == nil || exit.Sign() <= 0 ||
-		position.price == nil {
-		return
-	}
-
-	if fee == nil {
-		zero := decimal.Zero
-		fee = &zero
-	}
-
-	entryCost := entry.Mul(*qty)
-	netEntry := position.price.afterFee(&entryCost, fee, BUY)
-	exitGross := exit.Mul(*qty)
-	netExit := position.price.afterFee(&exitGross, fee, SELL)
-
-	if netEntry == nil || netExit == nil || netEntry.Sign() <= 0 {
-		return
-	}
-
-	pnl := netExit.Sub(*netEntry)
-	position.PnL = &pnl
-	pct := pnl.Div(*netEntry).Mul(decimalHundred)
-	position.PnLPct = &pct
-}
-
-/*
-CloseNowProceeds is fee-net quote received if the open lot sold now.
-*/
-func (position *Position) CloseNowProceeds() *decimal.Decimal {
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if position.price == nil || position.Qty == nil || position.Qty.Sign() <= 0 {
-		return nil
-	}
-
-	fee := position.price.Fee(position.Symbol)
-
-	if fee == nil {
-		zero := decimal.Zero
-		fee = &zero
-	}
-
-	if position.PnL != nil && position.Entry != nil && position.Entry.Sign() > 0 {
-		entryCost := position.Entry.Mul(*position.Qty)
-		netEntry := position.price.afterFee(&entryCost, fee, BUY)
-
-		if netEntry != nil {
-			proceeds := position.PnL.Add(*netEntry)
-			return &proceeds
-		}
-	}
-
-	exit := position.ExitVWAP
-
-	if exit == nil || exit.Sign() <= 0 {
-		exit = position.Mark
-	}
-
-	if exit == nil || exit.Sign() <= 0 {
-		return nil
-	}
-
-	gross := exit.Mul(*position.Qty)
-	return position.price.afterFee(&gross, fee, SELL)
 }
 
 // Flat is true when the lot has sold its open size.
@@ -422,8 +290,8 @@ func (position *Position) Exit() error {
 }
 
 /*
-Apply is the only fill path. It updates Qty/Entry/Sold from the print, and
-only stamps ClosedAt once Closing is armed and the lot is flat.
+Apply is the only fill path. Fills are the ledger; Qty/Entry/Sold are folded
+from them. ClosedAt stamps once the lot is flat.
 */
 func (position *Position) Apply(execution market.ExecutionData) {
 	position.mu.Lock()
@@ -442,63 +310,55 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		}
 	}
 
-	side := strings.ToLower(execution.Side)
-	px := execution.LastPrice
-
-	if px == nil || px.Sign() <= 0 {
-		px = execution.AvgPrice
-	}
-
-	if px == nil || px.Sign() <= 0 {
-		position.mu.Unlock()
-		return
-	}
-
-	qty := *execution.LastQty
-
-	switch side {
-	case "buy":
-		position.applyBuy(qty, *px)
-	case "sell":
-		if position.Qty == nil || position.Qty.Sign() <= 0 {
-			position.mu.Unlock()
-			return
-		}
-		position.applySell(qty, *px)
-	default:
+	// Nothing left to sell — ignore late/duplicate exit prints.
+	if strings.EqualFold(execution.Side, "sell") &&
+		(position.Qty == nil || position.Qty.Sign() <= 0) {
 		position.mu.Unlock()
 		return
 	}
 
 	copied := execution
 	position.Fills = append(position.Fills, &copied)
-	position.Mark = px
+	position.foldFills()
 
 	now := time.Now().UTC()
 	position.UpdatedAt = &now
 
 	closed := false
 
-	if position.Flat() {
-		fee := decimal.Zero
-
-		if position.price != nil {
-			if rate := position.price.Fee(position.Symbol); rate != nil {
-				fee = *rate
-			}
+	if position.Flat() && position.ClosedAt == nil {
+		if position.price == nil {
+			position.mu.Unlock()
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[position.Apply] price is not wired for "+position.Symbol,
+				nil,
+			))
+			return
 		}
 
-		position.feeNetPnL(position.Entry, position.Sold, position.ExitVWAP, &fee)
+		position.PnL, position.PnLPct = position.price.FeeNetRoundTrip(
+			position.Symbol, position.Entry, position.Sold, position.ExitVWAP,
+		)
 
-		if position.Closing && position.ClosedAt == nil {
-			position.ClosedAt = &now
-
-			if position.ExitTick == 0 {
-				position.ExitTick = data.Tick.Load()
-			}
-
-			closed = true
+		if position.PnL == nil || position.PnLPct == nil {
+			position.mu.Unlock()
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				"[position.Apply] fee-net settle failed for "+position.Symbol,
+				nil,
+			))
+			return
 		}
+
+		position.Closing = true
+		position.ClosedAt = &now
+
+		if position.ExitTick == 0 {
+			position.ExitTick = data.Tick.Load()
+		}
+
+		closed = true
 	}
 
 	onSettled := position.onSettled
@@ -509,56 +369,83 @@ func (position *Position) Apply(execution market.ExecutionData) {
 	}
 }
 
-func (position *Position) applyBuy(qty, px decimal.Decimal) {
-	if position.Qty == nil || position.Qty.Sign() <= 0 ||
-		position.Entry == nil || position.Entry.Sign() <= 0 {
-		q := qty
-		e := px
-		position.Qty = &q
-		position.Entry = &e
-		return
+/*
+foldFills rebuilds Qty/Entry/Sold/ExitVWAP/Mark from Fills.
+Venue CumQty/AvgPrice win when present; otherwise LastQty is summed.
+*/
+func (position *Position) foldFills() {
+	var qty, entry, sold, exitVWAP, mark *decimal.Decimal
+	var soldCost decimal.Decimal
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		px := fill.LastPrice
+
+		if px == nil || px.Sign() <= 0 {
+			px = fill.AvgPrice
+		}
+
+		if px == nil || px.Sign() <= 0 {
+			continue
+		}
+
+		mark = px
+		last := fill.LastQty
+
+		switch strings.ToLower(fill.Side) {
+		case "buy":
+			switch {
+			case fill.CumQty != nil && fill.CumQty.Sign() > 0:
+				qty = fill.CumQty
+			case qty == nil:
+				qty = last
+			default:
+				q := qty.Add(*last)
+				qty = &q
+			}
+
+			switch {
+			case fill.AvgPrice != nil && fill.AvgPrice.Sign() > 0:
+				entry = fill.AvgPrice
+			case entry == nil:
+				entry = px
+			default:
+				prev := qty.Sub(*last)
+				e := entry.Mul(prev).Add(px.Mul(*last)).Div(*qty)
+				entry = &e
+			}
+
+		case "sell":
+			if qty == nil || qty.Sign() <= 0 {
+				continue
+			}
+
+			take := decimal.Min(*last, *qty)
+			open := qty.Sub(take)
+			qty = &open
+
+			soldCost = soldCost.Add(px.Mul(take))
+
+			if sold == nil {
+				sold = &take
+			} else {
+				s := sold.Add(take)
+				sold = &s
+			}
+
+			vwap := soldCost.Div(*sold)
+			exitVWAP = &vwap
+		}
 	}
 
-	cost := position.Entry.Mul(*position.Qty).Add(px.Mul(qty))
-	open := position.Qty.Add(qty)
-	entry := cost.Div(open)
-	position.Qty = &open
-	position.Entry = &entry
-}
-
-func (position *Position) applySell(qty, px decimal.Decimal) {
-	take := qty
-
-	if take.Cmp(*position.Qty) > 0 {
-		take = *position.Qty
-	}
-
-	if take.Sign() <= 0 {
-		return
-	}
-
-	prevSold := decimal.Zero
-	if position.Sold != nil {
-		prevSold = *position.Sold
-	}
-
-	sold := prevSold.Add(take)
-	position.Sold = &sold
-
-	if position.ExitVWAP != nil && position.ExitVWAP.Sign() > 0 && prevSold.Sign() > 0 {
-		vwap := position.ExitVWAP.Mul(prevSold).Add(px.Mul(take)).Div(sold)
-		position.ExitVWAP = &vwap
-	} else {
-		position.ExitVWAP = &px
-	}
-
-	open := position.Qty.Sub(take)
-
-	if open.Sign() < 0 {
-		open = decimal.Zero
-	}
-
-	position.Qty = &open
+	position.Qty = qty
+	position.Entry = entry
+	position.Sold = sold
+	position.ExitVWAP = exitVWAP
+	position.Mark = mark
 }
 
 func (position *Position) armClosing(trigger string) {
@@ -566,4 +453,36 @@ func (position *Position) armClosing(trigger string) {
 	position.ExitTrigger = trigger
 	position.OutcomeTriggers = []string{trigger}
 	position.ExitTick = data.Tick.Load()
+	position.ensureExitOrder()
+}
+
+/*
+ensureExitOrder sets the sell to the filled open Qty. Caller holds mu.
+A blank ClOrdId (after a venue reject) remints so the next Send is not a
+duplicate client id.
+*/
+func (position *Position) ensureExitOrder() {
+	if position.Qty == nil || position.Qty.Sign() <= 0 {
+		return
+	}
+
+	vol := position.Qty.String()
+
+	if position.ExitOrder == nil {
+		position.ExitOrder = &spot.OrderRequest{
+			ClOrdId:   uuid.NewString(),
+			OrderType: "market",
+			Type:      "sell",
+			Volume:    vol,
+		}
+		return
+	}
+
+	if position.ExitOrder.ClOrdId == "" {
+		position.ExitOrder.ClOrdId = uuid.NewString()
+	}
+
+	position.ExitOrder.OrderType = "market"
+	position.ExitOrder.Type = "sell"
+	position.ExitOrder.Volume = vol
 }

@@ -15,7 +15,6 @@ import (
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
@@ -288,9 +287,8 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 
 /*
 level3FrameSize is how many symbols one subscribe frame may carry: Kraken's
-level3 subscription-rate budget (market.l3_rate_limit per rate window)
-divided by the rate-counter cost of one symbol at depth (5 at 10, 25 at 100,
-100 at 1000). Symbols past the budget get no snapshot and never get a book.
+level3 subscription-rate budget per rate window divided by the rate-counter
+cost of one symbol at depth (5 at 10, 25 at 100, 100 at 1000).
 */
 func level3FrameSize(depth int) (int, error) {
 	cost := map[int]int{10: 5, 100: 25, 1000: 100}[depth]
@@ -303,7 +301,7 @@ func level3FrameSize(depth int) (int, error) {
 		)
 	}
 
-	budget := viper.GetInt("market.l3_rate_limit")
+	budget := system.Cfg.Market.Level3.RateLimit
 
 	if budget < cost {
 		return 0, errnie.Err(
@@ -333,12 +331,7 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 		))
 	}
 
-	depth, err := level3Depth()
-
-	if err != nil {
-		return instrument.Error(err)
-	}
-
+	depth := system.Cfg.Market.Level3.Depth
 	frameSize, err := level3FrameSize(depth)
 
 	if err != nil {
@@ -358,7 +351,7 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 			)
 		}
 
-		time.Sleep(viper.GetDuration("market.subscribe.pace"))
+		time.Sleep(system.Cfg.Market.Subscribe.Pace)
 
 		if err := write(msg); err != nil {
 			return errnie.Err(
@@ -669,18 +662,6 @@ func (instrument *Instrument) WebSocketToken(ctx context.Context) (string, error
 }
 
 /*
-RememberFee stores one pair's account taker schedule. Fees are percent:
-0.40 means 0.40%.
-*/
-func (instrument *Instrument) RememberFee(symbol string, taker *decimal.Decimal) {
-	if symbol == "" || taker == nil {
-		return
-	}
-
-	instrument.takerFees.Store(symbol, taker)
-}
-
-/*
 TakerFee is the account's taker rate for the symbol, in percent.
 */
 func (instrument *Instrument) TakerFee(symbol string) *decimal.Decimal {
@@ -699,14 +680,4 @@ func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decim
 	}
 
 	return val.(*decimal.Decimal)
-}
-
-func level3Depth() (int, error) {
-	depth := viper.GetInt("market.l3_depth")
-
-	if depth <= 0 {
-		return 0, errnie.Err(errnie.Validation, "[instrument] market.l3_depth is not configured", nil)
-	}
-
-	return depth, nil
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/market"
 )
 
 /*
@@ -25,43 +26,112 @@ type TickerRow struct {
 }
 
 type Ticker struct {
-	Error  []any                `json:"error"`
-	Result map[string]TickerRow `json:"result"`
+	Error    []any                `json:"error"`
+	Result   map[string]TickerRow `json:"result"`
+	onChange func(market.MarketType)
 }
 
-func ParseTicker(buf []byte) (map[string]TickerRow, error) {
-	var ticker Ticker
+func NewTicker() *Ticker {
+	return &Ticker{Result: make(map[string]TickerRow)}
+}
 
-	if err := sonic.Unmarshal(buf, &ticker); err != nil {
-		return nil, errnie.Err(
+func (ticker *Ticker) OnChange(fn func(market.MarketType)) {
+	ticker.onChange = fn
+}
+
+func (ticker *Ticker) Request() map[string]any {
+	return map[string]any{}
+}
+
+func (ticker *Ticker) MarshalJSON() ([]byte, error) {
+	type alias Ticker
+	return sonic.Marshal((*alias)(ticker))
+}
+
+func (ticker *Ticker) UnmarshalJSON(data []byte) error {
+	type alias Ticker
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			"[kraken.ticker] invalid ticker frame",
 			err,
 		)
 	}
 
-	if len(ticker.Error) > 0 {
-		return nil, errnie.Err(
+	if len(decoded.Error) > 0 {
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			"[kraken.ticker] rejected",
-			fmt.Errorf("%v", ticker.Error),
+			fmt.Errorf("%v", decoded.Error),
 		)
 	}
 
-	if len(ticker.Result) == 0 {
-		return nil, errnie.Err(
+	if len(decoded.Result) == 0 {
+		return errnie.Err(
 			errnie.UnprocessableContent,
 			"[kraken.ticker] empty result",
 			nil,
 		)
 	}
 
+	onChange := ticker.onChange
+	*ticker = Ticker(decoded)
+	ticker.onChange = onChange
+
+	if ticker.Result == nil {
+		ticker.Result = make(map[string]TickerRow)
+	}
+
+	if ticker.onChange != nil {
+		ticker.onChange(ticker)
+	}
+
+	return nil
+}
+
+func (ticker *Ticker) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Ticker)
+
+	if !ok || book == nil || ticker == nil {
+		return other
+	}
+
+	rows := make(map[string]*market.TickerData, len(ticker.Result))
+
+	for pair, row := range ticker.Result {
+		rows[pair] = &market.TickerData{
+			Symbol:    pair,
+			VolumeUSD: row.QuoteVolume24h(),
+			ChangePct: row.ChangePct(),
+			High24h:   row.High24h(),
+			Low24h:    row.Low24h(),
+			Last:      row.LastTrade(),
+		}
+	}
+
+	return market.NewTicker(rows).ToMarket(book)
+}
+
+func (ticker *Ticker) FromMarket(other market.MarketType) market.MarketType {
+	if _, ok := other.(*market.Ticker); !ok || ticker == nil {
+		return ticker
+	}
+
+	return ticker
+}
+
+func ParseTicker(buf []byte) (map[string]TickerRow, error) {
+	ticker := NewTicker()
+
+	if err := ticker.UnmarshalJSON(buf); err != nil {
+		return nil, err
+	}
+
 	return ticker.Result, nil
 }
 
-/*
-QuoteVolume24h is last-24h base volume times last-24h VWAP (quote notional).
-*/
 func (row TickerRow) QuoteVolume24h() float64 {
 	base := atIndex(row.Volume, 1)
 	vwap := atIndex(row.VWAP, 1)
@@ -73,9 +143,6 @@ func (row TickerRow) QuoteVolume24h() float64 {
 	return base * vwap
 }
 
-/*
-ChangePct is percent move from today's open to last trade.
-*/
 func (row TickerRow) ChangePct() float64 {
 	open := parseFloat(row.Open)
 	last := row.LastTrade()
@@ -87,14 +154,9 @@ func (row TickerRow) ChangePct() float64 {
 	return (last - open) / open * 100
 }
 
-// LastTrade is the most recent trade price.
 func (row TickerRow) LastTrade() float64 { return atIndex(row.Last, 0) }
-
-// High24h is the last-24h high.
-func (row TickerRow) High24h() float64 { return atIndex(row.High, 1) }
-
-// Low24h is the last-24h low.
-func (row TickerRow) Low24h() float64 { return atIndex(row.Low, 1) }
+func (row TickerRow) High24h() float64   { return atIndex(row.High, 1) }
+func (row TickerRow) Low24h() float64    { return atIndex(row.Low, 1) }
 
 func atIndex(vals []string, i int) float64 {
 	if i < 0 || i >= len(vals) {
