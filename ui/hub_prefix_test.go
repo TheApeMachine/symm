@@ -63,7 +63,7 @@ func TestDecodePathBook(t *testing.T) {
 }
 
 func TestPolicyPathKey(t *testing.T) {
-	Convey("policyPathKey keeps .bin keys and appends action", t, func() {
+	Convey("policyPathKey rewrites Decision .bin keys into action suffixes", t, func() {
 		So(
 			policyPathKey("model/paths/R01/enter.bin", "enter"),
 			ShouldEqual,
@@ -73,6 +73,16 @@ func TestPolicyPathKey(t *testing.T) {
 			policyPathKey("model/paths/R01/R02", "exit"),
 			ShouldEqual,
 			"model/paths/R01/R02/exit.bin",
+		)
+		So(
+			policyPathKey("model/paths/R01/R02.bin", "enter"),
+			ShouldEqual,
+			"model/paths/R01/R02/enter.bin",
+		)
+		So(
+			policyPathKey("model/paths/M2/R00.bin", "exit"),
+			ShouldEqual,
+			"model/paths/M2/R00/exit.bin",
 		)
 	})
 }

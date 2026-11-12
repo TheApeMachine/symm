@@ -14,12 +14,18 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { bookAtom } from "#/collections/book";
+import {
+	STOPLOSS_ARMED,
+	STOPLOSS_HEALTHY,
+	STOPLOSS_TRIGGERED,
+} from "#/collections/types";
 import { ExitPolicyPanel } from "#/components/learning/exit-policy-panel";
 import { Badge, type BadgeVariant, badgeVariants } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import { moneyText, pctMark } from "#/lib/format";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -63,6 +69,8 @@ const REGION_INFO: Record<
 	R20: { name: "Contagion approve", tone: "up" },
 	R21: { name: "Capacity veto", tone: "warn" },
 	R22: { name: "Capacity approve", tone: "up" },
+	R23: { name: "24h peak veto", tone: "warn" },
+	R24: { name: "24h peak approve", tone: "up" },
 };
 
 const TONE_STYLES = {
@@ -516,14 +524,14 @@ const EventRow = ({ event }: { event: LifeEvent }) => {
 };
 
 const shownLife = (life: Lifecycle): Lifecycle =>
-	life.book === "virtual" && life.status === "open"
+	life.tier_key === "virtual" && life.status === "open"
 		? { ...life, status: "holding" }
 		: life;
 
 type TrialWord = "win" | "loss" | "scratch";
 
 const trialWord = (life: Lifecycle): TrialWord | null => {
-	if (life.book !== "virtual") return null;
+	if (life.tier_key !== "virtual") return null;
 	const word = life.outcome?.triggers?.[0];
 	switch (word) {
 		case "win":
@@ -541,12 +549,6 @@ const closedVerdict = (life: Lifecycle): TrialWord => {
 	return (life.outcome?.pnl ?? 0) > 0 ? "win" : "loss";
 };
 
-const pctMark = (value: number | null | undefined) =>
-	value === null || value === undefined ? "—" : `${value.toFixed(2)}%`;
-
-const moneyText = (value: number) =>
-	`${value >= 0 ? "+$" : "−$"}${Math.abs(value).toFixed(2)}`;
-
 /*
 ClosedHero is the one place the settled result is stated: dollars first,
 percent once, exit reason once, with the official exit mark beside it.
@@ -559,13 +561,18 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 	const money = outcome.money;
 	const exitPct = life.official_exit_pct;
 	const stop = life.stop_state;
-	const stopState = stop?.state;
+	const stopState =
+		stop?.State === STOPLOSS_TRIGGERED
+			? "Triggered"
+			: stop?.State === STOPLOSS_ARMED
+				? "Armed"
+				: stop?.State === STOPLOSS_HEALTHY
+					? "Healthy"
+					: null;
 	const exitReason =
 		life.exit_trigger && life.exit_trigger !== ""
 			? formatExitTrigger(life.exit_trigger)
-			: stop?.exit_reason
-				? formatExitTrigger(stop.exit_reason)
-				: null;
+			: null;
 	const triggers =
 		(outcome.triggers ?? [])
 			.map(formatExitTrigger)
@@ -596,7 +603,12 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 					<Flex.Row align="center" gap={2}>
 						<Badge size="xs" variant={trialVariant(verdict)} label={verdict} />
 						<span className="text-[10px] uppercase tracking-wider text-(--f4)">
-							{life.book === "virtual" ? "virtual" : "paper"} settle
+							{life.tier_key === "virtual"
+								? "virtual"
+								: life.tier_key === "real"
+									? "real"
+									: "paper"}{" "}
+							settle
 						</span>
 					</Flex.Row>
 					{money !== null && money !== undefined ? (
@@ -606,7 +618,7 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 								tone(money),
 							)}
 						>
-							{moneyText(money)}
+							{moneyText(money, 2)}
 						</span>
 					) : (
 						<span
@@ -657,11 +669,11 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 							<Badge
 								size="xxs"
 								variant={
-									stateTone(stopState) === "bad"
+									stateTone(stop?.State) === "bad"
 										? "error"
-										: stateTone(stopState) === "warn"
+										: stateTone(stop?.State) === "warn"
 											? "warning"
-											: stateTone(stopState) === "good"
+											: stateTone(stop?.State) === "good"
 												? "success"
 												: "info"
 								}
@@ -699,7 +711,7 @@ const ClosedHero = ({ life }: { life: Lifecycle }) => {
 lifecycleRow projects a lifecycle back to the raw desk-row shape the stop
 panels read.
 */
-const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
+const lifecycleRow = (life: Lifecycle) => {
 	const outcome = life.outcome;
 	const stop = life.stop_state;
 	const current =
@@ -707,12 +719,12 @@ const lifecycleRow = (life: Lifecycle): Record<string, unknown> => {
 		(life.mark != null && life.mark.unrealized_return != null
 			? life.mark.unrealized_return * 100
 			: undefined) ??
-		stop?.current_pnl;
+		stop?.CurrentPnLPct;
 
 	return {
 		id: life.id,
 		symbol: life.symbol,
-		book: life.book,
+		tier_key: life.tier_key,
 		opened_at: life.opened_at,
 		closed_at: life.closed_at ?? null,
 		entry_path: life.path,
@@ -756,7 +768,8 @@ export const LifecycleView = () => {
 			return rightAt - leftAt;
 		});
 	const perf = view.performance;
-	const name = book === "virtual" ? "virtual" : "paper";
+	const name =
+		book === "virtual" ? "virtual" : book === "real" ? "real" : "paper";
 	const active =
 		lifecycles.find((life) => life.id === selected) ?? lifecycles[0];
 
@@ -851,7 +864,7 @@ export const LifecycleView = () => {
 										<span>{time(life.closed_at ?? life.opened_at)}</span>
 										{money !== null && money !== undefined ? (
 											<span className={cn("font-bold text-[9px]", tone(money))}>
-												{moneyText(money)}
+												{moneyText(money, 2)}
 											</span>
 										) : frac !== undefined ? (
 											<span className={cn("font-bold text-[9px]", tone(frac))}>

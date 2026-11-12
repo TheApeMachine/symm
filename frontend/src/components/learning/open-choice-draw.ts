@@ -14,19 +14,21 @@ import {
 	NumericAxis,
 	SciChartJSDarkTheme,
 	SciChartSurface,
+	Thickness,
 	XyDataSeries,
 	XyyDataSeries,
 	ZoomExtentsModifier,
 	ZoomPanModifier,
 } from "scichart";
 import type { Book } from "#/collections/book";
-import type { Position } from "#/collections/types";
 import {
-	closeNowReturnPct,
-	onBook,
-	positionReadout,
-} from "#/components/book-readout";
-import { normalizeStoploss } from "#/lib/stoploss";
+	type Position,
+	STOPLOSS_ARMED,
+	STOPLOSS_TRIGGERED,
+} from "#/collections/types";
+import { isClosed, onTier, pnlPct } from "#/components/book-readout";
+import { asFinite, moneyText } from "#/lib/format";
+import { stopProximity, stopRoom } from "#/lib/stop-telemetry";
 import { GridLayoutModifier } from "./open-choice-grid-layout";
 
 /** SciChart fifo capacity — the DataSeries is the trail store. */
@@ -49,8 +51,10 @@ let wasmReady = false;
 
 const ensureWasm = () => {
 	if (wasmReady) return;
+
 	SciChartSurface.UseCommunityLicense();
 	SciChartSurface.loadWasmFromCDN();
+
 	wasmReady = true;
 };
 
@@ -70,9 +74,11 @@ const theme = () => {
 
 const strokeFor = (id: string) => {
 	let hash = 0;
+
 	for (let i = 0; i < id.length; i++) {
 		hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
 	}
+
 	return STROKES[hash % STROKES.length];
 };
 
@@ -84,52 +90,26 @@ const withAlpha = (hex: string, alpha: number) => {
 	return `rgba(${r},${g},${b},${alpha})`;
 };
 
-const moneyText = (value: number) => {
-	const abs = Math.abs(value);
-	const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
-	return value >= 0 ? `$+${abs.toFixed(digits)}` : `$-${abs.toFixed(digits)}`;
-};
-
-const asFinite = (raw: unknown): number | undefined => {
-	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-	if (typeof raw === "string" && raw !== "") {
-		const n = Number(raw);
-		return Number.isFinite(n) ? n : undefined;
-	}
-	return undefined;
-};
-
 /** Open lots on the selected book. */
-export const chartHeld = (pos: Position, book: Book) => {
-	const row = pos as unknown as Record<string, unknown>;
-	if (!onBook(row, book)) return false;
-	return !positionReadout(row).closed;
-};
+export const chartHeld = (pos: Position, book: Book) =>
+	onTier(pos, book) && !isClosed(pos);
 
 /** Live Y for one append — scalars only; SciChart fifo keeps the trail. */
 const markY = (pos: Position): number | undefined =>
-	closeNowReturnPct(pos as unknown as Record<string, unknown>) ??
-	asFinite(pos.pnl_pct);
+	pnlPct(pos) ?? asFinite(pos.pnl_pct) ?? undefined;
 
 const markFloor = (pos: Position): number | undefined => {
-	const stop = normalizeStoploss(pos.stoploss);
-	if (stop?.has_floor !== true) return undefined;
-	return asFinite(stop.floor_pnl);
+	const stop = pos.stoploss;
+	if (!stop) return undefined;
+	if (stop.State !== STOPLOSS_ARMED && stop.State !== STOPLOSS_TRIGGERED) {
+		return undefined;
+	}
+	return asFinite(stop.FloorPnLPct) ?? undefined;
 };
 
 /** Skip duplicate store publishes that did not move this lot's mark. */
-const markStamp = (pos: Position): string => {
-	const stop = normalizeStoploss(pos.stoploss);
-
-	return [
-		pos.pnl_pct,
-		pos.pnl,
-		pos.mark,
-		stop?.floor_pnl,
-		stop?.proximity,
-		stop?.room_pct,
-	].join("|");
-};
+const markStamp = (pos: Position): string =>
+	[pos.pnl_pct, pos.pnl, pos.mark].join("|");
 
 type LotBind = {
 	line: FastLineRenderableSeries;
@@ -153,10 +133,7 @@ export type OpenChoiceChartApi = {
 	sciChartSurface: SciChartSurface;
 	setIsGridLayoutMode: (value: boolean) => void;
 	/** Append new marks from a positions store snapshot into SciChart series. */
-	sync: (
-		state: Record<string, Position>,
-		book: Book,
-	) => OpenChoiceLegendItem[];
+	sync: (state: Record<string, Position>, book: Book) => OpenChoiceLegendItem[];
 };
 
 /** Store subscription → append into fifo DataSeries. Series are the trail. */
@@ -177,6 +154,7 @@ export const drawOpenChoiceChart = async (
 			autoRange: EAutoRange.Always,
 		}),
 	);
+
 	sciChartSurface.yAxes.add(
 		new NumericAxis(wasmContext, {
 			axisAlignment: EAxisAlignment.Left,
@@ -202,6 +180,7 @@ export const drawOpenChoiceChart = async (
 	);
 
 	const glm = new GridLayoutModifier();
+
 	sciChartSurface.chartModifiers.add(
 		new ZoomExtentsModifier({ modifierGroup: "open-choice" }),
 		new MouseWheelZoomModifier({ modifierGroup: "open-choice" }),
@@ -222,6 +201,7 @@ export const drawOpenChoiceChart = async (
 
 		sciChartSurface.renderableSeries.remove(bind.line);
 		bind.line.delete();
+
 		if (bind.band) {
 			sciChartSurface.renderableSeries.remove(bind.band);
 			bind.band.delete();
@@ -230,6 +210,7 @@ export const drawOpenChoiceChart = async (
 		const tip = sciChartSurface.annotations
 			.asArray()
 			.find((a) => a.id === tipId(id));
+
 		if (tip) sciChartSurface.annotations.remove(tip);
 
 		lots.delete(id);
@@ -246,15 +227,18 @@ export const drawOpenChoiceChart = async (
 			dataEvenlySpacedInX: true,
 			containsNaN: true,
 		});
+
 		const line = new FastLineRenderableSeries(wasmContext, {
 			dataSeries: data,
 			stroke: stroke || AUTO_COLOR,
 			strokeThickness: 2,
 		});
+
 		sciChartSurface.renderableSeries.add(line);
 
 		const bind: LotBind = { line, data, stamp: "" };
 		lots.set(id, bind);
+
 		return bind;
 	};
 
@@ -268,6 +252,7 @@ export const drawOpenChoiceChart = async (
 			dataEvenlySpacedInX: true,
 			containsNaN: true,
 		});
+
 		const band = new FastBandRenderableSeries(wasmContext, {
 			dataSeries: bandData,
 			stroke: "#00000000",
@@ -276,7 +261,9 @@ export const drawOpenChoiceChart = async (
 			fill: withAlpha(stroke, 0.08),
 			fillY1: withAlpha(stroke, 0.08),
 		});
+
 		sciChartSurface.renderableSeries.insert(0, band);
+
 		bind.band = band;
 		bind.bandData = bandData;
 	};
@@ -284,21 +271,7 @@ export const drawOpenChoiceChart = async (
 	const syncTip = (pos: Position, stroke: string, x: number, y: number) => {
 		const id = tipId(pos.id);
 		const pnl = asFinite(pos.pnl);
-		const stop = normalizeStoploss(pos.stoploss);
-		const room = stop?.room_pct;
-		const proximity = stop?.proximity ?? 0;
-		const hint =
-			proximity >= 1
-				? "STOP"
-				: typeof room === "number"
-					? `${Math.abs(room) >= 10 ? room.toFixed(0) : room.toFixed(1)}pp`
-					: "";
-		const text =
-			pnl !== undefined
-				? hint
-					? `${moneyText(pnl)}  ${hint}`
-					: moneyText(pnl)
-				: hint;
+		const text = pnl !== null ? moneyText(pnl) : "";
 
 		const prior = sciChartSurface.annotations
 			.asArray()
@@ -309,6 +282,7 @@ export const drawOpenChoiceChart = async (
 			prior.y1 = y;
 			prior.text = text;
 			prior.textColor = stroke;
+			prior.padding = Thickness.fromString("0 0 6 0");
 			return;
 		}
 
@@ -321,6 +295,8 @@ export const drawOpenChoiceChart = async (
 				fontSize: 12,
 				fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
 				textColor: stroke,
+				// Lift the label a few pixels off the series tip.
+				padding: Thickness.fromString("0 0 6 0"),
 				horizontalAnchorPoint: EHorizontalAnchorPoint.Right,
 				verticalAnchorPoint: EVerticalAnchorPoint.Bottom,
 			}),
@@ -365,16 +341,16 @@ export const drawOpenChoiceChart = async (
 
 			rows.push({ pos, bind, stroke, y, floor });
 
-			const stop = normalizeStoploss(pos.stoploss);
+			const stop = pos.stoploss;
 
 			legend.push({
 				id,
 				name: pos.symbol,
 				stroke,
-				pnlMoney: asFinite(pos.pnl),
-				pnlPct: asFinite(pos.pnl_pct),
-				stopRoomPct: stop?.room_pct,
-				stopProximity: stop?.proximity,
+				pnlMoney: asFinite(pos.pnl) ?? undefined,
+				pnlPct: asFinite(pos.pnl_pct) ?? undefined,
+				stopRoomPct: stop ? stopRoom(stop) : undefined,
+				stopProximity: stop ? stopProximity(stop) : undefined,
 			});
 		}
 
@@ -395,9 +371,7 @@ export const drawOpenChoiceChart = async (
 			if (!live.has(id)) dropLot(id);
 		}
 
-		legend.sort(
-			(a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0),
-		);
+		legend.sort((a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0));
 		return legend;
 	};
 

@@ -145,7 +145,7 @@ describe("LifecycleView", () => {
 		]);
 
 		const outcome = container.querySelector('[data-l="lifecycle-outcome"]');
-		expect(outcome?.textContent).toContain("−$1.10");
+		expect(outcome?.textContent).toContain("$-1.10");
 		expect(outcome?.textContent).toContain("-1.1%");
 		expect(outcome?.textContent).toContain("hold");
 		expect(outcome?.textContent).toContain("Official exit");
@@ -185,7 +185,7 @@ describe("LifecycleView", () => {
 				id: "R01/R05",
 				symbol: "TEL/USD",
 				status: "open",
-				book: "virtual",
+				tier_key: "virtual",
 				opened_at: "2026-10-17T12:00:00Z",
 				closed_at: null,
 				events: [
@@ -216,7 +216,7 @@ describe("LifecycleView", () => {
 				id: "R01/R05",
 				symbol: "TEL/USD",
 				status: "closed",
-				book: "virtual",
+				tier_key: "virtual",
 				opened_at: "2026-10-17T12:00:00Z",
 				closed_at: "2026-10-17T12:10:00Z",
 				events: [
@@ -253,7 +253,7 @@ describe("LifecycleView", () => {
 				id: "ETH/USD · R01/R05",
 				symbol: "ETH/USD",
 				status: "closed",
-				book: "virtual",
+				tier_key: "virtual",
 				opened_at: "2026-10-17T12:00:00Z",
 				closed_at: "2026-10-17T12:10:00Z",
 				events: [

@@ -7,17 +7,24 @@ import (
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Sentiment disruptor stage — outcomes land on envelope.Sentiment and
+Map() feeds logic/resonance Features (slump_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	sample  *algorithm.ConvictionSample
 	process *equation.Conviction
 }
 
+/*
+NewSignal is tape-only — Sentiment builds cross-symbol or print statistics without
+a book callback on the hot path.
+*/
 func NewSignal(ctx context.Context) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "sentiment"),
@@ -26,6 +33,11 @@ func NewSignal(ctx context.Context) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
@@ -33,11 +45,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if data.Price.IsZero() {
 				return
 			}
@@ -71,11 +79,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.Sentiment[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

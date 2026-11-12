@@ -16,7 +16,7 @@ describe("Engine", () => {
 	});
 
 	it("reads observations, decisions and phase from the live telemetry stores", () => {
-		atoms.tickCount.set(100);
+		atoms.tick.set({ epoch: 0, n: 100 });
 		atoms.candidates.set(20);
 		atoms.positionCount.set(3);
 		atoms.phase.set("learning");

@@ -14,17 +14,9 @@ import (
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	var dials atomic.Int32
 	upgrader := gorilla.Upgrader{}
 
@@ -71,13 +63,6 @@ func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
 }
 
 func TestWebsocketOnReconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 	var hooks atomic.Int32
 
@@ -122,14 +107,68 @@ func TestWebsocketOnReconnectHook(t *testing.T) {
 	}
 }
 
-func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
+func TestWebsocketReconnectHookSurvivesSoftDown(t *testing.T) {
+	upgrader := gorilla.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		go func() {
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	client := NewWebsocketClient(t.Context())
+	client.backoff = 5 * time.Millisecond
+
+	var hooks atomic.Int32
+	done := make(chan error, 1)
+
+	client.OnReconnect(func() error {
+		n := hooks.Add(1)
+
+		if n == 1 {
+			// Mimic a ping SoftDown while Live.Subscribe holds a token fetch,
+			// then Write → ensureReady. Must not deadlock on dialMu.
+			_ = client.SoftDown(errors.New("drop during resubscribe"))
+			return client.Write([]byte(`{"method":"subscribe"}`))
+		}
+
+		return nil
+	})
+
+	go func() {
+		done <- client.Open(wsURL)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("first Open hook must surface the SoftDown Write failure")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Open hung in reconnect resubscribe — dialMu deadlock")
 	}
 
+	client.backoff = 5 * time.Millisecond
+	client.hookBackoff = 5 * time.Millisecond
+
+	if err := client.ensureReady(); err != nil {
+		t.Fatalf("redial after SoftDown during hook: %v", err)
+	}
+	if hooks.Load() < 2 || client.Status() != runtime.READY {
+		t.Fatalf("expected recovery dial+hook, got %d hooks status=%v", hooks.Load(), client.Status())
+	}
+}
+
+func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,13 +234,6 @@ func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
 }
 
 func TestWebsocketOnDisconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -242,13 +274,6 @@ func TestWebsocketOnDisconnectHook(t *testing.T) {
 }
 
 func TestWebsocketWriteSerializesConcurrentWriters(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
 	upgrader := gorilla.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

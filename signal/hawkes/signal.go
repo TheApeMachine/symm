@@ -6,17 +6,24 @@ import (
 
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Hawkes disruptor stage — outcomes land on envelope.Hawkes and
+Map() feeds logic/resonance Features (spectral_radius) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	sample  *excitation.Sample
 	process *excitation.Process
 }
 
+/*
+NewSignal is tape-only — Hawkes builds cross-symbol or print statistics without
+a book callback on the hot path.
+*/
 func NewSignal(ctx context.Context) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "hawkes"),
@@ -26,8 +33,8 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each entry writes its own (reserved) layer.
+Step feeds hawkes arrivals per print — spectral_radius is the hold-stability
+feature; skipping quiet ticks would freeze the excitation state incorrectly.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -36,11 +43,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			input, ok, err := signal.sample.MeasureArrival(excitation.TradeInput{
 				Symbol:    data.Symbol,
 				Side:      data.Side.String(),
@@ -70,11 +73,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.Hawkes[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

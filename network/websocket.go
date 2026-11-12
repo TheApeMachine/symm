@@ -2,16 +2,21 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/internal/disconnect"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -37,6 +42,16 @@ type WebsocketClient struct {
 	dial        func(url string) (*gorilla.Conn, *http.Response, error)
 	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
 	writeMu sync.Mutex
+	// dialMu serializes ensureReady redials so concurrent Read/Write cannot
+	// open duplicate sockets or race client.conn / backoff.
+	dialMu sync.Mutex
+	// hooking is true while runHook runs. Held only under dialMu; the hook
+	// itself runs unlocked so Subscribe/Write can take writeMu and SoftDown
+	// can drop the socket. Nested ensureReady during a hook must not re-lock
+	// dialMu (deadlock) or nest another dial+hook.
+	hooking bool
+	// recoveryPending is set when a live socket drops; cleared after dial+hook succeed.
+	recoveryPending atomic.Bool
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -78,23 +93,36 @@ func (client *WebsocketClient) OnDisconnect(hook func()) {
 
 func (client *WebsocketClient) Open(url string) error {
 	client.url = url
+
+	client.dialMu.Lock()
 	err := client.dialLocked()
 	hook := client.onReconnect
 
 	if err != nil {
+		client.dialMu.Unlock()
 		return err
 	}
 
-	return client.runHook(hook)
+	client.hooking = true
+	client.dialMu.Unlock()
+
+	hookErr := client.runHook(hook)
+
+	client.dialMu.Lock()
+	client.hooking = false
+	client.dialMu.Unlock()
+
+	return hookErr
 }
 
 /*
-runHook runs the reconnect hook outside the client lock. A failure drops the
+runHook runs the reconnect hook outside dialMu. A failure drops the
 connection and grows the backoff so the next Read or Write redials and retries
 the hook (see OnReconnect).
 */
 func (client *WebsocketClient) runHook(hook func() error) error {
 	if hook == nil {
+		client.logRecovery()
 		return nil
 	}
 
@@ -102,6 +130,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	if hookErr == nil {
 		client.hookBackoff = 0
+		client.logRecovery()
 
 		return nil
 	}
@@ -121,7 +150,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 
-	errnie.Error(cause)
+	errnie.Warn("[network.websocket] reconnect hook failed, will retry: " + hookErr.Error())
 
 	return cause
 }
@@ -141,11 +170,11 @@ func (client *WebsocketClient) dialLocked() error {
 
 	if err != nil {
 		client.Transition(runtime.WAITING)
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"[network.websocket] error dialing url",
 			err,
-		))
+		)
 	}
 
 	client.conn = conn
@@ -225,6 +254,102 @@ func (client *WebsocketClient) Write(message []byte) error {
 	return nil
 }
 
+func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
+	resp, err := NewREST().Post(url, body)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if resp == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] empty post response", nil,
+		))
+	}
+
+	return resp.Body(), nil
+}
+
+func (client *WebsocketClient) Watch(
+	url string,
+	body any,
+	dest json.Unmarshaler,
+) {
+	if dest == nil {
+		return
+	}
+
+	go func() {
+		interval := 5 * time.Second
+		private := strings.Contains(url, "/private/")
+
+		if private {
+			interval = 15 * time.Second
+		}
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		backoff := time.Duration(0)
+
+		poll := func() {
+			if backoff > 0 {
+				select {
+				case <-client.Context().Done():
+					return
+				case <-time.After(backoff):
+				}
+			}
+
+			raw, err := client.Post(url, body)
+
+			if err != nil {
+				errnie.Warn("[network.websocket] watch poll failed, will retry: " + err.Error())
+				return
+			}
+
+			if len(raw) == 0 {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[network.websocket] empty post response", nil,
+				))
+				return
+			}
+
+			if err := dest.UnmarshalJSON(raw); err != nil {
+				errnie.Error(err)
+				return
+			}
+
+			if errs := kraken.VenueErrors(raw); len(errs) > 0 {
+				if kraken.RateLimited(errs...) {
+					if backoff == 0 {
+						backoff = 15 * time.Second
+					} else if backoff < 60*time.Second {
+						backoff *= 2
+					}
+
+					return
+				}
+			}
+
+			backoff = 0
+		}
+
+		if !private {
+			poll()
+		}
+
+		for {
+			select {
+			case <-client.Context().Done():
+				return
+			case <-ticker.C:
+				poll()
+			}
+		}
+	}()
+}
+
 func (client *WebsocketClient) writePing() error {
 	conn := client.conn
 	ready := client.Status() == runtime.READY
@@ -260,14 +385,31 @@ func (client *WebsocketClient) ensureReady() error {
 	}
 
 	if client.url == "" {
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation,
 			"[network.websocket] not open",
 			nil,
-		))
+		)
+	}
+
+	client.dialMu.Lock()
+
+	if client.Status() == runtime.READY && client.conn != nil {
+		client.dialMu.Unlock()
+		return nil
+	}
+
+	if client.hooking {
+		client.dialMu.Unlock()
+		return errnie.Err(
+			errnie.IO,
+			"[network.websocket] reconnect resubscribe in progress",
+			nil,
+		)
 	}
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
+	client.dialMu.Unlock()
 
 	select {
 	case <-client.Context().Done():
@@ -275,8 +417,20 @@ func (client *WebsocketClient) ensureReady() error {
 	case <-time.After(wait):
 	}
 
+	client.dialMu.Lock()
+
 	if client.Status() == runtime.READY && client.conn != nil {
+		client.dialMu.Unlock()
 		return nil
+	}
+
+	if client.hooking {
+		client.dialMu.Unlock()
+		return errnie.Err(
+			errnie.IO,
+			"[network.websocket] reconnect resubscribe in progress",
+			nil,
+		)
 	}
 
 	client.warnOnce("reconnecting after disconnect")
@@ -290,10 +444,21 @@ func (client *WebsocketClient) ensureReady() error {
 				client.backoff = 30 * time.Second
 			}
 		}
+
+		client.dialMu.Unlock()
 		return err
 	}
 
-	return client.runHook(hook)
+	client.hooking = true
+	client.dialMu.Unlock()
+
+	hookErr := client.runHook(hook)
+
+	client.dialMu.Lock()
+	client.hooking = false
+	client.dialMu.Unlock()
+
+	return hookErr
 }
 
 /*
@@ -312,14 +477,21 @@ func (client *WebsocketClient) SoftDown(cause error) error {
 		client.Transition(runtime.WAITING)
 	}
 
-	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 	client.warnOnce("disconnected: " + cause.Error())
 
-	if wasLive && hook != nil {
-		hook()
+	if wasLive {
+		client.recoveryPending.Store(true)
+
+		if hook != nil {
+			hook()
+		}
 	}
 
-	return cause
+	if disconnect.Expected(cause) {
+		return cause
+	}
+
+	return errnie.Error(cause)
 }
 
 func (client *WebsocketClient) softDown(cause error) error {
@@ -345,6 +517,20 @@ func (client *WebsocketClient) closeConnLocked() {
 	}
 	client.conn = nil
 	client.pinger.Stop()
+}
+
+func (client *WebsocketClient) logRecovery() {
+	if !client.recoveryPending.Swap(false) {
+		return
+	}
+
+	target := client.url
+
+	if target == "" {
+		target = client.Name()
+	}
+
+	errnie.Info("[network.websocket] stream recovered: " + target)
 }
 
 func (client *WebsocketClient) warnOnce(message string) {

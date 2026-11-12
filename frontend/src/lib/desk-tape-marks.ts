@@ -14,9 +14,9 @@ export const tickUint = (value: unknown): number | null => {
 	return null;
 };
 
-export const policyEpochFromRow = (
-	row: Record<string, unknown>,
-): string | undefined => {
+export const policyEpochFromRow = (row: {
+	policy_epoch?: number | string | null;
+}): string | undefined => {
 	const epoch = row.policy_epoch;
 	if (epoch === undefined || epoch === null || epoch === "") {
 		return undefined;
@@ -25,9 +25,10 @@ export const policyEpochFromRow = (
 	return String(epoch);
 };
 
-export const tapeMarksFromDeskRow = (
-	row: Record<string, unknown>,
-): { a: number; b: number; c: number } | null => {
+export const tapeMarksFromDeskRow = (row: {
+	entry_tick?: number | string | null;
+	exit_tick?: number | string | null;
+}): { a: number; b: number; c: number } | null => {
 	const entry = tickUint(row.entry_tick);
 	const exit = tickUint(row.exit_tick);
 	if (entry === null || exit === null || exit < entry) {

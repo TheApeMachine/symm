@@ -40,6 +40,10 @@ type symbolState struct {
 	pending  []float64
 }
 
+/*
+NewSolver builds one manifold lazily per symbol — pace comes from resonance config
+so Model gates and UI surprise share the same learning rate knob.
+*/
 func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		System:  runtime.NewSystem(ctx, "resonance"),
@@ -74,11 +78,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, sources := symbol, sources
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			reading := solver.stepSymbol(symbol, sources)
 			if reading == nil {
 				return
@@ -89,11 +89,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Unlock()
 
 			ui.Focus("resonance", symbol, reading)
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
@@ -143,6 +139,10 @@ func (solver *Solver) stepSymbol(
 	return solver.publish(state.manifold, hadTarget)
 }
 
+/*
+state get-or-creates the per-symbol manifold — symbols only pay coder cost once
+they appear on envelope.Metrics, not at process boot for the whole universe.
+*/
 func (solver *Solver) state(symbol string) *symbolState {
 	if held, ok := solver.symbols.Load(symbol); ok {
 		return held.(*symbolState)
@@ -185,6 +185,10 @@ type featureScorer struct {
 	seen          []bool
 }
 
+/*
+newFeatureScorer aligns one Standardizer per Features row — dimensions are not
+comparable raw, so resonance learns on z-scored observations per label.
+*/
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{
 		standardizers: make([]*adaptive.Standardizer, len(Features)),
@@ -259,6 +263,10 @@ func (scorer *featureScorer) Observe(
 	return input, ready
 }
 
+/*
+coderArch mirrors Resonance.Layers config — widening hidden layers lets the
+manifold encode pairwise feature interactions before projecting task heads.
+*/
 func coderArch(featureDim int) []int {
 	layers := system.Cfg.Resonance.Layers
 	arch := make([]int, layers)
@@ -272,6 +280,10 @@ func coderArch(featureDim int) []int {
 	return arch
 }
 
+/*
+publish flattens manifold wire state into envelope.Resonance keys Model reads —
+forward_curve_* is the supervised head output; supported_horizon gates cold start.
+*/
 func (solver *Solver) publish(
 	manifold *learning.ResonanceManifold,
 	hadTarget bool,
@@ -338,6 +350,10 @@ func (solver *Solver) publish(
 	return reading
 }
 
+/*
+Reset clears manifold state after config or universe changes — without dropping
+per-symbol scorers the held feature vector would train on stale semantics.
+*/
 func (solver *Solver) Reset(resetPrecision bool) {
 	solver.symbols.Range(func(_, held any) bool {
 		state := held.(*symbolState)
@@ -348,6 +364,10 @@ func (solver *Solver) Reset(resetPrecision bool) {
 	})
 }
 
+/*
+Close releases symbol manifolds on shutdown so goroutine Step does not retain
+coders after the disruptor ring stops.
+*/
 func (solver *Solver) Close() error {
 	solver.symbols.Clear()
 	return nil

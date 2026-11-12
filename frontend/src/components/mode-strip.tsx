@@ -4,8 +4,8 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 
 /*
-Compact top-bar strip: which of the three concurrent modes is live, and
-whether real is armed or halted on paper edge.
+Compact top-bar strip: concurrent modes, and real's Tier.Book gate
+(armed / halted) — same fields virtual and paper publish.
 */
 export const ModeStrip = () => {
 	const confidence = useSelector(confidenceAtom, (state) => state);

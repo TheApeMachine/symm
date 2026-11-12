@@ -1,3 +1,4 @@
+import { signals } from "#/collections/app";
 import { ingestExploreListPrefix } from "#/collections/cognition";
 import { seedFromClosedLots } from "#/collections/longtail";
 import {
@@ -7,7 +8,8 @@ import {
 import { ingestHistoryClosedBatch } from "#/lib/lifecycle";
 
 /*
-applyPathsEnvelope / applyClosedEnvelope ingest hub JSON ListPrefix listings.
+ListPrefix frames land on signals.pathbook / signals.closed; subscriptions
+fold them into cognition and history. The websocket stays a key→store push.
 */
 export const applyPathsEnvelope = (payload: unknown): boolean => {
 	const compact = pathsListingFromEnvelope(payload);
@@ -23,3 +25,11 @@ export const applyClosedEnvelope = (payload: unknown): boolean => {
 	seedFromClosedLots();
 	return true;
 };
+
+signals.pathbook.subscribe(() => {
+	applyPathsEnvelope(signals.pathbook.state);
+});
+
+signals.closed.subscribe(() => {
+	applyClosedEnvelope(signals.closed.state);
+});

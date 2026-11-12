@@ -26,12 +26,28 @@ func TestMDL(t *testing.T) {
 			So(gain, ShouldBeGreaterThan, 0)
 		})
 
-		Convey("Analyze advances the segment offset on a varied stream", func() {
-			for _, sym := range []string{"R00.R00", "R00.R01", "R01.R00", "R01.R01", "R02.R00", "R02.R01", "R03.R00", "R03.R01"} {
-				_, _ = mdl.Analyze(sym)
+		Convey("Analyze commits a cut and drops the consumed prefix", func() {
+			ingested := 0
+			cutSeen := false
+
+			for _, sym := range []string{
+				"R00.R00", "R00.R01", "R01.R00", "R01.R01",
+				"R02.R00", "R02.R01", "R03.R00", "R03.R01",
+			} {
+				ingested++
+				cut, _ := mdl.Analyze(sym)
+
+				if !cut {
+					continue
+				}
+
+				cutSeen = true
+				So(mdl.offset, ShouldEqual, 0)
+				So(len(mdl.stream), ShouldBeLessThan, ingested)
+				break
 			}
 
-			So(mdl.offset, ShouldBeGreaterThan, 0)
+			So(cutSeen, ShouldBeTrue)
 		})
 	})
 }

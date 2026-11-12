@@ -38,7 +38,7 @@ export const ORACLE_GATES: OracleGate[] = [
 		label: "Book integrity",
 		veto: 15,
 		approve: 16,
-		hint: "Can the book carry a lot? Cash, backing, tape liveness, open drag. Veto = thin/fake; approve = firm.",
+		hint: "Can the book carry a lot? Cash, backing, tape uptake, open drag. Veto = thin, fake, or fading; approve = firm.",
 	},
 	{
 		id: "brd",
@@ -61,15 +61,23 @@ export const ORACLE_GATES: OracleGate[] = [
 		approve: 22,
 		hint: "Can we exit without blowing impact? Veto = thin/vacuum; approve = depth can carry the size.",
 	},
+	{
+		id: "pk",
+		label: "24h peak",
+		veto: 23,
+		approve: 24,
+		hint: "Is last still under the top of the 24h range? Veto = chasing the high; approve = room left in the day range.",
+	},
 ];
 
 export type RiskDraft = {
 	min_mover_volume_usd: number;
 	min_mover_change_pct: number;
 	max_entry_spread_pct: number;
+	max_entry_peak_frac: number;
 	min_touch_bid_cash: number;
 	min_backing_ratio: number;
-	min_tape_trades: number;
+	min_tape_notional_usd: number;
 	max_entry_open_drag_pct: number;
 };
 
@@ -77,9 +85,10 @@ export const RISK_DEFAULTS: RiskDraft = {
 	min_mover_volume_usd: 100_000,
 	min_mover_change_pct: 0.5,
 	max_entry_spread_pct: 2.0,
+	max_entry_peak_frac: 0.9,
 	min_touch_bid_cash: 100,
 	min_backing_ratio: 0.6,
-	min_tape_trades: 8,
+	min_tape_notional_usd: 100,
 	max_entry_open_drag_pct: 2.0,
 };
 

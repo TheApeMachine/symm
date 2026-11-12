@@ -56,9 +56,11 @@ const walletFor = (
 		case "virtual":
 			return wallets.virtual ?? null;
 		case "real":
-			// REAL OFF / no live transport → never fall back to paper's bankroll.
+			// Prefer a live wallet frame when the hub has pushed one. Otherwise
+			// require real_ceiling so a paper desk never paints paper cash here.
+			if (wallets.real) return wallets.real;
 			if (!realLive) return null;
-			return wallets.real ?? null;
+			return null;
 		default:
 			return wallets.paper ?? legacy;
 	}
@@ -113,16 +115,32 @@ const Reading = ({
 
 /*
 Wallet readout follows the selected ledger tab: virtual, paper, or live.
+Each figure is a primitive selector so sub-cent mark churn does not re-render.
 */
 export const Balance = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const legacy = useSelector(atoms.balance, (state) => state);
-	const wallets = useSelector(atoms.balances, (state) => state);
 	const realLive = useSelector(
 		confidenceAtom,
 		(state) => state.real_ceiling === true,
 	);
-	const balance = walletFor(book, wallets, legacy, realLive);
+	const reading = (wallets: {
+		virtual?: BalanceReading | null;
+		paper?: BalanceReading | null;
+		real?: BalanceReading | null;
+	}) => walletFor(book, wallets, atoms.balance.get(), realLive);
+
+	const cash = useSelector(atoms.balances, (wallets) =>
+		fmt(field(reading(wallets), "cash")),
+	);
+	const unrealized = useSelector(atoms.balances, (wallets) =>
+		fmt(field(reading(wallets), "unrealized")),
+	);
+	const equity = useSelector(atoms.balances, (wallets) =>
+		fmt(field(reading(wallets), "equity")),
+	);
+	const profit = useSelector(atoms.balances, (wallets) =>
+		inProfit(reading(wallets)),
+	);
 	const label =
 		book === "real" && !realLive ? "Live cash (off)" : cashLabel(book);
 
@@ -133,23 +151,23 @@ export const Balance = () => {
 				tone="f1"
 				weight="medium"
 				which="cash"
-				value={fmt(field(balance, "cash"))}
+				value={cash}
 			/>
 			<Reading
 				label="Unrealized"
 				tone="f2"
 				weight="medium"
 				which="unrealized"
-				value={fmt(field(balance, "unrealized"))}
+				value={unrealized}
 			/>
 			<Reading
 				label="Equity"
 				tone="accent"
 				weight="semibold"
 				which="equity"
-				value={fmt(field(balance, "equity"))}
+				value={equity}
 			>
-				{inProfit(balance) ? <Lambo /> : null}
+				{profit ? <Lambo /> : null}
 			</Reading>
 		</Flex.Row>
 	);

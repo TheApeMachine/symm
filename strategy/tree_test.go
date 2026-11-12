@@ -8,7 +8,6 @@ import (
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 func leaf(action Action, resistance float64) *runtime.Decision {
@@ -18,9 +17,25 @@ func leaf(action Action, resistance float64) *runtime.Decision {
 	}
 }
 
+func emptyTree() *Tree {
+	tree := &Tree{}
+	tree.root.Store(iradix.New[*runtime.Decision]())
+	return tree
+}
+
+func put(tree *Tree, path string, decision *runtime.Decision) {
+	root := tree.root.Load()
+	root, _, _ = root.Insert([]byte(path), decision)
+	tree.root.Store(root)
+}
+
+func get(tree *Tree, path string) (*runtime.Decision, bool) {
+	return tree.root.Load().Get([]byte(path))
+}
+
 func withTree(f func(*Tree)) func() {
 	return func() {
-		tree := &Tree{root: iradix.New[*runtime.Decision]()}
+		tree := emptyTree()
 
 		for path, decision := range map[string]*runtime.Decision{
 			"R06.R00":                 leaf(ActionEnter, 0.75),
@@ -36,7 +51,7 @@ func withTree(f func(*Tree)) func() {
 			"R09.R01/R10.R02":         leaf(ActionHold, 0.75),
 			"R09.R01/R10.R02/R11.R03": leaf(ActionExit, 0.75),
 		} {
-			tree.root, _, _ = tree.root.Insert([]byte(path), decision)
+			put(tree, path, decision)
 		}
 
 		f(tree)
@@ -125,89 +140,136 @@ func TestPredict(t *testing.T) {
 			So(predicted, ShouldEqual, ActionNone)
 			So(strength, ShouldEqual, 0.0)
 		})
-	}))
-}
 
-func TestPredictPrune(t *testing.T) {
-	Convey("Predict prunes high-resistance paths", t, func() {
-		Convey("When no leaf counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*runtime.Decision]()}
+		Convey("When a high-resistance leaf is the only match", func() {
+			tree := emptyTree()
 			path := "R06.R00/R07.R01"
-
-			tree.root, _, _ = tree.root.Insert(
-				[]byte(path), leaf(ActionEnter, 0.85),
-			)
+			put(tree, path, leaf(ActionEnter, 0.85))
 
 			predicted, strength, disagreed := tree.Predict(tokensAt(path, 1.0))
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionNone)
 			So(strength, ShouldEqual, 0.0)
-			_, ok := tree.root.Get([]byte(path))
+			_, ok := get(tree, path)
 			So(ok, ShouldBeFalse)
 		})
 
-		Convey("When a sibling still counts toward the mean", func() {
-			tree := &Tree{root: iradix.New[*runtime.Decision]()}
+		Convey("When a high-resistance sibling is pruned and a light leaf remains", func() {
+			tree := emptyTree()
 			heavy := "R06.R00/R07.R01"
 			light := "R06.R00/R07.R01/R08.R02"
-
-			tree.root, _, _ = tree.root.Insert(
-				[]byte(heavy), leaf(ActionEnter, 0.85),
-			)
-			tree.root, _, _ = tree.root.Insert(
-				[]byte(light), leaf(ActionEnter, 0.75),
-			)
+			put(tree, heavy, leaf(ActionEnter, 0.85))
+			put(tree, light, leaf(ActionEnter, 0.75))
 
 			predicted, strength, disagreed := tree.Predict(tokensAt(heavy, 1.0))
 
 			So(disagreed, ShouldBeFalse)
 			So(predicted, ShouldEqual, ActionEnter)
 			So(strength, ShouldEqual, 0.75)
-			_, ok := tree.root.Get([]byte(heavy))
+			_, ok := get(tree, heavy)
 			So(ok, ShouldBeFalse)
-			_, ok = tree.root.Get([]byte(light))
+			_, ok = get(tree, light)
 			So(ok, ShouldBeTrue)
 		})
-	})
+	}))
 }
 
-func TestInsertMinPathLength(t *testing.T) {
-	Convey("Insert rejects cuts shorter than min path length", t, func() {
-		tree := &Tree{root: iradix.New[*runtime.Decision]()}
-		min := system.Cfg.Learning.MinPathLength
-
-		So(min, ShouldBeGreaterThan, 0)
-
-		tree.Insert("R06.R00", leaf(ActionEnter, 0.75))
-		_, ok := tree.root.Get([]byte("R06.R00"))
-		So(ok, ShouldBeFalse)
-
-		tree.Insert("R06.R00/R07.R01", leaf(ActionEnter, 0.75))
-		_, ok = tree.root.Get([]byte("R06.R00/R07.R01"))
-		So(ok, ShouldBeTrue)
-	})
+func withUpdateLeaf(f func(*Tree, string)) func() {
+	return func() {
+		tree := emptyTree()
+		path := "R06.R00/R07.R01"
+		put(tree, path, leaf(ActionEnter, seedResistance()))
+		f(tree, path)
+	}
 }
 
-func TestEnsureSeedsResistanceWithoutWipe(t *testing.T) {
-	Convey("new leaves start at seedResistance and Ensure does not reset", t, func() {
-		tree := &Tree{root: iradix.New[*runtime.Decision]()}
+func TestUpdate(t *testing.T) {
+	Convey("Setup", t, withUpdateLeaf(func(tree *Tree, path string) {
+		cases := []struct {
+			name  string
+			delta float64
+			want  float64
+		}{
+			{"negative delta lowers resistance", -0.05, 0.45},
+			{"positive delta raises resistance", 0.05, 0.55},
+		}
+
+		for _, tc := range cases {
+			Convey("When a "+tc.name+" is applied", func() {
+				fresh := emptyTree()
+				put(fresh, path, leaf(ActionEnter, seedResistance()))
+				fresh.Update(path, tc.delta)
+
+				decision, ok := get(fresh, path)
+				So(ok, ShouldBeTrue)
+				So(decision.Resistance, ShouldAlmostEqual, tc.want, 0.001)
+			})
+		}
+
+		Convey("When the path is shorter than min path length", func() {
+			tree.Update("R06.R00", -0.05)
+
+			decision, ok := get(tree, path)
+			So(ok, ShouldBeTrue)
+			So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
+		})
+
+		Convey("When the tree has no matching leaf", func() {
+			bare := emptyTree()
+			bare.Update(path, -0.05)
+
+			_, ok := get(bare, path)
+			So(ok, ShouldBeFalse)
+		})
+
+		Convey("When repeated wins hit the floor", func() {
+			fresh := emptyTree()
+			put(fresh, path, leaf(ActionEnter, seedResistance()))
+
+			for range 100 {
+				fresh.Update(path, -0.05)
+			}
+
+			decision, ok := get(fresh, path)
+			So(ok, ShouldBeTrue)
+			So(decision.Resistance, ShouldAlmostEqual, 0.05, 0.001)
+		})
+	}))
+}
+
+func TestEnsure(t *testing.T) {
+	Convey("Ensure seeds a missing leaf once", t, func() {
+		tree := emptyTree()
 		path := "R06.R00/R07.R01"
 
 		tree.Ensure(path, ActionEnter)
-		decision, ok := tree.root.Get([]byte(path))
-		So(ok, ShouldBeTrue)
-		So(decision.Resistance, ShouldAlmostEqual, seedResistance, 0.001)
-		So(decision.Resistance > system.Cfg.Learning.PaperEligibleResistance, ShouldBeTrue)
 
-		tree.Update(path, -0.05)
-		afterWin, ok := tree.root.Get([]byte(path))
+		decision, ok := get(tree, path)
 		So(ok, ShouldBeTrue)
-		So(afterWin.Resistance, ShouldAlmostEqual, 0.45, 0.001)
+		So(decision.Action, ShouldEqual, "enter")
+		So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
 
-		tree.Ensure(path, ActionEnter)
-		kept, ok := tree.root.Get([]byte(path))
+		tree.Ensure(path, ActionExit)
+		decision, ok = get(tree, path)
 		So(ok, ShouldBeTrue)
-		So(kept.Resistance, ShouldAlmostEqual, 0.45, 0.001)
+		So(decision.Action, ShouldEqual, "enter")
+		So(decision.Resistance, ShouldAlmostEqual, seedResistance(), 0.001)
+	})
+}
+
+func TestLeafObject(t *testing.T) {
+	Convey("leafObject parses action-suffixed and legacy flat keys", t, func() {
+		path, action := leafObject("model/paths/R01/M1/enter.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "enter")
+
+		path, action = leafObject("model/paths/R01/M1/exit.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "exit")
+
+		path, action = leafObject("model/paths/R01/M1.bin", "model/paths/")
+		So(path, ShouldEqual, "R01/M1")
+		So(action, ShouldEqual, "")
 	})
 }

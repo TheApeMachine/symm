@@ -4,16 +4,19 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the CVD disruptor stage — outcomes land on envelope.CVD and
+Map() feeds logic/resonance Features (starvation) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -21,6 +24,10 @@ type Signal struct {
 	process *equation.Flow
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — CVD labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "cvd"),
@@ -31,8 +38,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol flow state is
-keyed by the entry's symbol and each ready outcome lands on the envelope.
+Step ties each trade to L3 mid — starvation is flow vs touch, not raw CVD on
+prints alone, so the metric matches exit-side pressure in the forward story.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -41,17 +48,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if data.Price.IsZero() || data.Qty.IsZero() {
 				return
 			}
 
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
+			price := data.Price.InexactFloat64()
+			qty := data.Qty.InexactFloat64()
 
 			if price <= 0 || qty <= 0 {
 				return
@@ -59,13 +62,13 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			var mid float64
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
+			signal.books.Book(data.Symbol, func(book *market.Book) {
 				midDec := book.Midpoint()
 				if midDec == nil {
 					return
 				}
 
-				mid = midDec.Float64()
+				mid = midDec.InexactFloat64()
 			})
 
 			if mid <= 0 {
@@ -98,11 +101,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Lock()
 			envelope.CVD[data.Symbol] = &outcome
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

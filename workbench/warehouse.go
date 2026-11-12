@@ -34,13 +34,6 @@ func New() *Warehouse {
 }
 
 /*
-Wrap adapts an already-open DuckDB for tests without S3 boot.
-*/
-func Wrap(db *sql.DB) *Warehouse {
-	return &Warehouse{db: db, catalog: NewCatalog("symm")}
-}
-
-/*
 Close releases the engine. A Warehouse that never connected owns nothing.
 */
 func (warehouse *Warehouse) Close() error {
@@ -137,8 +130,11 @@ func emptyGlob(err error) bool {
 
 	message := err.Error()
 
-	return strings.Contains(message, "No files found") ||
-		strings.Contains(message, "No files found that match the pattern")
+	return strings.Contains(
+		message, "No files found",
+	) || strings.Contains(
+		message, "No files found that match the pattern",
+	)
 }
 
 func (warehouse *Warehouse) boot() []string {
@@ -218,7 +214,9 @@ func (warehouse *Warehouse) session(ctx context.Context) (*sql.Conn, error) {
 /*
 Execute runs one statement and returns its result as an Apache Arrow IPC stream.
 */
-func (warehouse *Warehouse) Execute(ctx context.Context, statement string) ([]byte, error) {
+func (warehouse *Warehouse) Execute(
+	ctx context.Context, statement string,
+) ([]byte, error) {
 	statement = sanitizeStatement(statement)
 
 	conn, err := warehouse.session(ctx)
@@ -263,7 +261,7 @@ func (warehouse *Warehouse) exec(
 ) error {
 	var err error
 
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():

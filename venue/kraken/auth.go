@@ -1,0 +1,375 @@
+package kraken
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
+)
+
+/*
+TokenReuse bounds how long one websockets token is presented for a new
+private subscription. Kraken honours a token for establishing a subscription
+only within 15 minutes of issue; an established connection keeps it, but a
+reconnect after that window must present a fresh token or the venue rejects
+the subscription and the private stream (executions, balances) goes dark.
+*/
+const TokenReuse = 10 * time.Minute
+
+/*
+PrivateRESTMu serializes every signed spot REST call in the process,
+including the SDK path used for websockets tokens and network.Post — nonce
+and HMAC must not interleave across goroutines on the same API key.
+*/
+var PrivateRESTMu sync.Mutex
+
+/*
+Auth caches websockets tokens young enough for private subscribe after
+reconnect; token fetch goes through authenticated REST behind PrivateRESTMu.
+*/
+type Auth struct {
+	mu       sync.Mutex
+	token    string
+	issuedAt time.Time
+	now      func() time.Time
+	fetch    func() (string, error)
+}
+
+/*
+NewAuth wires default wall clock and live token fetch for production sockets.
+*/
+func NewAuth() *Auth {
+	return &Auth{now: time.Now, fetch: fetchWebSocketsToken}
+}
+
+/*
+SeedToken pins a young websockets token (tests only) so private subscribe
+tests skip REST token round-trips.
+*/
+func (auth *Auth) SeedToken(token string) {
+	if auth == nil || token == "" {
+		return
+	}
+
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+
+	auth.token = token
+	auth.issuedAt = auth.now()
+}
+
+/*
+NewAuthenticatedREST returns a spot REST client signed with the API keys of
+the process's credential role (UseCredentials) and the process-wide nonce generator. A generator that cannot be built
+(unreadable or corrupt high-water file) is an error, never a fall back to the
+SDK's own nonce: that would race the shared generator, and every private call
+and Level3 token fetch depends on nonces staying strictly increasing.
+*/
+func NewAuthenticatedREST() (*spot.REST, error) {
+	keys, err := processKeys()
+
+	if err != nil {
+		return nil, err
+	}
+
+	nonce, err := ProcessAuthNonce()
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] process auth nonce unavailable",
+			err,
+		))
+	}
+
+	if nonce == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[kraken.auth] process auth nonce missing",
+			nil,
+		))
+	}
+
+	if err := nonce.Err(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] auth nonce high-water not persisted",
+			err,
+		))
+	}
+
+	restClient := spot.NewREST()
+	restClient.PublicKey = keys.key
+	restClient.PrivateKey = keys.secret
+	restClient.Nonce = nonce.Next
+
+	return restClient, nil
+}
+
+/*
+SignPrivate builds the JSON body and API-Key / API-Sign for one Kraken spot
+private REST call. requestURI is the path plus query, the same string Kraken
+hashes. The nonce is the process-wide generator unless body already carries one.
+*/
+func SignPrivate(requestURI string, body any) (key, signature string, signed []byte, err error) {
+	keys, err := processKeys()
+
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	nonceGen, err := ProcessAuthNonce()
+
+	if err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] process auth nonce unavailable",
+			err,
+		))
+	}
+
+	if nonceGen == nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"[kraken.auth] process auth nonce missing",
+			nil,
+		))
+	}
+
+	if err := nonceGen.Err(); err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] auth nonce high-water not persisted",
+			err,
+		))
+	}
+
+	signed, nonce, err := bodyWithNonce(body, nonceGen.Next)
+
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	signature, err = spot.Sign(keys.secret, requestURI, nonce, io.NopCloser(bytes.NewReader(signed)))
+
+	if err != nil {
+		return "", "", nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] private request sign failed",
+			err,
+		))
+	}
+
+	return keys.key, signature, signed, nil
+}
+
+/*
+SignPrivateURL signs a POST to the configured Kraken REST URL (path+query for
+the signature) so network.Client can reuse SignPrivate without duplicating host checks.
+*/
+func SignPrivateURL(postURL string, body any) (key, signature string, signed []byte, err error) {
+	parsed, err := url.Parse(postURL)
+
+	if err != nil {
+		return "", "", nil, errnie.Err(errnie.Validation, "[kraken.auth] url is invalid", err)
+	}
+
+	if parsed.Host != "api.kraken.com" {
+		return "", "", nil, errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] private post host "+parsed.Host,
+			nil,
+		)
+	}
+
+	requestURI := parsed.Path
+
+	if parsed.RawQuery != "" {
+		requestURI += "?" + parsed.RawQuery
+	}
+
+	return SignPrivate(requestURI, body)
+}
+
+/*
+bodyWithNonce merges caller JSON with a strictly increasing nonce unless the
+body already carries a non-zero nonce — placeholders from Request() must not stick.
+*/
+func bodyWithNonce(body any, next func() string) ([]byte, string, error) {
+	payload := map[string]any{}
+
+	if body != nil {
+		encoded, err := sonic.Marshal(body)
+
+		if err != nil {
+			return nil, "", errnie.Err(
+				errnie.UnprocessableContent,
+				"[kraken.auth] private body is not JSON",
+				err,
+			)
+		}
+
+		if !bytes.Equal(encoded, []byte("null")) {
+			if err := sonic.Unmarshal(encoded, &payload); err != nil {
+				return nil, "", errnie.Err(
+					errnie.UnprocessableContent,
+					"[kraken.auth] private body must be a JSON object",
+					err,
+				)
+			}
+		}
+	}
+
+	nonce := nonceFromPayload(payload)
+
+	if nonce == "" || nonce == "0" {
+		nonce = next()
+		payload["nonce"] = nonce
+	}
+
+	signed, err := sonic.Marshal(payload)
+
+	if err != nil {
+		return nil, "", errnie.Err(
+			errnie.UnprocessableContent,
+			"[kraken.auth] private body is not JSON",
+			err,
+		)
+	}
+
+	return signed, nonce, nil
+}
+
+/*
+nonceFromPayload reads a body nonce as a string. Numeric placeholders (0)
+from Request() maps must not stick — Kraken would reject them as stale.
+*/
+func nonceFromPayload(payload map[string]any) string {
+	raw, ok := payload["nonce"]
+
+	if !ok || raw == nil {
+		return ""
+	}
+
+	switch value := raw.(type) {
+	case string:
+		return value
+	case float64:
+		if value == 0 {
+			return "0"
+		}
+
+		return strconv.FormatInt(int64(value), 10)
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case json.Number:
+		return value.String()
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+/*
+Token returns a websockets authentication token young enough to subscribe
+with: the cached token while it is within TokenReuse of issue, otherwise a
+fresh one fetched through authenticated REST. Reconnect hooks therefore get a
+token the venue will accept, not the one issued at process start. A failed or
+empty fetch is returned at once: Token never retries; the websocket redial
+loop (network.WebsocketClient's reconnect hook backoff) owns retrying.
+*/
+func (auth *Auth) Token(ctx context.Context) (string, error) {
+	if auth == nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] nil auth instance",
+			nil,
+		))
+	}
+
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+
+	now := auth.now
+	if now == nil {
+		now = time.Now
+	}
+
+	if auth.token != "" && now().Sub(auth.issuedAt) < TokenReuse {
+		return auth.token, nil
+	}
+
+	fetch := auth.fetch
+
+	if fetch == nil {
+		fetch = fetchWebSocketsToken
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", errnie.Error(errnie.Err(errnie.IO, "[kraken.auth] token fetch cancelled", err))
+	}
+
+	token, err := fetch()
+
+	if err != nil {
+		return "", errnie.Error(errnie.Err(errnie.IO, "[kraken.auth] websockets token fetch failed", err))
+	}
+
+	if token == "" {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] empty websockets token received",
+			nil,
+		))
+	}
+
+	auth.token = token
+	auth.issuedAt = now()
+
+	return token, nil
+}
+
+/*
+fetchWebSocketsToken holds PrivateRESTMu for the full SDK GetWebSocketsToken
+call so nonce and signing cannot race paper or balance polls.
+*/
+func fetchWebSocketsToken() (string, error) {
+	PrivateRESTMu.Lock()
+	defer PrivateRESTMu.Unlock()
+
+	restClient, err := NewAuthenticatedREST()
+
+	if err != nil {
+		return "", err
+	}
+
+	tokenRes, err := restClient.GetWebSocketsToken()
+
+	if err != nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] failed to retrieve websockets token",
+			err,
+		))
+	}
+
+	if tokenRes == nil {
+		return "", errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[kraken.auth] empty websockets token response",
+			nil,
+		))
+	}
+
+	return tokenRes.Result.Token, nil
+}

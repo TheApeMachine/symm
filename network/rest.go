@@ -1,12 +1,11 @@
 package network
 
 import (
-	"net/url"
 	"strings"
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 type REST struct {
@@ -20,11 +19,7 @@ func NewREST() *REST {
 }
 
 func (rest *REST) Get(rawURL string, params map[string]string) (*client.Response, error) {
-	if _, private, err := privateSpot(rawURL); err != nil || private {
-		if err != nil {
-			return nil, err
-		}
-
+	if strings.Contains(rawURL, "/private/") {
 		return nil, errnie.Err(
 			errnie.Validation,
 			"[network.rest] private endpoints are POST",
@@ -40,19 +35,16 @@ func (rest *REST) Get(rawURL string, params map[string]string) (*client.Response
 	})
 }
 
-func (rest *REST) Post(rawURL string, body any) (*client.Response, error) {
+func (rest *REST) Post(url string, body any) (*client.Response, error) {
 	header := map[string]string{
 		"Content-Type": "application/json",
 	}
 
-	requestURI, private, err := privateSpot(rawURL)
+	if strings.Contains(url, "/private/") {
+		kraken.PrivateRESTMu.Lock()
+		defer kraken.PrivateRESTMu.Unlock()
 
-	if err != nil {
-		return nil, err
-	}
-
-	if private {
-		key, signature, signed, err := kraken.SignPrivate(requestURI, body)
+		key, signature, signed, err := kraken.SignPrivateURL(url, body)
 
 		if err != nil {
 			return nil, err
@@ -63,34 +55,8 @@ func (rest *REST) Post(rawURL string, body any) (*client.Response, error) {
 		body = signed
 	}
 
-	return rest.conn.Post(rawURL, client.Config{
+	return rest.conn.Post(url, client.Config{
 		Header: header,
 		Body:   body,
 	})
-}
-
-/*
-privateSpot reports whether rawURL is a Kraken spot private endpoint.
-The returned request URI is the path and query Kraken expects in the signature.
-*/
-func privateSpot(rawURL string) (string, bool, error) {
-	parsed, err := url.Parse(rawURL)
-
-	if err != nil {
-		return "", false, errnie.Err(errnie.Validation, "[network.rest] url is invalid", err)
-	}
-
-	if !strings.Contains(parsed.Path, "/private/") {
-		return "", false, nil
-	}
-
-	if parsed.Host != "api.kraken.com" {
-		return "", false, errnie.Err(
-			errnie.Validation,
-			"[network.rest] no signer for private url on "+parsed.Host,
-			nil,
-		)
-	}
-
-	return parsed.RequestURI(), true, nil
 }

@@ -13,12 +13,12 @@ func TestLearning_ApplyResonance(t *testing.T) {
 
 		Convey("It patches resonance gate floors and bypass", func() {
 			learning.ApplyResonance(map[string]any{
-				"type":                       "resonance",
-				"bypass":                     true,
+				"type":                        "resonance",
+				"bypass":                      true,
 				"min_task_relative_precision": 0.1,
-				"min_surprise":               0.2,
-				"min_supported_horizon":      1.0,
-				"min_enter_z":                0.0,
+				"min_surprise":                0.2,
+				"min_supported_horizon":       1.0,
+				"min_enter_z":                 0.0,
 			})
 
 			So(learning.ResonanceBypass, ShouldBeTrue)

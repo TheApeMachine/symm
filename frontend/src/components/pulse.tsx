@@ -29,7 +29,7 @@ const Reading = ({
 );
 
 export const Pulse = () => {
-	const tick = useSelector(atoms.tickCount, (state) => state);
+	const tick = useSelector(atoms.tick, (state) => state?.n ?? 0);
 	const phase = useSelector(atoms.phase, (state) => state);
 	const candidates = useSelector(atoms.candidates, (state) => state);
 	const signalCount = useSelector(atoms.signalSources, (state) => state.length);

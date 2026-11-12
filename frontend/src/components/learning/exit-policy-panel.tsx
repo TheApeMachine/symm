@@ -1,4 +1,10 @@
-import { decimal } from "#/components/book-readout";
+import {
+	type Position,
+	STOPLOSS_ARMED,
+	STOPLOSS_HEALTHY,
+	STOPLOSS_TRIGGERED,
+	type Stoploss,
+} from "#/collections/types";
 import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
@@ -8,55 +14,36 @@ import {
 	heldVerdict,
 	meterTone,
 	stateTone,
-	stopRule,
+	stopArmed,
+	stopRoom,
 } from "#/lib/stop-telemetry";
-import { normalizeStoploss } from "#/lib/stoploss";
 import { cn } from "#/lib/utils";
 
+const stateLabel = (stop: Stoploss) =>
+	stop.State === STOPLOSS_TRIGGERED
+		? "Triggered"
+		: stop.State === STOPLOSS_ARMED
+			? "Armed"
+			: stop.State === STOPLOSS_HEALTHY
+				? "Healthy"
+				: "—";
+
 /*
-ExitPolicyPanel shows DynamicStoploss on a lot: state, floor/peak/friction,
-and proximity to floor.
+ExitPolicyPanel reads position.stoploss as broker.Stoploss on the wire.
 */
 export const ExitPolicyPanel = ({
 	row,
 	className,
 }: {
-	row: Record<string, unknown>;
+	row: Position | { stoploss?: Stoploss; pnl_pct?: string | number };
 	className?: string;
 }) => {
-	const current = decimal(row.pnl_pct);
-	const stoploss = normalizeStoploss(row.stoploss);
-
-	const peakStop = stoploss?.peak_pnl ?? null;
-	const currentStop = stoploss?.current_pnl ?? current;
-	const floorStop = stoploss?.has_floor ? stoploss.floor_pnl : null;
-
-	const checks = buildStopChecks({
-		state: stoploss?.state,
-		proximity: stoploss?.proximity,
-		downside_pressure: stoploss?.downside_pressure,
-		downside_magnitude_ratio: stoploss?.downside_magnitude_ratio,
-		consecutive_down: stoploss?.consecutive_down,
-		has_floor: stoploss?.has_floor,
-		room_pct: stoploss?.room_pct,
-		current: currentStop,
-	});
-
-	const verdict = heldVerdict({
-		state: stoploss?.state,
-		current: currentStop,
-		peak: peakStop,
-		floor: floorStop,
-		friction: stoploss?.friction ?? null,
-		has_floor: stoploss?.has_floor,
-		proximity: stoploss?.proximity,
-		downside_pressure: stoploss?.downside_pressure,
-		exit_reason: stoploss?.exit_reason ?? null,
-		room_pct: stoploss?.room_pct,
-	});
+	const stop = row.stoploss;
+	const checks = buildStopChecks(stop);
+	const verdict = heldVerdict(stop);
 
 	const stateBadgeVariant = (() => {
-		const tone = stateTone(stoploss?.state);
+		const tone = stateTone(stop?.State);
 		if (tone === "good") return "success" as const;
 		if (tone === "warn") return "warning" as const;
 		if (tone === "bad") return "error" as const;
@@ -64,23 +51,7 @@ export const ExitPolicyPanel = ({
 		return "disabled" as const;
 	})();
 
-	const frictionRule = stopRule(
-		"Friction",
-		stoploss !== null ? `${stoploss.friction.toFixed(2)}pp` : "—",
-		"Minimum peak before the dynamic floor can arm.",
-	);
-	const peakRule = stopRule(
-		"Peak",
-		peakStop !== null ? `${peakStop.toFixed(2)}%` : "—",
-		"Highest fee-net return this lot has marked.",
-	);
-	const floorRule = stopRule(
-		"Floor",
-		floorStop !== null ? `${floorStop.toFixed(2)}%` : "not set",
-		stoploss?.has_floor
-			? `Profit floor — ${stoploss.room_pct.toFixed(2)}pp room on this mark.`
-			: "Floor has not armed yet.",
-	);
+	const armed = stop ? stopArmed(stop) : false;
 
 	return (
 		<Flex.Column
@@ -94,8 +65,12 @@ export const ExitPolicyPanel = ({
 				<div className="text-[10px] font-bold uppercase tracking-wider text-(--f3)">
 					Dynamic stop
 				</div>
-				{stoploss ? (
-					<Badge size="xxs" variant={stateBadgeVariant} label={stoploss.state} />
+				{stop ? (
+					<Badge
+						size="xxs"
+						variant={stateBadgeVariant}
+						label={stateLabel(stop)}
+					/>
 				) : (
 					<Badge size="xxs" variant="disabled" label="no stop" />
 				)}
@@ -104,15 +79,29 @@ export const ExitPolicyPanel = ({
 			<p className="text-[10px] leading-snug text-(--f2)">{verdict.text}</p>
 
 			<Grid cols={2} gap={2} responsive={false}>
-				<BoundaryFact {...frictionRule} />
-				<BoundaryFact {...peakRule} />
-				<BoundaryFact {...floorRule} />
 				<BoundaryFact
-					{...stopRule(
-						"Mark",
-						currentStop !== null ? `${currentStop.toFixed(2)}%` : "—",
-						"Current fee-net return on the live book.",
-					)}
+					label="Friction"
+					short={stop ? `${Math.abs(stop.InitialPnLPct).toFixed(2)}pp` : "—"}
+					title="Initial PnL at open."
+				/>
+				<BoundaryFact
+					label="Peak"
+					short={stop ? `${stop.PeakPnLPct.toFixed(2)}%` : "—"}
+					title="Highest fee-net return this lot has marked."
+				/>
+				<BoundaryFact
+					label="Floor"
+					short={armed && stop ? `${stop.FloorPnLPct.toFixed(2)}%` : "not set"}
+					title={
+						armed && stop
+							? `Profit floor — ${stopRoom(stop).toFixed(2)}pp room on this mark.`
+							: "Floor has not armed yet."
+					}
+				/>
+				<BoundaryFact
+					label="Mark"
+					short={stop ? `${stop.CurrentPnLPct.toFixed(2)}%` : "—"}
+					title="Current fee-net return on the live book."
 				/>
 			</Grid>
 

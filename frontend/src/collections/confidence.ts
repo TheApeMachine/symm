@@ -1,4 +1,4 @@
-import { createAtom } from "@tanstack/store";
+import { atoms } from "#/collections/app";
 import type { Book } from "#/collections/book";
 
 export type BookConfidence = {
@@ -19,23 +19,10 @@ export type ConfidenceFrame = {
 	real_ceiling: boolean;
 };
 
-const emptyBook = (): BookConfidence => ({
-	active: false,
-	armed: false,
-	halted: false,
-	closed: 0,
-	wins: 0,
-	win_rate: null,
-	edge: null,
-});
-
-export const confidenceAtom = createAtom<ConfidenceFrame>({
-	virtual: { ...emptyBook(), active: true },
-	paper: { ...emptyBook(), active: true },
-	real: emptyBook(),
-	eligible_resistance: 0.2,
-	real_ceiling: false,
-});
+/*
+confidence lives on atoms.confidence — the hub key matches the atom key.
+*/
+export const confidenceAtom = atoms.confidence;
 
 export const confidenceFor = (
 	frame: ConfidenceFrame,
@@ -49,45 +36,4 @@ export const confidenceFor = (
 		default:
 			return frame.paper;
 	}
-};
-
-const asRate = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const asCount = (value: unknown): number =>
-	typeof value === "number" && Number.isFinite(value) ? value : 0;
-
-const asBook = (value: unknown, fallbackActive = false): BookConfidence => {
-	if (!value || typeof value !== "object") {
-		return { ...emptyBook(), active: fallbackActive };
-	}
-
-	const row = value as Record<string, unknown>;
-
-	return {
-		active: row.active === true || fallbackActive,
-		armed: row.armed === true,
-		halted: row.halted === true,
-		closed: asCount(row.closed),
-		wins: asCount(row.wins),
-		win_rate: asRate(row.win_rate),
-		edge: asRate(row.edge),
-	};
-};
-
-export const ingestConfidence = (raw: unknown) => {
-	if (!raw || typeof raw !== "object") return;
-
-	const row = raw as Record<string, unknown>;
-
-	confidenceAtom.set({
-		virtual: asBook(row.virtual, true),
-		paper: asBook(row.paper, true),
-		real: asBook(row.real),
-		eligible_resistance:
-			typeof row.eligible_resistance === "number"
-				? row.eligible_resistance
-				: 0.2,
-		real_ceiling: row.real_ceiling === true,
-	});
 };

@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
-import { onBook, positionReadout } from "#/components/book-readout";
+import { isClosed, onTier, pnlFrac } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
 import { chartHeld } from "#/components/learning/open-choice-draw";
 import { Flex } from "#/components/ui";
@@ -11,12 +11,8 @@ import { comparePositionRows } from "#/lib/frame-position";
 /*
 Open positions are the desk's per-lot records on signals.positions.
 */
-export const positionRows = (
-	state: Record<string, Position>,
-): Record<string, unknown>[] => {
-	const rows = Object.values(state).map(
-		(row) => row as unknown as Record<string, unknown>,
-	);
+export const positionRows = (state: Record<string, Position>): Position[] => {
+	const rows = Object.values(state);
 	rows.sort(comparePositionRows);
 	return rows;
 };
@@ -29,20 +25,18 @@ export const positionsRevision = (state: Record<string, Position>): string => {
 };
 
 /** Open lots on the selected book. */
-export const chartHeldRow = (row: Record<string, unknown>, book: Book) => {
-	if (!onBook(row, book)) return false;
-	return !positionReadout(row).closed;
-};
+export const chartHeldRow = (pos: Position, book: Book) =>
+	onTier(pos, book) && !isClosed(pos);
 
-export const openLots = (rows: Record<string, unknown>[], book: Book) =>
+export const openLots = (rows: Position[], book: Book) =>
 	rows
-		.filter((row) => !positionReadout(row).closed && onBook(row, book))
+		.filter((row) => !isClosed(row) && onTier(row, book))
 		.map((row) => row.symbol)
 		.sort();
 
 /** Close-now return after fees. */
-export const lotInProfit = (row: Record<string, unknown>) => {
-	const pct = positionReadout(row).returnPct;
+export const lotInProfit = (pos: Position) => {
+	const pct = pnlFrac(pos);
 	return pct !== null && pct > 0;
 };
 
@@ -58,31 +52,22 @@ export const OpenPositions = () => {
 				align="center"
 				justify="center"
 				gap={2}
-				className="flex-1 text-(--f3)"
+				className="h-full min-h-48 px-4 text-center"
 			>
-				<div className="w-16 h-16 rounded-full border-2 border-dashed border-(--line)" />
-				<span className="text-sm">
-					{book === "virtual"
-						? "No virtual trades"
-						: book === "real"
-							? "No real trades"
-							: "No open positions"}
+				<span className="font-mono text-[11px] text-(--f4) tracking-[0.14em] uppercase">
+					no open lots
 				</span>
-				<span className="text-[10px] text-(--f4)">
-					{book === "virtual"
-						? "a chart appears when a finished rule opens a virtual trade"
-						: book === "real"
-							? "live lots appear once paper edge arms real trading"
-							: "the chart fills as soon as the desk holds a symbol"}
+				<span className="max-w-sm text-(--f3) text-[12px] leading-relaxed">
+					Held positions on this book paint here as they mark.
 				</span>
 			</Flex.Column>
 		);
 	}
 
 	return (
-		<Flex.Column className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden">
+		<div className="flex min-h-0 flex-1 flex-col">
 			<OpenChoiceChart />
-		</Flex.Column>
+		</div>
 	);
 };
 

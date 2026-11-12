@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	neturl "net/url"
@@ -15,12 +16,18 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/proxy"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
+
+// Sonic is frozen once at startup so dashboard frames reuse JIT encoders.
+var Sonic = sonic.Config{
+	EncodeNullForInfOrNan: true,
+}.Froze()
 
 var UI *Hub
 
@@ -47,7 +54,6 @@ type Hub struct {
 	err            error
 	app            *fiber.App
 	listenAddr     string
-	routes         *Routes
 	frameCh        chan []byte
 	pumpOnce       sync.Once
 	conn           atomic.Pointer[websocket.Conn]
@@ -56,41 +62,54 @@ type Hub struct {
 	callbacks      []func()
 	commit         atomic.Value
 	store          *store.Client
-	streamMu       sync.Mutex
-	streams        map[string]context.CancelFunc
-	streamGen      map[string]uint64
-	nextStream     uint64
+	ownStore       bool
+}
+
+/*
+UseStore wires the shared object-store client from Booter. Replaces any
+hub-owned client opened at NewHub so the process keeps one S3 pool.
+*/
+func (hub *Hub) UseStore(client *store.Client) {
+	if client == nil {
+		return
+	}
+
+	if hub.ownStore && hub.store != nil && hub.store != client {
+		_ = hub.store.Close()
+	}
+
+	hub.store = client
+	hub.ownStore = false
 }
 
 /*
 NewHub constructs the dashboard hub from its queue-backed system boundaries.
+The hub opens its own S3 client immediately — the dashboard connects during
+boot, before Booter.UseStore, and must already answer prefix fetches.
 */
 func NewHub(ctx context.Context) *Hub {
-	frames := system.Cfg.UI.WebSocket.QueueFrames
+	return newHub(ctx, system.Cfg.UI.WebSocket.QueueFrames)
+}
 
-	if frames <= 0 {
-		frames = 256
-	}
+func newHub(ctx context.Context, queueFrames int) *Hub {
+	ctx, cancel := context.WithCancel(ctx)
 
 	hub := &Hub{
 		ctx:        ctx,
+		cancel:     cancel,
 		listenAddr: system.Cfg.UI.Addr,
 		app: fiber.New(fiber.Config{
-			JSONEncoder:     sonic.Marshal,
+			JSONEncoder:     Sonic.Marshal,
 			JSONDecoder:     sonic.Unmarshal,
 			StrictRouting:   true,
 			ReadBufferSize:  system.Cfg.UI.WebSocket.MaxMessageBytes,
 			WriteBufferSize: system.Cfg.UI.WebSocket.MaxMessageBytes,
 		}),
-		frameCh:   make(chan []byte, frames),
+		frameCh:   make(chan []byte, queueFrames),
 		callbacks: make([]func(), 0),
 		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
+		ownStore:  true,
 	}
-
-	hub.streams = make(map[string]context.CancelFunc)
-	hub.streamGen = make(map[string]uint64)
-
-	hub.routes = NewRoutes(hub)
 
 	// The dashboard is a separate origin from the hub (vite dev server on
 	// :3000 vs. the hub on :8765). Permit loopback origins on any port
@@ -113,7 +132,7 @@ func NewHub(ctx context.Context) *Hub {
 		AllowPrivateNetwork: true,
 	}))
 
-	hub.routes.Register()
+	hub.registerRoutes()
 
 	return hub
 }
@@ -203,7 +222,11 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 		))
 	}
 
-	_ = conn.Close()
+	if err := conn.Close(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[hub] websocket close failed", err,
+		))
+	}
 
 	if hub.conn.CompareAndSwap(conn, nil) {
 		hub.connected.Store(false)
@@ -215,7 +238,7 @@ Write enqueues one frame without blocking. A full buffer drops the oldest.
 p must be a fresh buffer.
 */
 func (hub *Hub) Write(p []byte) (int, error) {
-	if len(p) == 0 || !hub.active() {
+	if len(p) == 0 || !hub.Active() {
 		return len(p), nil
 	}
 
@@ -279,7 +302,7 @@ func (hub *Hub) pump() {
 				continue
 			}
 
-			err := conn.WriteMessage(websocket.BinaryMessage, p)
+			err := conn.WriteMessage(websocket.TextMessage, p)
 
 			if err != nil {
 				hub.retireConnection(conn, err, len(p))
@@ -292,11 +315,11 @@ func (hub *Hub) pump() {
 WriteJSON marshals one envelope object and fans it to the dashboard.
 */
 func (hub *Hub) WriteJSON(frame map[string]any) {
-	if frame == nil || !hub.active() {
+	if frame == nil || !hub.Active() {
 		return
 	}
 
-	buf, err := sonic.Marshal(frame)
+	buf, err := Sonic.Marshal(frame)
 
 	if err != nil {
 		errnie.Error(errnie.Err(
@@ -310,17 +333,38 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 }
 
 /*
-Active reports whether a dashboard is attached. Publishers that build a frame
-per tick check it to skip the serialization entirely when nobody is listening.
+PrimeGrace opens the attach window without a socket so a test can read
+WriteJSON off the frame queue. The returned function restores the prior flags.
 */
+func (hub *Hub) PrimeGrace() func() {
+	prevConnected := hub.connected.Load()
+	prevSince := hub.connectedSince.Load()
+	hub.connected.Store(false)
+	hub.connectedSince.Store(time.Now().UnixNano())
+
+	return func() {
+		hub.connected.Store(prevConnected)
+		hub.connectedSince.Store(prevSince)
+	}
+}
+
 /*
-active reports whether a frame should be enqueued: a live connection, or one
-established within the grace window. The window covers the sliver between a
-connection being accepted and its dashboard's first read, where a concurrently
-produced tick would otherwise be dropped and a freshly-attached dashboard would
-show no metrics until the next symbol-bearing tick.
+NextFrame takes one queued dashboard payload, if any.
 */
-func (hub *Hub) active() bool {
+func (hub *Hub) NextFrame() ([]byte, bool) {
+	select {
+	case buf := <-hub.frameCh:
+		return append([]byte(nil), buf...), true
+	default:
+		return nil, false
+	}
+}
+
+/*
+Active reports whether a frame should be enqueued: a live connection, or one
+established within the grace window.
+*/
+func (hub *Hub) Active() bool {
 	if hub.connected.Load() && hub.conn.Load() != nil {
 		return true
 	}
@@ -334,80 +378,11 @@ func (hub *Hub) active() bool {
 	return time.Since(time.Unix(0, since)) < 5*time.Second
 }
 
-func (hub *Hub) Active() bool {
-	return hub.active()
-}
-
 /*
 RegisterCallback registers a callback to be called when a new websocket connection is established.
 */
 func (hub *Hub) RegisterCallback(callback func()) {
 	hub.callbacks = append(hub.callbacks, callback)
-}
-
-func (hub *Hub) cancelStream(kind string) {
-	hub.streamMu.Lock()
-	cancel := hub.streams[kind]
-	delete(hub.streams, kind)
-	hub.streamMu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-}
-
-func (hub *Hub) startStream(kind string, run func(context.Context)) {
-	hub.streamMu.Lock()
-
-	prev := hub.streams[kind]
-
-	ctx, cancel := context.WithCancel(hub.ctx)
-	hub.nextStream++
-	gen := hub.nextStream
-	hub.streams[kind] = cancel
-	hub.streamGen[kind] = gen
-
-	hub.streamMu.Unlock()
-
-	if prev != nil {
-		prev()
-	}
-
-	go func() {
-		run(ctx)
-
-		hub.streamMu.Lock()
-		defer hub.streamMu.Unlock()
-
-		if hub.streamGen[kind] == gen {
-			delete(hub.streams, kind)
-			delete(hub.streamGen, kind)
-		}
-	}()
-}
-
-func (hub *Hub) streamPrefix(kind, prefix string, done func()) {
-	if hub.store == nil || prefix == "" {
-		return
-	}
-
-	hub.startStream(kind, func(ctx context.Context) {
-		for raw := range hub.store.Stream(ctx, prefix) {
-			if len(raw) == 0 {
-				continue
-			}
-
-			hub.Write(raw)
-		}
-
-		if ctx.Err() != nil {
-			return
-		}
-
-		if done != nil {
-			done()
-		}
-	})
 }
 
 /*
@@ -454,9 +429,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		}
 
 		delete(patch, "type")
-		if system.Cfg != nil && system.Cfg.Risk != nil {
-			system.Cfg.Risk.Apply(patch)
-		}
+		system.Cfg.Risk.Apply(patch)
 	case "resonance":
 		var patch map[string]any
 		if err := sonic.Unmarshal(payload, &patch); err != nil {
@@ -468,9 +441,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		}
 
 		delete(patch, "type")
-		if system.Cfg != nil && system.Cfg.Learning != nil {
-			system.Cfg.Learning.ApplyResonance(patch)
-		}
+		system.Cfg.Learning.ApplyResonance(patch)
 	case "hindsight":
 	case "s3":
 		if request.Prefix == "" {
@@ -489,21 +460,9 @@ func (hub *Hub) handleCommand(payload []byte) error {
 			))
 		}
 
-		hub.cancelStream("s3")
-
-		// One aggregated frame for large prefix listings (trie books, closed lots).
-		// model/paths matches with or without a trailing slash: the S3 key is
-		// always "model/paths/<tokens>/<action>.bin" but the dashboard may send
-		// either form.
-		if strings.HasPrefix(request.Prefix, "model/paths") ||
-			strings.HasPrefix(request.Prefix, "paper/closed") ||
-			strings.HasPrefix(request.Prefix, "real/closed") ||
-			strings.HasPrefix(request.Prefix, "virtual/closed") {
-			hub.ListPrefix(request.Prefix)
-			break
-		}
-
-		hub.streamPrefix("s3", request.Prefix, nil)
+		// Aggregated envelopes for trie books and closed lots. ListPrefix
+		// warns and no-ops on unsupported prefixes.
+		hub.ListPrefix(request.Prefix)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -516,13 +475,6 @@ func (hub *Hub) handleCommand(payload []byte) error {
 	}
 
 	return nil
-}
-
-/*
-App exposes the underlying Fiber application for registering domain services.
-*/
-func (hub *Hub) App() *fiber.App {
-	return hub.app
 }
 
 /*
@@ -551,4 +503,86 @@ func (hub *Hub) Run() error {
 	}()
 
 	return nil
+}
+
+/*
+Close drains the hub store and shuts the HTTP server.
+*/
+func (hub *Hub) Close() error {
+	var errs error
+
+	// Only close a store this hub created. Shared clients are owned by Booter.
+	if hub.ownStore && hub.store != nil {
+		if err := hub.store.Close(); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+
+	if hub.cancel != nil {
+		hub.cancel()
+	}
+
+	if hub.app != nil {
+		if err := hub.app.ShutdownWithTimeout(5 * time.Second); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[hub] shutdown failed", err,
+			)))
+		}
+	}
+
+	return errs
+}
+
+func (hub *Hub) registerRoutes() {
+	policy := proxy.DefaultSecurityPolicy()
+	policy.AllowPrivateIPs = true
+	proxy.WithSecurityPolicy(policy)
+
+	hub.app.Use("/ws", func(reqCtx fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(reqCtx) {
+			reqCtx.Locals("allowed", true)
+			return reqCtx.Next()
+		}
+
+		return fiber.ErrUpgradeRequired
+	})
+
+	hub.app.Get("/ws", hub.wsHandler())
+
+	hub.app.Post("/workbench/query", func(reqCtx fiber.Ctx) error {
+		targetURL := system.Cfg.Workbench.URL
+		origin := reqCtx.Get("Origin")
+
+		if err := proxy.Do(reqCtx, targetURL); err != nil {
+			return fiber.NewError(
+				fiber.StatusServiceUnavailable,
+				"workbench service unavailable — start standalone workbench with 'make workbench'",
+			)
+		}
+
+		if origin != "" {
+			reqCtx.Set("Access-Control-Allow-Origin", origin)
+			reqCtx.Set("Vary", "Origin")
+		}
+
+		return nil
+	})
+}
+
+/*
+Focus writes one dashboard frame {"channel":{symbol: reading}} for the focused
+symbol so the hub queue is not flooded by the full universe each tick.
+*/
+func Focus(channel, symbol string, reading any) {
+	if reading == nil || channel == "" || !types.Allows(symbol) {
+		return
+	}
+
+	if !UI.Active() {
+		return
+	}
+
+	UI.WriteJSON(map[string]any{
+		channel: map[string]any{symbol: reading},
+	})
 }

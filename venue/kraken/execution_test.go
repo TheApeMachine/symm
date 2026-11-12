@@ -1,0 +1,77 @@
+package kraken_test
+
+import (
+	"testing"
+
+	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/venue/kraken"
+)
+
+func TestNewExecutionFromMap(t *testing.T) {
+	Convey("Given a paper execution carrying its client order identifier", t, func() {
+		execution := kraken.NewExecutionFromMap(map[string]any{
+			"cl_ord_id": "exit-order-id",
+			"pair":      "SLAY/USD",
+			"side":      "sell",
+		}).(*kraken.Execution)
+
+		Convey("The normalized execution should preserve order correlation", func() {
+			So(execution.Data, ShouldHaveLength, 1)
+			So(execution.Data[0].ClientOrderID, ShouldEqual, "exit-order-id")
+		})
+	})
+}
+
+func TestExecutionMeasurementRoundTrip(t *testing.T) {
+	Convey("Given a valid kraken.Execution with trade fill data", t, func() {
+		price, _ := decimal.NewFromString("50000.5")
+		qty, _ := decimal.NewFromString("0.1")
+		cost, _ := decimal.NewFromString("5000.05")
+		fee, _ := decimal.NewFromString("12.50")
+		pricePtr := &price
+		qtyPtr := &qty
+		costPtr := &cost
+		feePtr := &fee
+
+		execData := kraken.ExecutionData{
+			Symbol:        "BTC/USD",
+			OrderID:       "ord-999",
+			ClientOrderID: "cl-ord-888",
+			ExecID:        "exec-777",
+			ExecType:      "trade",
+			Side:          "buy",
+			OrderType:     "limit",
+			OrderStatus:   "filled",
+			LastPrice:     pricePtr,
+			LastQty:       qtyPtr,
+			Cost:          costPtr,
+			CumQty:        qtyPtr,
+			CumCost:       costPtr,
+			AvgPrice:      pricePtr,
+			FeeUsdEquiv:   feePtr,
+		}
+
+		execution := &kraken.Execution{
+			Channel: "executions",
+			Type:    "update",
+			Data:    []kraken.ExecutionData{execData},
+		}
+
+		Convey("sonic.Marshal round-trips the execution", func() {
+			raw, err := sonic.Marshal(execution)
+			So(err, ShouldBeNil)
+
+			var decoded kraken.Execution
+			So(sonic.Unmarshal(raw, &decoded), ShouldBeNil)
+			So(decoded.Channel, ShouldEqual, "executions")
+			So(decoded.Type, ShouldEqual, "update")
+			So(decoded.Data, ShouldHaveLength, 1)
+			So(decoded.Data[0].Symbol, ShouldEqual, "BTC/USD")
+			So(decoded.Data[0].OrderID, ShouldEqual, "ord-999")
+			So(decoded.Data[0].LastPrice.String(), ShouldEqual, price.String())
+			So(decoded.Data[0].LastQty.String(), ShouldEqual, qty.String())
+		})
+	})
+}
