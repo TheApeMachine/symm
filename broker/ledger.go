@@ -57,12 +57,6 @@ func (tier *Tier) pullHistory(urgent bool) {
 	}
 
 	if !tier.historyRunning.CompareAndSwap(false, true) {
-		errnie.Error(errnie.Err(
-			errnie.Conflict,
-			"[broker.Tier] trades history skipped: sync already in flight",
-			nil,
-		).With("urgent", urgent))
-
 		return
 	}
 

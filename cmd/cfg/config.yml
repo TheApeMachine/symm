@@ -223,6 +223,29 @@ risk:
   # Minimum bidCash/askCash inside that band (thin bids fail).
   min_backing_ratio: 0.6
 
+selection:
+  # Cross-sectional enter: only the top ranks per tick receive real capital.
+  max_open_positions: 5
+  max_enters_per_tick: 1
+  # Accumulation vs ignition range caps (dual peak oracles in training).
+  max_accum_peak_frac: 0.35
+  max_ignition_peak_frac: 0.85
+  ignition_precursor_min: 0.55
+  ignition_compression_min: 0.55
+  ignition_ignition_min: 0.45
+  weight_peak_score: 1.25
+  weight_precursor: 1.0
+  weight_tape_uptake: 0.75
+  weight_spread: 1.0
+  weight_peak_frac: 0.5
+  weight_rotation: 0.35
+  heartbeat_batch: 48
+  # Trailing stop floor: <0 disables hard giveback floor (rotator-friendly).
+  stoploss_floor_min_pnl_pct: -1
+  partial_take_profit_pct: 0.5
+  partial_take_fraction: 0.5
+  rotation_close_boost: 0.15
+
 learning:
   threshold_start: 0.5
   threshold_step: 0.05

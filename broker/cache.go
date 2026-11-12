@@ -78,6 +78,25 @@ func NewCache(
 }
 
 /*
+ChainOnSettle appends a listener after the tier settle hook without replacing it.
+*/
+func (cache *Cache) ChainOnSettle(fn func(*Position)) {
+	if cache == nil || fn == nil {
+		return
+	}
+
+	prior := cache.onSettled
+
+	cache.onSettled = func(position *Position) {
+		if prior != nil {
+			prior(position)
+		}
+
+		fn(position)
+	}
+}
+
+/*
 bootstrapFromStore replays S3 prefixes on boot so paper tiers resume mid-trade;
 orphan flat open blobs get promoted to closed so they are not re-armed for exit.
 */
@@ -398,6 +417,29 @@ func (cache *Cache) Has(symbol string) bool {
 	// the symbol. Remove is the only path into closed.
 	_, ok := cache.open.Load(symbol)
 	return ok
+}
+
+/*
+OpenCount counts symbols with a non-flat open lot on this tier cache.
+*/
+func (cache *Cache) OpenCount() int {
+	if cache == nil || cache.open == nil {
+		return 0
+	}
+
+	count := 0
+
+	cache.open.Range(func(_, value any) bool {
+		position := value.(*Position)
+
+		if position != nil && !position.Flat() {
+			count++
+		}
+
+		return true
+	})
+
+	return count
 }
 
 /*

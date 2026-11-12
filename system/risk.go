@@ -91,3 +91,4 @@ func (risk *Risk) Apply(patch map[string]any) {
 	setFloat(&risk.MaxEntryOpenDragPct, "max_entry_open_drag_pct")
 	setFloat(&risk.MinTapeNotionalUSD, "min_tape_notional_usd")
 }
+

@@ -14,7 +14,7 @@ import (
 
 func TestCorrelationStep(t *testing.T) {
 	Convey("Step attaches cohort readings once a peer cohort exists", t, func() {
-		signal := correlation.NewSignal(context.Background())
+		signal := correlation.NewSignal(context.Background(), nil)
 		envelope := runtime.NewEnvelope(nil)
 		at := time.Now().UTC()
 

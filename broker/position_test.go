@@ -185,6 +185,22 @@ func TestUpdate(t *testing.T) {
 					So(position.Mark.String(), ShouldEqual, before)
 				}
 			})
+
+			Convey("When level3 is stale Update uses touch without book walk", func() {
+				books := bookWithTouch("BTC/USD", "100", "101", "1")
+				pricer := priceFor("BTC/USD", books)
+				lot := NewPosition(
+					context.Background(), "BTC/USD", "virtual", "path", pricer, nil, nil,
+				)
+				lot.Apply(tradeFill("b1", "buy", "1", "100"))
+
+				books.Stale([]string{"BTC/USD"})
+
+				touch := decimal.RequireFromString("102")
+				So(lot.Update(&touch), ShouldBeNil)
+				So(lot.Mark.String(), ShouldEqual, "102")
+				So(lot.PnLPct, ShouldNotBeNil)
+			})
 		},
 	))
 
@@ -334,6 +350,54 @@ func TestUpdate(t *testing.T) {
 
 				markDown := decimal.RequireFromString("90")
 				So(position.Update(&markDown), ShouldBeNil)
+				So(position.Closing, ShouldBeFalse)
+				So(triggered, ShouldBeFalse)
+				So(position.Stoploss.State, ShouldEqual, StoplossHealthy)
+
+				books.Update(&market.Level3{
+					Type: "snapshot",
+					Data: []*market.Level3Data{{
+						Symbol: "BTC/USD",
+						Bids: []*market.Level3Order{{
+							OrderID: "b4",
+							LimitPrice: decimalPtr("115"),
+							OrderQty:   decimalPtr("5"),
+							Timestamp:  time.Unix(4, 0),
+						}},
+						Asks: []*market.Level3Order{{
+							OrderID: "a4",
+							LimitPrice: decimalPtr("116"),
+							OrderQty:   decimalPtr("5"),
+							Timestamp:  time.Unix(4, 0),
+						}},
+					}},
+				})
+
+				markPeak := decimal.RequireFromString("115")
+				So(position.Update(&markPeak), ShouldBeNil)
+				So(position.Stoploss.State, ShouldEqual, StoplossArmed)
+
+				books.Update(&market.Level3{
+					Type: "snapshot",
+					Data: []*market.Level3Data{{
+						Symbol: "BTC/USD",
+						Bids: []*market.Level3Order{{
+							OrderID: "b5",
+							LimitPrice: decimalPtr("105"),
+							OrderQty:   decimalPtr("5"),
+							Timestamp:  time.Unix(5, 0),
+						}},
+						Asks: []*market.Level3Order{{
+							OrderID: "a5",
+							LimitPrice: decimalPtr("106"),
+							OrderQty:   decimalPtr("5"),
+							Timestamp:  time.Unix(5, 0),
+						}},
+					}},
+				})
+
+				markGiveback := decimal.RequireFromString("105")
+				So(position.Update(&markGiveback), ShouldBeNil)
 				So(position.Closing, ShouldBeTrue)
 				So(triggered, ShouldBeTrue)
 			})

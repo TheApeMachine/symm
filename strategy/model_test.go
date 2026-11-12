@@ -64,7 +64,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		decide := func(d *runtime.Decision) { got = d }
 
 		model.applyAction(
-			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			decide, func(EnterCandidate) {}, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
 			[]*broker.Position{lot},
 		)
 
@@ -95,7 +95,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		decide := func(d *runtime.Decision) { got = d }
 
 		model.applyAction(
-			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			decide, func(EnterCandidate) {}, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
 			[]*broker.Position{lot},
 		)
 
@@ -125,7 +125,7 @@ func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 		decide := func(d *runtime.Decision) { got = d }
 
 		model.applyAction(
-			decide, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
+			decide, func(EnterCandidate) {}, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
 			[]*broker.Position{lot},
 		)
 

@@ -398,6 +398,19 @@ func (manager *BookManager) BlockReason(symbol string) string {
 }
 
 /*
+MarkPaused is true while level3 is reconnecting — marks may use ticker touch but
+must not arm stoploss or size entries against a nil book.
+*/
+func (manager *BookManager) MarkPaused(symbol string) bool {
+	switch manager.BlockReason(symbol) {
+	case "level3 book is stale", "level3 book still pending snapshot":
+		return true
+	default:
+		return false
+	}
+}
+
+/*
 StaleSymbol gates Desk.BookStale and BookIntact so disconnects stop entries before
 marks use a book the socket no longer feeds.
 */

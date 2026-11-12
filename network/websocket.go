@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -48,6 +50,8 @@ type WebsocketClient struct {
 	// can drop the socket. Nested ensureReady during a hook must not re-lock
 	// dialMu (deadlock) or nest another dial+hook.
 	hooking bool
+	// recoveryPending is set when a live socket drops; cleared after dial+hook succeed.
+	recoveryPending atomic.Bool
 }
 
 func NewWebsocketClient(ctx context.Context) *WebsocketClient {
@@ -118,6 +122,7 @@ the hook (see OnReconnect).
 */
 func (client *WebsocketClient) runHook(hook func() error) error {
 	if hook == nil {
+		client.logRecovery()
 		return nil
 	}
 
@@ -125,6 +130,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	if hookErr == nil {
 		client.hookBackoff = 0
+		client.logRecovery()
 
 		return nil
 	}
@@ -144,7 +150,7 @@ func (client *WebsocketClient) runHook(hook func() error) error {
 
 	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 
-	errnie.Error(cause)
+	errnie.Warn("[network.websocket] reconnect hook failed, will retry: " + hookErr.Error())
 
 	return cause
 }
@@ -164,11 +170,11 @@ func (client *WebsocketClient) dialLocked() error {
 
 	if err != nil {
 		client.Transition(runtime.WAITING)
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"[network.websocket] error dialing url",
 			err,
-		))
+		)
 	}
 
 	client.conn = conn
@@ -298,7 +304,7 @@ func (client *WebsocketClient) Watch(
 			raw, err := client.Post(url, body)
 
 			if err != nil {
-				errnie.Error(err)
+				errnie.Warn("[network.websocket] watch poll failed, will retry: " + err.Error())
 				return
 			}
 
@@ -395,11 +401,11 @@ func (client *WebsocketClient) ensureReady() error {
 
 	if client.hooking {
 		client.dialMu.Unlock()
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"[network.websocket] reconnect resubscribe in progress",
 			nil,
-		))
+		)
 	}
 
 	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
@@ -420,11 +426,11 @@ func (client *WebsocketClient) ensureReady() error {
 
 	if client.hooking {
 		client.dialMu.Unlock()
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"[network.websocket] reconnect resubscribe in progress",
 			nil,
-		))
+		)
 	}
 
 	client.warnOnce("reconnecting after disconnect")
@@ -471,11 +477,18 @@ func (client *WebsocketClient) SoftDown(cause error) error {
 		client.Transition(runtime.WAITING)
 	}
 
-	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
 	client.warnOnce("disconnected: " + cause.Error())
 
-	if wasLive && hook != nil {
-		hook()
+	if wasLive {
+		client.recoveryPending.Store(true)
+
+		if hook != nil {
+			hook()
+		}
+	}
+
+	if disconnect.Expected(cause) {
+		return cause
 	}
 
 	return errnie.Error(cause)
@@ -504,6 +517,20 @@ func (client *WebsocketClient) closeConnLocked() {
 	}
 	client.conn = nil
 	client.pinger.Stop()
+}
+
+func (client *WebsocketClient) logRecovery() {
+	if !client.recoveryPending.Swap(false) {
+		return
+	}
+
+	target := client.url
+
+	if target == "" {
+		target = client.Name()
+	}
+
+	errnie.Info("[network.websocket] stream recovered: " + target)
 }
 
 func (client *WebsocketClient) warnOnce(message string) {

@@ -364,6 +364,134 @@ func (price *Price) BelowPeak(symbol string) bool {
 }
 
 /*
+MoverVolumeOK accepts either venue 24h quote turnover or accelerating desk tape.
+*/
+func (price *Price) MoverVolumeOK(symbol string) bool {
+	risk := system.Cfg.Risk
+
+	if price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD {
+		return true
+	}
+
+	recent, prior := price.TapeUptake(symbol, time.Now())
+	floor := price.minTapeNotional
+
+	if risk.MinTapeNotionalUSD > 0 {
+		floor = risk.MinTapeNotionalUSD
+	}
+
+	return recent >= floor && recent > prior
+}
+
+/*
+EntryPeakOK applies accumulation vs ignition range caps from selection config.
+*/
+func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
+	sel := system.Cfg.Selection
+	cap := sel.MaxAccumPeakFrac
+
+	if ignition {
+		cap = sel.MaxIgnitionPeakFrac
+	}
+
+	if cap <= 0 || cap >= 1 {
+		return true
+	}
+
+	frac, ok := price.PeakFrac(symbol)
+
+	if !ok {
+		return false
+	}
+
+	return frac < cap
+}
+
+/*
+PulseSymbols returns the next heartbeat slice over the online L3 universe.
+*/
+func (price *Price) PulseSymbols(batch, start int) ([]string, int) {
+	if price.Instrument == nil || batch <= 0 {
+		return nil, start
+	}
+
+	all := price.Instrument.Symbols()
+
+	if len(all) == 0 {
+		return nil, start
+	}
+
+	if batch > len(all) {
+		batch = len(all)
+	}
+
+	if start < 0 {
+		start = 0
+	}
+
+	start %= len(all)
+	out := make([]string, 0, batch)
+
+	for i := range batch {
+		out = append(out, all[(start+i)%len(all)])
+	}
+
+	next := (start + batch) % len(all)
+
+	return out, next
+}
+
+/*
+PulseQuote is last mark plus touch bid/ask for book-heartbeat ignition inputs.
+*/
+func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) {
+	if symbol == "" {
+		return 0, 0, 0, false
+	}
+
+	mark := price.CloseMark(symbol)
+
+	if mark == nil || mark.Sign() <= 0 {
+		row := price.ticker.Of(symbol)
+
+		if row == nil || row.Last <= 0 {
+			return 0, 0, 0, false
+		}
+
+		last = row.Last
+	} else {
+		last = mark.InexactFloat64()
+	}
+
+	price.Books.Book(symbol, func(managed *market.Book) {
+		if !bookReady(managed) {
+			return
+		}
+
+		bestBid := managed.BestBid()
+		bestAsk := managed.BestAsk()
+
+		if bestBid == nil || bestAsk == nil ||
+			bestBid.Price == nil || bestAsk.Price == nil {
+			return
+		}
+
+		bid = bestBid.Price.InexactFloat64()
+		ask = bestAsk.Price.InexactFloat64()
+
+		if bid > 0 && ask > bid {
+			ok = true
+		}
+	})
+
+	if !ok {
+		return 0, 0, 0, false
+	}
+
+	return last, bid, ask, true
+}
+
+/*
 NoteTrade feeds BookIntact tape uptake — prints alone are too noisy per tick, so
 we aggregate quote dollars per minute before comparing recent vs prior windows.
 */
@@ -800,6 +928,18 @@ func (price *Price) TouchAsk(symbol string) *decimal.Decimal {
 	})
 
 	return ask
+}
+
+/*
+MarkPaused mirrors BookManager during level3 gaps so positions and desk can
+degrade marks without treating disconnect as an application fault.
+*/
+func (price *Price) MarkPaused(symbol string) bool {
+	if price == nil || price.Books == nil {
+		return false
+	}
+
+	return price.Books.MarkPaused(symbol)
 }
 
 /*

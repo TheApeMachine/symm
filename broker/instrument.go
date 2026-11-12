@@ -529,19 +529,19 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 		// Open runs any registered reconnect hook, so the hook is registered
 		// only after the initial subscribe was written once and checked.
 		l3Client.OnReconnect(func() error {
-			errnie.Info("[instrument] level3 resubscribe after reconnect for " + batchKey)
+			errnie.Warn("[instrument] level3 resubscribe in flight for " + batchKey)
 
 			if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
-				// The books of this batch were marked stale on disconnect
-				// and stay so until a resubscribe snapshot lands.
 				stale(connSymbols)
 
-				return errnie.Error(errnie.Err(
+				return errnie.Err(
 					errnie.IO,
 					"[instrument] level3 resubscribe failed, books stale, redialing for "+batchKey,
 					err,
-				))
+				)
 			}
+
+			errnie.Info("[instrument] level3 stream recovered for " + batchKey)
 
 			return nil
 		})
@@ -651,17 +651,19 @@ func (instrument *Instrument) SubscribeTrades() error {
 
 	if reconnector, ok := instrument.public.(interface{ OnReconnect(func() error) }); ok {
 		reconnector.OnReconnect(func() error {
-			errnie.Info("[instrument] public trade resubscribe after reconnect")
+			errnie.Warn("[instrument] public trade resubscribe in flight")
 
 			for _, msg := range tradeSubs {
 				if err := instrument.public.Write(msg); err != nil {
-					return errnie.Error(errnie.Err(
+					return errnie.Err(
 						errnie.IO,
 						"[instrument] trade resubscribe failed, redialing",
 						err,
-					))
+					)
 				}
 			}
+
+			errnie.Info("[instrument] public trade stream recovered")
 
 			return nil
 		})

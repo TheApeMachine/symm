@@ -85,15 +85,17 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				}
 			}
 
+			hot := ignitionHot(envelope.Pumpdump[symbol])
+
 			regions, err := training.grid.Observe(
 				symbol,
 				sources,
 				training.desk.Has(symbol),
-				training.price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD,
+				training.price.MoverVolumeOK(symbol),
 				training.price.ChangePct(symbol) >= risk.MinMoverChangePct,
 				spreadOK,
 				training.price.BookIntact(symbol),
-				training.price.BelowPeak(symbol),
+				training.price.EntryPeakOK(symbol, hot),
 			)
 
 			if err != nil {

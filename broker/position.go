@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -152,7 +153,26 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		}
 	}
 
+	paused := pricer != nil && pricer.MarkPaused(symbol)
+
 	if vwap == nil || bookPnL == nil || bookPnLPct == nil {
+		if paused {
+			touch := price
+
+			if touch == nil {
+				touch = pricer.CloseMark(symbol)
+			}
+
+			bookPnL, bookPnLPct = pricer.FeeNetRoundTrip(symbol, &entry, &qty, touch)
+
+			if touch != nil && bookPnL != nil && bookPnLPct != nil {
+				vwap = touch
+				position.applyMark(touch, vwap, room, bookPnL, bookPnLPct)
+				position.mu.Unlock()
+				return nil
+			}
+		}
+
 		position.mu.Unlock()
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
@@ -161,27 +181,9 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		))
 	}
 
-	now := time.Now().UTC()
-	position.UpdatedAt = &now
-	position.Mark = price
+	position.applyMark(price, vwap, room, bookPnL, bookPnLPct)
 
-	hasSellFills := position.Sold != nil && position.Sold.Sign() > 0
-
-	if hasSellFills {
-		position.ExitRoom = room
-	} else {
-		position.ExitVWAP = vwap
-		position.ExitRoom = room
-		position.PnL = bookPnL
-		position.PnLPct = bookPnLPct
-	}
-
-	if position.Closing {
-		position.mu.Unlock()
-		return nil
-	}
-
-	if position.EntryPath == "exchange" {
+	if position.Closing || position.EntryPath == "exchange" || paused {
 		position.mu.Unlock()
 		return nil
 	}
@@ -199,6 +201,29 @@ func (position *Position) Update(price *decimal.Decimal) error {
 }
 
 /*
+applyMark stores touch and book-walk fields; caller holds position.mu.
+*/
+func (position *Position) applyMark(
+	touch, vwap, room, bookPnL, bookPnLPct *decimal.Decimal,
+) {
+	now := time.Now().UTC()
+	position.UpdatedAt = &now
+	position.Mark = touch
+
+	hasSellFills := position.Sold != nil && position.Sold.Sign() > 0
+
+	if hasSellFills {
+		position.ExitRoom = room
+		return
+	}
+
+	position.ExitVWAP = vwap
+	position.ExitRoom = room
+	position.PnL = bookPnL
+	position.PnLPct = bookPnLPct
+}
+
+/*
 dischargeStoploss arms Closing and calls onSettled when the stop fires.
 Caller holds position.mu.
 */
@@ -209,6 +234,15 @@ func (position *Position) dischargeStoploss() {
 	}
 
 	if position.Stoploss == nil || !position.Stoploss.Triggered() {
+		position.mu.Unlock()
+		return
+	}
+
+	minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
+
+	if position.PnLPct != nil &&
+		position.PnLPct.InexactFloat64() < minProfit {
+		position.Stoploss.disarmForHold()
 		position.mu.Unlock()
 		return
 	}

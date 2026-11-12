@@ -11,6 +11,7 @@ func init() {
 type Config struct {
 	Resonance *Resonance
 	Risk      *Risk
+	Selection *Selection
 	WebSocket *WebSocket
 	Market    *Market
 	Learning  *Learning
@@ -23,6 +24,7 @@ func NewConfig() *Config {
 	return &Config{
 		Resonance: NewResonance(),
 		Risk:      NewRisk(),
+		Selection: NewSelection(),
 		WebSocket: NewWebSocket(),
 		Market:    NewMarket(),
 		Learning:  NewLearning(),

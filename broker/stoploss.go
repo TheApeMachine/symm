@@ -1,5 +1,7 @@
 package broker
 
+import "github.com/theapemachine/symm/system"
+
 /*
 StoplossState is persisted on Position JSON; legacy wire values must keep stable
 numeric ids across restores.
@@ -15,10 +17,11 @@ const (
 )
 
 /*
-Stoploss invalidates an open lot.
+Stoploss trails profit on armed lots and sells only when still fee-net green.
 
 Arms above 1%, trails a keep-ratio floor of peak (50% at arm, +5pp keep per
-+1% peak), and never lets the floor sit below 0.5% once armed.
++1% peak). The latch fires only if mark PnL is still at/above policy min profit;
+otherwise the lot stays open through loss or scratch.
 */
 type Stoploss struct {
 	State          StoplossState `json:"State"`
@@ -46,7 +49,7 @@ func NewStoploss(PnLPct float64) *Stoploss {
 		FloorPnLPct:    PnLPct,
 		ArmPnlPct:      1.0,
 		GivebackPnlPct: 0.5,
-		FloorMinPnlPct: 0.5,
+		FloorMinPnlPct: system.Cfg.Selection.StoplossFloorMinPnlPct,
 		TightenPerPct:  0.05,
 	}
 }
@@ -68,6 +71,15 @@ func (stoploss *Stoploss) Update(PnLPct float64) {
 	if stoploss.State == stoplossLegacyTakeProfit {
 		stoploss.State = StoplossArmed
 		stoploss.GivebackPnlPct = 0.5
+	}
+
+	minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
+
+	if stoploss.State == StoplossArmed || stoploss.State == StoplossTriggered {
+		if stoploss.CurrentPnLPct < minProfit {
+			stoploss.disarmForHold()
+			return
+		}
 	}
 
 	if stoploss.State == StoplossTriggered {
@@ -98,7 +110,7 @@ func (stoploss *Stoploss) ensureDefaults() {
 		stoploss.GivebackPnlPct = 0.5
 	}
 
-	if stoploss.FloorMinPnlPct <= 0 {
+	if stoploss.FloorMinPnlPct == 0 {
 		stoploss.FloorMinPnlPct = 0.5
 	}
 
@@ -131,15 +143,28 @@ func (stoploss *Stoploss) trailArmed() {
 
 	floor := stoploss.PeakPnLPct * keep
 
-	if floor < stoploss.FloorMinPnlPct {
+	if stoploss.FloorMinPnlPct >= 0 && floor < stoploss.FloorMinPnlPct {
 		floor = stoploss.FloorMinPnlPct
 	}
 
 	stoploss.FloorPnLPct = floor
 
-	if stoploss.CurrentPnLPct < stoploss.FloorPnLPct {
+	minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
+
+	if stoploss.CurrentPnLPct < stoploss.FloorPnLPct &&
+		stoploss.CurrentPnLPct >= minProfit {
 		stoploss.State = StoplossTriggered
 	}
+}
+
+/*
+disarmForHold clears the trail when PnL drops under the policy profit floor so
+the lot can ride back without an armed floor above spot. Re-arms on ArmPnlPct.
+*/
+func (stoploss *Stoploss) disarmForHold() {
+	stoploss.State = StoplossHealthy
+	stoploss.PeakPnLPct = stoploss.CurrentPnLPct
+	stoploss.FloorPnLPct = stoploss.CurrentPnLPct
 }
 
 /*

@@ -35,15 +35,27 @@ func TestStoploss(t *testing.T) {
 					wantState: StoplossArmed,
 				},
 				{
-					name: "hard floor never sits below half percent after arm",
+					name: "giveback below policy profit floor disarms",
 					seed: func(s *Stoploss) { *s = *NewStoploss(0) },
 					updates: []float64{1.01, 0.6, 0.49},
-					wantState: StoplossTriggered,
+					wantState: StoplossHealthy,
 				},
 				{
-					name: "peak tightening adds keep then triggers",
+					name: "gap through trail while red disarms",
 					seed: func(s *Stoploss) { *s = *NewStoploss(0) },
-					updates: []float64{2.0, 3.0, 1.9, 1.7},
+					updates: []float64{2.0, -1.0},
+					wantState: StoplossHealthy,
+				},
+				{
+					name: "re-arms after disarm when profit clears arm threshold",
+					seed: func(s *Stoploss) { *s = *NewStoploss(0) },
+					updates: []float64{2.0, -1.0, 1.2},
+					wantState: StoplossArmed,
+				},
+				{
+					name: "peak tightening adds keep then triggers in profit",
+					seed: func(s *Stoploss) { *s = *NewStoploss(0) },
+					updates: []float64{2.0, 3.0, 1.9, 0.6},
 					wantState: StoplossTriggered,
 				},
 				{
@@ -56,14 +68,15 @@ func TestStoploss(t *testing.T) {
 					wantState: StoplossArmed,
 				},
 				{
-					name: "triggered state ignores later updates",
+					name: "latched triggered disarms when mark falls below profit floor",
 					seed: func(s *Stoploss) {
 						*s = *NewStoploss(0)
 						s.State = StoplossTriggered
 						s.FloorPnLPct = 1
+						s.CurrentPnLPct = 1
 					},
-					updates:   []float64{5.0, -1.0},
-					wantState: StoplossTriggered,
+					updates:   []float64{-1.0},
+					wantState: StoplossHealthy,
 				},
 			}
 

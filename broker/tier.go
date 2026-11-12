@@ -323,18 +323,19 @@ func (tier *Tier) Hello() {
 
 			mark := position.Mark
 
+			if tier.price != nil {
+				if tier.price.MarkPaused(position.Symbol) {
+					if touch := tier.price.CloseMark(position.Symbol); touch != nil {
+						mark = touch
+					}
+				} else if mark == nil {
+					mark = tier.price.CloseMark(position.Symbol)
+				}
+			}
+
 			if mark == nil {
-				if tier.price == nil {
-					positions[position.ID] = position
-					continue
-				}
-
-				mark = tier.price.CloseMark(position.Symbol)
-
-				if mark == nil {
-					positions[position.ID] = position
-					continue
-				}
+				positions[position.ID] = position
+				continue
 			}
 
 			_ = position.Update(mark)
@@ -1343,8 +1344,48 @@ func (tier *Tier) OpenPrivate() error {
 		if err := ws.Open(system.Cfg.WebSocket.Endpoints.Private); err != nil {
 			return errnie.Error(err)
 		}
+
+		tier.wirePrivateReconnect(ws)
 	}
 
+	if err := tier.resubscribePrivate(); err != nil {
+		return errnie.Error(err)
+	}
+
+	tier.wirePrivateREST()
+
+	if tier.Type == TierTypeReal {
+		tier.purgeSyntheticBalanceLots()
+	}
+
+	tier.pullHistory(true)
+
+	return nil
+}
+
+/*
+wirePrivateReconnect re-attaches execution and balance channels after every
+private-socket redial so fills and balances resume without a process restart.
+*/
+func (tier *Tier) wirePrivateReconnect(ws *network.WebsocketClient) {
+	if ws == nil {
+		return
+	}
+
+	ws.OnReconnect(func() error {
+		errnie.Warn("[tier] private stream resubscribe in flight")
+
+		if err := tier.resubscribePrivate(); err != nil {
+			return err
+		}
+
+		errnie.Info("[tier] private stream recovered")
+
+		return nil
+	})
+}
+
+func (tier *Tier) resubscribePrivate() error {
 	wire := tier.venue.Execution()
 
 	if wire == nil {
@@ -1374,20 +1415,12 @@ func (tier *Tier) OpenPrivate() error {
 	}
 
 	if err := tier.private.Write(buf); err != nil {
-		return errnie.Error(err)
+		return err
 	}
 
 	if err := tier.subscribePrivate("balances"); err != nil {
-		return errnie.Error(err)
+		return err
 	}
-
-	tier.wirePrivateREST()
-
-	if tier.Type == TierTypeReal {
-		tier.purgeSyntheticBalanceLots()
-	}
-
-	tier.pullHistory(true)
 
 	return nil
 }
@@ -1456,6 +1489,12 @@ func (tier *Tier) Run() {
 		if err != nil {
 			if tier.ctx.Err() != nil {
 				return
+			}
+
+			if !network.Recoverable(err) {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[tier] private ingress read failed", err,
+				))
 			}
 
 			continue

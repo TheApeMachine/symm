@@ -324,6 +324,12 @@ func (desk *Desk) Run() {
 				return
 			}
 
+			if !network.Recoverable(err) {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[desk] public ingress read failed", err,
+				))
+			}
+
 			continue
 		}
 
@@ -434,8 +440,11 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 
 		desk.price.NoteTrade(trade)
 
-		// Longs mark on the executable bid, never the print.
 		mark := desk.price.TouchBid(trade.Symbol)
+
+		if mark == nil && desk.Has(trade.Symbol) {
+			mark = desk.price.CloseMark(trade.Symbol)
+		}
 
 		if mark == nil {
 			continue
@@ -455,7 +464,13 @@ func (desk *Desk) Refresh(symbols []string) {
 			continue
 		}
 
-		if price := desk.price.TouchBid(symbol); price != nil {
+		price := desk.price.TouchBid(symbol)
+
+		if price == nil && desk.Has(symbol) {
+			price = desk.price.CloseMark(symbol)
+		}
+
+		if price != nil {
 			desk.mark(symbol, price)
 		}
 	}
@@ -562,6 +577,36 @@ func (desk *Desk) Has(symbol string) bool {
 	}
 
 	return false
+}
+
+/*
+OpenCount is the number of non-flat lots on one tier — board capacity uses this.
+*/
+func (desk *Desk) OpenCount(tt TierType) int {
+	tier := desk.tiers[tt]
+
+	if tier == nil || tier.positions == nil {
+		return 0
+	}
+
+	return tier.positions.OpenCount()
+}
+
+/*
+ChainOnSettle fans settle events to an extra listener on every armed tier.
+*/
+func (desk *Desk) ChainOnSettle(fn func(*Position)) {
+	if desk == nil || fn == nil {
+		return
+	}
+
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
+		tier.positions.ChainOnSettle(fn)
+	}
 }
 
 /*

@@ -27,6 +27,8 @@ type Model struct {
 	price     *broker.Price
 	store     *store.Client
 	tree      *atomic.Pointer[Tree]
+	board     *Board
+	rotation  *Rotation
 	resetPath func(string)
 	live      bool
 }
@@ -42,12 +44,17 @@ func NewModel(
 	resetPath func(string),
 	client *store.Client,
 ) *Model {
+	rotation := NewRotation(ctx)
+	board := NewBoard(ctx, rotation)
+
 	model := &Model{
 		System:    runtime.NewSystem(ctx, "model"),
 		desk:      desk,
 		price:     price,
 		store:     client,
 		tree:      &atomic.Pointer[Tree]{},
+		board:     board,
+		rotation:  rotation,
 		resetPath: resetPath,
 		live:      system.Cfg.Market.Model == "real",
 	}
@@ -56,6 +63,17 @@ func NewModel(
 	model.tree.Store(tree)
 
 	return model
+}
+
+/*
+NoteSettled feeds rotation memory when a lot closes or arms stoploss exit.
+*/
+func (model *Model) NoteSettled(position *broker.Position) {
+	if model == nil || model.rotation == nil {
+		return
+	}
+
+	model.rotation.NoteSettled(position)
 }
 
 /*
@@ -80,6 +98,16 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var (
+		candMu      sync.Mutex
+		enterCands  []EnterCandidate
+	)
+
+	queueEnter := func(cand EnterCandidate) {
+		candMu.Lock()
+		enterCands = append(enterCands, cand)
+		candMu.Unlock()
+	}
 
 	decide := func(decision *runtime.Decision) {
 		// Live desk: stamp every outcome real. Untiered skips otherwise
@@ -220,7 +248,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				(action == ActionNone && bullish && cut.Len() >= minPath)
 
 			if action != ActionNone {
-				model.applyAction(decide, symbol, path, action, resistance, bullish, bypass, open)
+				model.applyAction(decide, queueEnter, symbol, path, action, resistance, bullish, bypass, open)
 				return
 			}
 
@@ -261,12 +289,42 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			if wantEnter {
-				model.enterTiers(decide, symbol, path, resistance, false, bypass)
+				queueEnter(EnterCandidate{
+					Decide:     decide,
+					Symbol:     symbol,
+					Path:       path,
+					Resistance: resistance,
+					Bypass:     bypass,
+				})
 			}
 		})
 	}
 
 	wg.Wait()
+
+	if len(enterCands) > 0 {
+		enter := func(cand EnterCandidate) {
+			model.enterTiers(
+				cand.Decide, cand.Symbol, cand.Path,
+				cand.Resistance, cand.PathFound, cand.Bypass,
+			)
+		}
+
+		if model.board != nil {
+			model.board.Place(
+				enterCands,
+				envelope,
+				model.price,
+				model.desk,
+				model.live,
+				enter,
+			)
+		} else {
+			for _, cand := range enterCands {
+				enter(cand)
+			}
+		}
+	}
 
 	if ui.UI != nil && ui.UI.Active() && len(envelope.Decisions) > 0 {
 		if payload := envelope.Publish("decisions"); len(payload) > 0 {
@@ -314,6 +372,7 @@ enter against a bearish forward curve.
 */
 func (model *Model) applyAction(
 	decide func(*runtime.Decision),
+	queueEnter func(EnterCandidate),
 	symbol, path string,
 	action Action,
 	resistance float64,
@@ -333,7 +392,14 @@ func (model *Model) applyAction(
 			return
 		}
 
-		model.enterTiers(decide, symbol, path, resistance, true, bypass)
+		queueEnter(EnterCandidate{
+			Decide:     decide,
+			Symbol:     symbol,
+			Path:       path,
+			Resistance: resistance,
+			Bypass:     bypass,
+			PathFound:  true,
+		})
 
 	case ActionExit:
 		if bullish || len(open) == 0 {

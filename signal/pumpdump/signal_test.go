@@ -41,7 +41,7 @@ func TestPumpdumpStep(t *testing.T) {
 		books := broker.NewBookManager()
 		at := time.Now().UTC()
 
-		signal := pumpdump.NewSignal(context.Background(), books)
+		signal := pumpdump.NewSignal(context.Background(), books, nil)
 		envelope := runtime.NewEnvelope(nil)
 
 		for i := range 140 {

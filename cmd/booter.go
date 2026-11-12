@@ -16,7 +16,6 @@ import (
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/internal/disconnect"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -379,14 +378,14 @@ func (booter *Booter) initPipeline() error {
 		"workspace",
 		[]nmruntime.Ring{
 			{Group: "signal", Nodes: []nmruntime.Node{
-				correlation.NewSignal(ctx),
+				correlation.NewSignal(ctx, booter.price),
 				cvd.NewSignal(ctx, booter.book),
 				depthflow.NewSignal(ctx, booter.book, booter.instrument),
 				hawkes.NewSignal(ctx),
 				leadlag.NewSignal(ctx),
 				liquidity.NewSignal(ctx, booter.book),
 				morphology.NewSignal(ctx, booter.book),
-				pumpdump.NewSignal(ctx, booter.book),
+				pumpdump.NewSignal(ctx, booter.book, booter.price),
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
 			}},
@@ -396,11 +395,13 @@ func (booter *Booter) initPipeline() error {
 			{Group: "model", Nodes: []nmruntime.Node{
 				model,
 			}},
-			// {Group: "persist", Nodes: []nmruntime.Node{
-			// 	booter.persist,
-			// }},
+			{Group: "persist", Nodes: []nmruntime.Node{
+				booter.persist,
+			}},
 		},
 	)
+
+	booter.wireSettle(model)
 
 	booter.workspace.Transition(nmruntime.READY)
 
@@ -455,13 +456,33 @@ func (booter *Booter) seedBooks() error {
 		return errnie.Err(errnie.IO, "[booter] level3 subscribe failed", err)
 	}
 
-	timeout := 2 * time.Minute
+	const seedWait = 2 * time.Minute
+	const seedRetry = 30 * time.Second
 
-	if err := booter.book.Wait(timeout); err != nil {
-		return errnie.Err(errnie.IO, "[booter] level3 seed timed out", err)
+	for {
+		if err := booter.book.Wait(seedWait); err != nil {
+			if booter.Context().Err() != nil {
+				return errnie.Err(errnie.IO, "[booter] level3 seed canceled", err)
+			}
+
+			errnie.Warn("[booter] level3 books still seeding, retrying: " + err.Error())
+
+			select {
+			case <-booter.Context().Done():
+				return booter.Context().Err()
+			case <-time.After(seedRetry):
+			}
+
+			continue
+		}
+
+		errnie.Info(fmt.Sprintf(
+			"[booter] level3 books seeded for %d symbols",
+			len(symbols),
+		))
+
+		return nil
 	}
-
-	return nil
 }
 
 func (booter *Booter) readLevel3(client *network.WebsocketClient) {
@@ -479,9 +500,7 @@ func (booter *Booter) readLevel3(client *network.WebsocketClient) {
 				return
 			}
 
-			if disconnect.Expected(err) {
-				errnie.Warn("[booter] level3 disconnected, retrying read")
-			} else {
+			if !network.Recoverable(err) {
 				errnie.Error(errnie.Err(
 					errnie.IO, "[booter] level3 ingress read failed", err,
 				))
@@ -511,4 +530,12 @@ func (booter *Booter) openFirehose() error {
 	}
 
 	return nil
+}
+
+func (booter *Booter) wireSettle(model *strategy.Model) {
+	if booter.desk == nil || model == nil {
+		return
+	}
+
+	booter.desk.ChainOnSettle(model.NoteSettled)
 }

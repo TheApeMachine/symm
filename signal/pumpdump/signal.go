@@ -3,11 +3,14 @@ package pumpdump
 import (
 	"context"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -18,32 +21,61 @@ Map() feeds logic/resonance Features (compression, exhaustion) for Model story g
 */
 type Signal struct {
 	*runtime.System
-	books *broker.Book
-	algo  *equation.Ignition
+	books  *broker.Book
+	price  *broker.Price
+	algo   *equation.Ignition
+	pulse  atomic.Uint64
 }
 
 /*
 NewSignal binds L3 touch state on each trade tick — Pumpdump labels are book-native,
 not printable from public tape alone.
 */
-func NewSignal(ctx context.Context, books *broker.Book) *Signal {
+func NewSignal(ctx context.Context, books *broker.Book, price *broker.Price) *Signal {
 	return &Signal{
 		System: runtime.NewSystem(ctx, "pumpdump"),
 		books:  books,
+		price:  price,
 		algo:   equation.NewIgnition(128),
 	}
 }
 
 /*
-Step fans one trade frame in parallel — metrics aggregate later, but each symbol
-needs fresh readings here or featureScorer never marks that Feature as seen.
-Ignition uses touch bid/ask with print for enter/exit compression features.
+Step fans trade prints and book heartbeats so quiet symbols still warm ignition.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
+
+	measure := func(symbol string, at time.Time, last, bid, ask, vol float64) {
+		if symbol == "" || vol <= 0 {
+			return
+		}
+
+		output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
+			At:     at,
+			Symbol: symbol,
+			Last:   last,
+			Volume: vol,
+			Ask:    ask,
+			Bid:    bid,
+		})
+
+		if err != nil {
+			signal.Error(err)
+			return
+		}
+
+		if !ready {
+			return
+		}
+
+		mu.Lock()
+		envelope.Pumpdump[symbol] = &output
+		mu.Unlock()
+	}
 
 	for _, data := range envelope.Trade.Data {
 		wg.Go(func() {
@@ -70,28 +102,39 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
-			output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
-				At:     data.Timestamp,
-				Symbol: data.Symbol,
-				Last:   data.Price.InexactFloat64(),
-				Volume: data.Qty.InexactFloat64(),
-				Ask:    ask,
-				Bid:    bid,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			mu.Lock()
-			envelope.Pumpdump[data.Symbol] = &output
-			mu.Unlock()
+			measure(
+				data.Symbol, data.Timestamp,
+				data.Price.InexactFloat64(), bid, ask,
+				data.Qty.InexactFloat64(),
+			)
 		})
+	}
+
+	if signal.price != nil {
+		batch := system.Cfg.Selection.HeartbeatBatch
+
+		if batch <= 0 {
+			batch = 48
+		}
+
+		start := int(signal.pulse.Load())
+		symbols, next := signal.price.PulseSymbols(batch, start)
+
+		for _, symbol := range symbols {
+			last, bid, ask, ok := signal.price.PulseQuote(symbol)
+
+			if !ok {
+				continue
+			}
+
+			symbol, last, bid, ask := symbol, last, bid, ask
+
+			wg.Go(func() {
+				measure(symbol, time.Now(), last, bid, ask, 1e-12)
+			})
+		}
+
+		signal.pulse.Store(uint64(next))
 	}
 
 	wg.Wait()

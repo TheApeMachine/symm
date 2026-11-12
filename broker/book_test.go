@@ -333,6 +333,7 @@ func TestBookManager(t *testing.T) {
 
 		manager.Stale([]string{"SOL/USD"})
 		So(manager.StaleSymbol("SOL/USD"), ShouldBeTrue)
+		So(manager.MarkPaused("SOL/USD"), ShouldBeTrue)
 		So(manager.Get("SOL/USD"), ShouldBeNil)
 	})
 
