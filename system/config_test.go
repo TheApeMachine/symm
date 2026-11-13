@@ -34,3 +34,11 @@ func TestNewConfig(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewConfig(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewConfig()
+	}
+}

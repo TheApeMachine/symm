@@ -66,3 +66,43 @@ func TestCommand(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkUnmarshalJSONOrder(b *testing.B) {
+	raw := []byte(`{
+		"method":"add_order",
+		"result":{
+			"order_id":"O3RGN3-S2VJ7-ZNHVNO",
+			"cl_ord_id":"desk-enter-42",
+			"order_userref":0
+		},
+		"success":true,
+		"error":"",
+		"req_id":901,
+		"time_in":"2026-03-06T14:20:01.123456Z",
+		"time_out":"2026-03-06T14:20:01.234567Z"
+	}`)
+	order := NewOrder()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sonic.Unmarshal(raw, order)
+	}
+}
+
+func BenchmarkCommand(b *testing.B) {
+	req := &AddOrderRequest{
+		Pair:    "BTC/USD",
+		Type:    "buy",
+		OrdType: "limit",
+		Volume:  "0.25",
+		Price:   "64000.0",
+		ClOrdId: "enter-btc-1",
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = req.Command()
+	}
+}

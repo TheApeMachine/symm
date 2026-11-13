@@ -13,7 +13,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 )
 
-func trainingBook(t *testing.T, symbol string) *broker.Price {
+func trainingBook(t testing.TB, symbol string) *broker.Price {
 	t.Helper()
 
 	bidPx := decimal.NewFromInt(100)
@@ -219,4 +219,105 @@ func TestStepCut(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkNewTraining(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTraining(ctx, trainingBook(b, "BTC/USD"), &broker.Desk{}, nil)
+	}
+}
+
+func BenchmarkTrainingStep(b *testing.B) {
+	ctx := context.Background()
+	training := &Training{
+		System:     runtime.NewSystem(ctx, "training"),
+		price:      trainingBook(b, "TRN/USD"),
+		desk:       &broker.Desk{},
+		grid:       store.NewGrid(ctx),
+		sequencers: &sync.Map{},
+	}
+	env := runtime.NewEnvelope(nil)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = training.Step(env)
+	}
+}
+
+func BenchmarkSequencer(b *testing.B) {
+	training := &Training{sequencers: &sync.Map{}}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = training.Sequencer("BTC/USD")
+	}
+}
+
+func BenchmarkRestoreSequencer(b *testing.B) {
+	training := &Training{sequencers: &sync.Map{}}
+	live := training.Sequencer("SYM/USD")
+	_, _ = live.Step("R01", 0.5)
+	state := live.State()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		training.restoreSequencer("SYM/USD", state)
+	}
+}
+
+func BenchmarkResetSequencer(b *testing.B) {
+	ctx := context.Background()
+	training := NewTraining(ctx, trainingBook(b, "RST/USD"), &broker.Desk{}, nil)
+	seq := training.Sequencer("RST/USD")
+	_, _ = seq.Step("R03", 0.7)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		training.ResetSequencer("RST/USD")
+		seq.Step("R03", 0.7)
+	}
+}
+
+func BenchmarkFlush(b *testing.B) {
+	ctx := context.Background()
+	training := NewTraining(ctx, trainingBook(b, "FLU/USD"), &broker.Desk{}, nil)
+	seq := training.Sequencer("FLU/USD")
+	_, _ = seq.Step("R02", 0.6)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = training.Flush()
+	}
+}
+
+func BenchmarkStepCut(b *testing.B) {
+	training := &Training{
+		System:     runtime.NewSystem(context.Background(), "training"),
+		sequencers: &sync.Map{},
+	}
+	regions := []*runtime.Region{
+		{Key: 3, Brightness: 0.8},
+		{Key: 17, Brightness: 0.9},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = training.stepCut("BTC/USD", regions)
+	}
 }

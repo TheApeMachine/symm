@@ -91,3 +91,41 @@ func TestEmptyPositionView(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewCatalog(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewCatalog("symm")
+	}
+}
+
+func BenchmarkSeeds(b *testing.B) {
+	catalog := NewCatalog("symm")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.seeds()
+	}
+}
+
+func BenchmarkPositionView(b *testing.B) {
+	catalog := NewCatalog("symm")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.positionView("open_paper", "s3://symm/paper/open/**")
+	}
+}
+
+func BenchmarkEmptyPositionView(b *testing.B) {
+	catalog := NewCatalog("symm")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.emptyPositionView("closed_paper")
+	}
+}

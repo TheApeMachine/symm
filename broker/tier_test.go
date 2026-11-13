@@ -223,3 +223,159 @@ func TestTierSettle(t *testing.T) {
 		})
 	}))
 }
+
+func BenchmarkTierTypeString(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = TierTypePaper.String()
+	}
+}
+
+func BenchmarkNewTier(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withTier(ctx, TierTypePaper, func(tier *Tier) {
+			_ = tier
+		})()
+	}
+}
+
+func BenchmarkTierHello(b *testing.B) {
+	ctx := context.Background()
+	var tier *Tier
+	withTier(ctx, TierTypePaper, func(t *Tier) {
+		tier = t
+		pos := NewPosition(t.ctx, testSymbol, "paper", "path", t.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		t.positions.Add(testSymbol, pos, true)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tier.Hello()
+	}
+}
+
+func BenchmarkTierUpdate(b *testing.B) {
+	ctx := context.Background()
+	var tier *Tier
+	withTier(ctx, TierTypePaper, func(t *Tier) {
+		tier = t
+		pos := NewPosition(t.ctx, testSymbol, "paper", "path", t.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		t.positions.Add(testSymbol, pos, true)
+	})()
+	upd := &market.Update{Symbol: testSymbol, Price: dec("120")}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tier.Update(upd)
+	}
+}
+
+func BenchmarkTierEnter(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withTier(ctx, TierTypePaper, func(tier *Tier) {
+			_ = tier.Enter(testSymbol, "R00/M1", true)
+		})()
+	}
+}
+
+func BenchmarkTierExit(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withTier(ctx, TierTypePaper, func(tier *Tier) {
+			pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+			pos.ExitPath = "R00/M1"
+			tier.positions.Add(testSymbol, pos, true)
+			_ = tier.Exit(pos)
+		})()
+	}
+}
+
+func BenchmarkTierSend(b *testing.B) {
+	ctx := context.Background()
+	var tier *Tier
+	var pos *Position
+	withTier(ctx, TierTypePaper, func(t *Tier) {
+		tier = t
+		pos = NewPosition(t.ctx, testSymbol, "paper", "path", t.price, nil, nil)
+		_ = pos.Enter("R00/M1", dec("1"), t.balance)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = tier.Send(pos, "enter")
+	}
+}
+
+func BenchmarkTierClearPending(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withTier(ctx, TierTypePaper, func(tier *Tier) {
+			pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+			tier.pending.Store(testSymbol, pos)
+			tier.ClearPending(testSymbol)
+		})()
+	}
+}
+
+func BenchmarkTierPending(b *testing.B) {
+	ctx := context.Background()
+	var tier *Tier
+	withTier(ctx, TierTypePaper, func(t *Tier) {
+		tier = t
+		pos := NewPosition(t.ctx, testSymbol, "paper", "path", t.price, nil, nil)
+		tier.pending.Store(testSymbol, pos)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		for range tier.Pending() {
+		}
+	}
+}
+
+func BenchmarkTierSettle(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withTier(ctx, TierTypePaper, func(tier *Tier) {
+			pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+			tier.positions.Add(testSymbol, pos, true)
+			tier.settle(pos)
+		})()
+	}
+}

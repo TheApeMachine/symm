@@ -41,3 +41,18 @@ func TestIgnitionHot(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkIgnitionHot(b *testing.B) {
+	sel := system.Cfg.Selection
+	reading := &equation.IgnitionOutput{
+		Precursor:   sel.IgnitionPrecursorMin,
+		Compression: sel.IgnitionCompressionMin,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ignitionHot(reading)
+	}
+}

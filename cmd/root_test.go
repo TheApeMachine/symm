@@ -22,3 +22,12 @@ func TestLoadEmbeddedConfig(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkLoadEmbeddedConfig(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		viper.Reset()
+		_ = loadEmbeddedConfig()
+	}
+}

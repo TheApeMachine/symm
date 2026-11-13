@@ -112,3 +112,68 @@ func TestNewTradeSubscription(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewTrade(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTrade().Request()
+	}
+}
+
+func BenchmarkUnmarshalJSONTrade(b *testing.B) {
+	raw := []byte(`{
+		"channel":"trade",
+		"type":"update",
+		"data":[{
+			"symbol":"BTC/USD",
+			"side":"buy",
+			"price":"50000.1",
+			"qty":0.25,
+			"ord_type":"market",
+			"trade_id":42,
+			"timestamp":"2024-01-02T12:00:00Z"
+		}]
+	}`)
+	trade := NewTrade()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = trade.UnmarshalJSON(raw)
+	}
+}
+
+func BenchmarkToMarketTrade(b *testing.B) {
+	trade := NewTrade()
+	_ = trade.UnmarshalJSON([]byte(`{
+		"channel":"trade",
+		"type":"update",
+		"data":[{
+			"symbol":"ETH/USD",
+			"side":"sell",
+			"price":"3000",
+			"qty":1.5,
+			"ord_type":"limit",
+			"trade_id":7,
+			"timestamp":"2024-01-02T12:00:00Z"
+		}]
+	}`))
+	book := market.NewTrade("", "", nil)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		trade.ToMarket(book)
+	}
+}
+
+func BenchmarkNewTradeSubscription(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sonic.Marshal(NewTradeSubscription([]string{"BTC/USD"}))
+	}
+}

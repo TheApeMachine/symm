@@ -108,3 +108,60 @@ func TestVirtualPost(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkRestPath(b *testing.B) {
+	const path = "https://api.kraken.com/0/private/Balance"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = RestPath(path)
+	}
+}
+
+func BenchmarkNewVirtual(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		virtual := NewVirtual(ctx)
+		_ = virtual.Close()
+	}
+}
+
+func BenchmarkVirtualClose(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		virtual := NewVirtual(ctx)
+		_ = virtual.Close()
+	}
+}
+
+func BenchmarkVirtualWrite(b *testing.B) {
+	virtual := NewVirtual(context.Background())
+	defer virtual.Close()
+	payload := []byte(`{"method":"ping"}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = virtual.Write(payload)
+	}
+}
+
+func BenchmarkVirtualPost(b *testing.B) {
+	virtual := NewVirtual(context.Background())
+	defer virtual.Close()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = virtual.Post("/0/public/Time", nil)
+	}
+}

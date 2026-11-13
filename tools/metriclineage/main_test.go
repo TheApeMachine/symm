@@ -77,3 +77,37 @@ func TestBuildReport(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSplitMetricIdentity(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = splitMetricIdentity("liquidity", "depth_ratio:bid")
+	}
+}
+
+func BenchmarkMetricIDString(b *testing.B) {
+	id := metricID{Source: "liquidity", Metric: "depth_ratio", Side: "bid"}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = id.String()
+	}
+}
+
+func BenchmarkBuildReport(b *testing.B) {
+	identity := splitMetricIdentity("toxicity", "touch_fill_fraction:ask")
+	producers := []producer{{ID: identity}}
+	edges := []consumerEdge{{
+		ID:       identity,
+		Kind:     "bound",
+		Consumer: "position-risk:executable-liquidity",
+	}}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = buildReport(producers, edges, nil)
+	}
+}

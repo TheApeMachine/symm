@@ -327,3 +327,103 @@ func TestLeafObject(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewAction(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewAction("enter")
+	}
+}
+
+func BenchmarkActionString(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ActionEnter.String()
+	}
+}
+
+func BenchmarkNewTree(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTree(ctx, "model/paths/", nil)
+	}
+}
+
+func BenchmarkPredict(b *testing.B) {
+	tree := emptyTree()
+	put(tree, "R06.R00/R07.R01", leaf(ActionEnter, 0.75))
+	put(tree, "R06.R00/R07.R01/R08.R02", leaf(ActionEnter, 0.75))
+	cut := tokensAt("R06.R00/R07.R01/R08.R02", 1.0)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tree.Predict(cut)
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	path := "R06.R00/R07.R01"
+	tree := emptyTree()
+	put(tree, path, leaf(ActionEnter, seedResistance()))
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tree.Update(path, -0.05)
+	}
+}
+
+func BenchmarkInsert(b *testing.B) {
+	tree := emptyTree()
+	path := "R06.R00/R07.R01"
+	decision := leaf(ActionEnter, 0.42)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tree.Insert(path, decision)
+	}
+}
+
+func BenchmarkEnsure(b *testing.B) {
+	tree := emptyTree()
+	path := "R06.R00/R07.R01"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tree.Ensure(path, ActionEnter)
+	}
+}
+
+func BenchmarkDelete(b *testing.B) {
+	tree := emptyTree()
+	path := "R06.R00/R07.R01"
+	put(tree, path, leaf(ActionEnter, 0.5))
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tree.Delete(path)
+		put(tree, path, leaf(ActionEnter, 0.5))
+	}
+}
+
+func BenchmarkLeafObject(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		leafObject("model/paths/R01/M1/enter.bin", "model/paths/")
+	}
+}

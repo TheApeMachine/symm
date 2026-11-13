@@ -84,3 +84,33 @@ func TestThrottleUntil(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkVenueErrors(b *testing.B) {
+	body := []byte(`{"error":["EAPI:Rate limit exceeded"]}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = VenueErrors(body)
+	}
+}
+
+func BenchmarkRateLimited(b *testing.B) {
+	errs := []any{"EAPI:Rate limit exceeded"}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = RateLimited(errs)
+	}
+}
+
+func BenchmarkThrottleUntil(b *testing.B) {
+	errs := []any{"EService: Throttled: 1700000000"}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = ThrottleUntil(errs)
+	}
+}

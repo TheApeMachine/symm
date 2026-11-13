@@ -26,3 +26,11 @@ func TestNewMarket(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewMarket(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewMarket()
+	}
+}

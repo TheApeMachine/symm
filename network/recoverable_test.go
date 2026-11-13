@@ -41,3 +41,13 @@ func TestRecoverable(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkRecoverable(b *testing.B) {
+	dial := errnie.Err(errnie.IO, "[network.websocket] error dialing url", errors.New("dial"))
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Recoverable(dial)
+	}
+}

@@ -300,3 +300,260 @@ func TestDeskBookStale(t *testing.T) {
 		})
 	}))
 }
+
+func BenchmarkDeskFor(b *testing.B) {
+	ctx := context.Background()
+	var price *Price
+	withPrice(func(p *Price) { price = p })()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = DeskFor(ctx, map[string]network.Client{}, price, nil, false)
+	}
+}
+
+func BenchmarkDeskForLive(b *testing.B) {
+	ctx := context.Background()
+	var price *Price
+	withPrice(func(p *Price) { price = p })()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = DeskFor(ctx, map[string]network.Client{}, price, nil, true)
+	}
+}
+
+func BenchmarkDeskOpenCount(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = desk.OpenCount(TierTypePaper)
+	}
+}
+
+func BenchmarkDeskHas(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = desk.Has(testSymbol)
+	}
+}
+
+func BenchmarkDeskCanSize(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) { desk = d })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = desk.CanSize(testSymbol)
+	}
+}
+
+func BenchmarkDeskHello(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) { desk = d })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		desk.Hello()
+	}
+}
+
+func BenchmarkDeskUpdate(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+	trades := []*market.TradeData{{Symbol: testSymbol}}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		desk.Update(trades)
+	}
+}
+
+func BenchmarkDeskEnter(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withDesk(ctx, false, func(desk *Desk) {
+			_ = desk.Enter(testSymbol, "R00/M1", TierTypePaper, true)
+		})()
+	}
+}
+
+func BenchmarkDeskExit(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withDesk(ctx, false, func(desk *Desk) {
+			paper := desk.tiers[TierTypePaper]
+			pos := NewPosition(ctx, testSymbol, "paper", "path", desk.price, nil, nil)
+			pos.ExitPath = "R00/M1"
+			paper.positions.Add(testSymbol, pos, true)
+			_ = desk.Exit(TierTypePaper, pos)
+		})()
+	}
+}
+
+func BenchmarkDeskPositions(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		for range desk.Positions(TierTypePaper, testSymbol) {
+		}
+	}
+}
+
+func BenchmarkDeskPending(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		paper.pending.Store(testSymbol, pos)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		for range desk.Pending(TierTypePaper) {
+		}
+	}
+}
+
+func BenchmarkDeskClearPending(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withDesk(ctx, false, func(desk *Desk) {
+			paper := desk.tiers[TierTypePaper]
+			pos := NewPosition(ctx, testSymbol, "paper", "path", desk.price, nil, nil)
+			paper.pending.Store(testSymbol, pos)
+			desk.ClearPending(TierTypePaper, testSymbol)
+		})()
+	}
+}
+
+func BenchmarkDeskFlush(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = desk.Flush()
+	}
+}
+
+func BenchmarkDeskApply(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) {
+		desk = d
+		paper := d.tiers[TierTypePaper]
+		pos := NewPosition(ctx, testSymbol, "paper", "path", d.price, nil, nil)
+		paper.positions.Add(testSymbol, pos, true)
+	})()
+	exec := &market.Execution{
+		Data: []*market.ExecutionData{{
+			ExecID: "b1", Side: "buy", Symbol: testSymbol,
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		}},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		desk.Apply(exec)
+	}
+}
+
+func BenchmarkDeskBookStale(b *testing.B) {
+	ctx := context.Background()
+	var desk *Desk
+	withDesk(ctx, false, func(d *Desk) { desk = d })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = desk.BookStale(testSymbol)
+	}
+}

@@ -127,3 +127,30 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewTickPersist(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTickPersist(ctx, nil)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	ctx := context.Background()
+	backing := &recordingTickStore{}
+	persist := &TickPersist{
+		System: nmruntime.NewSystem(ctx, "tick-persist"),
+		store:  backing,
+	}
+	envelope := nmruntime.NewEnvelope(nil)
+	envelope.N = 42
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = persist.Step(envelope)
+	}
+}

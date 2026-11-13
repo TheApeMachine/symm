@@ -178,3 +178,83 @@ func TestErr(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewAuthNonce(b *testing.B) {
+	base := b.TempDir()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	n := 0
+	for b.Loop() {
+		dir := filepath.Join(base, strconv.Itoa(n))
+		n++
+		_ = os.Mkdir(dir, 0o755)
+		nonce, err := NewAuthNonce(dir)
+		if err == nil {
+			_ = nonce.Close()
+		}
+	}
+}
+
+func BenchmarkNext(b *testing.B) {
+	dir := b.TempDir()
+	nonce, err := NewAuthNonce(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer nonce.Close()
+
+	clock := nonce.highWater.Load() + 1
+	nonce.clock = func() int64 { return clock }
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = nonce.Next()
+	}
+}
+
+func BenchmarkBump(b *testing.B) {
+	dir := b.TempDir()
+	nonce, err := NewAuthNonce(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer nonce.Close()
+
+	hw := nonce.highWater.Load()
+	nonce.clock = func() int64 { return hw }
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		nonce.Bump(hw + 1000)
+		_ = nonce.Next()
+		hw += 1002
+	}
+}
+
+func BenchmarkErr(b *testing.B) {
+	dir := b.TempDir()
+	nonce, err := NewAuthNonce(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer nonce.Close()
+
+	blocker := filepath.Join(dir, "blocker")
+	_ = os.WriteFile(blocker, []byte("x"), 0o600)
+	nonce.path = filepath.Join(blocker, "kraken-auth-nonce")
+	nonce.lastPersistNs.Store(0)
+	_ = nonce.Next()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = nonce.Err()
+	}
+}

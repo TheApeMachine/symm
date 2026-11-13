@@ -116,3 +116,50 @@ func TestLane(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewTape(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTape()
+	}
+}
+
+func BenchmarkNote(b *testing.B) {
+	tape := NewTape()
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tape.Note("BTC/USD", 250.0, at)
+	}
+}
+
+func BenchmarkUptake(b *testing.B) {
+	tape := NewTape()
+	now := time.Unix(1_700_000_600, 0).UTC()
+	tape.Note("BTC/USD", 40.0, now)
+	tape.Note("BTC/USD", 60.0, now.Add(-5*time.Minute))
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = tape.Uptake("BTC/USD", now)
+	}
+}
+
+func BenchmarkLane(b *testing.B) {
+	tape := NewTape()
+	at := time.Unix(10_000, 0)
+	tape.Note(testSymbol, 42, at)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = tape.lane(testSymbol)
+	}
+}

@@ -63,3 +63,45 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSignal(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = correlation.NewSignal(context.Background(), nil)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	signal := correlation.NewSignal(context.Background(), nil)
+	envelope := runtime.NewEnvelope(nil)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	order := []string{"B/USD", "C/USD", "D/USD", "E/USD", "A/USD"}
+	trade := &market.Trade{Data: []*market.TradeData{{
+		Symbol:    "A/USD",
+		Side:      market.SideBuy,
+		Price:     decimal.NewFromFloat(200),
+		Qty:       decimal.NewFromInt(2),
+		Timestamp: at,
+	}}}
+
+	for i := range 127 {
+		price := decimal.NewFromFloat(100 + float64(i))
+		ts := at.Add(time.Duration(i) * time.Second)
+		for _, symbol := range order {
+			trade.Data[0].Symbol = symbol
+			trade.Data[0].Price = price
+			trade.Data[0].Timestamp = ts
+			envelope.Trade = trade
+			envelope = signal.Step(envelope)
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		envelope.Trade = trade
+		envelope = signal.Step(envelope)
+	}
+}

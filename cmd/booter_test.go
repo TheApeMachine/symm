@@ -25,3 +25,15 @@ func TestNewBooter(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewBooter(b *testing.B) {
+	system.Cfg = system.NewConfig()
+	system.Cfg.Market.Model = "paper"
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewBooter(ctx, "symm-test")
+	}
+}

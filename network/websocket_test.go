@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,8 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 )
 
-func persistentWSServer(t *testing.T) (wsURL string, cleanup func()) {
-	t.Helper()
+func persistentWSServer(tb testing.TB) (wsURL string, cleanup func()) {
+	tb.Helper()
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,4 +133,61 @@ func TestClose(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkNewWebsocketClient(b *testing.B) {
+	ctx := context.Background()
+	const url = "wss://ws.kraken.com/v2"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewWebsocketClient(ctx, url)
+	}
+}
+
+func BenchmarkOpen(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		client := NewWebsocketClient(ctx, wsURL)
+		_ = client.Open()
+		_ = client.Close()
+	}
+}
+
+func BenchmarkWrite(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
+	client := NewWebsocketClient(ctx, wsURL)
+	_ = client.Open()
+	client.Transition(runtime.READY)
+	defer client.Close()
+	payload := []byte(`{"method":"ping"}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = client.Write(payload)
+	}
+}
+
+func BenchmarkClose(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		client := NewWebsocketClient(ctx, wsURL)
+		_ = client.Open()
+		_ = client.Close()
+	}
 }

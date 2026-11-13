@@ -60,3 +60,40 @@ func TestAllows(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSetFocus(b *testing.B) {
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		SetFocus("BTC/USD")
+	}
+}
+
+func BenchmarkFocus(b *testing.B) {
+	SetFocus("ETH/USD")
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Focus()
+	}
+}
+
+func BenchmarkAllows(b *testing.B) {
+	SetFocus("BTC/USD")
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Allows("BTC/USD")
+	}
+}

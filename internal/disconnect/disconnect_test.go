@@ -46,3 +46,13 @@ func TestExpected(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkExpected(b *testing.B) {
+	err := &websocket.CloseError{Code: websocket.CloseAbnormalClosure}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Expected(err)
+	}
+}

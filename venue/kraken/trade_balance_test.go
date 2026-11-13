@@ -117,3 +117,60 @@ func TestMarshalJSONTradeBalanceResult(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkUnmarshalJSONTradeBalance(b *testing.B) {
+	tb := NewTradeBalance()
+	raw := []byte(tradeBalanceREST)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = tb.UnmarshalJSON(raw)
+	}
+}
+
+func BenchmarkToMarketTradeBalance(b *testing.B) {
+	tb := NewTradeBalance()
+	raw := []byte(`{
+		"error":[],
+		"result":{
+			"eb":"161.01",
+			"tb":"50.00",
+			"m":"0.0000",
+			"n":"0.80",
+			"c":"72.09",
+			"v":"60.60",
+			"e":"61.76",
+			"mf":"61.76"
+		}
+	}`)
+	_ = tb.UnmarshalJSON(raw)
+	book := market.NewBalance(map[string]any{
+		"quote":  "USD",
+		"assets": []*market.Asset{},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tb.ToMarket(book)
+	}
+}
+
+func BenchmarkMarshalJSONTradeBalanceResult(b *testing.B) {
+	unrealized := decimal.RequireFromString("-0.32")
+	equity := decimal.RequireFromString("199.68")
+	cash := decimal.RequireFromString("160.14")
+	tb := &TradeBalanceResult{
+		UnrealizedPnL: &unrealized,
+		Equity:        &equity,
+		AvailableCash: &cash,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sonic.Marshal(tb)
+	}
+}

@@ -75,3 +75,38 @@ func TestLastGain(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewMDL(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewMDL()
+	}
+}
+
+func BenchmarkMDLAnalyze(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		mdl := NewMDL()
+		mdl.MinSegmentSymbols = 2
+		for _, sym := range []string{
+			"R00.R00", "R00.R01", "R01.R00", "R01.R01",
+			"R02.R00", "R02.R01", "R03.R00", "R03.R01",
+		} {
+			mdl.Analyze(sym)
+		}
+	}
+}
+
+func BenchmarkLastGain(b *testing.B) {
+	mdl := NewMDL()
+	mdl.lastGain = 1.5
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = mdl.LastGain()
+	}
+}

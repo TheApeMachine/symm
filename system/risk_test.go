@@ -64,3 +64,33 @@ func TestApply(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewRisk(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewRisk()
+	}
+}
+
+func BenchmarkApply(b *testing.B) {
+	risk := NewRisk()
+	patch := map[string]any{
+		"type":                    "risk",
+		"min_mover_volume_usd":    50_000.0,
+		"min_mover_change_pct":    1.25,
+		"max_entry_spread_pct":    0.75,
+		"max_entry_peak_frac":     0.85,
+		"min_touch_bid_cash":      250.0,
+		"min_backing_ratio":       0.4,
+		"min_tape_notional_usd":   250.0,
+		"max_entry_open_drag_pct": 1.1,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		risk.Apply(patch)
+	}
+}

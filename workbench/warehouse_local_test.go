@@ -10,7 +10,7 @@ import (
 /*
 local opens an in-memory DuckDB with fixture views for Warehouse tests.
 */
-func local(t *testing.T) *Warehouse {
+func local(t testing.TB) *Warehouse {
 	t.Helper()
 
 	db, err := sql.Open("duckdb", "")

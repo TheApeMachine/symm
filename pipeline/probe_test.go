@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -85,4 +86,41 @@ func TestSnapshot(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkNewProbe(b *testing.B) {
+	ctx := context.Background()
+	node := &stubNode{System: nmruntime.NewSystem(ctx, "stub", nil)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewProbe("signal", node)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	ctx := context.Background()
+	node := &stubNode{System: nmruntime.NewSystem(ctx, "stub", nil)}
+	probe := NewProbe("signal", node)
+	env := nmruntime.NewEnvelope(nil)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = probe.Step(env)
+	}
+}
+
+func BenchmarkSnapshot(b *testing.B) {
+	ctx := context.Background()
+	node := &stubNode{System: nmruntime.NewSystem(ctx, "cvd", nil)}
+	probe := NewProbe("signal", node)
+	probe.record(3 * time.Millisecond)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = probe.Snapshot()
+	}
 }

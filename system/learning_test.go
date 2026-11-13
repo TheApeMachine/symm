@@ -57,3 +57,30 @@ func TestApplyResonance(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewLearning(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewLearning()
+	}
+}
+
+func BenchmarkApplyResonance(b *testing.B) {
+	learning := NewLearning()
+	patch := map[string]any{
+		"type":                        "resonance",
+		"bypass":                      true,
+		"min_task_relative_precision": 0.1,
+		"min_surprise":                0.2,
+		"min_supported_horizon":       1.0,
+		"min_enter_z":                 0.0,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		learning.ApplyResonance(patch)
+	}
+}

@@ -93,3 +93,33 @@ func TestEncodeIPC(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkAsInt64(b *testing.B) {
+	v := uint64(99)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = asInt64(v)
+	}
+}
+
+func BenchmarkEncodeIPC(b *testing.B) {
+	when := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	columns := []Column{
+		{Name: "sym", Type: "VARCHAR"},
+		{Name: "qty", Type: "DOUBLE"},
+		{Name: "ok", Type: "BOOL"},
+		{Name: "ts", Type: "TIMESTAMP"},
+	}
+	rows := [][]any{
+		{"BTC/USD", 1.5, true, when},
+		{"ETH/USD", nil, false, nil},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = encodeIPC(columns, rows)
+	}
+}

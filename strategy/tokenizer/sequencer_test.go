@@ -118,3 +118,74 @@ func TestRestore(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSequencer(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewSequencer()
+	}
+}
+
+func BenchmarkReset(b *testing.B) {
+	seq := NewSequencer()
+	_, _ = seq.Step("R01", 0.5)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.Reset()
+		seq.Step("R01", 0.5)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq := NewSequencer()
+		seq.Step("R02", 0.5)
+		seq.Step("R00", 0.7)
+		seq.Step("R06", 0.8)
+	}
+}
+
+func BenchmarkStepPath(b *testing.B) {
+	seq := NewSequencer()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.StepPath([]string{}, 0.5)
+	}
+}
+
+func BenchmarkState(b *testing.B) {
+	seq := NewSequencer()
+	_, _ = seq.Step("R02", 0.4)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.State()
+	}
+}
+
+func BenchmarkRestore(b *testing.B) {
+	saved := func() SequencerState {
+		seq := NewSequencer()
+		_, _ = seq.Step("R02", 0.4)
+		return seq.State()
+	}()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq := NewSequencer()
+		seq.Restore(saved)
+	}
+}

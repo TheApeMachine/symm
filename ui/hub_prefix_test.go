@@ -148,3 +148,54 @@ func TestClosedHistoryPrefix(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkChunkThresholds(b *testing.B) {
+	all := map[string]float64{
+		"model/paths/a/enter.bin": 0.5,
+		"model/paths/b/enter.bin": 0.5,
+		"model/paths/c/enter.bin": 0.5,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = chunkThresholds(all, 120)
+	}
+}
+
+func BenchmarkRead(b *testing.B) {
+	raw := []byte(`{"epoch":12,"tick":3,"timestamp":99,"position":{"id":"abc","qty":1}}`)
+	var entry closedEntry
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = entry.read(raw)
+	}
+}
+
+func BenchmarkDecodePathBook(b *testing.B) {
+	raw := []byte(`{"action":"enter","resistance":0.53}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = decodePathBook(raw)
+	}
+}
+
+func BenchmarkPolicyPathKey(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = policyPathKey("model/paths/R01/R02.bin", "enter")
+	}
+}
+
+func BenchmarkClosedHistoryPrefix(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = closedHistoryPrefix("paper/closed/foo")
+	}
+}

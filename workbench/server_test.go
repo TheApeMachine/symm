@@ -125,3 +125,52 @@ func TestQuery(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewServer(b *testing.B) {
+	warehouse := &Warehouse{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewServer(warehouse)
+	}
+}
+
+func BenchmarkListen(b *testing.B) {
+	prev := system.Cfg.Workbench.Addr
+	system.Cfg.Workbench.Addr = "127.0.0.1:0"
+	defer func() { system.Cfg.Workbench.Addr = prev }()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		server := NewServer(nil)
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- server.Listen()
+		}()
+
+		time.Sleep(20 * time.Millisecond)
+		_ = server.app.Shutdown()
+		<-errCh
+	}
+}
+
+func BenchmarkQuery(b *testing.B) {
+	warehouse := local(b)
+	server := NewServer(warehouse)
+	payload := `{"sql":"SELECT id FROM closed_paper"}`
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		req := httptest.NewRequest(http.MethodPost, "/workbench/query", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := server.app.Test(req)
+		if err == nil && resp != nil {
+			_, _ = io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+		}
+	}
+}

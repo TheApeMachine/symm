@@ -170,3 +170,92 @@ func TestAcceptedBookReceivers(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSourceType(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = string(SourcePumpDump)
+	}
+}
+
+func BenchmarkSignalSources(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(SignalSources)
+	}
+}
+
+func BenchmarkSignalSourceStrings(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(SignalSourceStrings)
+	}
+}
+
+func BenchmarkLogicSourceStrings(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(LogicSourceStrings)
+	}
+}
+
+func BenchmarkTradeReceivers(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(TradeReceivers)
+	}
+}
+
+func BenchmarkTradeReceiverStrings(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(TradeReceiverStrings)
+	}
+}
+
+func BenchmarkBookReceivers(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(BookReceivers)
+	}
+}
+
+func BenchmarkLevel3Receivers(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(Level3Receivers)
+	}
+}
+
+func BenchmarkLevel3ReceiverStrings(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(Level3ReceiverStrings)
+	}
+}
+
+func BenchmarkAcceptedBookReceivers(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(AcceptedBookReceivers)
+	}
+}

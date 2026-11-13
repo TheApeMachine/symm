@@ -82,3 +82,40 @@ func TestWantsGrid(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkRoute(b *testing.B) {
+	prev := Route()
+	b.Cleanup(func() { SetRoute(prev) })
+	SetRoute("longtail")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Route()
+	}
+}
+
+func BenchmarkSetRoute(b *testing.B) {
+	prev := Route()
+	b.Cleanup(func() { SetRoute(prev) })
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		SetRoute("/learning")
+	}
+}
+
+func BenchmarkWantsGrid(b *testing.B) {
+	prev := Route()
+	b.Cleanup(func() { SetRoute(prev) })
+	SetRoute("dashboard")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = WantsGrid()
+	}
+}

@@ -214,3 +214,118 @@ func mustJSON(value map[string]any) []byte {
 	}
 	return buf
 }
+
+func BenchmarkWrite(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	paper := NewPaper(ctx)
+	message := mustJSON(map[string]any{"method": "ping"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = paper.Write(message)
+	}
+}
+
+func BenchmarkPost(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	paper := NewPaper(ctx)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = paper.Post("/0/private/OpenOrders", nil)
+	}
+}
+
+func BenchmarkRead(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	paper := NewPaper(ctx)
+	cancel()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = paper.Read()
+	}
+}
+
+func BenchmarkWriteAddOrder(b *testing.B) {
+	restore := swapPaperCommand(func(ctx context.Context, entity string, command ...string) (map[string]any, error) {
+		return map[string]any{
+			"order_id":     "O1",
+			"success":      true,
+			"exec_type":    "trade",
+			"order_status": "filled",
+			"cl_ord_id":    "paper-cl-1",
+			"pair":         "BTC/USD",
+			"side":         "buy",
+			"volume":       0.1,
+			"price":        50000.0,
+			"trade_id":     "T1",
+		}, nil
+	})
+	defer restore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	paper := NewPaper(ctx)
+	message := []byte(`{
+		"method":"add_order",
+		"params":{
+			"symbol":"BTC/USD",
+			"side":"buy",
+			"order_type":"market",
+			"order_qty":"0.1",
+			"cl_ord_id":"paper-cl-1"
+		}
+	}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = paper.Write(message)
+		_, _ = paper.Read()
+		_, _ = paper.Read()
+	}
+}
+
+func BenchmarkPostBalance(b *testing.B) {
+	restore := swapPaperCommand(func(ctx context.Context, entity string, _ ...string) (map[string]any, error) {
+		return map[string]any{
+			"balances": map[string]any{
+				"USD": map[string]any{"available": 10000.0},
+			},
+		}, nil
+	})
+	defer restore()
+
+	paper := NewPaper(context.Background())
+	bal := &Balance{}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		raw, err := paper.Post("/0/private/Balance", nil)
+		if err != nil {
+			continue
+		}
+		_ = bal.UnmarshalJSON(raw)
+	}
+}
+
+func BenchmarkRestPath(b *testing.B) {
+	url := "https://api.kraken.com/0/private/Balance"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = RestPath(url)
+	}
+}

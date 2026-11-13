@@ -299,3 +299,137 @@ func BenchmarkRuleCount(b *testing.B) {
 		_ = seq.RuleCount()
 	}
 }
+
+func BenchmarkRuleRef(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = RuleRef(12)
+	}
+}
+
+func BenchmarkNewSequitur(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewSequitur()
+	}
+}
+
+func BenchmarkTail(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02", "R03"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.Tail(2)
+	}
+}
+
+func BenchmarkRootSequence(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R05", "R06"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.RootSequence()
+	}
+}
+
+func BenchmarkTerminalNames(b *testing.B) {
+	seq := NewSequitur()
+	rule, _ := seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.TerminalNames(rule)
+	}
+}
+
+func BenchmarkTerminalsForRef(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.TerminalsForRef("M1")
+	}
+}
+
+func BenchmarkRuleViews(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.RuleViews()
+	}
+}
+
+func BenchmarkSymbols(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.Symbols()
+	}
+}
+
+func BenchmarkRules(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.Rules()
+	}
+}
+
+func BenchmarkSentence(b *testing.B) {
+	seq := NewSequitur()
+	seq.Analyze([]string{"R01", "R02"})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.Sentence()
+	}
+}
+
+func BenchmarkLearn(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq := NewSequitur()
+		seq.Learn(1, 2, []string{"R01", "R02"})
+	}
+}
+
+func BenchmarkRestoreRoot(b *testing.B) {
+	seq := NewSequitur()
+	seq.Learn(1, 1, []string{"R01", "R02"})
+	root := []string{"M1", "R03"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.RestoreRoot(root)
+	}
+}

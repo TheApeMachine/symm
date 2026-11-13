@@ -399,3 +399,170 @@ func paperPromotedTree() *Tree {
 
 	return tree
 }
+
+func BenchmarkNewModel(b *testing.B) {
+	ctx := context.Background()
+	desk := &broker.Desk{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewModel(ctx, desk, nil, func(string) {}, nil)
+	}
+}
+
+func BenchmarkNoteSettled(b *testing.B) {
+	ctx := context.Background()
+	model := NewModel(ctx, &broker.Desk{}, nil, func(string) {}, nil)
+	win := decimal.NewFromFloat(1.0)
+	pos := &broker.Position{Symbol: "BTC/USD", PnLPct: &win}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		model.NoteSettled(pos)
+	}
+}
+
+func BenchmarkHold(b *testing.B) {
+	model := &Model{}
+	position := &broker.Position{EntryPath: "R00/R01"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		model.Hold(position, "R00/R02")
+		position.HoldPaths = nil
+	}
+}
+
+func BenchmarkExit(b *testing.B) {
+	tree := emptyTree()
+	entry := "R06.R00/R07.R01/R08.R02"
+	exit := "R09.R03/R10.R04/R11.R05"
+	put(tree, entry, leaf(ActionEnter, 0.75))
+	put(tree, exit, leaf(ActionExit, 0.75))
+
+	pnl := decimal.NewFromFloat(-0.04)
+	closed := time.Now().UTC()
+	position := &broker.Position{
+		Symbol:    "AKE/USD",
+		EntryPath: entry,
+		HoldPaths: []string{exit},
+		PnL:       &pnl,
+		ClosedAt:  &closed,
+	}
+	model := &Model{tree: &atomic.Pointer[Tree]{}}
+	model.tree.Store(tree)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		path := model.exitCut(nil, position.Symbol, position)
+		model.Exit(position, path)
+		position.TreeApplied = false
+	}
+}
+
+func BenchmarkResistanceDelta(b *testing.B) {
+	model := &Model{}
+	win := decimal.NewFromFloat(1)
+	closed := time.Now().UTC()
+	fat := decimal.NewFromFloat(2.0)
+	short := &broker.Position{
+		PnL:      &win,
+		PnLPct:   &fat,
+		OpenedAt: closed.Add(-time.Second),
+		ClosedAt: &closed,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = model.resistanceDelta(short)
+	}
+}
+
+func BenchmarkOracleAllows(b *testing.B) {
+	model := &Model{}
+	regions := []*runtime.Region{
+		{Key: 10, Brightness: 1},
+		{Key: 12, Brightness: 1},
+		{Key: 14, Brightness: 1},
+		{Key: 16, Brightness: 1},
+		{Key: 17, Brightness: 0},
+		{Key: 20, Brightness: 1},
+		{Key: 22, Brightness: 1},
+		{Key: 24, Brightness: 1},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = model.oracleAllows(regions)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	desk := broker.DeskFor(context.Background(), map[string]network.Client{
+		"public":  &modelTransportStub{},
+		"private": &modelTransportStub{},
+	}, nil, nil, true)
+	tree := emptyTree()
+	model := &Model{
+		desk:      desk,
+		tree:      &atomic.Pointer[Tree]{},
+		resetPath: func(string) {},
+		live:      true,
+	}
+	model.tree.Store(tree)
+	cut := runtime.Tokens{{Symbols: []string{"R17"}, Brightness: 1}}
+	envelope := runtime.NewEnvelope(nil)
+	envelope.Paths["BTC/USD"] = &cut
+	envelope.Regions["BTC/USD"] = []*runtime.Region{{Key: 17, Brightness: 0.9}}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = model.Step(envelope)
+	}
+}
+
+func BenchmarkBypassReading(b *testing.B) {
+	model := &Model{}
+	cfg := system.Cfg.Learning
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = model.bypassReading(cfg)
+	}
+}
+
+func BenchmarkPredictIntegration(b *testing.B) {
+	tree := paperPromotedTree()
+	cut := tokensAt("R06.R00/R07.R01/R08.R02", 1)
+	regions := []*runtime.Region{
+		{Key: 10, Brightness: 1},
+		{Key: 12, Brightness: 1},
+		{Key: 14, Brightness: 1},
+		{Key: 16, Brightness: 1},
+		{Key: 17, Brightness: 0},
+	}
+	model := &Model{}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = model.oracleAllows(regions)
+		tree.Predict(cut)
+	}
+}

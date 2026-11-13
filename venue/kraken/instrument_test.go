@@ -98,3 +98,58 @@ func TestInstrumentPairDecimals(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewInstrument(b *testing.B) {
+	raw := []byte(`{
+		"channel":"instrument",
+		"type":"snapshot",
+		"data":{
+			"pairs":[{
+				"symbol":"BTC/USD",
+				"base":"BTC",
+				"quote":"USD",
+				"status":"online",
+				"qty_precision":8,
+				"qty_increment":"0.00000001",
+				"price_precision":1,
+				"cost_precision":5,
+				"marginable":false,
+				"has_index":false,
+				"cost_min":"0.5",
+				"tick_size":"0.1",
+				"price_increment":"0.1",
+				"qty_min":"0.0001"
+			}]
+		}
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewInstrument(raw)
+	}
+}
+
+func BenchmarkNewInstrumentSubscription(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sonic.Marshal(NewInstrumentSubscription())
+	}
+}
+
+func BenchmarkInstrumentPairDecimals(b *testing.B) {
+	inc := decimal.RequireFromString("0.01")
+	pair := InstrumentPair{PriceIncrement: &inc}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		raw, err := sonic.Marshal(pair)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var decoded InstrumentPair
+		_ = sonic.Unmarshal(raw, &decoded)
+	}
+}

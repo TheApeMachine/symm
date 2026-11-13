@@ -11,8 +11,8 @@ import (
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
-func testInstrument(t *testing.T, extra ...kraken.InstrumentPair) *Instrument {
-	t.Helper()
+func testInstrument(tb testing.TB, extra ...kraken.InstrumentPair) *Instrument {
+	tb.Helper()
 
 	normalizer := spot.NewNormalizer()
 	seedPair(normalizer, testSymbol)
@@ -172,4 +172,89 @@ func TestInstrumentPairs(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkInstrumentCache(b *testing.B) {
+	instrument := testInstrument(b)
+	ethMin := decimal.RequireFromString("0.01")
+	pairs := []kraken.InstrumentPair{
+		{Symbol: "ETH/USD", Base: "ETH", Quote: "USD", Status: "online", QtyMin: &ethMin},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		instrument.Cache(pairs)
+	}
+}
+
+func BenchmarkInstrumentHas(b *testing.B) {
+	instrument := testInstrument(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.Has(testSymbol)
+	}
+}
+
+func BenchmarkInstrumentSpotOpen(b *testing.B) {
+	instrument := testInstrument(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.SpotOpen(testSymbol)
+	}
+}
+
+func BenchmarkInstrumentPair(b *testing.B) {
+	instrument := testInstrument(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.Pair(testSymbol)
+	}
+}
+
+func BenchmarkInstrumentSymbols(b *testing.B) {
+	instrument := testInstrument(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.Symbols()
+	}
+}
+
+func BenchmarkInstrumentTakerFee(b *testing.B) {
+	instrument := testInstrument(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.TakerFee(testSymbol)
+	}
+}
+
+func BenchmarkInstrumentPairs(b *testing.B) {
+	instrument := testInstrument(b)
+	ethMin := decimal.RequireFromString("0.01")
+	instrument.Cache([]kraken.InstrumentPair{
+		{Symbol: "ETH/USD", Base: "ETH", Quote: "USD", Status: "online", QtyMin: &ethMin},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = instrument.Pairs()
+	}
 }

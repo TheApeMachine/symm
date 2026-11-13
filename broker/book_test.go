@@ -192,3 +192,113 @@ func TestStale(t *testing.T) {
 		})
 	}))
 }
+
+func BenchmarkNewBookManager(b *testing.B) {
+	normalizer := spot.NewNormalizer()
+	seedPair(normalizer, testSymbol)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewBookManager(normalizer)
+	}
+}
+
+func BenchmarkBookUpdate(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) { mgr = m })()
+	snap := level3Snapshot(testSymbol, "100", "101")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		mgr.Update(snap)
+	}
+}
+
+func BenchmarkExpect(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) { mgr = m })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		mgr.Expect([]string{testSymbol})
+	}
+}
+
+func BenchmarkPending(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) {
+		mgr = m
+		mgr.Expect([]string{testSymbol, "ETH/USD"})
+		mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = mgr.Pending()
+	}
+}
+
+func BenchmarkOnInvalid(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) {
+		mgr = m
+		mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+	})()
+	snap := level3Snapshot(testSymbol, "99", "100")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		mgr.Update(snap)
+	}
+}
+
+func BenchmarkMarkPaused(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) {
+		mgr = m
+		mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = mgr.MarkPaused(testSymbol)
+	}
+}
+
+func BenchmarkStale(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var mgr *BookManager
+		withBookManager(func(m *BookManager) {
+			mgr = m
+			mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+		})()
+		mgr.Stale([]string{testSymbol})
+	}
+}
+
+func BenchmarkWait(b *testing.B) {
+	var mgr *BookManager
+	withBookManager(func(m *BookManager) {
+		mgr = m
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = mgr.Wait(time.Hour)
+	}
+}

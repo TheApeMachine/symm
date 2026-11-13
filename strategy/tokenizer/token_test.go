@@ -31,3 +31,23 @@ func TestNewTokens(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewToken(b *testing.B) {
+	syms := []string{"R09", "R03", "R13", "R06"}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		tok := NewToken(syms, 0.8)
+		_ = tok.String()
+	}
+}
+
+func BenchmarkNewTokens(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		cut := NewTokens()
+		_ = cut.Len()
+	}
+}

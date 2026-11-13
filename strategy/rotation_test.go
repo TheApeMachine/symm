@@ -81,3 +81,41 @@ func TestRotationScore(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewRotation(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		rotation := NewRotation(ctx)
+		_ = rotation.Score("PIPE/USD")
+	}
+}
+
+func BenchmarkRotationNoteSettled(b *testing.B) {
+	rotation := NewRotation(context.Background())
+	win := decimal.NewFromFloat(1.0)
+	pos := &broker.Position{Symbol: "PIPE/USD", PnLPct: &win}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		rotation.NoteSettled(pos)
+	}
+}
+
+func BenchmarkRotationScore(b *testing.B) {
+	rotation := NewRotation(context.Background())
+	win := decimal.NewFromFloat(1.0)
+	rotation.NoteSettled(&broker.Position{Symbol: "PIPE/USD", PnLPct: &win})
+	rotation.NoteSettled(&broker.Position{Symbol: "PIPE/USD", PnLPct: &win})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = rotation.Score("PIPE/USD")
+	}
+}

@@ -76,3 +76,21 @@ func TestExecutionSurface(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkExecutionSurface(b *testing.B) {
+	at := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	sellable := decimal.RequireFromString("1.5")
+	bid := decimal.RequireFromString("100.1")
+	ask := decimal.RequireFromString("100.2")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		surf := ExecutionSurface{
+			Symbol: "BTC/USD", At: at,
+			SellableQty: &sellable, BestBid: &bid, BestAsk: &ask,
+			BookComplete: true, FullyExecutable: true,
+		}
+		_ = surf.Symbol
+	}
+}

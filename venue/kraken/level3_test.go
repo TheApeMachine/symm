@@ -44,3 +44,28 @@ func TestDecodeLevel3(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkDecodeLevel3(b *testing.B) {
+	raw := []byte(`{
+		"channel":"level3",
+		"type":"update",
+		"data":[{
+			"symbol":"MATIC/USD",
+			"checksum":1,
+			"bids":[],
+			"asks":[{
+				"event":"delete",
+				"order_id":"OOIATY-6EIWY-ACVIUN",
+				"limit_price":0.5636,
+				"order_qty":302.89736033,
+				"timestamp":"2023-10-06T18:21:00.097010033Z"
+			}]
+		}]
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = DecodeLevel3(raw)
+	}
+}

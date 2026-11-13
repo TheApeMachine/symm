@@ -217,3 +217,86 @@ func TestHistogramFrom(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkMDLState(b *testing.B) {
+	mdl := NewMDL()
+	mdl.stream = []uint32{1, 2}
+	mdl.offset = 1
+	mdl.vocab["R00"] = 1
+	mdl.vocab["R01"] = 2
+	mdl.nextID = 3
+	mdl.dist.add(1)
+	mdl.dist.add(2)
+	mdl.dist.add(1)
+	mdl.lastGain = 0.42
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = mdl.State()
+	}
+}
+
+func BenchmarkMDLRestore(b *testing.B) {
+	mdl := NewMDL()
+	state := MDLState{
+		Stream: []uint32{7, 8},
+		Offset: 1,
+		Vocab:  map[string]uint32{"R00.R00": 7, "R01.R00": 8},
+		NextID: 9,
+		Dist: symbolHistogramState{
+			Counts:   map[uint32]int{7: 2, 8: 1},
+			Total:    3,
+			Distinct: 2,
+		},
+		LastGain: 0.9,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		mdl.Restore(state)
+	}
+}
+
+func BenchmarkCloneVocab(b *testing.B) {
+	src := map[string]uint32{"R00": 1, "R01": 2}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cloneVocab(src)
+	}
+}
+
+func BenchmarkHistogramSnapshot(b *testing.B) {
+	hist := newSymbolHistogram()
+	hist.add(1)
+	hist.add(1)
+	hist.add(2)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = histogramSnapshot(hist)
+	}
+}
+
+func BenchmarkHistogramFrom(b *testing.B) {
+	state := symbolHistogramState{
+		Counts:   map[uint32]int{3: 4, 5: 1},
+		Total:    5,
+		Distinct: 2,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = histogramFrom(state)
+	}
+}

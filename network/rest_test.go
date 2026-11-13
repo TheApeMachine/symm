@@ -108,3 +108,63 @@ func TestKrakenSignPrivate(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewREST(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewREST()
+	}
+}
+
+func BenchmarkPost(b *testing.B) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	rest := NewREST()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = rest.Post(server.URL+"/0/public/Time", map[string]string{"pair": "XBTUSD"})
+	}
+}
+
+func BenchmarkGet(b *testing.B) {
+	rest := NewREST()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = rest.Get("https://api.kraken.com/0/private/Balance", nil)
+	}
+}
+
+func setupKrakenSignBench(b *testing.B) {
+	b.Helper()
+	secret := base64.StdEncoding.EncodeToString([]byte("secret"))
+	b.Setenv("TEST_KRAKEN_KEY", "api-key")
+	b.Setenv("TEST_KRAKEN_SECRET", secret)
+	viper.Set("kraken.credentials.main.key_env", "TEST_KRAKEN_KEY")
+	viper.Set("kraken.credentials.main.secret_env", "TEST_KRAKEN_SECRET")
+	viper.Set("system.data_path", b.TempDir())
+	if err := kraken.UseCredentials(kraken.RoleMain); err != nil {
+		b.Fatal(err)
+	}
+}
+
+func BenchmarkKrakenSignPrivate(b *testing.B) {
+	setupKrakenSignBench(b)
+	body := map[string]string{
+		"pair": "XBTUSD", "type": "buy", "ordertype": "market", "volume": "0.1",
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, _, _ = kraken.SignPrivate("/0/private/AddOrder", body)
+	}
+}

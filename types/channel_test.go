@@ -125,3 +125,75 @@ func TestChannelTelemetry(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkChannelTrades(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelTrades
+	}
+}
+
+func BenchmarkChannelLevel3(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelLevel3
+	}
+}
+
+func BenchmarkChannelFuturesTickers(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelFuturesTickers
+	}
+}
+
+func BenchmarkChannelFuturesTrades(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelFuturesTrades
+	}
+}
+
+func BenchmarkChannelSignals(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelSignals
+	}
+}
+
+func BenchmarkChannelPerspectives(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelPerspectives
+	}
+}
+
+func BenchmarkChannelDecisions(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelDecisions
+	}
+}
+
+func BenchmarkChannelExecutions(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelExecutions
+	}
+}
+
+func BenchmarkChannelOrders(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelOrders
+	}
+}
+
+func BenchmarkChannelPositions(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelPositions
+	}
+}
+
+func BenchmarkChannelPnl(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelPnl
+	}
+}
+
+func BenchmarkChannelTelemetry(b *testing.B) {
+	for b.Loop() {
+		_ = ChannelTelemetry
+	}
+}

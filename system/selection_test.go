@@ -25,3 +25,11 @@ func TestNewSelection(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSelection(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewSelection()
+	}
+}

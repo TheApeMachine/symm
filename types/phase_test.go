@@ -49,3 +49,24 @@ func TestPhaseResponse(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkPhaseOutcome(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		out := PhaseOutcome{Direction: "up", Return: 0.0125, Horizon: 4}
+		_ = out.Horizon
+	}
+}
+
+func BenchmarkPhaseResponse(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		resp := PhaseResponse{
+			Angle: 1.5707963267948966, Similarity: 0.82, ObservedAt: "2024-01-02T03:04:05Z",
+			Outcome: PhaseOutcome{Direction: "down", Return: -0.05, Horizon: 2},
+		}
+		_ = resp.Similarity
+	}
+}

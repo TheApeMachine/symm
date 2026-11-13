@@ -98,3 +98,46 @@ func TestPlace(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewBoard(b *testing.B) {
+	ctx := context.Background()
+	rotation := NewRotation(ctx)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewBoard(ctx, rotation)
+	}
+}
+
+func BenchmarkBoardScore(b *testing.B) {
+	board := NewBoard(context.Background(), NewRotation(context.Background()))
+	envelope := runtime.NewEnvelope(nil)
+	envelope.Correlation["A/USD"] = &equation.CohortOutput{PeakScore: 2.0, HerdScore: 1.0}
+	envelope.Pumpdump["A/USD"] = &equation.IgnitionOutput{Precursor: 1.0, Compression: 0.8}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = board.Score("A/USD", envelope, nil)
+	}
+}
+
+func BenchmarkPlace(b *testing.B) {
+	board := NewBoard(context.Background(), nil)
+	envelope := runtime.NewEnvelope(nil)
+	envelope.Correlation["TOP/USD"] = &equation.CohortOutput{PeakScore: 3.0}
+	envelope.Correlation["LOW/USD"] = &equation.CohortOutput{PeakScore: 0.1}
+	candidates := []EnterCandidate{
+		{Symbol: "LOW/USD", Path: "p1"},
+		{Symbol: "TOP/USD", Path: "p2"},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		board.Place(candidates, envelope, nil, nil, false, func(EnterCandidate) {})
+	}
+}

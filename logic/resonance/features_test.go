@@ -55,3 +55,32 @@ func TestForwardStoryNets(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkFeatures(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(Features)
+		_ = Features[0].Label
+	}
+}
+
+func BenchmarkForwardStoryNets(b *testing.B) {
+	curve := make([]float64, len(Features))
+	for i := range curve {
+		curve[i] = 0.5
+	}
+	curve[2] = 0.1
+	curve[8] = 0.1
+	for pair := range oraclePairs {
+		curve[oracleFirst+2*pair] = 0.05
+	}
+	curve[9] = 0.4
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ForwardStoryNets(curve)
+	}
+}

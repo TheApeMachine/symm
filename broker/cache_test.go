@@ -339,3 +339,146 @@ func TestDrop(t *testing.T) {
 		})
 	}))
 }
+
+func BenchmarkNewCache(b *testing.B) {
+	body := []byte(historyTwoClosed)
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewCache(ctx, "real", &historyClient{body: body}, nil, nil, nil)
+	}
+}
+
+func BenchmarkBound(b *testing.B) {
+	var cache *Cache
+	withHistory(historyTwoOpen, func(c *Cache) { cache = c })()
+	bera := decimal.NewFromFloat(10)
+	book := market.NewBalance(map[string]any{
+		"quote": "USD",
+		"assets": []*market.Asset{
+			market.NewAsset(nil, "BERA", bera, decimal.Zero, bera),
+		},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		cache.Bound(book)
+	}
+}
+
+func BenchmarkAll(b *testing.B) {
+	var cache *Cache
+	withEmptyCache(func(c *Cache) {
+		cache = c
+		openPos := NewPosition(cache.Context(), "BERAUSD", "paper", "", nil, nil, nil)
+		closedPos := NewPosition(cache.Context(), "ZECUSD", "paper", "", nil, nil, nil)
+		closed := time.Unix(1, 0).UTC()
+		closedPos.ClosedAt = &closed
+		cache.open.Store("BERAUSD", openPos)
+		cache.closed.Store(closedPos.ID, closedPos)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cache.All()
+	}
+}
+
+func BenchmarkOpen(b *testing.B) {
+	var cache *Cache
+	withHistory(historyPartialOpen, func(c *Cache) { cache = c })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cache.Open()
+	}
+}
+
+func BenchmarkClosed(b *testing.B) {
+	var cache *Cache
+	withHistory(historyTwoClosed, func(c *Cache) { cache = c })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cache.Closed("XBTUSD")
+	}
+}
+
+func BenchmarkHas(b *testing.B) {
+	var cache *Cache
+	withHistory(historyPartialOpen, func(c *Cache) { cache = c })()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cache.Has("ZECUSD")
+	}
+}
+
+func BenchmarkAdd(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var cache *Cache
+		withEmptyCache(func(c *Cache) { cache = c })()
+		live := NewPosition(ctx, testSymbol, "paper", "", nil, nil, nil)
+		_ = cache.Add(testSymbol, live, true)
+	}
+}
+
+func BenchmarkSave(b *testing.B) {
+	var cache *Cache
+	var pos *Position
+	withEmptyCache(func(c *Cache) {
+		cache = c
+		pos = NewPosition(cache.Context(), testSymbol, "paper", "", nil, nil, nil)
+	})()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cache.Save(pos)
+	}
+}
+
+func BenchmarkRemove(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var cache *Cache
+		withEmptyCache(func(c *Cache) {
+			cache = c
+			pos := NewPosition(cache.Context(), testSymbol, "paper", "", nil, nil, nil)
+			cache.open.Store(testSymbol, pos)
+		})()
+		_ = cache.Remove(testSymbol)
+	}
+}
+
+func BenchmarkDrop(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var cache *Cache
+		withEmptyCache(func(c *Cache) {
+			cache = c
+			pos := NewPosition(cache.Context(), testSymbol, "paper", "", nil, nil, nil)
+			cache.open.Store(testSymbol, pos)
+		})()
+		cache.Drop(testSymbol)
+	}
+}

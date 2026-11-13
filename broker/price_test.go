@@ -513,3 +513,330 @@ func TestNewPriceFeeFailure(t *testing.T) {
 		})
 	})
 }
+
+func benchPrice(b *testing.B) *Price {
+	b.Helper()
+	var price *Price
+	withPrice(func(p *Price) { price = p })()
+	return price
+}
+
+func BenchmarkNewPrice(b *testing.B) {
+	normalizer := spot.NewNormalizer()
+	seedPair(normalizer, testSymbol)
+	base, quote, _ := strings.Cut(testSymbol, "/")
+	min := decimal.RequireFromString("0.01")
+	instrument := &Instrument{
+		cache: &sync.Map{}, takerFees: &sync.Map{},
+		quote: quote, symbols: []string{testSymbol}, normalizer: normalizer,
+	}
+	instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+		Symbol: testSymbol, Base: base, Quote: quote, Status: "online", QtyMin: &min,
+	})
+	public := &feeClient{body: []byte(`{
+			"error":[],
+			"result":{"fees":{"BTC/USD":{"fee":"0.40"}}}
+		}`)}
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewPrice(ctx, NewBookManager(normalizer), instrument, normalizer, venue.NewKraken(quote), public)
+	}
+}
+
+func BenchmarkSetTicker(b *testing.B) {
+	price := benchPrice(b)
+	row := &market.TickerData{Symbol: testSymbol, VolumeUSD: 12_000, ChangePct: -2.5}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.SetTicker(row)
+	}
+}
+
+func BenchmarkVolumeUSD(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.VolumeUSD(testSymbol)
+	}
+}
+
+func BenchmarkChangePct(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ChangePct(testSymbol)
+	}
+}
+
+func BenchmarkMark(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.Mark(testSymbol)
+	}
+}
+
+func BenchmarkWalk(b *testing.B) {
+	price := benchPrice(b)
+	qty := decimal.NewFromInt(10)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.Walk(testSymbol, qty, true)
+	}
+}
+
+func BenchmarkFee(b *testing.B) {
+	price := benchPrice(b)
+	amount := decimal.NewFromInt(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.Fee(testSymbol, &amount)
+	}
+}
+
+func BenchmarkExitRoom(b *testing.B) {
+	price := benchPrice(b)
+	qty := decimal.NewFromInt(10)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ExitRoom(testSymbol, &qty)
+	}
+}
+
+func BenchmarkNoteExhaustion(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.NoteExhaustion(testSymbol, 0.42)
+	}
+}
+
+func BenchmarkExhaustionReading(b *testing.B) {
+	price := benchPrice(b)
+	price.NoteExhaustion(testSymbol, 0.8)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ExhaustionReading(testSymbol)
+	}
+}
+
+func BenchmarkNoteTrade(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	trade := &market.TradeData{
+		Symbol: testSymbol, Price: decimal.RequireFromString("100"),
+		Qty: decimal.RequireFromString("2"), Timestamp: at,
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.NoteTrade(trade)
+	}
+}
+
+func BenchmarkTapeUptake(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Now().UTC()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.TapeUptake(testSymbol, at)
+	}
+}
+
+func BenchmarkSpreadPct(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.SpreadPct(testSymbol)
+	}
+}
+
+func BenchmarkPeakFrac(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.PeakFrac(testSymbol)
+	}
+}
+
+func BenchmarkEntryPeakOK(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.EntryPeakOK(testSymbol, false)
+	}
+}
+
+func BenchmarkMoverVolumeOK(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.MoverVolumeOK(testSymbol)
+	}
+}
+
+func BenchmarkTouchBidCash(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.TouchBidCash(testSymbol)
+	}
+}
+
+func BenchmarkBackingRatio(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.BackingRatio(testSymbol)
+	}
+}
+
+func BenchmarkBookIntact(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	price.NoteTrade(&market.TradeData{
+		Symbol: testSymbol, Price: decimal.RequireFromString("100"),
+		Qty: decimal.RequireFromString("5"), Timestamp: at,
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.BookIntact(testSymbol)
+	}
+}
+
+func BenchmarkPulseSymbols(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.PulseSymbols(1, 0)
+	}
+}
+
+func BenchmarkPulseQuote(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, _, _ = price.PulseQuote(testSymbol)
+	}
+}
+
+func BenchmarkPnL(b *testing.B) {
+	price := benchPrice(b)
+	pos := &Position{
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"), Exit: dec("110"),
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.PnL(pos)
+	}
+}
+
+func BenchmarkPnLPct(b *testing.B) {
+	price := benchPrice(b)
+	pos := &Position{
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"), Exit: dec("100"),
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.PnLPct(pos)
+	}
+}
+
+func BenchmarkAllocate(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.Allocate(testSymbol, price.balance)
+	}
+}
+
+func BenchmarkNewPriceFeeFailure(b *testing.B) {
+	normalizer := spot.NewNormalizer()
+	seedPair(normalizer, testSymbol)
+	instrument := &Instrument{
+		cache: &sync.Map{}, takerFees: &sync.Map{},
+		symbols: []string{testSymbol}, normalizer: normalizer,
+	}
+	instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+		Symbol: testSymbol, Base: "BTC", Quote: "USD", Status: "online",
+	})
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewPrice(ctx, NewBookManager(normalizer), instrument, normalizer, venue.NewKraken("USD"),
+			&feeClient{body: []byte(`{"error":["EAPI:Invalid key"]}`)})
+	}
+}

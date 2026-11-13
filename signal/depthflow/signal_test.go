@@ -146,3 +146,84 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func depthflowInstrument(b *testing.B) *broker.Instrument {
+	b.Helper()
+	symbol := "DF/USD"
+	step := decimal.RequireFromString("1")
+	snapshot := &kraken.Instrument{Channel: "instrument", Type: "snapshot"}
+	snapshot.Data.Pairs = []kraken.InstrumentPair{{
+		Symbol: symbol, Base: "DF", Quote: "USD", Status: "online",
+		TickSize: &step, QtyMin: &step,
+	}}
+	frame, err := json.Marshal(snapshot)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return broker.NewInstrument(context.Background(), &depthSnapClient{frame: frame}, nil)
+}
+
+func benchDepthBook(books *broker.BookManager, symbol string, step int) {
+	bidPx := []decimal.Decimal{decimal.NewFromInt(100), decimal.NewFromInt(99)}
+	bidQty := []decimal.Decimal{decimal.NewFromInt(20 + int64(step%16)), decimal.NewFromInt(18)}
+	askPx := []decimal.Decimal{decimal.NewFromInt(101), decimal.NewFromInt(102)}
+	askQty := []decimal.Decimal{decimal.NewFromInt(8), decimal.NewFromInt(6)}
+	bids := make([]*market.Level3Order, len(bidPx))
+	for i := range bids {
+		bids[i] = &market.Level3Order{LimitPrice: &bidPx[i], OrderQty: &bidQty[i]}
+	}
+	asks := make([]*market.Level3Order, len(askPx))
+	for i := range asks {
+		asks[i] = &market.Level3Order{LimitPrice: &askPx[i], OrderQty: &askQty[i]}
+	}
+	books.Update(&market.Level3{
+		Type: "snapshot",
+		Data: []*market.Level3Data{{Symbol: symbol, Bids: bids, Asks: asks}},
+	})
+}
+
+func BenchmarkNewSignal(b *testing.B) {
+	books := broker.NewBookManager(nil)
+	instrument := depthflowInstrument(b)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = depthflow.NewSignal(context.Background(), books, instrument)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	symbol := "DF/USD"
+	books := broker.NewBookManager(nil)
+	signal := depthflow.NewSignal(context.Background(), books, depthflowInstrument(b))
+	envelope := runtime.NewEnvelope(nil)
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := range 159 {
+		benchDepthBook(books, symbol, i)
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromInt(100),
+			Qty:       decimal.NewFromInt(3),
+			Timestamp: at.Add(time.Duration(i) * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		benchDepthBook(books, symbol, 160)
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromInt(100),
+			Qty:       decimal.NewFromInt(3),
+			Timestamp: at.Add(160 * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+}

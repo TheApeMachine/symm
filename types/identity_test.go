@@ -171,3 +171,98 @@ func TestComponentState(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkRunID(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = string(RunID("run-abc"))
+	}
+}
+
+func BenchmarkStream(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = string(Stream("spot.public"))
+	}
+}
+
+func BenchmarkStreamEpoch(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = uint64(StreamEpoch(3))
+	}
+}
+
+func BenchmarkStreamRef(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ref := StreamRef{Stream: Stream("spot.public"), Epoch: StreamEpoch(2), Sequence: 81}
+		_ = ref.Sequence
+	}
+}
+
+func BenchmarkCaptureSequence(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = uint64(CaptureSequence(42))
+	}
+}
+
+func BenchmarkCaptureIdentity(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		id := CaptureIdentity{
+			Run: RunID("run-1"), Sequence: CaptureSequence(7),
+			Stream: Stream("spot.private"), StreamEpoch: StreamEpoch(1), StreamSequence: 99,
+		}
+		_ = id.StreamSequence
+	}
+}
+
+func BenchmarkEnvelopeRef(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ref := EnvelopeRef{
+			Origin: CaptureIdentity{
+				Run: RunID("run-2"), Sequence: CaptureSequence(1),
+				Stream: Stream("level3"), StreamEpoch: StreamEpoch(0), StreamSequence: 5,
+			},
+			Ordinal: 3,
+		}
+		_ = ref.Ordinal
+	}
+}
+
+func BenchmarkArtifactID(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		id := ArtifactID{Kind: "fingerprint", Identity: "fp-001"}
+		_ = id.Identity
+	}
+}
+
+func BenchmarkStateVersion(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		v := StateVersion{Component: "resonance", Key: "BTC/USD", Version: 12}
+		_ = v.Version
+	}
+}
+
+func BenchmarkComponentState(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		s := ComponentState{Component: "manifold", Key: "ETH/USD", Version: 4}
+		_ = s.Version
+	}
+}

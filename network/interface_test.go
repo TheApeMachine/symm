@@ -34,3 +34,16 @@ func TestClient(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkClient(b *testing.B) {
+	client := stubClient{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = client.Read("k")
+		_ = client.Write(nil)
+		_, _ = client.Post("/x", nil)
+		client.Watch("/x", nil, nil)
+	}
+}

@@ -19,3 +19,11 @@ func TestNewUI(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewUI(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewUI()
+	}
+}

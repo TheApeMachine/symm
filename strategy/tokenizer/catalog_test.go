@@ -164,3 +164,67 @@ func TestRestoreCatalog(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewGrammarCatalog(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		catalog := NewGrammarCatalog()
+		_ = catalog.ObjectKey("ETH/USD")
+	}
+}
+
+func BenchmarkObjectKey(b *testing.B) {
+	catalog := NewGrammarCatalog()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.ObjectKey("BTC/USD")
+	}
+}
+
+func BenchmarkSymbol(b *testing.B) {
+	catalog := NewGrammarCatalog()
+	key := grammarSymbolDir + "BTC-USD.bin"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.Symbol(key)
+	}
+}
+
+func BenchmarkPersist(b *testing.B) {
+	ctx := context.Background()
+	backing := &memGrammarStore{}
+	catalog := NewGrammarCatalog()
+	seq := NewSequencer()
+	_, _ = seq.Step("R03", 0.7)
+	state := seq.State()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = catalog.Persist(ctx, backing, "BTC/USD", state)
+	}
+}
+
+func BenchmarkRestoreCatalog(b *testing.B) {
+	ctx := context.Background()
+	backing := &memGrammarStore{}
+	catalog := NewGrammarCatalog()
+	seq := NewSequencer()
+	_, _ = seq.Step("R02", 0.5)
+	_ = catalog.Persist(ctx, backing, "BTC/USD", seq.State())
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		catalog.RestoreCatalog(ctx, backing, func(string, SequencerState) {})
+	}
+}

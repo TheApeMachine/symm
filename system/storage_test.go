@@ -24,3 +24,11 @@ func TestNewStorage(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewStorage(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewStorage()
+	}
+}

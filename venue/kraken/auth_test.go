@@ -172,3 +172,65 @@ func TestSignPrivate(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewAuth(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewAuth()
+	}
+}
+
+func BenchmarkSeedToken(b *testing.B) {
+	auth := NewAuth()
+	auth.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		auth.SeedToken("pinned-token")
+	}
+}
+
+func BenchmarkToken(b *testing.B) {
+	clock := time.Unix(1_700_000_000, 0)
+	auth := &Auth{
+		now: func() time.Time { return clock },
+		fetch: func() (string, error) {
+			return "token-A", nil
+		},
+	}
+	ctx := context.Background()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = auth.Token(ctx)
+	}
+}
+
+func BenchmarkSignPrivateURL(b *testing.B) {
+	params := map[string]any{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, _, _ = SignPrivateURL("https://example.com/0/private/Balance", params)
+	}
+}
+
+func BenchmarkSignPrivate(b *testing.B) {
+	prev := processCredentials.Load()
+	processCredentials.Store(nil)
+	defer processCredentials.Store(prev)
+
+	params := map[string]any{}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, _, _ = SignPrivate("/0/private/Balance", params)
+	}
+}

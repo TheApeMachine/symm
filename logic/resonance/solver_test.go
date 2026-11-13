@@ -144,3 +144,41 @@ func TestStepSymbol(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkObserve(b *testing.B) {
+	sources := fullSources(0.5)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		scorer := newFeatureScorer()
+		scorer.Observe(sources)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	solver := NewSolver(b.Context())
+	envelope := runtime.NewEnvelope(&market.Trade{
+		Data: []*market.TradeData{{Symbol: "PEAQ/USD"}},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = solver.Step(envelope)
+	}
+}
+
+func BenchmarkStepSymbol(b *testing.B) {
+	solver := NewSolver(b.Context())
+	symbol := "ZEC/USD"
+	sources := fullSources(0.3)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = solver.stepSymbol(symbol, sources)
+	}
+}

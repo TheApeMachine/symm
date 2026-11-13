@@ -109,3 +109,67 @@ func TestFire(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkDefine(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Define("bench-pulse-define", "kraken")
+	}
+}
+
+func BenchmarkHit(b *testing.B) {
+	id := "bench-pulse-hit"
+	Define(id, "kraken")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Hit(id)
+	}
+}
+
+func BenchmarkTime(b *testing.B) {
+	id := "bench-pulse-time"
+	Define(id, "training")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Time(id, time.Millisecond)
+	}
+}
+
+func BenchmarkQueue(b *testing.B) {
+	id := "bench-pulse-queue"
+	Define(id, "store")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Queue(id, 42)
+	}
+}
+
+func BenchmarkWrote(b *testing.B) {
+	Define("queue", "store")
+	Define("bench-pulse-wrote", "store")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Wrote(7)
+	}
+}
+
+func BenchmarkFire(b *testing.B) {
+	id := "bench-pulse-fire"
+	Define(id, "")
+	payload := map[string]any{"ema_ns": int64(9000)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		Fire(id, payload)
+	}
+}

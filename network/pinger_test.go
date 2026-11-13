@@ -109,3 +109,67 @@ func TestPing(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewPinger(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewPinger(ctx)
+	}
+}
+
+func BenchmarkStart(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ctx, cancel := context.WithCancel(context.Background())
+		pinger := NewPinger(ctx)
+		pinger.conn = &gorilla.Conn{}
+		var writeMu sync.Mutex
+		status := runtime.READY
+		pinger.Start(pinger.conn, &writeMu, &status)
+		cancel()
+	}
+}
+
+func BenchmarkPing(b *testing.B) {
+	upgrader := gorilla.Upgrader{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		conn.SetPingHandler(func(string) error {
+			return conn.WriteControl(gorilla.PongMessage, nil, time.Now().Add(time.Second))
+		})
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, _, err := gorilla.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer conn.Close()
+
+	var writeMu sync.Mutex
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		writeMu.Lock()
+		_ = conn.WriteControl(gorilla.PingMessage, nil, time.Now().Add(5*time.Second))
+		writeMu.Unlock()
+	}
+}

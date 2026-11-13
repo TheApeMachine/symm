@@ -63,3 +63,23 @@ func TestResonanceReturnForecast(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkResonanceReturnForecastKey(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ResonanceReturnForecastKey
+	}
+}
+
+func BenchmarkResonanceReturnForecast(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		f := ResonanceReturnForecast{
+			Horizon: 8, CandidateCall: 1, Call: 1, StableCall: 1,
+			Held: false, SwitchConfidence: 0.75, SwitchThreshold: 0.6,
+		}
+		_ = f.Call
+	}
+}

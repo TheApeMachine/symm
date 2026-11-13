@@ -24,3 +24,15 @@ func TestPrediction(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkPrediction(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		pred := Prediction{
+			Symbol: "BTC/USD", Timestamp: 1700000000,
+			Price: decimal.RequireFromString("42150.25"),
+		}
+		_ = pred.Price.String()
+	}
+}

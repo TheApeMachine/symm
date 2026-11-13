@@ -98,3 +98,47 @@ func TestClose(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkName(b *testing.B) {
+	sig := &stubSignal{name: "cvd", typ: SourceCVD}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sig.Name()
+	}
+}
+
+func BenchmarkError(b *testing.B) {
+	sig := &stubSignal{name: "cvd", typ: SourceCVD}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sig.Error()
+	}
+}
+
+func BenchmarkType(b *testing.B) {
+	sig := &stubSignal{name: "hawkes", typ: SourceHawkes}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sig.Type()
+	}
+}
+
+func BenchmarkClose(b *testing.B) {
+	sig := &stubSignal{name: "cvd", typ: SourceCVD}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sig.Close()
+	}
+}

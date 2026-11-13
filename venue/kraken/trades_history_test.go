@@ -184,3 +184,102 @@ func TestNewTradesHistoryFromMap(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewTradesHistoryRequest(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sonic.Marshal(NewTradesHistoryRequest(nil))
+	}
+}
+
+func BenchmarkUnmarshalJSONHistoryTrade(b *testing.B) {
+	raw := []byte(`{
+		"ordertxid":"O1",
+		"postxid":"P1",
+		"pair":"BTC/USD",
+		"type":"buy",
+		"ordertype":"market",
+		"price":"50000",
+		"cost":"100",
+		"fee":"0.2",
+		"vol":"0.002",
+		"time":1700000000.0
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var trade HistoryTrade
+		_ = sonic.Unmarshal(raw, &trade)
+	}
+}
+
+func BenchmarkUnmarshalJSONTradesHistory(b *testing.B) {
+	history := NewTradesHistory()
+	raw := []byte(`{
+		"error":[],
+		"result":{
+			"count":"1",
+			"trades":{
+				"T1":{
+					"ordertxid":"O1",
+					"pair":"BTC/USD",
+					"type":"sell",
+					"time":1700000001.0
+				}
+			},
+			"cursor":{"next":"abc"}
+		}
+	}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = history.UnmarshalJSON(raw)
+	}
+}
+
+func BenchmarkNewTradesHistoryResult(b *testing.B) {
+	raw := []byte(`{
+		"error":[],
+		"result":{
+			"count":"2",
+			"trades":{
+				"T1":{"pair":"BTC/USD","time":1},
+				"T2":{"pair":"ETH/USD","time":2}
+			}
+		}
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTradesHistoryResult(raw)
+	}
+}
+
+func BenchmarkNewTradesHistoryFromMap(b *testing.B) {
+	model := map[string]any{
+		"trades": []any{
+			map[string]any{
+				"id":       "T1",
+				"order_id": "O1",
+				"pair":     "BTC/USD",
+				"side":     "buy",
+				"price":    100.0,
+				"cost":     100.0,
+				"fee":      0.1,
+				"volume":   1.0,
+				"time":     1700000000.0,
+			},
+		},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewTradesHistoryFromMap(model)
+	}
+}

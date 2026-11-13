@@ -87,3 +87,48 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSignal(b *testing.B) {
+	books := broker.NewBookManager(nil)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = cvd.NewSignal(context.Background(), books)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	symbol := "CVD/USD"
+	books := broker.NewBookManager(nil)
+	signal := cvd.NewSignal(context.Background(), books)
+	envelope := runtime.NewEnvelope(nil)
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := range 15 {
+		seedBook(books, symbol, 100+int64(i), 102+int64(i))
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromInt(103 + int64(i)),
+			Qty:       decimal.NewFromInt(2),
+			Timestamp: at.Add(time.Duration(i) * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seedBook(books, symbol, 115, 117)
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromInt(118),
+			Qty:       decimal.NewFromInt(2),
+			Timestamp: at.Add(15 * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+}

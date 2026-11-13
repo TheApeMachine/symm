@@ -82,3 +82,48 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSignal(b *testing.B) {
+	books := broker.NewBookManager(nil)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = pumpdump.NewSignal(context.Background(), books, nil)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	symbol := "PD/USD"
+	books := broker.NewBookManager(nil)
+	signal := pumpdump.NewSignal(context.Background(), books, nil)
+	envelope := runtime.NewEnvelope(nil)
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := range 139 {
+		seedBook(books, symbol, int64(i))
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromFloat(100 + float64(i)),
+			Qty:       decimal.NewFromInt(20),
+			Timestamp: at.Add(time.Duration(i) * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+	seedBook(books, symbol, 139)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromFloat(239),
+			Qty:       decimal.NewFromInt(20),
+			Timestamp: at.Add(139 * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+}

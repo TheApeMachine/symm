@@ -165,3 +165,122 @@ func TestRead(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewKraken(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewKraken("kraken")
+	}
+}
+
+func BenchmarkBalance(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Balance()
+	}
+}
+
+func BenchmarkTradeBalance(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.TradeBalance()
+	}
+}
+
+func BenchmarkTradesHistory(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.TradesHistory()
+	}
+}
+
+func BenchmarkLevel3(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Level3()
+	}
+}
+
+func BenchmarkTrade(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Trade()
+	}
+}
+
+func BenchmarkExecution(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Execution()
+	}
+}
+
+func BenchmarkOrder(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Order()
+	}
+}
+
+func BenchmarkBook(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Book()
+	}
+}
+
+func BenchmarkTicker(b *testing.B) {
+	venue := NewKraken("kraken")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Ticker()
+	}
+}
+
+func BenchmarkRead(b *testing.B) {
+	venue := NewKraken("kraken")
+	frame := []byte(`{"channel":"balances","data":[]}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = venue.Read(frame)
+	}
+}

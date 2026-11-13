@@ -119,3 +119,45 @@ func TestAscentReset(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkAscentNote(b *testing.B) {
+	ascent := &Ascent{}
+	t0 := time.Unix(100, 0)
+	t1 := t0.Add(100 * time.Millisecond)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ascent.Reset()
+		ascent.Note(1.0, t0)
+		ascent.Note(1.5, t1)
+	}
+}
+
+func BenchmarkAscentExhaust(b *testing.B) {
+	ascent := &Ascent{PeakVelocity: 2.5, SmoothVelocity: 1.25}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = ascent.Exhaust()
+	}
+}
+
+func BenchmarkAscentReset(b *testing.B) {
+	ascent := &Ascent{}
+	t0 := time.Unix(100, 0)
+	ascent.Note(1.0, t0)
+	ascent.Note(2.0, t0.Add(time.Second))
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ascent.Reset()
+		ascent.Note(1.0, t0)
+		ascent.Note(2.0, t0.Add(time.Second))
+	}
+}

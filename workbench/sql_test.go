@@ -146,3 +146,47 @@ func TestSelection(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSanitizeStatement(b *testing.B) {
+	stmt := "SELECT id FROM closed_paper"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sanitizeStatement(stmt)
+	}
+}
+
+func BenchmarkLiteral(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = literal("s3://symm/paper")
+	}
+}
+
+func BenchmarkIdentifier(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = identifier("open_paper")
+	}
+}
+
+func BenchmarkNested(b *testing.B) {
+	kind := "STRUCT(a INTEGER)[]"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = nested(kind)
+	}
+}
+
+func BenchmarkSelection(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = selection("fills", "STRUCT(side VARCHAR)[]")
+	}
+}

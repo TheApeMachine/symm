@@ -77,3 +77,27 @@ func TestUnmarshalJSONTicker(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkParseTicker(b *testing.B) {
+	raw := []byte(tickerREST)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = ParseTicker(raw)
+	}
+}
+
+func BenchmarkUnmarshalJSONTicker(b *testing.B) {
+	wire := NewTicker()
+	book := market.NewTicker(nil)
+	raw := []byte(tickerREST)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = wire.UnmarshalJSON(raw)
+		wire.ToMarket(book)
+	}
+}

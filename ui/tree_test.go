@@ -121,3 +121,55 @@ func TestCognitionTreeExport(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkTrieNodeJSON(b *testing.B) {
+	node := &TrieNodeJSON{
+		ID:          "root",
+		TokenPrefix: "R",
+		Token:       "R00",
+		Action:      "enter",
+		Count:       3,
+		Children: []*TrieNodeJSON{
+			{ID: "child", TokenPrefix: "R0"},
+		},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = json.Marshal(node)
+	}
+}
+
+func BenchmarkTrieBranchJSON(b *testing.B) {
+	branch := TrieBranchJSON{
+		Hash:       "abc",
+		Depth:      2,
+		Visits:     4,
+		MeanEdge:   0.5,
+		Confidence: 0.75,
+		Policy:     "enter",
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = json.Marshal(branch)
+	}
+}
+
+func BenchmarkCognitionTreeExport(b *testing.B) {
+	export := CognitionTreeExport{
+		Keys: []string{"a", "b"},
+		Root: &TrieNodeJSON{ID: "root", TokenPrefix: ""},
+		Branches: []TrieBranchJSON{
+			{Hash: "h1", Depth: 1, Visits: 1, MeanEdge: 0, Confidence: 1, Policy: "hold"},
+		},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = json.Marshal(export)
+	}
+}

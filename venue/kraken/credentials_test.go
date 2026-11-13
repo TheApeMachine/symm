@@ -59,3 +59,19 @@ func TestUseCredentials(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkUseCredentials(b *testing.B) {
+	viper.Set("kraken.credentials.collector.key_env", "SYMM_BENCH_COLLECTOR_KEY")
+	viper.Set("kraken.credentials.collector.secret_env", "SYMM_BENCH_COLLECTOR_SECRET")
+	viper.Set("kraken.credentials.main.key_env", "SYMM_BENCH_MAIN_KEY")
+	viper.Set("kraken.credentials.main.secret_env", "SYMM_BENCH_MAIN_SECRET")
+	b.Setenv("SYMM_BENCH_MAIN_KEY", "main-key")
+	b.Setenv("SYMM_BENCH_MAIN_SECRET", "main-secret")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		processCredentials.Store(nil)
+		_ = UseCredentials(RoleMain)
+	}
+}

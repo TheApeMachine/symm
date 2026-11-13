@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -84,4 +85,50 @@ func TestTopology(t *testing.T) {
 			})
 		})
 	})
+}
+
+func BenchmarkNewGraph(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewGraph()
+	}
+}
+
+func BenchmarkWrap(b *testing.B) {
+	ctx := context.Background()
+	node := &stubNode{System: nmruntime.NewSystem(ctx, "cvd", nil)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		graph := NewGraph()
+		_ = graph.Wrap("signal", []nmruntime.Node{node})
+	}
+}
+
+func BenchmarkIngress(b *testing.B) {
+	graph := NewGraph()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		graph.Ingress(2 * time.Microsecond)
+	}
+}
+
+func BenchmarkTopology(b *testing.B) {
+	ctx := context.Background()
+	graph := NewGraph()
+	a := &stubNode{System: nmruntime.NewSystem(ctx, "cvd", nil)}
+	bNode := &stubNode{System: nmruntime.NewSystem(ctx, "model", nil)}
+	graph.Wrap("signal", []nmruntime.Node{a})
+	graph.Wrap("model", []nmruntime.Node{bNode})
+	graph.Ingress(2 * time.Microsecond)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = graph.Topology()
+	}
 }

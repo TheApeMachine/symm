@@ -146,3 +146,34 @@ func TestTriggered(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewStoploss(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewStoploss(0.5)
+	}
+}
+
+func BenchmarkStoplossUpdate(b *testing.B) {
+	sl := NewStoploss(0.0)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		sl.Update(1.5, 0)
+	}
+}
+
+func BenchmarkTriggered(b *testing.B) {
+	sl := NewStoploss(0.5)
+	sl.State = StoplossTriggered
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sl.Triggered()
+	}
+}

@@ -160,3 +160,62 @@ func TestNextFrame(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkWrite(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 2)}
+	hub.connected.Store(true)
+	hub.conn.Store(&websocket.Conn{})
+	frame := []byte("tick")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = hub.Write(frame)
+	}
+}
+
+func BenchmarkDrainFrames(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 2)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		hub.frameCh <- []byte("stale")
+		hub.frameCh <- []byte("older")
+		hub.drainFrames()
+	}
+}
+
+func BenchmarkNewHub(b *testing.B) {
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = newHub(ctx, 64)
+	}
+}
+
+func BenchmarkActive(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 1)}
+	hub.connected.Store(true)
+	hub.conn.Store(&websocket.Conn{})
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = hub.Active()
+	}
+}
+
+func BenchmarkNextFrame(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 1)}
+	frame := []byte("tick")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		hub.frameCh <- frame
+		_, _ = hub.NextFrame()
+	}
+}

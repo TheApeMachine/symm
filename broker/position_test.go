@@ -288,3 +288,114 @@ func TestApply(t *testing.T) {
 		})
 	}))
 }
+
+func benchPosition(b *testing.B) (*Position, *Price) {
+	b.Helper()
+	var pos *Position
+	withPrice(func(price *Price) {
+		pos = NewPosition(b.Context(), testSymbol, "paper", "path", price, nil, nil)
+	})()
+	return pos, nil
+}
+
+func BenchmarkNewPosition(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withPrice(func(price *Price) {
+			_ = NewPosition(b.Context(), testSymbol, "paper", "path", price, nil, nil)
+		})()
+	}
+}
+
+func BenchmarkQty(b *testing.B) {
+	pos, _ := benchPosition(b)
+	pos.Apply(market.ExecutionData{
+		ExecID: "b1", Side: "buy",
+		LastQty: dec("1"), LastPrice: dec("100"),
+		Timestamp: time.Unix(1, 0).UTC(),
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = pos.Qty.String()
+	}
+}
+
+func BenchmarkEntry(b *testing.B) {
+	pos, _ := benchPosition(b)
+	pos.Apply(market.ExecutionData{
+		ExecID: "b1", Side: "buy",
+		LastQty: dec("1"), LastPrice: dec("100"),
+		Timestamp: time.Unix(1, 0).UTC(),
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = pos.Entry.String()
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	pos, _ := benchPosition(b)
+	pos.Apply(market.ExecutionData{
+		ExecID: "b1", Side: "buy",
+		LastQty: dec("1"), LastPrice: dec("100"),
+		Timestamp: time.Unix(1, 0).UTC(),
+	})
+	mark := dec("120")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = pos.Update(mark)
+	}
+}
+
+func BenchmarkEnter(b *testing.B) {
+	var balance *market.Balance
+	withPrice(func(price *Price) { balance = price.balance })()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withPrice(func(price *Price) {
+			pos := NewPosition(b.Context(), testSymbol, "paper", "", price, nil, nil)
+			_ = pos.Enter("R00/M1", dec("1"), balance)
+		})()
+	}
+}
+
+func BenchmarkExit(b *testing.B) {
+	pos, _ := benchPosition(b)
+	pos.ExitPath = "R00/M1"
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = pos.exit()
+	}
+}
+
+func BenchmarkApply(b *testing.B) {
+	fill := market.ExecutionData{
+		ExecID: "b1", Side: "buy",
+		LastQty: dec("1"), LastPrice: dec("100"),
+		Timestamp: time.Unix(1, 0).UTC(),
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		withPrice(func(price *Price) {
+			pos := NewPosition(b.Context(), testSymbol, "paper", "path", price, nil, nil)
+			pos.Apply(fill)
+		})()
+	}
+}

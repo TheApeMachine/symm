@@ -21,3 +21,11 @@ func TestNewWorkbench(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewWorkbench(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewWorkbench()
+	}
+}

@@ -72,3 +72,43 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSignal(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = leadlag.NewSignal(context.Background())
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	signal := leadlag.NewSignal(context.Background())
+	envelope := runtime.NewEnvelope(nil)
+	leader := "LEAD/USD"
+	follower := "FOL/USD"
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := range 31 {
+		leaderPrice := decimal.NewFromInt(10 + int64(i))
+		followerPrice := decimal.NewFromInt(10)
+		if i > 4 {
+			followerPrice = decimal.NewFromInt(10 + int64(i-4))
+		}
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{
+			{Symbol: leader, Side: market.SideBuy, Price: leaderPrice, Qty: decimal.NewFromInt(2), Timestamp: at.Add(time.Duration(i) * time.Second)},
+			{Symbol: follower, Side: market.SideBuy, Price: followerPrice, Qty: decimal.NewFromInt(1), Timestamp: at.Add(time.Duration(i) * time.Second)},
+		}}
+		envelope = signal.Step(envelope)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{
+			{Symbol: leader, Side: market.SideBuy, Price: decimal.NewFromInt(42), Qty: decimal.NewFromInt(2), Timestamp: at.Add(31 * time.Second)},
+			{Symbol: follower, Side: market.SideBuy, Price: decimal.NewFromInt(37), Qty: decimal.NewFromInt(1), Timestamp: at.Add(31 * time.Second)},
+		}}
+		envelope = signal.Step(envelope)
+	}
+}

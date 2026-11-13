@@ -106,3 +106,23 @@ func TestClose(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkExecute(b *testing.B) {
+	warehouse := local(b)
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = warehouse.Execute(ctx, `SELECT id, symbol FROM closed_paper`)
+	}
+}
+
+func BenchmarkClose(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		warehouse := New()
+		_ = warehouse.Close()
+	}
+}

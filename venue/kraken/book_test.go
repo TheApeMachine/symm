@@ -52,3 +52,34 @@ func TestBook(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkSide(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = SideBid
+		_ = SideAsk
+	}
+}
+
+func BenchmarkBook(b *testing.B) {
+	raw := []byte(`{
+		"channel":"book",
+		"type":"snapshot",
+		"data":[{
+			"symbol":"PIPE/USD",
+			"type":"snapshot",
+			"bids":[{"price":"1.10","qty":2}],
+			"asks":[{"price":"1.20","qty":3}],
+			"checksum":42,
+			"timestamp":"2024-01-02T03:04:05.000Z"
+		}]
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		var book Book
+		_ = json.Unmarshal(raw, &book)
+	}
+}

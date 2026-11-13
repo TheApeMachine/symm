@@ -35,3 +35,18 @@ func TestLoadConfig(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkLoadConfig(b *testing.B) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		b.Fatal(err)
+	}
+	path := filepath.Join(root, "cmd/cfg/config.yml")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		viper.Reset()
+		_ = loadConfig(path)
+	}
+}

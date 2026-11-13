@@ -184,3 +184,87 @@ func TestQuoteCash(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkMarshalJSONBalance(b *testing.B) {
+	btcBal := decimal.RequireFromString("1.5")
+	usdBal := decimal.RequireFromString("1000.50")
+	original := &kraken.Balance{
+		Error: []any{},
+		Result: map[string]*decimal.Decimal{
+			"XXBT": &btcBal,
+			"ZUSD": &usdBal,
+		},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		raw, err := sonic.Marshal(original)
+		if err != nil {
+			b.Fatal(err)
+		}
+		var decoded kraken.Balance
+		_ = sonic.Unmarshal(raw, &decoded)
+		_ = decoded.QuoteCash("USD")
+	}
+}
+
+func BenchmarkUnmarshalJSONBalance(b *testing.B) {
+	host := venue.NewKraken("USD")
+	raw := []byte(`{
+		"error":[],
+		"result":{
+			"ZUSD":"200.00",
+			"XXBT":"0.5"
+		}
+	}`)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = sonic.Unmarshal(raw, host.Balance())
+	}
+}
+
+func BenchmarkToMarketBalance(b *testing.B) {
+	equity := decimal.RequireFromString("1250.5")
+	unrealized := decimal.RequireFromString("12.25")
+	book := market.NewBalance(map[string]any{
+		"quote":  "USD",
+		"assets": []*market.Asset{},
+	})
+	book.Equity = &equity
+	book.Unrealized = &unrealized
+	cash := decimal.RequireFromString("24.62")
+	frame := &kraken.Balance{
+		Result: map[string]*decimal.Decimal{"USD": &cash},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		frame.ToMarket(book)
+	}
+}
+
+func BenchmarkSpotAsset(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = kraken.SpotAsset("ZUSD")
+		_ = kraken.SpotAsset("XXBT")
+	}
+}
+
+func BenchmarkQuoteCash(b *testing.B) {
+	usd := decimal.RequireFromString("10")
+	balance := &kraken.Balance{
+		Result: map[string]*decimal.Decimal{"USD": &usd},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = balance.QuoteCash("USD")
+	}
+}

@@ -27,3 +27,16 @@ func TestReadCatalog(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkReadCatalog(b *testing.B) {
+	source := strings.Join([]string{
+		"source,metric,identity,metric_class,semantic_role,purpose,quality_definedness,current_named_use,normative_destinations,forbidden_use,review_note,normative_status,baseline_commit",
+		"flow,rate,flow/rate,rate,FLOW_STATE,purpose,defined,use,destination,forbidden,,KEEP_NAMED_USE,commit",
+	}, "\n")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = readCatalog(strings.NewReader(source))
+	}
+}

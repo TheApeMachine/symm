@@ -85,3 +85,49 @@ func TestStep(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewSignal(b *testing.B) {
+	books := broker.NewBookManager(nil)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = toxicity.NewSignal(context.Background(), books)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	symbol := "TOX/USD"
+	books := broker.NewBookManager(nil)
+	pushBook(books, symbol, 20)
+	signal := toxicity.NewSignal(context.Background(), books)
+	envelope := runtime.NewEnvelope(nil)
+	at := time.Unix(1_700_000_000, 0).UTC()
+
+	for i := range 47 {
+		pushBook(books, symbol, 20+int64(i)*5)
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromFloat(90.5),
+			Qty:       decimal.NewFromInt(2),
+			Timestamp: at.Add(time.Duration(i) * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		pushBook(books, symbol, 260)
+		envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+			Symbol:    symbol,
+			Side:      market.SideBuy,
+			Price:     decimal.NewFromFloat(90.5),
+			Qty:       decimal.NewFromInt(2),
+			Timestamp: at.Add(48 * time.Second),
+		}}}
+		envelope = signal.Step(envelope)
+	}
+}

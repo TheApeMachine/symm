@@ -23,3 +23,11 @@ func TestNewWebSocket(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewWebSocket(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewWebSocket()
+	}
+}

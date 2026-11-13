@@ -160,3 +160,104 @@ func TestToMarketExecution(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkNewExecution(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewExecution().Request()
+	}
+}
+
+func BenchmarkNewExecutionFromMap(b *testing.B) {
+	model := map[string]any{
+		"cl_ord_id": "exit-order-id",
+		"pair":      "SLAY/USD",
+		"side":      "sell",
+		"exec_type": "trade",
+		"volume":    0.1,
+		"price":     1.25,
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewExecutionFromMap(model)
+	}
+}
+
+func BenchmarkTradable(b *testing.B) {
+	qty := decimal.RequireFromString("0.1")
+	execution := &Execution{
+		Data: []ExecutionData{{
+			ExecType: "trade",
+			LastQty:  &qty,
+		}},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = execution.Tradable()
+	}
+}
+
+func BenchmarkMarshalJSONExecution(b *testing.B) {
+	price := decimal.RequireFromString("50000.5")
+	qty := decimal.RequireFromString("0.1")
+	cost := decimal.RequireFromString("5000.05")
+	fee := decimal.RequireFromString("12.50")
+	execution := &Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data: []ExecutionData{{
+			Symbol:        "BTC/USD",
+			OrderID:       "ord-999",
+			ClientOrderID: "cl-ord-888",
+			ExecID:        "exec-777",
+			ExecType:      "trade",
+			Side:          "buy",
+			OrderType:     "limit",
+			OrderStatus:   "filled",
+			LastPrice:     &price,
+			LastQty:       &qty,
+			Cost:          &cost,
+			CumQty:        &qty,
+			CumCost:       &cost,
+			AvgPrice:      &price,
+			FeeUsdEquiv:   &fee,
+		}},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sonic.Marshal(execution)
+	}
+}
+
+func BenchmarkToMarketExecution(b *testing.B) {
+	price := decimal.RequireFromString("100")
+	qty := decimal.RequireFromString("2")
+	execution := &Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data: []ExecutionData{{
+			Symbol:      "BTC/USD",
+			ExecID:      "e1",
+			ExecType:    "trade",
+			Side:        "buy",
+			LastPrice:   &price,
+			LastQty:     &qty,
+			OrderStatus: "filled",
+		}},
+	}
+	book := market.NewExecution(nil)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		execution.ToMarket(book)
+	}
+}
