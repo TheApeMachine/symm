@@ -35,7 +35,7 @@ import { GridLayoutModifier } from "./open-choice-grid-layout";
 export const CHOICE_TRAIL_LENGTH = 90;
 
 const ZERO_LINE_ID = "pnl-zero";
-const tipId = (lotId: string) => `tip:${lotId}`;
+const tipId = (positionId: string) => `tip:${positionId}`;
 
 const STROKES = [
 	"#7eb6ff",
@@ -90,7 +90,7 @@ const withAlpha = (hex: string, alpha: number) => {
 	return `rgba(${r},${g},${b},${alpha})`;
 };
 
-/** Open lots on the selected book. */
+/** Open positions on the selected book. */
 export const chartHeld = (pos: Position, book: Book) =>
 	onTier(pos, book) && !isClosed(pos);
 
@@ -107,11 +107,11 @@ const markFloor = (pos: Position): number | undefined => {
 	return asFinite(stop.FloorPnLPct) ?? undefined;
 };
 
-/** Skip duplicate store publishes that did not move this lot's mark. */
+/** Skip duplicate store publishes that did not move this position's mark. */
 const markStamp = (pos: Position): string =>
 	[pos.pnl_pct, pos.pnl, pos.mark].join("|");
 
-type LotBind = {
+type PositionBind = {
 	line: FastLineRenderableSeries;
 	data: XyDataSeries;
 	band?: FastBandRenderableSeries;
@@ -188,15 +188,15 @@ export const drawOpenChoiceChart = async (
 		glm,
 	);
 
-	const lots = new Map<string, LotBind>();
+	const positions = new Map<string, PositionBind>();
 	let nextX = 0;
 
 	const setIsGridLayoutMode = (value: boolean) => {
 		glm.isGrid = value;
 	};
 
-	const dropLot = (id: string) => {
-		const bind = lots.get(id);
+	const dropPosition = (id: string) => {
+		const bind = positions.get(id);
 		if (!bind) return;
 
 		sciChartSurface.renderableSeries.remove(bind.line);
@@ -213,11 +213,11 @@ export const drawOpenChoiceChart = async (
 
 		if (tip) sciChartSurface.annotations.remove(tip);
 
-		lots.delete(id);
+		positions.delete(id);
 	};
 
-	const ensureLot = (id: string, stroke: string): LotBind => {
-		const prior = lots.get(id);
+	const ensurePosition = (id: string, stroke: string): PositionBind => {
+		const prior = positions.get(id);
 		if (prior) return prior;
 
 		const data = new XyDataSeries(wasmContext, {
@@ -236,13 +236,13 @@ export const drawOpenChoiceChart = async (
 
 		sciChartSurface.renderableSeries.add(line);
 
-		const bind: LotBind = { line, data, stamp: "" };
-		lots.set(id, bind);
+		const bind: PositionBind = { line, data, stamp: "" };
+		positions.set(id, bind);
 
 		return bind;
 	};
 
-	const ensureBand = (bind: LotBind, id: string, stroke: string) => {
+	const ensureBand = (bind: PositionBind, id: string, stroke: string) => {
 		if (bind.band && bind.bandData) return;
 
 		const bandData = new XyyDataSeries(wasmContext, {
@@ -311,7 +311,7 @@ export const drawOpenChoiceChart = async (
 		const legend: OpenChoiceLegendItem[] = [];
 		const rows: {
 			pos: Position;
-			bind: LotBind;
+			bind: PositionBind;
 			stroke: string;
 			y: number;
 			floor?: number;
@@ -329,7 +329,7 @@ export const drawOpenChoiceChart = async (
 
 			const stamp = markStamp(pos);
 			const stroke = strokeFor(id);
-			const bind = ensureLot(id, stroke);
+			const bind = ensurePosition(id, stroke);
 			const floor = markFloor(pos);
 
 			if (floor !== undefined) ensureBand(bind, id, stroke);
@@ -367,8 +367,8 @@ export const drawOpenChoiceChart = async (
 			}
 		}
 
-		for (const id of [...lots.keys()]) {
-			if (!live.has(id)) dropLot(id);
+		for (const id of [...positions.keys()]) {
+			if (!live.has(id)) dropPosition(id);
 		}
 
 		legend.sort((a, b) => a.name.localeCompare(b.name));

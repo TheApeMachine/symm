@@ -11,7 +11,9 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
@@ -32,6 +34,7 @@ type Desk struct {
 	public    network.Client
 	venue     market.Venue
 	tiers     map[TierType]*Tier
+	live      bool
 	onTrade   func(*market.Trade)
 	level3Ch  chan *market.Level3
 	tradeCh   chan *market.Trade
@@ -127,6 +130,7 @@ func DeskFor(
 		level3Ch: make(chan *market.Level3, system.Cfg.Market.Level3.RingCapacity),
 		tradeCh:  make(chan *market.Trade, tradeQueueFrames),
 		tiers:    tiers,
+		live:     live,
 	}
 
 	go desk.pumpLevel3()
@@ -138,6 +142,7 @@ func DeskFor(
 		desk.enqueueTrade(trade)
 	})
 
+	desk.publishModes()
 	desk.Transition(runtime.READY)
 	return desk
 }
@@ -312,6 +317,7 @@ func (desk *Desk) Run() {
 			continue
 		}
 
+		pipeline.Hit("trade")
 		desk.venue.Read(buf)
 	}
 }
@@ -321,13 +327,43 @@ Hello is the operator-facing book: balance changes and history sync call it so
 the hub stays consistent without every tier mutating UI directly.
 */
 func (desk *Desk) Hello() {
+	desk.publishModes()
+
 	for _, tier := range desk.tiers {
 		tier.Hello()
 	}
 }
 
 /*
-Flush persists every open lot (including Closing) before process exit.
+publishModes tells the hub which books this process actually runs so the
+mode strip does not hardcode virtual/paper as live.
+*/
+func (desk *Desk) publishModes() {
+	virtual := desk.tiers[TierTypeVirtual] != nil
+	paper := desk.tiers[TierTypePaper] != nil
+	real := desk.tiers[TierTypeReal] != nil
+
+	book := func(active, armed bool) map[string]any {
+		return map[string]any{
+			"active": active,
+			"armed":  armed,
+			"halted": active && !armed,
+		}
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"confidence": map[string]any{
+			"virtual":             book(virtual, virtual && !desk.live),
+			"paper":               book(paper, paper && !desk.live),
+			"real":                book(real, desk.live && real),
+			"eligible_resistance": system.Cfg.Learning.PaperEligibleResistance,
+			"real_ceiling":        desk.live && real,
+		},
+	})
+}
+
+/*
+Flush persists every open position (including Closing) before process exit.
 */
 func (desk *Desk) Flush() error {
 	var errs error
@@ -352,7 +388,9 @@ func (desk *Desk) Flush() error {
 }
 
 /*
-Update records tape flow and marks open lots from the executable bid, not the print.
+Update records tape flow and marks open positions from the executable bid.
+Level3 and public trades both land here — each successful mark is pushed to
+the hub (not only Hello on balance).
 */
 func (desk *Desk) Update(trades []*market.TradeData) {
 	for _, trade := range trades {
@@ -361,7 +399,14 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 
 		desk.price.NoteTrade(trade)
-		mark := desk.price.Mark(trade.Symbol)
+
+		symbol := trade.Symbol
+
+		if desk.price.normalizer != nil {
+			symbol = desk.price.normalizer.Name(symbol)
+		}
+
+		mark := desk.price.Mark(symbol)
 
 		if mark == nil {
 			continue
@@ -372,15 +417,31 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 				continue
 			}
 
-			for _, position := range tier.positions.Open(trade.Symbol) {
-				_ = position.Update(mark)
+			touched := make(map[string]*Position)
+
+			for _, position := range tier.positions.Open(symbol) {
+				if err := position.Update(mark); err != nil {
+					continue
+				}
+
+				_ = tier.positions.Save(position)
+				touched[position.ID] = position
 			}
+
+			if len(touched) == 0 {
+				continue
+			}
+
+			ui.UI.WriteJSON(map[string]any{
+				"tier":      tier.Type.String(),
+				"positions": touched,
+			})
 		}
 	}
 }
 
 /*
-OpenCount is how many live lots a tier holds — board capacity uses this.
+OpenCount is how many live positions a tier holds — board capacity uses this.
 */
 func (desk *Desk) OpenCount(tt TierType) int {
 	tier := desk.tiers[tt]
@@ -452,7 +513,7 @@ func (desk *Desk) Exit(
 
 /*
 Has is the fast guard inside mark/Refresh — multi-tier paper+real may share
-symbols but only tiers with open lots need Update work.
+symbols but only tiers with open positions need Update work.
 */
 func (desk *Desk) Has(symbol string) bool {
 	for _, tier := range desk.tiers {
@@ -490,7 +551,7 @@ func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
 
 /*
 Pending holds flat sells until the model records exit_path — Remove ran but
-learning still needs the lot handle for attribution before ClearPending.
+learning still needs the position handle for attribution before ClearPending.
 */
 func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {

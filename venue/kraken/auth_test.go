@@ -9,8 +9,48 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestAuthTokenReuse(t *testing.T) {
-	Convey("Given an Auth with a controllable clock and token source", t, func() {
+func TestNewAuth(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewAuth is called", func() {
+			auth := NewAuth()
+
+			Convey("clock and fetch are wired for production", func() {
+				So(auth, ShouldNotBeNil)
+				So(auth.now, ShouldNotBeNil)
+				So(auth.fetch, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestSeedToken(t *testing.T) {
+	Convey("Setup", t, func() {
+		auth := NewAuth()
+		issued := time.Unix(1_700_000_000, 0)
+		auth.now = func() time.Time { return issued }
+
+		Convey("When SeedToken pins a young token", func() {
+			auth.SeedToken("pinned-token")
+			token, err := auth.Token(t.Context())
+
+			Convey("Token returns the pinned value without fetching", func() {
+				So(err, ShouldBeNil)
+				So(token, ShouldEqual, "pinned-token")
+			})
+		})
+
+		Convey("When SeedToken is called with an empty token", func() {
+			auth.SeedToken("")
+
+			Convey("the cache stays empty", func() {
+				So(auth.token, ShouldBeEmpty)
+			})
+		})
+	})
+}
+
+func TestToken(t *testing.T) {
+	Convey("Setup", t, func() {
 		clock := time.Unix(1_700_000_000, 0)
 		fetches := 0
 		auth := &Auth{
@@ -21,71 +61,100 @@ func TestAuthTokenReuse(t *testing.T) {
 			},
 		}
 
-		Convey("a token within TokenReuse is reused", func() {
+		Convey("When the cached token is younger than TokenReuse", func() {
 			first, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse - time.Second)
 			second, err := auth.Token(t.Context())
-			So(err, ShouldBeNil)
-			So(second, ShouldEqual, first)
-			So(fetches, ShouldEqual, 1)
+
+			Convey("the same token is reused", func() {
+				So(err, ShouldBeNil)
+				So(second, ShouldEqual, first)
+				So(fetches, ShouldEqual, 1)
+			})
 		})
 
-		Convey("a token past TokenReuse is reissued for a reconnect", func() {
+		Convey("When TokenReuse has elapsed", func() {
 			first, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse)
 			second, err := auth.Token(t.Context())
-			So(err, ShouldBeNil)
-			So(second, ShouldNotEqual, first)
-			So(fetches, ShouldEqual, 2)
+
+			Convey("a fresh token is fetched", func() {
+				So(err, ShouldBeNil)
+				So(second, ShouldNotEqual, first)
+				So(fetches, ShouldEqual, 2)
+			})
 		})
 
-		Convey("a fetch failure is returned, not masked by the stale token", func() {
+		Convey("When fetch fails after a valid cache", func() {
 			_, err := auth.Token(t.Context())
 			So(err, ShouldBeNil)
 			clock = clock.Add(TokenReuse)
 			auth.fetch = func() (string, error) { return "", errors.New("rest down") }
 			token, err := auth.Token(t.Context())
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "rest down")
-			So(token, ShouldBeEmpty)
-			So(fetches, ShouldEqual, 1) // no retry: the one failed fetch is all
 
-			// The failure caches nothing: the next call fetches again.
-			auth.fetch = func() (string, error) { fetches++; return "token-B", nil }
-			token, err = auth.Token(t.Context())
-			So(err, ShouldBeNil)
-			So(token, ShouldEqual, "token-B")
+			Convey("the error is returned and nothing is cached", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "rest down")
+				So(token, ShouldBeEmpty)
+				So(fetches, ShouldEqual, 1)
+			})
 		})
 
-		Convey("an empty token is an error", func() {
+		Convey("When a failed fetch is followed by a successful one", func() {
+			_, err := auth.Token(t.Context())
+			So(err, ShouldBeNil)
+			clock = clock.Add(TokenReuse)
+			auth.fetch = func() (string, error) { return "", errors.New("rest down") }
+			_, _ = auth.Token(t.Context())
+			auth.fetch = func() (string, error) { fetches++; return "token-B", nil }
+			token, err := auth.Token(t.Context())
+
+			Convey("the next call fetches again", func() {
+				So(err, ShouldBeNil)
+				So(token, ShouldEqual, "token-B")
+			})
+		})
+
+		Convey("When fetch returns an empty token", func() {
 			auth.fetch = func() (string, error) { return "", nil }
 			_, err := auth.Token(t.Context())
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "empty websockets token")
+
+			Convey("empty websockets token is an error", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "empty websockets token")
+			})
 		})
 
-		Convey("a cancelled context fetches nothing", func() {
+		Convey("When the context is already cancelled", func() {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			_, err := auth.Token(ctx)
-			So(err, ShouldNotBeNil)
-			So(fetches, ShouldEqual, 0)
+
+			Convey("no fetch runs", func() {
+				So(err, ShouldNotBeNil)
+				So(fetches, ShouldEqual, 0)
+			})
 		})
 	})
 }
 
-func TestSignPrivateURLRejectsForeignHost(t *testing.T) {
-	Convey("SignPrivateURL only signs Kraken REST", t, func() {
-		_, _, _, err := SignPrivateURL("https://example.com/0/private/Balance", map[string]any{})
-		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldContainSubstring, "private post host")
+func TestSignPrivateURL(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When the host is not api.kraken.com", func() {
+			_, _, _, err := SignPrivateURL("https://example.com/0/private/Balance", map[string]any{})
+
+			Convey("signing is rejected", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "private post host")
+			})
+		})
 	})
 }
 
-func TestSignPrivateRequiresCredentials(t *testing.T) {
-	Convey("SignPrivate fails when no role credentials are selected", t, func() {
+func TestSignPrivate(t *testing.T) {
+	Convey("Setup", t, func() {
 		prev := processCredentials.Load()
 		processCredentials.Store(nil)
 		Reset(func() {
@@ -94,7 +163,12 @@ func TestSignPrivateRequiresCredentials(t *testing.T) {
 			}
 		})
 
-		_, _, _, err := SignPrivate("/0/private/Balance", map[string]any{})
-		So(err, ShouldNotBeNil)
+		Convey("When no credential role is selected", func() {
+			_, _, _, err := SignPrivate("/0/private/Balance", map[string]any{})
+
+			Convey("signing fails", func() {
+				So(err, ShouldNotBeNil)
+			})
+		})
 	})
 }

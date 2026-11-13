@@ -19,15 +19,15 @@ func local(t *testing.T) *Warehouse {
 	}
 
 	dir := t.TempDir()
-	lot := filepath.Join(dir, "lot.json")
+	position := filepath.Join(dir, "position.json")
 	frames := filepath.Join(dir, "frames.ndjson")
 
-	if err := os.WriteFile(lot, []byte(`{
+	if err := os.WriteFile(position, []byte(`{
 		"epoch": 1,
 		"tick": 2,
 		"timestamp": 3,
 		"position": {
-			"id": "lot-1",
+			"id": "position-1",
 			"symbol": "BTC/USD",
 			"book": "paper",
 			"virtual": false,
@@ -47,7 +47,7 @@ func local(t *testing.T) *Warehouse {
 		t.Fatal(err)
 	}
 
-	lotURL := filepath.ToSlash(lot)
+	positionURL := filepath.ToSlash(position)
 	framesURL := filepath.ToSlash(frames)
 
 	statements := []string{
@@ -58,7 +58,7 @@ func local(t *testing.T) *Warehouse {
 			json_extract_string(position, '$.book') AS book,
 			json_extract(position, '$.fills')::VARCHAR AS fills,
 			json_extract(position, '$.hold_paths')::VARCHAR AS hold_paths
-		FROM read_json('` + lotURL + `', columns={'epoch':'UBIGINT','tick':'UBIGINT','timestamp':'UBIGINT','position':'JSON'})`,
+		FROM read_json('` + positionURL + `', columns={'epoch':'UBIGINT','tick':'UBIGINT','timestamp':'UBIGINT','position':'JSON'})`,
 		`CREATE OR REPLACE VIEW level3_frames AS SELECT
 			channel, type, data::VARCHAR AS data
 		FROM read_json('` + framesURL + `', format='newline_delimited', columns={'channel':'VARCHAR','type':'VARCHAR','data':'JSON'})`,

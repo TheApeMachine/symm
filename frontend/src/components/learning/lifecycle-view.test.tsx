@@ -177,7 +177,7 @@ describe("LifecycleView", () => {
 		expect(widget?.textContent).not.toContain("Bound by");
 	});
 
-	it("omits open virtual lots from the list", () => {
+	it("omits open virtual positions from the list", () => {
 		bookAtom.set("virtual");
 		const { container } = render(<LifecycleView />);
 		deliver([

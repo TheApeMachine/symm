@@ -7,8 +7,8 @@ import (
 	"github.com/theapemachine/nomagique/market"
 )
 
-func TestDecodeLevel3DeleteEvent(t *testing.T) {
-	Convey("Update frames keep event through ToMarket", t, func() {
+func TestDecodeLevel3(t *testing.T) {
+	Convey("Setup", t, func() {
 		raw := []byte(`{
 			"channel":"level3",
 			"type":"update",
@@ -26,12 +26,21 @@ func TestDecodeLevel3DeleteEvent(t *testing.T) {
 			}]
 		}`)
 
-		decoded := DecodeLevel3(raw)
-		So(decoded, ShouldNotBeNil)
-		So(decoded.Data[0].Asks[0].Event, ShouldEqual, "delete")
+		Convey("When DecodeLevel3 parses a delete event", func() {
+			decoded := DecodeLevel3(raw)
 
-		out := decoded.ToMarket(market.NewLevel3()).(*market.Level3)
-		So(out.Data[0].Asks[0].Event, ShouldEqual, "delete")
-		So(out.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "302.89736033")
+			Convey("event and order qty decode on the wire", func() {
+				So(decoded, ShouldNotBeNil)
+				So(decoded.Channel, ShouldEqual, "level3")
+				So(decoded.Data[0].Asks[0].Event, ShouldEqual, "delete")
+				So(decoded.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "302.89736033")
+			})
+
+			Convey("ToMarket keeps the delete event on the book", func() {
+				out := decoded.ToMarket(market.NewLevel3()).(*market.Level3)
+				So(out.Data[0].Asks[0].Event, ShouldEqual, "delete")
+				So(out.Data[0].Asks[0].OrderQty.String(), ShouldEqual, "302.89736033")
+			})
+		})
 	})
 }

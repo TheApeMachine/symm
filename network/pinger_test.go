@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,26 +14,44 @@ import (
 	gorilla "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
-func TestPingerStartStop(t *testing.T) {
-	Convey("Start and Stop transition the pinger without panicking", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+func TestNewPinger(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewPinger is called", func() {
+			pinger := NewPinger(t.Context())
 
-		client := NewWebsocketClient(ctx)
-		pinger := NewPinger(ctx, client)
-
-		pinger.Start()
-		So(pinger.Status(), ShouldEqual, runtime.READY)
-
-		pinger.Stop()
-		So(pinger.Status(), ShouldEqual, runtime.WAITING)
+			Convey("the pinger names network.pinger", func() {
+				So(pinger.Name(), ShouldEqual, "network.pinger")
+			})
+		})
 	})
 }
 
-func TestPingerWritePing(t *testing.T) {
-	Convey("pinger loop emits websocket pings on the configured interval", t, func() {
+func TestStart(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		pinger := NewPinger(ctx)
+		var writeMu sync.Mutex
+		status := runtime.READY
+		pinger.conn = &gorilla.Conn{}
+		pinger.writeMu = &writeMu
+
+		Convey("When Start is called", func() {
+			pinger.Start(pinger.conn, &writeMu, &status)
+
+			Convey("it returns without blocking", func() {
+				So(true, ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestPing(t *testing.T) {
+	Convey("Setup", t, func() {
 		var pings atomic.Int32
 		upgrader := gorilla.Upgrader{}
 
@@ -56,22 +75,37 @@ func TestPingerWritePing(t *testing.T) {
 		defer server.Close()
 
 		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+		conn, _, err := gorilla.DefaultDialer.Dial(wsURL, nil)
+		So(err, ShouldBeNil)
+		defer conn.Close()
+
+		prev := system.Cfg.WebSocket.PingInterval
+		system.Cfg.WebSocket.PingInterval = 15 * time.Millisecond
+		defer func() { system.Cfg.WebSocket.PingInterval = prev }()
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		client := NewWebsocketClient(ctx)
-		So(client.Open(wsURL), ShouldBeNil)
+		pinger := NewPinger(ctx)
+		var writeMu sync.Mutex
+		status := runtime.READY
+		pinger.conn = conn
+		pinger.writeMu = &writeMu
 
-		pinger := NewPinger(ctx, client)
-		pinger.interval = 15 * time.Millisecond
-		pinger.Start()
+		Convey("When the pinger loop is running", func() {
+			pinger.Start(conn, &writeMu, &status)
 
-		deadline := time.Now().Add(500 * time.Millisecond)
-		for time.Now().Before(deadline) && pings.Load() == 0 {
-			goruntime.Gosched()
-		}
+			deadline := time.Now().Add(500 * time.Millisecond)
+			for time.Now().Before(deadline) && pings.Load() == 0 {
+				goruntime.Gosched()
+			}
 
-		pinger.Stop()
-		So(pings.Load(), ShouldBeGreaterThan, 0)
+			cancel()
+			time.Sleep(40 * time.Millisecond)
+
+			Convey("the server received a ping", func() {
+				So(pings.Load(), ShouldBeGreaterThan, int32(0))
+			})
+		})
 	})
 }

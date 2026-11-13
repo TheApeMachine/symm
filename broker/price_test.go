@@ -149,8 +149,9 @@ func TestNewPrice(t *testing.T) {
 			public,
 		)
 
-		Convey("When fees load and the ticker watch arms", func() {
+		Convey("When fees load and ticker Watch arms", func() {
 			So(price, ShouldNotBeNil)
+			So(price.Status(), ShouldEqual, runtime.READY)
 			So(public.watches, ShouldEqual, 1)
 
 			notional := decimal.NewFromInt(100)
@@ -301,10 +302,10 @@ func TestTapeUptake(t *testing.T) {
 func TestSpreadPct(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When the book is crossed cleanly", func() {
+			// (101-100)/101*100
 			spread, ok := price.SpreadPct(testSymbol)
 			So(ok, ShouldBeTrue)
-			So(spread, ShouldNotBeNil)
-			So(spread.Sign(), ShouldBeGreaterThan, 0)
+			So(spread.String(), ShouldEqual, "0.99009900990099")
 		})
 	}))
 }
@@ -355,9 +356,10 @@ func TestTouchBidCash(t *testing.T) {
 func TestBackingRatio(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When both sides sit near mid", func() {
+			// bidCash=3000 askCash=3030 → 3000/3030
 			ratio, ok := price.BackingRatio(testSymbol)
 			So(ok, ShouldBeTrue)
-			So(ratio, ShouldBeGreaterThan, 0)
+			So(ratio, ShouldEqual, 3000.0/3030.0)
 		})
 
 		Convey("When the band is hollow on both sides", func() {
@@ -432,11 +434,18 @@ func TestPulseQuote(t *testing.T) {
 func TestPnL(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When exit is above entry after fees", func() {
-			qty, entry, exit := dec("10"), dec("100"), dec("110")
-			pnl := price.PnL(testSymbol, qty, entry, exit)
+			// qty=10 entry=100 exit=110 taker=0.40%
+			// entryGross=1000 feeIn=4 exitGross=1100 feeOut=4.4
+			// pnl=1100-4.4-(1000+4)=91.6
+			pos := &Position{
+				Symbol: testSymbol,
+				Qty:    dec("10"),
+				Entry:  dec("100"),
+				Exit:   dec("110"),
+			}
+			pnl := price.PnL(pos)
 
-			So(pnl, ShouldNotBeNil)
-			So(pnl.Sign(), ShouldBeGreaterThan, 0)
+			So(pnl.String(), ShouldEqual, "91.6")
 		})
 	}))
 }
@@ -444,11 +453,17 @@ func TestPnL(t *testing.T) {
 func TestPnLPct(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When exit matches entry after fees", func() {
-			qty, entry, exit := dec("10"), dec("100"), dec("100")
-			pct := price.PnLPct(testSymbol, qty, entry, exit)
+			// qty=10 entry=100 exit=100 → pnl=1000-4-(1000+4)=-8
+			// pct=-8/1004*100=-0.7968127490039841
+			pos := &Position{
+				Symbol: testSymbol,
+				Qty:    dec("10"),
+				Entry:  dec("100"),
+				Exit:   dec("100"),
+			}
+			pct := price.PnLPct(pos)
 
-			So(pct, ShouldNotBeNil)
-			So(pct.Sign(), ShouldBeLessThan, 0)
+			So(pct.String(), ShouldEqual, "-0.79681274900398")
 		})
 	}))
 }
@@ -456,19 +471,16 @@ func TestPnLPct(t *testing.T) {
 func TestAllocate(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When the book and wallet can size", func() {
+			// bid touch qty=30 / touch_divisor=3 → cap=10; ask walk fits budget
 			qty, err := price.Allocate(testSymbol, price.balance)
 			So(err, ShouldBeNil)
-			So(qty, ShouldNotBeNil)
-			So(qty.Sign(), ShouldBeGreaterThan, 0)
+			So(qty.String(), ShouldEqual, "10")
 		})
 
-		Convey("When wallet is nil, desk balance still enforces venue mins", func() {
+		Convey("When wallet is nil, desk balance still sizes", func() {
 			qty, err := price.Allocate(testSymbol, nil)
 			So(err, ShouldBeNil)
-			So(qty, ShouldNotBeNil)
-
-			pair := price.Instrument.Pair(testSymbol)
-			So(qty.Cmp(*pair.QtyMin) >= 0, ShouldBeTrue)
+			So(qty.String(), ShouldEqual, "10")
 		})
 	}))
 }

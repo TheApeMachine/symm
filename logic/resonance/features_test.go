@@ -6,23 +6,27 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestFeaturesAreSignalMetrics(t *testing.T) {
-	Convey("Features are real envelope signal labels only", t, func() {
-		So(len(Features), ShouldEqual, 15)
-		So(Features[0].Label, ShouldEqual, "compression")
-		So(Features[8].Label, ShouldEqual, "scarcity_score")
-		So(Features[9].Source, ShouldEqual, "sentiment")
-		So(Features[9].Label, ShouldEqual, "slump_score")
-		So(Features[14].Label, ShouldEqual, "depth_score")
+func TestFeatures(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When the static Features table is inspected", func() {
+			Convey("Labels match envelope signal metrics only", func() {
+				So(len(Features), ShouldEqual, 15)
+				So(Features[0].Label, ShouldEqual, "compression")
+				So(Features[8].Label, ShouldEqual, "scarcity_score")
+				So(Features[9].Source, ShouldEqual, "sentiment")
+				So(Features[9].Label, ShouldEqual, "slump_score")
+				So(Features[14].Label, ShouldEqual, "depth_score")
 
-		for _, feature := range Features {
-			So(feature.Source, ShouldNotEqual, "broker")
-		}
+				for _, feature := range Features {
+					So(feature.Source, ShouldNotEqual, "broker")
+				}
+			})
+		})
 	})
 }
 
 func TestForwardStoryNets(t *testing.T) {
-	Convey("ForwardStoryNets folds story + signal oracle pairs", t, func() {
+	Convey("Setup", t, func() {
 		curve := make([]float64, len(Features))
 
 		for i := range curve {
@@ -38,11 +42,16 @@ func TestForwardStoryNets(t *testing.T) {
 
 		curve[9] = 0.4
 
-		enter, hold, exit, risk, ok := ForwardStoryNets(curve)
-		So(ok, ShouldBeTrue)
-		So(enter, ShouldAlmostEqual, 0.9+1.5, 1e-9)
-		So(hold, ShouldAlmostEqual, 0.9+0.5, 1e-9)
-		So(exit, ShouldAlmostEqual, 0.5+0.5-0.5, 1e-9)
-		So(risk, ShouldAlmostEqual, 0.4, 1e-9)
+		Convey("When ForwardStoryNets folds the oracle curve", func() {
+			enter, hold, exit, risk, ok := ForwardStoryNets(curve)
+
+			Convey("Story nets match the folded weights", func() {
+				So(ok, ShouldBeTrue)
+				So(enter, ShouldEqual, 0.9+1.5)
+				So(hold, ShouldEqual, 0.9+0.5)
+				So(exit, ShouldEqual, 0.5+0.5-0.5)
+				So(risk, ShouldEqual, 0.4)
+			})
+		})
 	})
 }

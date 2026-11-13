@@ -48,7 +48,7 @@ export const OpenChoiceChart = () => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Store → SciChart fifo series per open lot. Toggle grid per lot.
+						Store → SciChart fifo series per open position. Toggle grid per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">

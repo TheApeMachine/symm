@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Position } from "#/collections/types";
 import { mergePositionBook } from "./position-book";
 
-const lot = (partial: Partial<Position> & Pick<Position, "id" | "symbol">): Position => ({
+const position = (partial: Partial<Position> & Pick<Position, "id" | "symbol">): Position => ({
 	entry_path: "exchange",
 	exit_path: "",
 	opened_at: "2026-11-11T20:12:38Z",
@@ -11,15 +11,15 @@ const lot = (partial: Partial<Position> & Pick<Position, "id" | "symbol">): Posi
 });
 
 describe("mergePositionBook", () => {
-	it("drops an open lot once the same trip is closed under a new id", () => {
-		const open = lot({ id: "mon-open", symbol: "MON/USD", pnl_pct: "-3.2" });
-		const closed = lot({
+	it("drops an open position once the same trip is closed under a new id", () => {
+		const open = position({ id: "mon-open", symbol: "MON/USD", pnl_pct: "-3.2" });
+		const closed = position({
 			id: "mon-closed",
 			symbol: "MON/USD",
 			closed_at: "2026-11-11T23:29:02Z",
 			pnl_pct: "0.67",
 		});
-		const other = lot({
+		const other = position({
 			id: "bera",
 			symbol: "BERA/USD",
 			opened_at: "2026-11-11T18:00:00Z",
@@ -37,13 +37,13 @@ describe("mergePositionBook", () => {
 	});
 
 	it("replaces one tier on a snapshot and keeps the other books", () => {
-		const paper = lot({
+		const paper = position({
 			id: "paper-doge",
 			symbol: "DOGE/USD",
 			tier_key: "paper",
 		});
-		const stale = lot({ id: "mon-open", symbol: "MON/USD" });
-		const live = lot({
+		const stale = position({ id: "mon-open", symbol: "MON/USD" });
+		const live = position({
 			id: "bera",
 			symbol: "BERA/USD",
 			opened_at: "2026-11-11T18:00:00Z",
@@ -60,13 +60,13 @@ describe("mergePositionBook", () => {
 		expect(next["paper-doge"]?.symbol).toBe("DOGE/USD");
 	});
 
-	it("keeps an open lot when the close is a later trip", () => {
-		const open = lot({
+	it("keeps an open position when the close is a later trip", () => {
+		const open = position({
 			id: "mon-next",
 			symbol: "MON/USD",
 			opened_at: "2026-11-11T23:40:00Z",
 		});
-		const closed = lot({
+		const closed = position({
 			id: "mon-closed",
 			symbol: "MON/USD",
 			opened_at: "2026-11-11T20:12:38Z",

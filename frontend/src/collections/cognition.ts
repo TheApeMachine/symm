@@ -114,7 +114,7 @@ export type CognitionMatch = {
 export type CognitionState = {
 	epoch: string;
 	policyKeys: string[];
-	/** Threshold per explore key. Absent until a settled lot has written one. */
+	/** Threshold per explore key. Absent until a settled position has written one. */
 	thresholds: Record<string, number>;
 	matches: Record<string, CognitionMatch>;
 	problem: CognitionProblem | null;

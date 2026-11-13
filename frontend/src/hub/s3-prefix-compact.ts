@@ -96,7 +96,7 @@ export const pathsListingFromEnvelope = (
 
 /*
 closedListingFromEnvelope folds hub WriteJSON {"closed":{…}} into history
-entries from lot JSON {epoch,tick,timestamp,position→row}.
+entries from position JSON {epoch,tick,timestamp,position→row}.
 */
 export const closedListingFromEnvelope = (
 	payload: unknown,

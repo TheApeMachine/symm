@@ -162,7 +162,7 @@ func (warehouse *Warehouse) boot() []string {
 		"INSTALL httpfs",
 		"LOAD httpfs",
 		/*
-			Open/closed lot JSON is rewritten in place while the desk runs.
+			Open/closed position JSON is rewritten in place while the desk runs.
 			CREATE TABLE snapshots (and any long S3 scan) otherwise die with
 			"ETag ... changed after it was opened". The workbench accepts a
 			tear-consistent read of live prefixes rather than failing the viewer.

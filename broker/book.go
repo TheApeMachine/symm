@@ -440,8 +440,7 @@ func (manager *BookManager) StaleSymbol(symbol string) bool {
 }
 
 /*
-Stale is wired from Instrument OnDisconnect so marks and sizing halt until
-ResubscribeLevel3 delivers a fresh snapshot.
+Stale marks books so marks and sizing halt until a fresh Level3 snapshot lands.
 */
 func (manager *BookManager) Stale(symbols []string) {
 	for _, symbol := range symbols {

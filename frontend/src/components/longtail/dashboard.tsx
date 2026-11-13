@@ -838,7 +838,7 @@ export const LongtailDashboard = () => {
 							}
 						/>
 						<RailRow
-							label="lots armed"
+							label="positions armed"
 							value={
 								stops?.armed === null || stops?.armed === undefined
 									? "—"

@@ -34,34 +34,52 @@ func seedBook(books *broker.BookManager, symbol string) {
 	})
 }
 
-func TestMorphologyStep(t *testing.T) {
-	Convey("Step records morphology from book-shaped trades", t, func() {
+func TestNewSignal(t *testing.T) {
+	Convey("Setup", t, func() {
+		books := broker.NewBookManager(nil)
+
+		Convey("When NewSignal is called", func() {
+			signal := morphology.NewSignal(context.Background(), books)
+
+			Convey("It returns a usable signal", func() {
+				So(signal, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
 		symbol := "MOR/USD"
 		books := broker.NewBookManager(nil)
 		seedBook(books, symbol)
 
 		signal := morphology.NewSignal(context.Background(), books)
 		envelope := runtime.NewEnvelope(nil)
-		at := time.Now().UTC()
+		at := time.Unix(1_700_000_000, 0).UTC()
 
-		var out *runtime.Envelope
-		for i := range 32 {
-			envelope.Trade = &market.Trade{Data: []*market.TradeData{{
-				Symbol:    symbol,
-				Side:      market.SideBuy,
-				Price:     decimal.NewFromInt(31),
-				Qty:       decimal.NewFromInt(1),
-				Timestamp: at.Add(time.Duration(i) * time.Second),
-			}}}
-			out = signal.Step(envelope)
-		}
+		Convey("When book-shaped trades repeat", func() {
+			var out *runtime.Envelope
+			for i := range 32 {
+				envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+					Symbol:    symbol,
+					Side:      market.SideBuy,
+					Price:     decimal.NewFromInt(31),
+					Qty:       decimal.NewFromInt(1),
+					Timestamp: at.Add(time.Duration(i) * time.Second),
+				}}}
+				out = signal.Step(envelope)
+			}
 
-		reading := out.Morphology[symbol]
-		So(reading, ShouldNotBeNil)
-		So(reading.ShapeStable, ShouldEqual, 1)
-		So(reading.AskVacuum, ShouldEqual, 0)
-		So(reading.BidNotionalLean, ShouldEqual, 0)
-		So(reading.Value, ShouldEqual, 1)
-		So(reading.Strength, ShouldEqual, 1)
+			Convey("Shape is stable with unit strength", func() {
+				reading := out.Morphology[symbol]
+				So(reading, ShouldNotBeNil)
+				So(reading.ShapeStable, ShouldEqual, 1)
+				So(reading.AskVacuum, ShouldEqual, 0)
+				So(reading.BidNotionalLean, ShouldEqual, 0)
+				So(reading.Value, ShouldEqual, 1)
+				So(reading.Strength, ShouldEqual, 1)
+			})
+		})
 	})
 }

@@ -60,7 +60,7 @@ run:
 paper:
 	go run main.go paper $(CONFIG_FLAG)
 
-# Analytical Workbench: DuckDB over S3 JSON (lots + Level3 NDJSON). The hub
+# Analytical Workbench: DuckDB over S3 JSON (positions + Level3 NDJSON). The hub
 # proxies POST /workbench/query to workbench.url (default :8081).
 workbench:
 	go run ./cmd/workbench $(CONFIG_FLAG)

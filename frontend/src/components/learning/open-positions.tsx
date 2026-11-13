@@ -9,7 +9,7 @@ import { Flex } from "#/components/ui";
 import { comparePositionRows } from "#/lib/frame-position";
 
 /*
-Open positions are the desk's per-lot records on signals.positions.
+Open positions are the desk's per-position records on signals.positions.
 */
 export const positionRows = (state: Record<string, Position>): Position[] => {
 	const rows = Object.values(state);
@@ -24,18 +24,18 @@ export const positionsRevision = (state: Record<string, Position>): string => {
 	return parts.join("|");
 };
 
-/** Open lots on the selected book. */
+/** Open positions on the selected book. */
 export const chartHeldRow = (pos: Position, book: Book) =>
 	onTier(pos, book) && !isClosed(pos);
 
-export const openLots = (rows: Position[], book: Book) =>
+export const openPositions = (rows: Position[], book: Book) =>
 	rows
 		.filter((row) => !isClosed(row) && onTier(row, book))
 		.map((row) => row.symbol)
 		.sort();
 
 /** Close-now return after fees. */
-export const lotInProfit = (pos: Position) => {
+export const positionInProfit = (pos: Position) => {
 	const pct = pnlFrac(pos);
 	return pct !== null && pct > 0;
 };
@@ -55,7 +55,7 @@ export const OpenPositions = () => {
 				className="h-full min-h-48 px-4 text-center"
 			>
 				<span className="font-mono text-[11px] text-(--f4) tracking-[0.14em] uppercase">
-					no open lots
+					no open positions
 				</span>
 				<span className="max-w-sm text-(--f3) text-[12px] leading-relaxed">
 					Held positions on this book paint here as they mark.

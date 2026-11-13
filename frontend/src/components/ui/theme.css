@@ -47,6 +47,16 @@ Foreground scale (--f1 through --f4) is ordered by emphasis, f1 loudest.
 symFade is the entrance every overlay in the library uses, so a palette and a
 modal arrive the same way.
 */
+@keyframes diagEdgeFlow {
+	to {
+		stroke-dashoffset: -20;
+	}
+}
+
+.diag-edge-flow {
+	animation: diagEdgeFlow 0.8s linear infinite;
+}
+
 @keyframes symFade {
 	from {
 		opacity: 0;

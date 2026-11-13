@@ -36,7 +36,7 @@ func NewRotation(ctx context.Context) *Rotation {
 }
 
 /*
-NoteSettled ingests a closed lot for rotation scoring.
+NoteSettled ingests a closed position for rotation scoring.
 */
 func (rotation *Rotation) NoteSettled(position *broker.Position) {
 	if rotation == nil || position == nil || position.Symbol == "" {

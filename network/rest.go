@@ -5,6 +5,7 @@ import (
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -27,12 +28,18 @@ func (rest *REST) Get(rawURL string, params map[string]string) (*client.Response
 		)
 	}
 
-	return rest.conn.Get(rawURL, client.Config{
+	response, err := rest.conn.Get(rawURL, client.Config{
 		Header: map[string]string{
 			"Content-Type": "application/json",
 		},
 		Param: params,
 	})
+
+	if err == nil {
+		pipeline.Hit("rest")
+	}
+
+	return response, err
 }
 
 func (rest *REST) Post(url string, body any) (*client.Response, error) {
@@ -55,8 +62,14 @@ func (rest *REST) Post(url string, body any) (*client.Response, error) {
 		body = signed
 	}
 
-	return rest.conn.Post(url, client.Config{
+	response, err := rest.conn.Post(url, client.Config{
 		Header: header,
 		Body:   body,
 	})
+
+	if err == nil {
+		pipeline.Hit("rest")
+	}
+
+	return response, err
 }

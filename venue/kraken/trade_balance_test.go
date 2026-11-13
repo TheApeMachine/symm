@@ -1,4 +1,4 @@
-package kraken_test
+package kraken
 
 import (
 	"testing"
@@ -6,75 +6,114 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/venue/kraken"
+	"github.com/theapemachine/nomagique/market"
 )
 
-func TestTradeBalanceRESTUnmarshal(t *testing.T) {
-	Convey("REST TradeBalance decodes Kraken e and n fields", t, func() {
-		raw := []byte(`{
-			"error":[],
-			"result":{
-				"eb":"140.9725",
-				"tb":"141.5225",
-				"m":"0.0000",
-				"n":"-1.5500",
-				"c":"72.0900",
-				"v":"70.5400",
-				"e":"139.9725",
-				"mf":"139.9725"
-			}
-		}`)
+const tradeBalanceREST = `{
+	"error":[],
+	"result":{
+		"eb":"140.9725",
+		"tb":"141.5225",
+		"m":"0.0000",
+		"n":"-1.5500",
+		"c":"72.0900",
+		"v":"70.5400",
+		"e":"139.9725",
+		"mf":"139.9725"
+	}
+}`
 
-		tb := kraken.NewTradeBalance()
+func TestUnmarshalJSONTradeBalance(t *testing.T) {
+	Convey("Setup", t, func() {
+		tb := NewTradeBalance()
 
-		So(tb.UnmarshalJSON(raw), ShouldBeNil)
-		So(tb.Result.Equity.String(), ShouldEqual, "139.9725")
-		So(tb.Result.UnrealizedPnL.String(), ShouldEqual, "-1.55")
+		Convey("When REST TradeBalance JSON arrives", func() {
+			So(tb.UnmarshalJSON([]byte(tradeBalanceREST)), ShouldBeNil)
+
+			Convey("equity and unrealized decode from e and n", func() {
+				So(tb.Result.Equity.String(), ShouldEqual, "139.9725")
+				So(tb.Result.UnrealizedPnL.String(), ShouldEqual, "-1.55")
+			})
+		})
 	})
 }
 
-func TestTradeBalanceResultMeasurementRoundTrip(t *testing.T) {
-	Convey("Given a valid kraken.TradeBalanceResult and wallet", t, func() {
-		unrealized, _ := decimal.NewFromString("-0.32")
-		equity, _ := decimal.NewFromString("199.68")
-		cash, _ := decimal.NewFromString("160.14")
-		zamaAmount, _ := decimal.NewFromString("517.71")
-		unrealizedPtr := &unrealized
-		equityPtr := &equity
-		cashPtr := &cash
-		zamaPtr := &zamaAmount
+func TestToMarketTradeBalance(t *testing.T) {
+	Convey("Setup", t, func() {
+		tb := NewTradeBalance()
+		raw := []byte(`{
+			"error":[],
+			"result":{
+				"eb":"161.01",
+				"tb":"50.00",
+				"m":"0.0000",
+				"n":"0.80",
+				"c":"72.09",
+				"v":"60.60",
+				"e":"61.76",
+				"mf":"61.76"
+			}
+		}`)
+		So(tb.UnmarshalJSON(raw), ShouldBeNil)
 
-		tb := &kraken.TradeBalanceResult{
-			UnrealizedPnL: unrealizedPtr,
-			Equity:        equityPtr,
-			AvailableCash: cashPtr,
+		book := market.NewBalance(map[string]any{
+			"quote":  "USD",
+			"assets": []*market.Asset{},
+		})
+
+		Convey("When ToMarket projects trade balance", func() {
+			tb.ToMarket(book)
+
+			Convey("eb drives equity and v-c drives unrealized", func() {
+				So(book.Equity.String(), ShouldEqual, "161.01")
+				So(book.Unrealized.String(), ShouldEqual, "-11.49")
+			})
+		})
+	})
+}
+
+func TestMarshalJSONTradeBalanceResult(t *testing.T) {
+	Convey("Setup", t, func() {
+		unrealized := decimal.RequireFromString("-0.32")
+		equity := decimal.RequireFromString("199.68")
+		cash := decimal.RequireFromString("160.14")
+		zamaAmount := decimal.RequireFromString("517.71")
+
+		tb := &TradeBalanceResult{
+			UnrealizedPnL: &unrealized,
+			Equity:        &equity,
+			AvailableCash: &cash,
 		}
-
-		wallet := &kraken.Balance{
+		wallet := &Balance{
 			Error: []any{},
 			Result: map[string]*decimal.Decimal{
-				"USD":  cashPtr,
-				"ZAMA": zamaPtr,
+				"USD":  &cash,
+				"ZAMA": &zamaAmount,
 			},
 		}
 
-		Convey("sonic.Marshal round-trips the trade balance and wallet", func() {
+		Convey("When TradeBalanceResult round-trips", func() {
 			balanceRaw, err := sonic.Marshal(tb)
 			So(err, ShouldBeNil)
 
-			var decoded kraken.TradeBalanceResult
+			var decoded TradeBalanceResult
 			So(sonic.Unmarshal(balanceRaw, &decoded), ShouldBeNil)
-			So(decoded.Equity.String(), ShouldEqual, equity.String())
-			So(decoded.UnrealizedPnL.String(), ShouldEqual, unrealized.String())
-			So(decoded.AvailableCash.String(), ShouldEqual, cash.String())
 
-			walletRaw, err := sonic.Marshal(wallet)
-			So(err, ShouldBeNil)
+			Convey("decimal fields survive", func() {
+				So(decoded.Equity.String(), ShouldEqual, "199.68")
+				So(decoded.UnrealizedPnL.String(), ShouldEqual, "-0.32")
+				So(decoded.AvailableCash.String(), ShouldEqual, "160.14")
+			})
 
-			var decodedWallet kraken.Balance
-			So(sonic.Unmarshal(walletRaw, &decodedWallet), ShouldBeNil)
-			So(decodedWallet.Result["USD"].String(), ShouldEqual, cash.String())
-			So(decodedWallet.Result["ZAMA"].String(), ShouldEqual, zamaAmount.String())
+			Convey("and the wallet map round-trips", func() {
+				walletRaw, err := sonic.Marshal(wallet)
+				So(err, ShouldBeNil)
+
+				var decodedWallet Balance
+				So(sonic.Unmarshal(walletRaw, &decodedWallet), ShouldBeNil)
+				So(decodedWallet.Result["USD"].String(), ShouldEqual, "160.14")
+				So(decodedWallet.Result["ZAMA"].String(), ShouldEqual, "517.71")
+			})
 		})
 	})
 }

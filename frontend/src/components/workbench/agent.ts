@@ -19,8 +19,8 @@ const DATASET_DOCS = [
 	{
 		title: "Symm warehouse tables",
 		text:
-			"Tables include open_* and closed_* lot views plus level3_frames and " +
-			"level3_events. Lot columns: symbol, entry_path, exit_path, " +
+			"Tables include open_* and closed_* position views plus level3_frames and " +
+			"level3_events. Position columns: symbol, entry_path, exit_path, " +
 			"exit_trigger, opened_at, closed_at, pnl, pnl_pct, mark, " +
 			"entry_order, exit_order, fills. Qty and entry price come from " +
 			"fills / entry_order.volume — not separate scalar columns. " +

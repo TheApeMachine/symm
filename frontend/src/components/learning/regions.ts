@@ -212,7 +212,7 @@ export const REGIONS: Record<string, RegionMeta> = {
 		subtitle: "Depth clear",
 		role: "oracle_approve",
 		tone: "up",
-		description: "Depth and median liquidity can carry the desk lot.",
+		description: "Depth and median liquidity can carry the desk position.",
 	},
 	R23: {
 		id: "R23",

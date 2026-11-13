@@ -12,13 +12,14 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
 
 /*
 Model turns each tick's path cut into desk enter/hold/exit decisions and only
-mutates the resistance tree on settled lots — fills and gates stay ahead of
+mutates the resistance tree on settled positions — fills and gates stay ahead of
 learning so bad sends do not train the path book.
 */
 type Model struct {
@@ -66,7 +67,7 @@ func NewModel(
 }
 
 /*
-NoteSettled feeds rotation memory when a lot closes or arms stoploss exit.
+NoteSettled feeds rotation memory when a position closes or arms stoploss exit.
 */
 func (model *Model) NoteSettled(position *broker.Position) {
 	if model == nil || model.rotation == nil {
@@ -148,7 +149,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			// Oracle gate after pending exits: block flat symbols that are not
-			// tradable. Open lots still run hold/exit.
+			// tradable. Open positions still run hold/exit.
 			if len(open) == 0 && !bypass && !model.oracleAllows(envelope.Regions[symbol]) {
 				decide(&runtime.Decision{
 					Symbol: symbol,
@@ -224,7 +225,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
 			}
 
+			treeStarted := time.Now()
 			action, resistance, disagreed := model.tree.Load().Predict(*cut)
+			pipeline.Time("tree", time.Since(treeStarted))
 			minEnter := learn.MinEnterZ
 
 			bullish := bypass || (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
@@ -253,14 +256,14 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			if len(open) > 0 && path != "" && cut.Len() >= minPath {
-				for _, lot := range open {
-					model.Hold(lot, path)
+				for _, position := range open {
+					model.Hold(position, path)
 				}
 
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "hold",
-					Reason: "open lot tracking live path",
+					Reason: "open position tracking live path",
 					Path:   path,
 				})
 				return
@@ -311,6 +314,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		if model.board != nil {
+			boardStarted := time.Now()
 			model.board.Place(
 				enterCands,
 				envelope,
@@ -319,6 +323,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				model.live,
 				enter,
 			)
+			pipeline.Time("board", time.Since(boardStarted))
 		} else {
 			for _, cand := range enterCands {
 				enter(cand)
@@ -367,7 +372,7 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 
 /*
 applyAction handles explicit tree leaves (enter/hold/exit) — story bullishness
-and min profit still gate so an exit leaf cannot flatten underwater lots or
+and min profit still gate so an exit leaf cannot flatten underwater positions or
 enter against a bearish forward curve.
 */
 func (model *Model) applyAction(
@@ -406,7 +411,7 @@ func (model *Model) applyAction(
 			decide(&runtime.Decision{
 				Symbol: symbol,
 				Action: "skip",
-				Reason: "exit leaf without open lot or still bullish",
+				Reason: "exit leaf without open position or still bullish",
 				Gate:   "story",
 				Path:   path,
 			})
@@ -415,30 +420,30 @@ func (model *Model) applyAction(
 		}
 
 		// Policy match takes profit only once fee-net PnL% clears the
-		// floor. Thin greens and underwater lots stay for the hard stop;
+		// floor. Thin greens and underwater positions stay for the hard stop;
 		// seeding exit leaves from losses poisoned early trees.
 		minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
 		exited := 0
 
-		for _, lot := range open {
-			if lot == nil || lot.PnLPct == nil ||
-				lot.PnLPct.InexactFloat64() < minProfit {
+		for _, position := range open {
+			if position == nil || position.PnLPct == nil ||
+				position.PnLPct.InexactFloat64() < minProfit {
 				continue
 			}
 
-			model.Exit(lot, path)
+			model.Exit(position, path)
 			exited++
 		}
 
 		if exited == 0 {
-			for _, lot := range open {
-				model.Hold(lot, path)
+			for _, position := range open {
+				model.Hold(position, path)
 			}
 
 			decide(&runtime.Decision{
 				Symbol: symbol,
 				Action: "hold",
-				Reason: "exit leaf ignored — lot below min profit",
+				Reason: "exit leaf ignored — position below min profit",
 				Gate:   "pnl",
 				Path:   path,
 			})
@@ -455,8 +460,8 @@ func (model *Model) applyAction(
 
 	case ActionHold:
 		if len(open) > 0 {
-			for _, lot := range open {
-				model.Hold(lot, path)
+			for _, position := range open {
+				model.Hold(position, path)
 			}
 
 			decide(&runtime.Decision{
@@ -469,7 +474,7 @@ func (model *Model) applyAction(
 			decide(&runtime.Decision{
 				Symbol: symbol,
 				Action: "skip",
-				Reason: "hold leaf with no open lot",
+				Reason: "hold leaf with no open position",
 				Gate:   "position",
 				Path:   path,
 			})
@@ -648,7 +653,7 @@ func (model *Model) exitCut(
 
 /*
 Hold records the latest non-entry path for outcome attribution — one hold path
-per lot so tree training sees the path in force when stoploss later fires.
+per position so tree training sees the path in force when stoploss later fires.
 */
 func (model *Model) Hold(position *broker.Position, path string) {
 	if position == nil || path == "" || path == position.EntryPath {
@@ -663,7 +668,7 @@ func (model *Model) Hold(position *broker.Position, path string) {
 }
 
 /*
-Exit arms broker sells before tree Update on pending lots — resistance moves
+Exit arms broker sells before tree Update on pending positions — resistance moves
 only after ClosedAt so rejects and repeated marks cannot train on ghost exits.
 */
 func (model *Model) Exit(position *broker.Position, path string) {
@@ -737,12 +742,12 @@ func (model *Model) tierOf(position *broker.Position) broker.TierType {
 }
 
 /*
-resistanceDelta is the leaf step for a settled (or settling) lot.
+resistanceDelta is the leaf step for a settled (or settling) position.
 
 Losses raise resistance by the full ThresholdStep. Wins lower it by
 step × timeWeight × pnlWeight, where short holds and larger fee-net PnL%
 earn more credit, never more than one step per proof. Hold duration is
-measured in seconds against a multi-hour half-life (lots live minutes–hours).
+measured in seconds against a multi-hour half-life (positions live minutes–hours).
 */
 func (model *Model) resistanceDelta(position *broker.Position) float64 {
 	step := system.Cfg.Learning.ThresholdStep
@@ -797,7 +802,7 @@ func (model *Model) holdDuration(position *broker.Position, halfLifeSec float64)
 }
 
 /*
-dropPending releases the desk pending slot after tree training consumed the lot —
+dropPending releases the desk pending slot after tree training consumed the position —
 until then strategy must still see the position for exit_path attribution.
 */
 func (model *Model) dropPending(position *broker.Position) {

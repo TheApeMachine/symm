@@ -44,8 +44,8 @@ func (catalog *Catalog) seeds() []seed {
 
 			out = append(out, seed{
 				name:    name,
-				primary: catalog.lotView(name, glob),
-				empty:   catalog.emptyLotView(name),
+				primary: catalog.positionView(name, glob),
+				empty:   catalog.emptyPositionView(name),
 			})
 		}
 	}
@@ -66,26 +66,26 @@ func (catalog *Catalog) seeds() []seed {
 	return out
 }
 
-func (catalog *Catalog) lotView(name, glob string) string {
+func (catalog *Catalog) positionView(name, glob string) string {
 	// Explicit columns avoid read_json_auto sampling the whole prefix at CREATE VIEW.
 	return fmt.Sprintf(
 		"CREATE OR REPLACE VIEW %s AS SELECT %s FROM read_json(%s, union_by_name=true, columns=%s)",
 		qualified(name),
-		strings.Join(lotProjections(), ", "),
+		strings.Join(positionProjections(), ", "),
 		literal(glob),
-		lotColumnMap(),
+		positionColumnMap(),
 	)
 }
 
-func (catalog *Catalog) emptyLotView(name string) string {
+func (catalog *Catalog) emptyPositionView(name string) string {
 	return fmt.Sprintf(
 		"CREATE OR REPLACE VIEW %s AS SELECT %s WHERE false",
 		qualified(name),
-		strings.Join(emptyLotColumns(), ", "),
+		strings.Join(emptyPositionColumns(), ", "),
 	)
 }
 
-func lotColumnMap() string {
+func positionColumnMap() string {
 	return `{` +
 		`'epoch': 'UBIGINT', ` +
 		`'tick': 'UBIGINT', ` +
@@ -94,7 +94,7 @@ func lotColumnMap() string {
 		`}`
 }
 
-func lotProjections() []string {
+func positionProjections() []string {
 	return []string{
 		"epoch",
 		"tick",
@@ -117,7 +117,7 @@ func lotProjections() []string {
 	}
 }
 
-func emptyLotColumns() []string {
+func emptyPositionColumns() []string {
 	return []string{
 		"CAST(NULL AS UBIGINT) AS epoch",
 		"CAST(NULL AS UBIGINT) AS tick",

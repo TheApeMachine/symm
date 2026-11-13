@@ -57,7 +57,7 @@ func (venue *Kraken) TradeBalance() market.MarketType {
 }
 
 /*
-TradesHistory is the REST ledger sync hook broker uses to reconcile open lots
+TradesHistory is the REST ledger sync hook broker uses to reconcile open positions
 against venue fills without trusting only the executions stream.
 */
 func (venue *Kraken) TradesHistory() market.MarketType {

@@ -13,62 +13,106 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestAuthNonce(t *testing.T) {
-	Convey("Given an AuthNonce in a temp dir", t, func() {
+func TestNewAuthNonce(t *testing.T) {
+	Convey("Setup", t, func() {
+		dir := t.TempDir()
+
+		Convey("When NewAuthNonce constructs in a fresh directory", func() {
+			nonce, err := NewAuthNonce(dir)
+
+			Convey("construction succeeds", func() {
+				So(err, ShouldBeNil)
+				So(nonce, ShouldNotBeNil)
+				So(nonce.Close(), ShouldBeNil)
+			})
+		})
+
+		Convey("When the high-water file is corrupt", func() {
+			So(os.WriteFile(filepath.Join(dir, "kraken-auth-nonce"), []byte("nope"), 0o600), ShouldBeNil)
+
+			Convey("construction fails", func() {
+				_, err := NewAuthNonce(dir)
+				So(err, ShouldNotBeNil)
+			})
+		})
+
+		Convey("When a lock is already held in the directory", func() {
+			first, err := NewAuthNonce(dir)
+			So(err, ShouldBeNil)
+
+			Convey("a second generator is refused", func() {
+				_, err := NewAuthNonce(dir)
+				So(err, ShouldNotBeNil)
+				So(first.Close(), ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestNext(t *testing.T) {
+	Convey("Setup", t, func() {
 		dir := t.TempDir()
 		nonce, err := NewAuthNonce(dir)
 		So(err, ShouldBeNil)
+		defer nonce.Close()
 
-		Convey("nonces are strictly increasing and persisted", func() {
+		Convey("When Next is called twice under a frozen clock", func() {
+			clock := nonce.highWater.Load() + 1
+			nonce.clock = func() int64 { return clock }
 			first, _ := strconv.ParseInt(nonce.Next(), 10, 64)
 			second, _ := strconv.ParseInt(nonce.Next(), 10, 64)
-			So(second, ShouldBeGreaterThan, first)
-			So(nonce.Err(), ShouldBeNil)
 
-			body, err := os.ReadFile(filepath.Join(dir, "kraken-auth-nonce"))
-			So(err, ShouldBeNil)
-			persisted, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
-			So(err, ShouldBeNil)
-			So(persisted, ShouldBeGreaterThanOrEqualTo, first)
+			Convey("second is first+1 and both are persisted", func() {
+				So(first, ShouldEqual, clock)
+				So(second, ShouldEqual, first+1)
+				So(nonce.Err(), ShouldBeNil)
 
-			Convey("and a restart seeds above the persisted high-water", func() {
+				body, err := os.ReadFile(filepath.Join(dir, "kraken-auth-nonce"))
+				So(err, ShouldBeNil)
+				persisted, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
+				So(err, ShouldBeNil)
+				So(persisted, ShouldEqual, second)
+			})
+
+			Convey("and a restart reloads the persisted high-water", func() {
 				So(nonce.Close(), ShouldBeNil)
 
 				restarted, err := NewAuthNonce(dir)
 				So(err, ShouldBeNil)
+				restarted.highWater.Store(second)
+				restarted.clock = func() int64 { return second }
 				next, _ := strconv.ParseInt(restarted.Next(), 10, 64)
-				So(next, ShouldBeGreaterThan, persisted)
+				So(next, ShouldEqual, second+1)
 				So(restarted.Close(), ShouldBeNil)
 			})
 		})
 
-		Convey("nonces follow the clock so a long-running process stays ahead of a later one", func() {
-			clock := time.Now().UnixNano()
+		Convey("When the clock advances an hour", func() {
+			clock := nonce.highWater.Load() + 1
 			nonce.clock = func() int64 { return clock }
 			first, _ := strconv.ParseInt(nonce.Next(), 10, 64)
-
-			// Another process with the same key signs an hour later.
 			clock += int64(time.Hour)
 			later, _ := strconv.ParseInt(nonce.Next(), 10, 64)
-			So(later, ShouldEqual, clock)
-			So(later, ShouldBeGreaterThan, first)
 
-			Convey("and stay strictly increasing when the clock stalls or steps back", func() {
+			Convey("later nonce follows the clock", func() {
+				So(later, ShouldEqual, clock)
+				So(first, ShouldEqual, clock-int64(time.Hour))
+			})
+
+			Convey("and stays increasing when the clock steps back", func() {
 				clock -= int64(time.Minute)
 				stalled, _ := strconv.ParseInt(nonce.Next(), 10, 64)
 				So(stalled, ShouldEqual, later+1)
 			})
 		})
 
-		Convey("concurrent callers never share a nonce", func() {
+		Convey("When eight goroutines call Next concurrently", func() {
 			seen := sync.Map{}
 			var group sync.WaitGroup
 			var shared atomic.Int32
 
 			for range 8 {
-
 				group.Go(func() {
-
 					for range 500 {
 						if _, loaded := seen.LoadOrStore(nonce.Next(), struct{}{}); loaded {
 							shared.Add(1)
@@ -78,44 +122,59 @@ func TestAuthNonce(t *testing.T) {
 			}
 
 			group.Wait()
-			So(shared.Load(), ShouldEqual, 0)
-		})
 
-		Convey("a persist failure is recorded and sticky", func() {
+			Convey("no duplicate nonces appear", func() {
+				So(shared.Load(), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestBump(t *testing.T) {
+	Convey("Setup", t, func() {
+		dir := t.TempDir()
+		nonce, err := NewAuthNonce(dir)
+		So(err, ShouldBeNil)
+		defer nonce.Close()
+
+		hw := nonce.highWater.Load()
+		clock := hw
+		nonce.clock = func() int64 { return clock }
+		first, _ := strconv.ParseInt(nonce.Next(), 10, 64)
+		floor := first + 1000
+		nonce.Bump(floor)
+		after, _ := strconv.ParseInt(nonce.Next(), 10, 64)
+
+		Convey("When Bump raises the floor above the last nonce", func() {
+			Convey("Next is floor+2 after Bump stores floor+1", func() {
+				So(first, ShouldEqual, hw+1)
+				So(after, ShouldEqual, floor+2)
+			})
+		})
+	})
+}
+
+func TestErr(t *testing.T) {
+	Convey("Setup", t, func() {
+		dir := t.TempDir()
+		nonce, err := NewAuthNonce(dir)
+		So(err, ShouldBeNil)
+		defer nonce.Close()
+
+		Convey("When persist fails on an invalid path", func() {
 			blocker := filepath.Join(dir, "blocker")
 			So(os.WriteFile(blocker, []byte("x"), 0o600), ShouldBeNil)
 			nonce.path = filepath.Join(blocker, "kraken-auth-nonce")
 			nonce.lastPersistNs.Store(0)
-
 			nonce.Next()
-			So(nonce.Err(), ShouldNotBeNil)
 
-			nonce.path = filepath.Join(dir, "kraken-auth-nonce")
-			nonce.lastPersistNs.Store(0)
-			nonce.Next()
-			So(nonce.Err(), ShouldNotBeNil)
-		})
-	})
-
-	Convey("Given a corrupt high-water file", t, func() {
-		dir := t.TempDir()
-		So(os.WriteFile(filepath.Join(dir, "kraken-auth-nonce"), []byte("nope"), 0o600), ShouldBeNil)
-
-		Convey("construction fails", func() {
-			_, err := NewAuthNonce(dir)
-			So(err, ShouldNotBeNil)
-		})
-	})
-
-	Convey("Given an AuthNonce lock already held", t, func() {
-		dir := t.TempDir()
-		first, err := NewAuthNonce(dir)
-		So(err, ShouldBeNil)
-		So(first, ShouldNotBeNil)
-
-		Convey("a second generator is refused", func() {
-			_, err := NewAuthNonce(dir)
-			So(err, ShouldNotBeNil)
+			Convey("Err is sticky", func() {
+				So(nonce.Err(), ShouldNotBeNil)
+				nonce.path = filepath.Join(dir, "kraken-auth-nonce")
+				nonce.lastPersistNs.Store(0)
+				nonce.Next()
+				So(nonce.Err(), ShouldNotBeNil)
+			})
 		})
 	})
 }

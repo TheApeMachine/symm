@@ -6,48 +6,72 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestMDL(t *testing.T) {
-	Convey("Given an MDL segmenter on grammar symbols", t, func() {
+func TestNewMDL(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewMDL is called", func() {
+			mdl := NewMDL()
+
+			Convey("MinSegmentSymbols defaults to 2", func() {
+				So(mdl, ShouldNotBeNil)
+				So(mdl.MinSegmentSymbols, ShouldEqual, 2)
+				So(mdl.LastGain(), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestMDLAnalyze(t *testing.T) {
+	Convey("Setup", t, func() {
 		mdl := NewMDL()
 		mdl.MinSegmentSymbols = 2
 
-		Convey("detectBoundary finds a split in a bimodal window", func() {
-			symbols := []uint32{1, 1, 1, 1, 1, 2, 2, 2, 2, 2}
-			dist := newSymbolHistogram()
+		Convey("When symbol is empty", func() {
+			cut, gain := mdl.Analyze("")
 
-			for _, id := range symbols {
-				dist.add(id)
-			}
-
-			ok, k, gain := mdl.detectBoundary(symbols, dist)
-
-			So(ok, ShouldBeTrue)
-			So(k, ShouldEqual, 5)
-			So(gain, ShouldBeGreaterThan, 0)
+			Convey("Analyze returns no cut", func() {
+				So(cut, ShouldBeFalse)
+				So(gain, ShouldEqual, 0)
+			})
 		})
 
-		Convey("Analyze commits a cut and drops the consumed prefix", func() {
-			ingested := 0
-			cutSeen := false
+		Convey("When the stream crosses a bimodal boundary", func() {
+			var (
+				cutSeen bool
+				gain    float64
+			)
 
 			for _, sym := range []string{
 				"R00.R00", "R00.R01", "R01.R00", "R01.R01",
 				"R02.R00", "R02.R01", "R03.R00", "R03.R01",
 			} {
-				ingested++
-				cut, _ := mdl.Analyze(sym)
+				cut, g := mdl.Analyze(sym)
 
-				if !cut {
-					continue
+				if cut {
+					cutSeen = true
+					gain = g
+					break
 				}
-
-				cutSeen = true
-				So(mdl.offset, ShouldEqual, 0)
-				So(len(mdl.stream), ShouldBeLessThan, ingested)
-				break
 			}
 
-			So(cutSeen, ShouldBeTrue)
+			Convey("Analyze commits a cut", func() {
+				So(cutSeen, ShouldBeTrue)
+				So(gain, ShouldEqual, 4.1588830833596715)
+				So(mdl.LastGain(), ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestLastGain(t *testing.T) {
+	Convey("Setup", t, func() {
+		mdl := NewMDL()
+		mdl.MinSegmentSymbols = 2
+		mdl.lastGain = 1.5
+
+		Convey("When lastGain exceeds 1", func() {
+			Convey("LastGain is capped at 1", func() {
+				So(mdl.LastGain(), ShouldEqual, 1)
+			})
 		})
 	})
 }

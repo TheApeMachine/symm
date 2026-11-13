@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -56,10 +57,12 @@ type Booter struct {
 	model      *strategy.Model
 	workspace  *nmruntime.Workspace
 	persist    *TickPersist
+	graph      *pipeline.Graph
 	store      *store.Client
 	replies    sync.Map
 	credErr    error
 	live       bool
+	engine     string
 }
 
 func NewBooter(ctx context.Context, name string) *Booter {
@@ -141,6 +144,7 @@ func NewBooter(ctx context.Context, name string) *Booter {
 
 func (booter *Booter) Run() error {
 	if booter.credErr != nil {
+		booter.setEngine("error")
 		return booter.credErr
 	}
 
@@ -149,30 +153,36 @@ func (booter *Booter) Run() error {
 	))
 
 	started := time.Now()
+	booter.setEngine("booting")
 
 	// Transports and the market come first: training paper-trades through the
 	// price and the desk. The workspace is up before any trade is subscribed.
 	booter.Transition(nmruntime.WAITING)
 
 	if err := booter.initTransports(); err != nil {
+		booter.setEngine("error")
 		return err
 	}
 
 	if err := booter.initMarket(); err != nil {
+		booter.setEngine("error")
 		return err
 	}
 
 	if err := booter.initPipeline(); err != nil {
+		booter.setEngine("error")
 		return err
 	}
 
 	if err := booter.seedBooks(); err != nil {
+		booter.setEngine("error")
 		return err
 	}
 
 	booter.desk.Start()
 
 	if err := booter.openFirehose(); err != nil {
+		booter.setEngine("error")
 		return err
 	}
 
@@ -183,11 +193,29 @@ func (booter *Booter) Run() error {
 		time.Since(started).Round(time.Millisecond),
 	))
 
+	booter.setEngine("ready")
+
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
 
 	return booter.shutdown()
+}
+
+/*
+setEngine publishes booting / ready / error so the dashboard ONLINE badge
+tracks firehose readiness, not only hub socket connect.
+*/
+func (booter *Booter) setEngine(status string) {
+	booter.engine = status
+
+	if ui.UI == nil {
+		return
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"engine": status,
+	})
 }
 
 /*
@@ -288,8 +316,8 @@ func (booter *Booter) initTransports() error {
 		booter.paper = kraken.NewPaper(ctx)
 	}
 
-	booter.public = network.NewWebsocketClient(ctx)
-	booter.private = network.NewWebsocketClient(ctx)
+	booter.public = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Public)
+	booter.private = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Private)
 
 	return nil
 }
@@ -352,7 +380,17 @@ func (booter *Booter) initMarket() error {
 	booter.desk = broker.NewDesk(ctx, transports, booter.price, booter.store)
 
 	ui.UI.RegisterCallback(func() {
+		// Topology first so a busy Hello fan-out cannot crowd it out of the
+		// hub queue on refresh.
+		if booter.graph != nil {
+			booter.graph.PublishTopology()
+		}
+
 		booter.desk.Hello()
+
+		if booter.engine != "" {
+			booter.setEngine(booter.engine)
+		}
 	})
 
 	return nil
@@ -368,12 +406,13 @@ func (booter *Booter) initPipeline() error {
 	booter.training = training
 	booter.model = model
 	booter.persist = NewTickPersist(ctx, booter.store)
+	booter.graph = pipeline.NewGraph()
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
 		[]nmruntime.Ring{
-			{Group: "signal", Nodes: []nmruntime.Node{
+			{Group: "signal", Nodes: booter.graph.Wrap("signal", []nmruntime.Node{
 				correlation.NewSignal(ctx, booter.price),
 				cvd.NewSignal(ctx, booter.book),
 				depthflow.NewSignal(ctx, booter.book, booter.instrument),
@@ -384,26 +423,28 @@ func (booter *Booter) initPipeline() error {
 				pumpdump.NewSignal(ctx, booter.book, booter.price),
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
-			}},
-			{Group: "resonance", Nodes: []nmruntime.Node{
+			})},
+			{Group: "resonance", Nodes: booter.graph.Wrap("resonance", []nmruntime.Node{
 				resonance.NewSolver(ctx), training,
-			}},
-			{Group: "model", Nodes: []nmruntime.Node{
+			})},
+			{Group: "model", Nodes: booter.graph.Wrap("model", []nmruntime.Node{
 				model,
-			}},
-			{Group: "persist", Nodes: []nmruntime.Node{
+			})},
+			{Group: "persist", Nodes: booter.graph.Wrap("persist", []nmruntime.Node{
 				booter.persist,
-			}},
+			})},
 		},
 	)
 
 	booter.workspace.Transition(nmruntime.READY)
+	booter.graph.PublishTopology()
 
 	booter.desk.OnTrade(func(trade *market.Trade) {
 		if booter.workspace == nil || trade == nil {
 			return
 		}
 
+		started := time.Now()
 		tick := nmruntime.NewEnvelope(trade)
 		tick.N = data.Tick.Add(1)
 
@@ -417,6 +458,7 @@ func (booter *Booter) initPipeline() error {
 		}
 
 		booter.workspace.Step(tick)
+		booter.graph.Ingress(time.Since(started))
 	})
 
 	return nil
@@ -429,24 +471,21 @@ func (booter *Booter) seedBooks() error {
 	symbols := booter.instrument.Symbols()
 	booter.book.Expect(symbols)
 
-	booter.book.OnInvalid(func(symbols []string) {
-		for _, symbol := range symbols {
-			if err := booter.instrument.ResubscribeLevel3(symbol); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"[booter] level3 checksum recovery failed for "+symbol,
-					err,
-				))
-			}
+	read := func(client *network.WebsocketClient) {
+		go booter.readLevel3(client)
+	}
+
+	booter.book.OnInvalid(func([]string) {
+		if err := booter.instrument.ResubscribeBooks(read); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[booter] level3 checksum recovery failed",
+				err,
+			))
 		}
 	})
 
-	if err := booter.instrument.SubscribeBooks(broker.Level3{
-		Stale: booter.book.Stale,
-		Reader: func(client *network.WebsocketClient) {
-			go booter.readLevel3(client)
-		},
-	}); err != nil {
+	if err := booter.instrument.SubscribeBooks(read); err != nil {
 		return errnie.Err(errnie.IO, "[booter] level3 subscribe failed", err)
 	}
 
@@ -503,6 +542,7 @@ func (booter *Booter) readLevel3(client *network.WebsocketClient) {
 			continue
 		}
 
+		pipeline.Hit("level3")
 		booter.desk.Feed(buf)
 	}
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Position } from "#/collections/types";
 import { holdNs, isClosed, onTier, pnlFrac, pnlPct } from "./book-readout";
 
-const lot = (partial: Partial<Position>): Position => ({
+const position = (partial: Partial<Position>): Position => ({
 	id: "a",
 	symbol: "DOGE/USD",
 	entry_path: "R01",
@@ -12,8 +12,8 @@ const lot = (partial: Partial<Position>): Position => ({
 });
 
 describe("Position wire fields", () => {
-	it("reads qty, entry, mark, pnl_pct from the lot", () => {
-		const pos = lot({
+	it("reads qty, entry, mark, pnl_pct from the position", () => {
+		const pos = position({
 			qty: "10",
 			entry: "0.20",
 			mark: "0.22",
@@ -26,7 +26,7 @@ describe("Position wire fields", () => {
 	});
 
 	it("treats closed_at as closed", () => {
-		const pos = lot({
+		const pos = position({
 			closed_at: "2026-01-01T00:01:00Z",
 			pnl_pct: "8",
 		});
@@ -37,9 +37,9 @@ describe("Position wire fields", () => {
 });
 
 describe("onTier", () => {
-	it("defaults unlabeled lots to paper", () => {
-		expect(onTier(lot({}), "paper")).toBe(true);
-		expect(onTier(lot({}), "virtual")).toBe(false);
-		expect(onTier(lot({ tier_key: "virtual" }), "virtual")).toBe(true);
+	it("defaults unlabeled positions to paper", () => {
+		expect(onTier(position({}), "paper")).toBe(true);
+		expect(onTier(position({}), "virtual")).toBe(false);
+		expect(onTier(position({ tier_key: "virtual" }), "virtual")).toBe(true);
 	});
 });

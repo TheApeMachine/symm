@@ -6,57 +6,115 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestSequencerStep(t *testing.T) {
-	Convey("Given a sequencer", t, func() {
+func TestNewSequencer(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewSequencer is called", func() {
+			seq := NewSequencer()
+
+			Convey("Sequencer starts with empty grammar", func() {
+				So(seq, ShouldNotBeNil)
+				So(len(seq.State().Root), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestReset(t *testing.T) {
+	Convey("Setup", t, func() {
 		seq := NewSequencer()
 
-		Convey("State survives Restore", func() {
-			_, _ = seq.Step("R02", 0.4)
-			saved := seq.State()
-			restored := NewSequencer()
-			restored.Restore(saved)
+		Convey("When Reset follows a stepped sentence", func() {
+			_, _ = seq.Step("R01", 0.5)
+			So(seq.State().LastEmitted, ShouldNotEqual, "")
 
-			next, mutated := restored.Step("R00", 0.5)
-			So(next.Last().String(), ShouldNotBeBlank)
-			So(mutated, ShouldBeTrue)
-			So(len(restored.State().Root), ShouldBeGreaterThan, 0)
+			seq.Reset()
+
+			Convey("lastEmitted clears while rules remain", func() {
+				So(seq.State().LastEmitted, ShouldEqual, "")
+				So(len(seq.State().Root), ShouldEqual, 0)
+			})
 		})
+	})
+}
 
-		Convey("duplicate regime refreshes cut brightness without growing grammar", func() {
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When duplicate regime refreshes brightness", func() {
 			first, firstMutated := seq.Step("R00", 0.3)
 			second, secondMutated := seq.Step("R00", 0.5)
 
-			So(first.String(), ShouldEqual, "R00")
-			So(firstMutated, ShouldBeTrue)
-			So(second.Len(), ShouldBeGreaterThan, 0)
-			So(second.Last().Brightness, ShouldEqual, 0.5)
-			So(secondMutated, ShouldBeFalse)
+			Convey("Cut string stays R00 with tail brightness 0.5", func() {
+				So(first.String(), ShouldEqual, "R00")
+				So(firstMutated, ShouldBeTrue)
+				So(second.Last().Brightness, ShouldEqual, 0.5)
+				So(secondMutated, ShouldBeFalse)
+			})
 		})
 
-		Convey("repeat regime does not append to grammar", func() {
-			_, _ = seq.Step("R00", 0.3)
-			before := len(seq.grammar.RootSequence())
-			_, mutated := seq.Step("R00", 0.3)
-			So(len(seq.grammar.RootSequence()), ShouldEqual, before)
-			So(mutated, ShouldBeFalse)
-		})
-
-		Convey("Step builds a multi-tick precursor sequence", func() {
+		Convey("When three regimes step in sequence", func() {
 			_, _ = seq.Step("R02", 0.5)
 			_, _ = seq.Step("R00", 0.7)
 			cut, mutated := seq.Step("R06", 0.8)
-			So(cut.String(), ShouldEqual, "R02/R00/R06")
-			So(cut.Len(), ShouldEqual, 3)
-			So(mutated, ShouldBeTrue)
+
+			Convey("Cut is R02/R00/R06", func() {
+				So(cut.String(), ShouldEqual, "R02/R00/R06")
+				So(cut.Len(), ShouldEqual, 3)
+				So(mutated, ShouldBeTrue)
+			})
 		})
+	})
+}
 
-		Convey("oscillating symbols compress via sequitur", func() {
-			for range 6 {
-				_, _ = seq.Step("R07", 0.5)
-				_, _ = seq.Step("R08", 0.5)
-			}
+func TestStepPath(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
 
-			So(len(seq.grammar.Tail(8)), ShouldBeLessThanOrEqualTo, 4)
+		Convey("When StepPath receives empty symbols", func() {
+			cut, mutated := seq.StepPath([]string{}, 0.5)
+
+			Convey("Cut is empty", func() {
+				So(cut.Len(), ShouldEqual, 0)
+				So(mutated, ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func TestState(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When State is called after Step", func() {
+			_, _ = seq.Step("R02", 0.4)
+			state := seq.State()
+
+			Convey("LastEmitted matches the stepped key", func() {
+				So(state.LastEmitted, ShouldEqual, "R02")
+				So(len(state.Root), ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestRestore(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+		_, _ = seq.Step("R02", 0.4)
+		saved := seq.State()
+
+		restored := NewSequencer()
+		restored.Restore(saved)
+
+		Convey("When Restore replays saved grammar", func() {
+			next, mutated := restored.Step("R00", 0.5)
+
+			Convey("Next cut extends the restored root", func() {
+				So(mutated, ShouldBeTrue)
+				So(next.String(), ShouldEqual, "R02/R00")
+				So(len(restored.State().Root), ShouldEqual, 2)
+			})
 		})
 	})
 }

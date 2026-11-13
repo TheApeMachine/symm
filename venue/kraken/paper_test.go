@@ -16,7 +16,7 @@ func withPaper(f func(*Paper)) func() {
 	}
 }
 
-func TestPaperWrite(t *testing.T) {
+func TestWrite(t *testing.T) {
 	Convey("Setup", t, withPaper(func(paper *Paper) {
 		cases := []struct {
 			name    string
@@ -41,20 +41,26 @@ func TestPaperWrite(t *testing.T) {
 		}
 
 		for _, tc := range cases {
-			Convey("When "+tc.name, func() {
+			Convey("When Write receives "+tc.name, func() {
 				err := paper.Write(tc.message)
-				So(err != nil, ShouldEqual, tc.wantErr)
+
+				Convey("error matches expectation", func() {
+					So(err != nil, ShouldEqual, tc.wantErr)
+				})
 			})
 		}
 	}))
 }
 
-func TestPaperPost(t *testing.T) {
+func TestPost(t *testing.T) {
 	Convey("Setup", t, withPaper(func(paper *Paper) {
-		Convey("When the path is unknown", func() {
+		Convey("When Post targets an unknown path", func() {
 			raw, err := paper.Post("/0/private/OpenOrders", nil)
-			So(err, ShouldNotBeNil)
-			So(raw, ShouldBeNil)
+
+			Convey("Post is rejected", func() {
+				So(err, ShouldNotBeNil)
+				So(raw, ShouldBeNil)
+			})
 		})
 
 		Convey("When the context is cancelled before Balance Post", func() {
@@ -63,13 +69,16 @@ func TestPaperPost(t *testing.T) {
 			cancel()
 
 			raw, err := paper.Post("/0/private/Balance", nil)
-			So(err, ShouldNotBeNil)
-			So(raw, ShouldBeNil)
+
+			Convey("Post is cancelled", func() {
+				So(err, ShouldNotBeNil)
+				So(raw, ShouldBeNil)
+			})
 		})
 	}))
 }
 
-func TestPaperRead(t *testing.T) {
+func TestRead(t *testing.T) {
 	Convey("Setup", t, withPaper(func(paper *Paper) {
 		Convey("When the context is cancelled with an empty queue", func() {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -77,70 +86,77 @@ func TestPaperRead(t *testing.T) {
 			cancel()
 
 			_, err := paper.Read()
-			So(err, ShouldNotBeNil)
+
+			Convey("Read returns an error", func() {
+				So(err, ShouldNotBeNil)
+			})
 		})
 	}))
 }
 
-func TestPaperAddOrderHappyPath(t *testing.T) {
-	Convey("add_order Write queues an ack and a tradable execution", t, func() {
+func TestWriteAddOrder(t *testing.T) {
+	Convey("Setup", t, func() {
 		restore := swapPaperCommand(func(ctx context.Context, entity string, command ...string) (map[string]any, error) {
 			So(entity, ShouldEqual, "add_order")
 
 			return map[string]any{
-				"order_id":      "O1",
-				"success":       true,
-				"exec_type":     "trade",
-				"order_status":  "filled",
-				"cl_ord_id":     "paper-cl-1",
-				"pair":          "BTC/USD",
-				"side":          "buy",
-				"volume":        0.1,
-				"price":         50000.0,
-				"trade_id":      "T1",
+				"order_id":     "O1",
+				"success":      true,
+				"exec_type":    "trade",
+				"order_status": "filled",
+				"cl_ord_id":    "paper-cl-1",
+				"pair":         "BTC/USD",
+				"side":         "buy",
+				"volume":       0.1,
+				"price":        50000.0,
+				"trade_id":     "T1",
 			}, nil
 		})
 		defer restore()
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-
 		paper := NewPaper(ctx)
-		err := paper.Write([]byte(`{
-			"method":"add_order",
-			"params":{
-				"symbol":"BTC/USD",
-				"side":"buy",
-				"order_type":"market",
-				"order_qty":"0.1",
-				"cl_ord_id":"paper-cl-1"
-			}
-		}`))
-		So(err, ShouldBeNil)
 
-		ack, err := paper.Read()
-		So(err, ShouldBeNil)
+		Convey("When add_order Write succeeds", func() {
+			err := paper.Write([]byte(`{
+				"method":"add_order",
+				"params":{
+					"symbol":"BTC/USD",
+					"side":"buy",
+					"order_type":"market",
+					"order_qty":"0.1",
+					"cl_ord_id":"paper-cl-1"
+				}
+			}`))
+			So(err, ShouldBeNil)
 
-		var order Order
-		So(sonic.Unmarshal(ack, &order), ShouldBeNil)
-		So(order.Success, ShouldBeTrue)
-		So(order.Result.OrderID, ShouldEqual, "O1")
+			ack, err := paper.Read()
+			So(err, ShouldBeNil)
 
-		fill, err := paper.Read()
-		So(err, ShouldBeNil)
+			var order Order
+			So(sonic.Unmarshal(ack, &order), ShouldBeNil)
 
-		exec := &Execution{}
-		So(exec.UnmarshalJSON(fill), ShouldBeNil)
-		So(exec.Tradable(), ShouldBeTrue)
-		So(len(exec.Data), ShouldBeGreaterThan, 0)
-		So(exec.Data[0].ClientOrderID, ShouldEqual, "paper-cl-1")
-		So(exec.Data[0].LastQty.String(), ShouldEqual, "0.1")
-		So(exec.Data[0].Symbol, ShouldEqual, "BTC/USD")
+			fill, err := paper.Read()
+			So(err, ShouldBeNil)
+
+			exec := &Execution{}
+			So(exec.UnmarshalJSON(fill), ShouldBeNil)
+
+			Convey("an ack and tradable execution are queued", func() {
+				So(order.Success, ShouldBeTrue)
+				So(order.Result.OrderID, ShouldEqual, "O1")
+				So(exec.Tradable(), ShouldBeTrue)
+				So(exec.Data[0].ClientOrderID, ShouldEqual, "paper-cl-1")
+				So(exec.Data[0].LastQty.String(), ShouldEqual, "0.1")
+				So(exec.Data[0].Symbol, ShouldEqual, "BTC/USD")
+			})
+		})
 	})
 }
 
-func TestPaperBalancePost(t *testing.T) {
-	Convey("Balance Post returns venue JSON through the paper runner", t, func() {
+func TestPostBalance(t *testing.T) {
+	Convey("Setup", t, func() {
 		restore := swapPaperCommand(func(ctx context.Context, entity string, _ ...string) (map[string]any, error) {
 			So(entity, ShouldEqual, "balances")
 
@@ -153,13 +169,34 @@ func TestPaperBalancePost(t *testing.T) {
 		defer restore()
 
 		paper := NewPaper(context.Background())
-		raw, err := paper.Post("/0/private/Balance", nil)
-		So(err, ShouldBeNil)
-		So(raw, ShouldNotBeEmpty)
 
-		bal := &Balance{}
-		So(bal.UnmarshalJSON(raw), ShouldBeNil)
-		So(bal.QuoteCash("USD").String(), ShouldEqual, "10000")
+		Convey("When Balance Post runs", func() {
+			raw, err := paper.Post("/0/private/Balance", nil)
+			So(err, ShouldBeNil)
+
+			bal := &Balance{}
+			So(bal.UnmarshalJSON(raw), ShouldBeNil)
+
+			Convey("USD cash decodes from paper JSON", func() {
+				So(bal.QuoteCash("USD").String(), ShouldEqual, "10000")
+			})
+		})
+	})
+}
+
+func TestRestPath(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When RestPath receives a full URL", func() {
+			path := RestPath("https://api.kraken.com/0/private/Balance")
+
+			Convey("the path component is returned", func() {
+				So(path, ShouldEqual, "/0/private/Balance")
+			})
+		})
+
+		Convey("When RestPath receives a bare path", func() {
+			So(RestPath("/0/private/Balance"), ShouldEqual, "/0/private/Balance")
+		})
 	})
 }
 

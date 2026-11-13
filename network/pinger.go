@@ -2,96 +2,52 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
+	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
 
+// Pinger writes websocket ping controls on a live conn.
 type Pinger struct {
 	*runtime.System
-	client   *WebsocketClient
-	mu       sync.Mutex
-	stop     chan struct{}
-	interval time.Duration
+	conn    *gorilla.Conn
+	writeMu *sync.Mutex
 }
 
-func NewPinger(ctx context.Context, client *WebsocketClient) *Pinger {
-	pinger := &Pinger{client: client, interval: system.Cfg.WebSocket.PingInterval}
+func NewPinger(ctx context.Context) *Pinger {
+	pinger := &Pinger{}
 	pinger.System = runtime.NewSystem(ctx, "network.pinger", pinger)
 	return pinger
 }
 
-func (pinger *Pinger) Start() {
-	pinger.mu.Lock()
-	defer pinger.mu.Unlock()
+func (pinger *Pinger) Start(
+	conn *gorilla.Conn, writeMu *sync.Mutex, status *runtime.Stage,
+) {
+	go func() {
+		ticker := time.NewTicker(system.Cfg.WebSocket.PingInterval)
+		defer ticker.Stop()
 
-	if pinger.stop != nil {
-		close(pinger.stop)
-		pinger.stop = nil
-	}
+		for {
+			select {
+			case <-pinger.Context().Done():
+				return
+			case <-ticker.C:
+				pinger.writeMu.Lock()
 
-	stop := make(chan struct{})
-	pinger.stop = stop
-	pinger.Transition(runtime.READY)
+				if pinger.conn != nil && *status == runtime.READY {
+					errnie.Error(pinger.conn.WriteControl(
+						gorilla.PingMessage,
+						nil,
+						time.Now().Add(5*time.Second),
+					))
+				}
 
-	go pinger.loop(stop)
-}
-
-func (pinger *Pinger) Stop() {
-	pinger.mu.Lock()
-	defer pinger.mu.Unlock()
-
-	if pinger.stop == nil {
-		return
-	}
-
-	close(pinger.stop)
-	pinger.stop = nil
-
-	if pinger.Status() == runtime.READY {
-		pinger.Transition(runtime.WAITING)
-	}
-}
-
-func (pinger *Pinger) loop(stop <-chan struct{}) {
-	interval := pinger.interval
-
-	// system.websocket.ping_interval has its default in system; a
-	// non-positive value is a broken config, not a reason to pick another.
-	if interval <= 0 {
-		pinger.Error(errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[network.pinger] system.websocket.ping_interval %s is not positive", interval),
-			nil,
-		))
-
-		return
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-stop:
-			return
-		case <-pinger.Context().Done():
-			return
-		case <-ticker.C:
-			if pinger.Status() != runtime.READY {
-				continue
-			}
-
-			// Soft-fail: writePing drops the client to WAITING for reconnect
-			// and SoftDown warns; System.Error would flood ERROR and kill
-			// the session.
-			if err := pinger.client.writePing(); err != nil {
-				errnie.Warn("[network.pinger] ping failed, reconnecting: " + err.Error())
+				pinger.writeMu.Unlock()
 			}
 		}
-	}
+	}()
 }

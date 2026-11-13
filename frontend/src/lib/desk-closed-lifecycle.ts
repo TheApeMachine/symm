@@ -84,7 +84,7 @@ export const lifecycleFromDeskOpen = (pos: Position): Lifecycle | null => {
 			{
 				at: pos.opened_at,
 				kind: "opened",
-				detail: `desk lot opened${pos.entry_path ? ` · ${pos.entry_path}` : ""}`,
+				detail: `desk position opened${pos.entry_path ? ` · ${pos.entry_path}` : ""}`,
 			},
 		],
 	};

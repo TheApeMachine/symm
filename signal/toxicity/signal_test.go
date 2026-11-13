@@ -34,37 +34,54 @@ func pushBook(books *broker.BookManager, symbol string, bidQty int64) {
 	})
 }
 
-func TestToxicityStep(t *testing.T) {
-	Convey("Step records hard support after touch refills", t, func() {
-		symbol := "TOX/USD"
+func TestNewSignal(t *testing.T) {
+	Convey("Setup", t, func() {
 		books := broker.NewBookManager(nil)
 
+		Convey("When NewSignal is called", func() {
+			signal := toxicity.NewSignal(context.Background(), books)
+
+			Convey("It returns a usable signal", func() {
+				So(signal, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		symbol := "TOX/USD"
+		books := broker.NewBookManager(nil)
 		pushBook(books, symbol, 20)
 
 		signal := toxicity.NewSignal(context.Background(), books)
 		envelope := runtime.NewEnvelope(nil)
-		at := time.Now().UTC()
+		at := time.Unix(1_700_000_000, 0).UTC()
 
-		var out *runtime.Envelope
-		for i := range 48 {
-			pushBook(books, symbol, 20+int64(i)*5)
+		Convey("When touch refills deepen bid support", func() {
+			var out *runtime.Envelope
+			for i := range 48 {
+				pushBook(books, symbol, 20+int64(i)*5)
 
-			envelope.Trade = &market.Trade{Data: []*market.TradeData{{
-				Symbol:    symbol,
-				Side:      market.SideBuy,
-				Price:     decimal.NewFromFloat(90.5),
-				Qty:       decimal.NewFromInt(2),
-				Timestamp: at.Add(time.Duration(i) * time.Second),
-			}}}
-			out = signal.Step(envelope)
-		}
+				envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+					Symbol:    symbol,
+					Side:      market.SideBuy,
+					Price:     decimal.NewFromFloat(90.5),
+					Qty:       decimal.NewFromInt(2),
+					Timestamp: at.Add(time.Duration(i) * time.Second),
+				}}}
+				out = signal.Step(envelope)
+			}
 
-		reading := out.Toxicity[symbol]
-		So(reading, ShouldNotBeNil)
-		So(int(reading.Category), ShouldEqual, 3)
-		So(reading.BluffScore, ShouldEqual, 0)
-		So(reading.VacuumScore, ShouldEqual, 0)
-		So(reading.SupportScore, ShouldBeGreaterThan, 0.3)
-		So(reading.Value, ShouldBeGreaterThan, 0.25)
+			Convey("Category is hard support without vacuum or bluff", func() {
+				reading := out.Toxicity[symbol]
+				So(reading, ShouldNotBeNil)
+				So(int(reading.Category), ShouldEqual, 3)
+				So(reading.BluffScore, ShouldEqual, 0)
+				So(reading.VacuumScore, ShouldEqual, 0)
+				So(reading.SupportScore, ShouldEqual, 0.35902039183346857)
+				So(reading.Value, ShouldEqual, 0.3137254901960784)
+			})
+		})
 	})
 }

@@ -13,36 +13,32 @@ import (
 )
 
 type TradesHistoryRequest struct {
-	Nonce            int    `json:"nonce"`
-	Type             string `json:"type"`
-	Trades           bool   `json:"trades"`
-	ConsolidateTaker bool   `json:"consolidate_taker"`
-	Pair             string `json:"pair"`
-	Limit            int    `json:"limit"`
-	WithoutCount     bool   `json:"without_count"`
-	Ledgers          bool   `json:"ledgers"`
-	RebaseMultiplier string `json:"rebase_multiplier"`
-	Aclass           string `json:"aclass"`
-	WithCursor       bool   `json:"with_cursor"`
+	Type         string `json:"type,omitempty"`
+	Trades       bool   `json:"trades,omitempty"`
+	Pair         string `json:"pair,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	WithoutCount bool   `json:"without_count,omitempty"`
+	WithCursor   bool   `json:"with_cursor,omitempty"`
+	Cursor       string `json:"cursor,omitempty"`
 }
 
 func NewTradesHistoryRequest(symbols []string) *TradesHistoryRequest {
-	return &TradesHistoryRequest{
-		Type:             "all",
-		Trades:           false,
-		Pair:             strings.Join(symbols, ","),
-		ConsolidateTaker: true,
-		Limit:            100,
-		WithoutCount:     true,
-		Ledgers:          true,
-		RebaseMultiplier: "1",
-		Aclass:           "currency",
-		WithCursor:       true,
+	req := &TradesHistoryRequest{
+		Type:         "all",
+		Limit:        100,
+		WithoutCount: true,
+		WithCursor:   true,
 	}
+
+	if len(symbols) > 0 {
+		req.Pair = strings.Join(symbols, ",")
+	}
+
+	return req
 }
 
 /*
-HistoryTrade is one closed lot row in TradesHistory REST — broker reconciles
+HistoryTrade is one closed position row in TradesHistory REST — broker reconciles
 tier ledger against these ids when executions snapshots are incomplete.
 */
 type HistoryTrade struct {
@@ -130,8 +126,10 @@ Request asks for all types without embedded trades — map is built from top-lev
 */
 func (history *TradesHistory) Request() map[string]any {
 	return map[string]any{
-		"type":   "all",
-		"trades": false,
+		"type":          "all",
+		"limit":         100,
+		"without_count": true,
+		"with_cursor":   true,
 	}
 }
 
@@ -199,13 +197,24 @@ type TradesHistoryResult struct {
 }
 
 func NewTradesHistoryResult(data []byte) *TradesHistoryResult {
-	var result TradesHistoryResult
+	var envelope TradesHistory
 
-	if err := sonic.Unmarshal(data, &result); err != nil {
+	if err := sonic.Unmarshal(data, &envelope); err != nil {
+		errnie.Debug("[tradeshistory] unmarshal failed", "err", err, "bytes", len(data))
 		return nil
 	}
 
-	return &result
+	if len(envelope.Error) > 0 {
+		errnie.Debug("[tradeshistory] venue error", "error", envelope.Error)
+		return nil
+	}
+
+	if envelope.Result.Trades == nil {
+		envelope.Result.Trades = make(map[string]HistoryTrade)
+	}
+
+	errnie.Debug("[tradeshistory] parsed", "trades", len(envelope.Result.Trades), "count", envelope.Result.Count)
+	return &envelope.Result
 }
 
 /*

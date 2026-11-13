@@ -1,6 +1,6 @@
 storage:
   s3:
-    # Object storage for whole-blob artifacts: lots, model state, L3 NDJSON tape.
+    # Object storage for whole-blob artifacts: positions, model state, L3 NDJSON tape.
     bucket: symm
     region: us-east-1
     endpoint: http://s3.seaweed.home.arpa
@@ -27,7 +27,7 @@ workbench:
 system:
   data_path: ~/.symm/data
   log:
-    level: debug
+    level: info
   websocket:
     endpoints:
       public: "wss://ws.kraken.com/v2"
@@ -40,6 +40,9 @@ system:
     # is invisible to a socket that only reads. The periodic write is what
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
+    # Private REST Balance + TradeBalance poll. Each call is +1 on Kraken's
+    # REST counter; Intermediate decays 0.5/s / Pro 1/s, so 5s for both is fine.
+    private_refresh: 5s
     # Public Ticker REST poll. Kraken's unfiltered (and often multi-pair)
     # Ticker returns EService:Unavailable, so each cycle covers a slice of
     # desk symbols and hard failures back off up to ticker_backoff_max.
@@ -67,7 +70,7 @@ kraken:
 
 market:
   # paper: virtual + paper books (real transport disarmed). real: live book
-  # only — entry gates + stoploss, no virtual/paper shadow lots. Fees come
+  # only — entry gates + stoploss, no virtual/paper shadow positions. Fees come
   # from the account TradeVolume schedule. Needs KRAKEN_API_KEY/SECRET.
   model: real
   quote_currency: USD
@@ -256,11 +259,11 @@ learning:
   min_path_length: 2
   # Virtual → paper promotion floor on path resistance.
   paper_eligible_resistance: 0.2
-  # Fee-net PnL% floor before a tree exit leaf may settle a lot.
+  # Fee-net PnL% floor before a tree exit leaf may settle a position.
   policy_exit_min_profit_pct: 0.5
   # Win resistance credit: shorter holds and higher PnL% lower more, capped
   # at threshold_step so paths still need multiple proofs. Half-life is in
-  # seconds (14400 = 4h) — lots usually live minutes to hours, not ticks.
+  # seconds (14400 = 4h) — positions usually live minutes to hours, not ticks.
   resistance_hold_half_life_sec: 14400
   resistance_pnl_ref_pct: 1.0
   min_supported_horizon: 2

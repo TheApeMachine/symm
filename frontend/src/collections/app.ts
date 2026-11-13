@@ -18,6 +18,8 @@ import type {
 	Resonance,
 	Tokens,
 } from "./envelope";
+import type { PipelineFrame } from "./pipeline";
+import { EMPTY_PIPELINE } from "./pipeline";
 import type { Balance, Position } from "./types";
 
 export const DEFAULT_KERNELS = [
@@ -56,6 +58,8 @@ export const atoms: Record<string, Atom<any>> = {
 	route: createAtom<string>("dashboard"),
 	focusMetric: createAtom<string>(""),
 	online: createAtom<"ONLINE" | "OFFLINE" | "CONNECTING">("OFFLINE"),
+	engine: createAtom<"booting" | "ready" | "error">("booting"),
+	pipeline: createAtom<PipelineFrame>(EMPTY_PIPELINE),
 	symbols: createAtom<string[]>([DEFAULT_FOCUS_SYMBOL]),
 	error: createAtom<Record<string, unknown> | null>(null),
 	tick: createAtom<LightTick | null>(null),
@@ -67,7 +71,7 @@ export const atoms: Record<string, Atom<any>> = {
 	}>({}),
 	confidence: createAtom<ConfidenceFrame>({
 		virtual: {
-			active: true,
+			active: false,
 			armed: false,
 			halted: false,
 			closed: 0,
@@ -76,7 +80,7 @@ export const atoms: Record<string, Atom<any>> = {
 			edge: null,
 		},
 		paper: {
-			active: true,
+			active: false,
 			armed: false,
 			halted: false,
 			closed: 0,
@@ -124,7 +128,7 @@ export const signals: Record<string, Store<any>> = {
 		epoch?: string;
 		thresholds?: Record<string, number>;
 	}>({}),
-	// ListPrefix closed-lot chunks for history.
+	// ListPrefix closed-position chunks for history.
 	closed: createStore<{
 		scope?: string;
 		entries?: unknown[];

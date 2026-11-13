@@ -3,9 +3,12 @@ package broker
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
@@ -16,7 +19,7 @@ import (
 )
 
 /*
-Cache splits open vs closed lanes because a lot stays under open/ through
+Cache splits open vs closed lanes because a position stays under open/ through
 Closing until exit fills land — desk logic and object keys must match that seam.
 */
 type Cache struct {
@@ -31,7 +34,7 @@ type Cache struct {
 }
 
 /*
-NewCache wires the tier lot lanes. Venue history / private fills admit lots;
+NewCache wires the tier position lanes. Venue history / private fills admit positions;
 the cache does not bootstrap ClosedAt from wall clock or store replay.
 */
 func NewCache(
@@ -54,41 +57,130 @@ func NewCache(
 	}
 
 	if transport == nil {
+		errnie.Debug("[cache] trades history skipped: nil transport", "tier", tierKey)
 		return cache
 	}
 
-	raw, err := transport.Post(
-		system.Cfg.WebSocket.Endpoints.TradesHistory,
-		kraken.NewTradesHistoryRequest([]string{}),
-	)
-
-	if err != nil {
-		errnie.Error(err)
-		return cache
+	type row struct {
+		id    string
+		trade kraken.HistoryTrade
 	}
 
-	history := kraken.NewTradesHistoryResult(raw)
+	endpoint := system.Cfg.WebSocket.Endpoints.TradesHistory
+	rows := make([]row, 0)
+	cursor := ""
 
-	if history == nil {
-		return cache
-	}
+	for page := 0; page < 50; page++ {
+		req := kraken.NewTradesHistoryRequest([]string{})
+		req.Cursor = cursor
 
-	for _, trade := range history.Trades {
-		position := NewPosition(
-			cache.Context(),
-			trade.Pair,
-			tierKey,
-			"",
-			price,
-			cache.transport,
-			cache.onSettled,
+		raw, err := transport.Post(endpoint, req)
+
+		if err != nil {
+			errnie.Debug("[cache] trades history post failed",
+				"tier", tierKey, "page", page, "endpoint", endpoint, "err", err,
+			)
+			errnie.Error(err)
+			break
+		}
+
+		preview := string(raw)
+		if len(preview) > 512 {
+			preview = preview[:512]
+		}
+
+		errnie.Debug("[cache] trades history post ok",
+			"tier", tierKey, "page", page, "bytes", len(raw), "body", preview,
 		)
 
+		history := kraken.NewTradesHistoryResult(raw)
+
+		if history == nil {
+			errnie.Debug("[cache] trades history parse returned nil",
+				"tier", tierKey, "page", page, "bytes", len(raw),
+			)
+			break
+		}
+
+		for id, trade := range history.Trades {
+			rows = append(rows, row{id: id, trade: trade})
+		}
+
+		errnie.Debug("[cache] trades history page",
+			"tier", tierKey, "page", page, "page_n", len(history.Trades), "total_n", len(rows),
+			"next", history.Cursor.Next,
+		)
+
+		if history.Cursor.Next == "" {
+			break
+		}
+
+		cursor = history.Cursor.Next
+	}
+
+	slices.SortFunc(rows, func(a, b row) int {
+		return a.trade.Time.Compare(b.trade.Time)
+	})
+
+	errnie.Debug("[cache] trades history rows", "tier", tierKey, "n", len(rows))
+
+	active := make(map[string]*Position)
+
+	for _, row := range rows {
+		trade := row.trade
+		symbol := trade.Pair
+
+		if price != nil && price.normalizer != nil {
+			symbol = price.normalizer.Name(symbol)
+		}
+
+		errnie.Debug("[cache] history trade",
+			"tier", tierKey,
+			"id", row.id,
+			"pair", trade.Pair,
+			"symbol", symbol,
+			"side", trade.Type,
+			"vol", trade.Volume,
+			"price", trade.Price,
+			"time", trade.Time,
+		)
+
+		if symbol == "" {
+			errnie.Debug("[cache] skip trade: empty symbol", "tier", tierKey, "id", row.id, "pair", trade.Pair)
+			continue
+		}
+
+		position := active[symbol]
+
+		if position == nil {
+			if trade.Type != "buy" {
+				errnie.Debug("[cache] skip sell with no active position",
+					"tier", tierKey, "symbol", symbol, "id", row.id,
+				)
+				continue
+			}
+
+			position = NewPosition(
+				cache.Context(),
+				symbol,
+				tierKey,
+				"",
+				price,
+				cache.transport,
+				cache.onSettled,
+			)
+			position.OpenedAt = trade.Time
+			active[symbol] = position
+			errnie.Debug("[cache] new position from buy",
+				"tier", tierKey, "symbol", symbol, "id", position.ID, "trade", row.id,
+			)
+		}
+
 		position.Apply(market.ExecutionData{
-			ExecID:      trade.OrderID,
+			ExecID:      row.id,
 			ExecType:    "trade",
 			OrderID:     trade.OrderID,
-			Symbol:      trade.Pair,
+			Symbol:      symbol,
 			Side:        trade.Type,
 			LastQty:     trade.Volume,
 			LastPrice:   trade.Price,
@@ -99,24 +191,110 @@ func NewCache(
 			OrderStatus: "filled",
 		})
 
-		position.PnLPct = price.PnLPct(
-			position.Symbol,
-			position.Qty,
-			position.Entry,
-			position.Exit,
+		errnie.Debug("[cache] after apply",
+			"tier", tierKey,
+			"symbol", symbol,
+			"position", position.ID,
+			"qty", position.Qty,
+			"closed_at", position.ClosedAt,
 		)
 
-		pnlPct, _ := position.PnLPct.Float64()
-		position.Stoploss = NewStoploss(pnlPct)
-
 		if position.ClosedAt == nil {
-			cache.open.Store(position.Symbol, position)
-		} else {
-			cache.closed.Store(position.Symbol, position)
+			continue
 		}
+
+		cache.closed.Store(position.ID, position)
+		delete(active, symbol)
+		errnie.Debug("[cache] position closed",
+			"tier", tierKey, "symbol", symbol, "id", position.ID, "trade", row.id,
+		)
 	}
 
+	for symbol, position := range active {
+		if position.PnLPct != nil {
+			pnlPct, _ := position.PnLPct.Float64()
+			position.Stoploss = NewStoploss(pnlPct)
+		}
+
+		cache.open.Store(symbol, position)
+		errnie.Debug("[cache] position open",
+			"tier", tierKey, "symbol", symbol, "id", position.ID, "qty", position.Qty,
+		)
+	}
+
+	errnie.Debug("[cache] restore done",
+		"tier", tierKey,
+		"open", len(cache.Open()),
+		"closed", len(cache.Closed()),
+	)
+
 	return cache
+}
+
+/*
+Bound drops open positions the wallet no longer holds and aligns qty to
+spendable capital. History proposes; Balance confirms — never invents opens.
+*/
+func (cache *Cache) Bound(book *market.Balance) {
+	if book == nil {
+		return
+	}
+
+	quote := book.Quote
+
+	if quote == "" {
+		quote = system.Cfg.Market.QuoteCurrency
+	}
+
+	held := make(map[string]decimal.Decimal)
+
+	for _, asset := range book.Assets {
+		if asset == nil || asset.Symbol == "" || asset.Symbol == quote {
+			continue
+		}
+
+		if asset.Capital.Sign() <= 0 {
+			continue
+		}
+
+		held[asset.Symbol] = asset.Capital
+	}
+
+	for _, position := range cache.Open() {
+		base := position.Symbol
+
+		if b, _, ok := strings.Cut(position.Symbol, "/"); ok {
+			base = b
+		} else if quote != "" && strings.HasSuffix(position.Symbol, quote) {
+			base = strings.TrimSuffix(position.Symbol, quote)
+		}
+
+		capital, ok := held[base]
+
+		if !ok {
+			errnie.Debug("[cache] bound drop: not in wallet",
+				"tier", cache.tierKey, "symbol", position.Symbol, "base", base, "id", position.ID,
+			)
+			cache.open.Delete(position.Symbol)
+			continue
+		}
+
+		if position.Qty == nil || !position.Qty.Equal(capital) {
+			qty := capital
+			position.Qty = &qty
+			errnie.Debug("[cache] bound qty from wallet",
+				"tier", cache.tierKey, "symbol", position.Symbol, "qty", qty,
+			)
+		}
+
+		errnie.Debug("[cache] bound keep",
+			"tier", cache.tierKey, "symbol", position.Symbol, "base", base, "qty", position.Qty,
+		)
+	}
+
+	errnie.Debug("[cache] bound done",
+		"tier", cache.tierKey, "open", len(cache.Open()), "wallet_bases", len(held),
+	)
 }
 
 /*
@@ -128,7 +306,7 @@ func (cache *Cache) All(symbols ...string) []*Position {
 }
 
 /*
-Open is filled live lots only — Qty/Entry set. Unfilled submits are not open.
+Open is filled live positions only — Qty/Entry set. Unfilled submits are not open.
 */
 func (cache *Cache) Open(symbols ...string) []*Position {
 	if len(symbols) == 0 {
@@ -172,24 +350,24 @@ func (cache *Cache) Closed(symbols ...string) []*Position {
 		return positions
 	}
 
-	positions := make([]*Position, 0, len(symbols))
+	positions := make([]*Position, 0)
 
-	for _, symbol := range symbols {
-		raw, ok := cache.closed.Load(symbol)
+	cache.closed.Range(func(_, raw any) bool {
+		position := raw.(*Position)
 
-		if !ok {
-			continue
+		if slices.Contains(symbols, position.Symbol) {
+			positions = append(positions, position)
 		}
 
-		positions = append(positions, raw.(*Position))
-	}
+		return true
+	})
 
 	return positions
 }
 
 /*
-Has is the enter mutex: one symbol may not get a second lot until Remove clears
-the open key (including lots with ClosedAt set but exit fills in flight).
+Has is the enter mutex: one symbol may not get a second position until Remove clears
+the open key (including positions with ClosedAt set but exit fills in flight).
 */
 func (cache *Cache) Has(symbol string) bool {
 	// Still under open (including ClosedAt claimed while settle Sends) occupies
@@ -199,7 +377,7 @@ func (cache *Cache) Has(symbol string) bool {
 }
 
 /*
-Add is idempotent on restore — it refuses to overwrite a live open lot unless
+Add is idempotent on restore — it refuses to overwrite a live open position unless
 the incumbent already claimed ClosedAt during settle.
 */
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
@@ -226,9 +404,9 @@ func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 }
 
 /*
-Save writes the full lot (orders, fills, mark, pnl, stoploss) to S3.
+Save writes the full position (orders, fills, mark, pnl, stoploss) to S3.
 
-Lots already under closed/ (or settled and no longer open) update the closed
+Positions already under closed/ (or settled and no longer open) update the closed
 object and retire any open/ orphan — exit fills after Remove must not recreate
 an open key with a second mark pass.
 */
@@ -275,7 +453,7 @@ func (cache *Cache) Remove(symbol string) bool {
 	}
 
 	loaded := raw.(*Position)
-	cache.closed.Store(symbol, loaded)
+	cache.closed.Store(loaded.ID, loaded)
 
 	if err := cache.move(loaded); err != nil {
 		errnie.Error(err)
@@ -295,7 +473,7 @@ func (cache *Cache) Drop(symbol string) {
 
 	cache.open.Delete(symbol)
 
-	// Only the failed open lot — closed history must survive a reject.
+	// Only the failed open position — closed history must survive a reject.
 	if cache.store == nil {
 		return
 	}
@@ -307,7 +485,7 @@ func (cache *Cache) Drop(symbol string) {
 
 /*
 move makes S3 match memory after settle; a crash between write and delete must not
-leave two authoritative copies of the same lot id.
+leave two authoritative copies of the same position id.
 */
 func (cache *Cache) move(position *Position) error {
 	if position == nil || position.ID == "" || cache.store == nil {
@@ -330,7 +508,7 @@ func (cache *Cache) move(position *Position) error {
 	if err := cache.store.DeletePrefix(open); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"[broker.Cache.move] failed to retire open lot",
+			"[broker.Cache.move] failed to retire open position",
 			err,
 		))
 	}

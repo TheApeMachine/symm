@@ -9,7 +9,11 @@ import (
 )
 
 func main() {
-	client := network.NewWebsocketClient(context.Background())
+	client := network.NewWebsocketClient(context.Background(), "wss://ws.kraken.com/v2")
+	if err := client.Open(); err != nil {
+		fmt.Println("Open:", err)
+		return
+	}
 	msg, _ := sonic.Marshal(kraken.NewInstrumentSubscription())
 	client.Write(msg)
 

@@ -35,8 +35,22 @@ func seedBook(books *broker.BookManager, symbol string, bid, ask, bidQty, askQty
 	})
 }
 
-func TestLiquidityStep(t *testing.T) {
-	Convey("Step records liquidity once depth peers exist", t, func() {
+func TestNewSignal(t *testing.T) {
+	Convey("Setup", t, func() {
+		books := broker.NewBookManager(nil)
+
+		Convey("When NewSignal is called", func() {
+			signal := liquidity.NewSignal(context.Background(), books)
+
+			Convey("It returns a usable signal", func() {
+				So(signal, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
 		books := broker.NewBookManager(nil)
 		symbols := []string{"L1/USD", "L2/USD", "L3/USD", "L4/USD"}
 		seedBook(books, symbols[0], 20, 21, 200, 20)
@@ -46,28 +60,32 @@ func TestLiquidityStep(t *testing.T) {
 
 		signal := liquidity.NewSignal(context.Background(), books)
 		envelope := runtime.NewEnvelope(nil)
-		at := time.Now().UTC()
+		at := time.Unix(1_700_000_000, 0).UTC()
 
-		for i := range 64 {
-			trades := make([]*market.TradeData, 0, len(symbols))
-			for j, symbol := range symbols {
-				trades = append(trades, &market.TradeData{
-					Symbol:    symbol,
-					Side:      market.SideBuy,
-					Price:     decimal.NewFromInt(20 + int64(j*10)),
-					Qty:       decimal.NewFromInt(2),
-					Timestamp: at.Add(time.Duration(i) * time.Second),
-				})
+		Convey("When depth peers trade across symbols", func() {
+			for i := range 64 {
+				trades := make([]*market.TradeData, 0, len(symbols))
+				for j, symbol := range symbols {
+					trades = append(trades, &market.TradeData{
+						Symbol:    symbol,
+						Side:      market.SideBuy,
+						Price:     decimal.NewFromInt(20 + int64(j*10)),
+						Qty:       decimal.NewFromInt(2),
+						Timestamp: at.Add(time.Duration(i) * time.Second),
+					})
+				}
+
+				envelope.Trade = &market.Trade{Data: trades}
+				envelope = signal.Step(envelope)
 			}
 
-			envelope.Trade = &market.Trade{Data: trades}
-			envelope = signal.Step(envelope)
-		}
-
-		reading := envelope.Liquidity["L1/USD"]
-		So(reading, ShouldNotBeNil)
-		So(int(reading.Category), ShouldEqual, 3)
-		So(reading.ScarcityScore, ShouldEqual, 0)
-		So(reading.DepthScore, ShouldBeGreaterThan, 0.4)
+			Convey("L1/USD is deep with zero scarcity", func() {
+				reading := envelope.Liquidity["L1/USD"]
+				So(reading, ShouldNotBeNil)
+				So(int(reading.Category), ShouldEqual, 3)
+				So(reading.ScarcityScore, ShouldEqual, 0)
+				So(reading.DepthScore, ShouldEqual, 0.44366197183098594)
+			})
+		})
 	})
 }

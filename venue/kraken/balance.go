@@ -335,6 +335,7 @@ func (balance *Balance) AssetAmount(asset string) (*decimal.Decimal, bool) {
 
 /*
 ToMarket projects spendable Result rows into nomagique Balance for desk QuoteCash.
+Equity and unrealized stay on TradeBalance — a cash frame must not wipe them.
 */
 func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Balance)
@@ -357,10 +358,18 @@ func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 		))
 	}
 
-	return market.NewBalance(map[string]any{
+	equity := book.Equity
+	unrealized := book.Unrealized
+
+	market.NewBalance(map[string]any{
 		"quote":  book.Quote,
 		"assets": assets,
 	}).ToMarket(book)
+
+	book.Equity = equity
+	book.Unrealized = unrealized
+
+	return book
 }
 
 /*

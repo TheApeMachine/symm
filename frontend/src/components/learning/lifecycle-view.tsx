@@ -763,8 +763,8 @@ const PathChart = ({ life }: { life: Lifecycle }) => {
 };
 
 /*
-LifecycleView lists settled round trips for the active book (closed desk lots
-and archive rows). Open lots stay on Open Positions; exchange figures read
+LifecycleView lists settled round trips for the active book (closed desk positions
+and archive rows). Open positions stay on Open Positions; exchange figures read
 "not available", never zero.
 */
 export const LifecycleView = () => {
@@ -830,8 +830,8 @@ export const LifecycleView = () => {
 				<Flex.Column className="w-64 shrink-0 overflow-auto border-(--line) border-r bg-(--surface)/40 max-lg:w-full">
 					{lifecycles.length === 0 ? (
 						<Typography.Mono size="s" tone="f3" className="p-3">
-							No closed positions yet. Open lots live under Open Positions;
-							settled trips appear here when the desk closes a lot.
+							No closed positions yet. Open positions live under Open Positions;
+							settled trips appear here when the desk closes a position.
 						</Typography.Mono>
 					) : (
 						lifecycles.map((life) => {

@@ -54,7 +54,7 @@ export type LifeOutcome = {
 	realized?: number | null;
 	/** Mark-to-market return at settle (fraction). The realized-vs-mark gap is the seam audit. */
 	mark?: number | null;
-	/** Repress events the lot held (tape timebase). */
+	/** Repress events the position held (tape timebase). */
 	bars_held?: number | null;
 	/** Empirical winning horizon in bars. */
 	max_lifetime_bars?: number | null;
@@ -62,7 +62,7 @@ export type LifeOutcome = {
 
 /*
 LearnedExitPolicy is the Causal-MCTS stopping boundary the desk has tuned for
-this symbol, copied onto the lot at entry (broker/exitpolicy.go teachPolicy).
+this symbol, copied onto the position at entry (broker/exitpolicy.go teachPolicy).
 A zero or absent value means the desk has not learned that boundary yet — the
 stop falls back to the friction floor. The UI must distinguish "unlearned" from
 "zero", so each field is a nullable percent, not a defaulted 0.
@@ -78,7 +78,7 @@ export type LearnedExitPolicy = {
 	worst?: number | null;
 };
 
-/** Live Stoploss snapshot copied onto lifecycle rows from desk lots. */
+/** Live Stoploss snapshot copied onto lifecycle rows from desk positions. */
 export type LiveStopState = Stoploss;
 
 export type Lifecycle = {
@@ -86,17 +86,17 @@ export type Lifecycle = {
 	symbol: string;
 	status: string;
 	policy_epoch?: string;
-	/** Grammar path the desk opened the lot on (path discovery ledger). */
+	/** Grammar path the desk opened the position on (path discovery ledger). */
 	path?: string;
 	opened_at: string;
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
-	/** Live Stoploss snapshot from the desk lot. */
+	/** Live Stoploss snapshot from the desk position. */
 	stop_state?: LiveStopState | null;
 	/** Learned exit policy for this symbol (Causal MCTS), copied on at entry. */
 	policy?: LearnedExitPolicy | null;
-	/** Peak mark-to-market return (percent) the lot has reached. */
+	/** Peak mark-to-market return (percent) the position has reached. */
 	peak_pct?: number | null;
 	/** Fee-net realized return captured at exit (fraction). */
 	realized_pct?: number | null;
@@ -108,12 +108,12 @@ export type Lifecycle = {
 	exit_trigger?: string | null;
 	/** Exit mark at official close, percent. */
 	official_exit_pct?: number | null;
-	/** Bid marks sampled while the lot was open (for hold charts). */
+	/** Bid marks sampled while the position was open (for hold charts). */
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
 	tier_key?: string;
 	path_found?: boolean;
-	/** Set when this row was copied from a desk lot snapshot. */
+	/** Set when this row was copied from a desk position snapshot. */
 	desk?: boolean;
 	/** Set when this closed row was restored from S3 history. */
 	history?: boolean;
@@ -193,7 +193,7 @@ const summarize = (all: Lifecycle[]): LifecycleReport => {
 let snapshot: Snapshot = { report: summarize([]) };
 
 const publish = () => {
-	// Newest close first for settled trips; open lots by opened_at.
+	// Newest close first for settled trips; open positions by opened_at.
 	const all = [...lives.values()].sort((a, b) => {
 		const aClose = a.closed_at || a.opened_at;
 		const bClose = b.closed_at || b.opened_at;
@@ -339,11 +339,11 @@ export const ingestPositionFrame = (frame: unknown) => {
 };
 
 /*
-ingestDeskClosedLots mirrors the desk snapshot. A lot is open when it is in
+ingestDeskClosedPositions mirrors the desk snapshot. A position is open when it is in
 that snapshot without a close, and closed when Exit put a close on it. Desk
 rows that are no longer open are removed. A close already recorded stays.
 */
-export const ingestDeskClosedLots = (rows: Position[]) => {
+export const ingestDeskClosedPositions = (rows: Position[]) => {
 	const openIds = new Set(
 		rows.filter((row) => row.id && !isClosed(row)).map((row) => row.id),
 	);
@@ -415,7 +415,7 @@ export const ingestDeskClosedLots = (rows: Position[]) => {
 };
 
 export const ingestDeskSnapshot = () => {
-	ingestDeskClosedLots(positionRows(appSignals.positions.state));
+	ingestDeskClosedPositions(positionRows(appSignals.positions.state));
 };
 
 const deskRowFromClosedLife = (life: Lifecycle): Position | null => {
@@ -440,7 +440,7 @@ const deskRowFromClosedLife = (life: Lifecycle): Position | null => {
 };
 
 /*
-deskRowsForStats is the positions snapshot plus closed desk lots the lifecycle
+deskRowsForStats is the positions snapshot plus closed desk positions the lifecycle
 store still holds after Train drops them from the hub frame. Edge and win rate
 must use this, not positionRows alone.
 */
@@ -542,7 +542,7 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 };
 
 /*
-ingestHistoryClosedBatch folds many stored closed lots with one publish.
+ingestHistoryClosedBatch folds many stored closed positions with one publish.
 Hub ListPrefix sends JSON {"closed":{entries}} envelopes.
 */
 export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
@@ -562,7 +562,7 @@ export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
 let closedHistoryRequested = false;
 
 /*
-requestClosedPositionHistory asks the hub to list every closed lot in S3
+requestClosedPositionHistory asks the hub to list every closed position in S3
 across virtual, paper, and real. ListPrefix returns one frame per book prefix.
 */
 export const requestClosedPositionHistory = () => {
@@ -587,8 +587,8 @@ const subscribe = (listener: () => void) => {
 };
 
 /*
-ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's lot
-frames on a timer, so the Position Life-Cycle tab shows open lots and
+ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's position
+frames on a timer, so the Position Life-Cycle tab shows open positions and
 settled closes even when no rich frame stream replayed them. The longtail
 recorder ingests the same rows; one interval is enough for both.
 */
@@ -599,7 +599,7 @@ export const ensureDeskLifecycleFeed = () => {
 	lifecycleFeedStarted = true;
 
 	const tick = () => {
-		ingestDeskClosedLots(positionRows(appSignals.positions.state));
+		ingestDeskClosedPositions(positionRows(appSignals.positions.state));
 	};
 
 	tick();

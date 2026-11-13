@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -222,7 +223,7 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 }
 
 /*
-Update nudges resistance along the whole path prefix after a settled lot proves
+Update nudges resistance along the whole path prefix after a settled position proves
 or disproves the grammar — Ensure seeds once; repeat exits must not reset leaves.
 */
 func (tree *Tree) Update(path string, delta float64) {
@@ -389,6 +390,7 @@ func (tree *Tree) persist(path string, decision *runtime.Decision) {
 	tree.store.WriteAtPrefix(
 		"model/paths/"+path+"/"+action.String()+".bin", raw,
 	)
+	pipeline.Wrote(int64(tree.store.QueueDepth()))
 }
 
 /*

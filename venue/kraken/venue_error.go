@@ -2,7 +2,9 @@ package kraken
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 )
@@ -28,8 +30,7 @@ func VenueErrors(body []byte) []any {
 }
 
 /*
-RateLimited reports EAPI rate-limit text nested in Kraken's heterogeneous error
-slices so network backoff can defer nonce bumps and retries.
+RateLimited reports EAPI:Rate limit exceeded (counter past the account max).
 */
 func RateLimited(errs ...any) bool {
 	for _, entry := range errs {
@@ -54,11 +55,53 @@ func RateLimited(errs ...any) bool {
 	return false
 }
 
-/*
-rateLimitedText matches Kraken's English rate-limit substring case-insensitively.
-*/
 func rateLimitedText(line string) bool {
 	lower := strings.ToLower(line)
 
-	return strings.Contains(lower, "rate limit")
+	return strings.Contains(lower, "eapi:rate limit exceeded") ||
+		strings.Contains(lower, "rate limit exceeded")
+}
+
+/*
+ThrottleUntil reports EService: Throttled: <unix> and the time to retry after.
+*/
+func ThrottleUntil(errs ...any) (time.Time, bool) {
+	for _, entry := range errs {
+		switch value := entry.(type) {
+		case []any:
+			if until, ok := ThrottleUntil(value...); ok {
+				return until, true
+			}
+		case []string:
+			for _, line := range value {
+				if until, ok := throttleUntilText(line); ok {
+					return until, true
+				}
+			}
+		default:
+			if until, ok := throttleUntilText(fmt.Sprint(entry)); ok {
+				return until, true
+			}
+		}
+	}
+
+	return time.Time{}, false
+}
+
+func throttleUntilText(line string) (time.Time, bool) {
+	lower := strings.ToLower(line)
+	idx := strings.Index(lower, "throttled:")
+
+	if idx < 0 {
+		return time.Time{}, false
+	}
+
+	rest := strings.TrimSpace(line[idx+len("throttled:"):])
+	sec, err := strconv.ParseInt(rest, 10, 64)
+
+	if err != nil || sec <= 0 {
+		return time.Time{}, false
+	}
+
+	return time.Unix(sec, 0).UTC(), true
 }

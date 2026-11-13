@@ -47,7 +47,7 @@ type closedEntry struct {
 }
 
 /*
-read fills one closed lot from a stored JSON object.
+read fills one closed position from a stored JSON object.
 Missing epoch, tick, and timestamp stay zero.
 */
 func (entry *closedEntry) read(raw []byte) bool {
@@ -82,7 +82,7 @@ envelopes that stay under the websocket max message size.
 model/paths → {"pathbook":{scope,epoch,thresholds}}
 paper|real|virtual/closed → {"closed":{scope,entries}}
 
-Path leaves are PathBook JSON. Closed lots are JSON with a position object.
+Path leaves are PathBook JSON. Closed positions are JSON with a position object.
 Live sequencer Tokens still publish under "paths" — a different key.
 */
 func (hub *Hub) ListPrefix(prefix string) {
@@ -323,7 +323,7 @@ func chunkClosedEntries(entries []closedEntry, budget int) [][]closedEntry {
 
 		if cost > budget {
 			errnie.Warn(fmt.Sprintf(
-				"[hub] skipping oversized closed lot (%d bytes > budget %d)",
+				"[hub] skipping oversized closed position (%d bytes > budget %d)",
 				cost, budget,
 			))
 			start = i + 1

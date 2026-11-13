@@ -6,7 +6,7 @@ import (
 
 /*
 Ascent tracks smoothed PnL velocity (acceleration/deceleration) so exhaustion
-is relative to this lot's own peak climb rate, immune to discrete tick jitter.
+is relative to this position's own peak climb rate, immune to discrete tick jitter.
 */
 type Ascent struct {
 	PeakVelocity   float64   `json:"PeakVelocity"`

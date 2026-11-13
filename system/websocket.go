@@ -9,6 +9,7 @@ import (
 type WebSocket struct {
 	Endpoints        *Endpoints
 	PingInterval     time.Duration
+	PrivateRefresh   time.Duration
 	TickerRefresh    time.Duration
 	TickerBackoffMax time.Duration
 	TickerBatchSize  int
@@ -35,6 +36,11 @@ func NewWebSocket() *WebSocket {
 	viper.SetDefault("system.websocket.endpoints.tradevolume", "https://api.kraken.com/0/private/TradeVolume")
 	viper.SetDefault("system.websocket.endpoints.ticker", "https://api.kraken.com/0/public/Ticker")
 	viper.SetDefault("system.websocket.ping_interval", 20*time.Second)
+	// Balance + TradeBalance are +1 REST counter each. Intermediate decays
+	// 0.5/s (Pro 1/s), so a 5s private poll of both (+2/5s) stays under the
+	// Intermediate/Pro caps; Starter (0.33/s) is tighter if other private
+	// calls share the key.
+	viper.SetDefault("system.websocket.private_refresh", 5*time.Second)
 	// Unfiltered / multi-pair public Ticker often returns EService:Unavailable;
 	// refresh a round-robin slice and back off on hard failures.
 	viper.SetDefault("system.websocket.ticker_refresh", time.Minute)
@@ -53,6 +59,7 @@ func NewWebSocket() *WebSocket {
 			TradesHistory: viper.GetString("system.websocket.endpoints.trades_history"),
 		},
 		PingInterval:     viper.GetDuration("system.websocket.ping_interval"),
+		PrivateRefresh:   viper.GetDuration("system.websocket.private_refresh"),
 		TickerRefresh:    viper.GetDuration("system.websocket.ticker_refresh"),
 		TickerBackoffMax: viper.GetDuration("system.websocket.ticker_backoff_max"),
 		TickerBatchSize:  viper.GetInt("system.websocket.ticker_batch_size"),

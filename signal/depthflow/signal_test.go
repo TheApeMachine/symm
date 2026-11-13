@@ -29,8 +29,34 @@ func (client *depthSnapClient) Post(string, any) ([]byte, error) { return nil, n
 
 func (client *depthSnapClient) Watch(string, any, json.Unmarshaler) {}
 
-func TestDepthflowStep(t *testing.T) {
-	Convey("Step publishes loaded depthflow after sustained bid pressure", t, func() {
+func TestNewSignal(t *testing.T) {
+	Convey("Setup", t, func() {
+		symbol := "DF/USD"
+		step := decimal.RequireFromString("1")
+		snapshot := &kraken.Instrument{Channel: "instrument", Type: "snapshot"}
+		snapshot.Data.Pairs = []kraken.InstrumentPair{{
+			Symbol: symbol, Base: "DF", Quote: "USD", Status: "online",
+			TickSize: &step, QtyMin: &step,
+		}}
+
+		frame, err := json.Marshal(snapshot)
+		So(err, ShouldBeNil)
+
+		instrument := broker.NewInstrument(context.Background(), &depthSnapClient{frame: frame}, nil)
+		books := broker.NewBookManager(nil)
+
+		Convey("When NewSignal is called", func() {
+			signal := depthflow.NewSignal(context.Background(), books, instrument)
+
+			Convey("It returns a usable signal", func() {
+				So(signal, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
 		symbol := "DF/USD"
 		step := decimal.RequireFromString("1")
 		snapshot := &kraken.Instrument{Channel: "instrument", Type: "snapshot"}
@@ -47,7 +73,7 @@ func TestDepthflowStep(t *testing.T) {
 
 		signal := depthflow.NewSignal(context.Background(), books, instrument)
 		envelope := runtime.NewEnvelope(nil)
-		at := time.Now().UTC()
+		at := time.Unix(1_700_000_000, 0).UTC()
 
 		seedBook := func(step int) {
 			bidPx := []decimal.Decimal{
@@ -93,26 +119,30 @@ func TestDepthflowStep(t *testing.T) {
 			})
 		}
 
-		for i := range 160 {
-			seedBook(i)
+		Convey("When sustained bid pressure trades through depth", func() {
+			for i := range 160 {
+				seedBook(i)
 
-			envelope.Trade = &market.Trade{Data: []*market.TradeData{{
-				Symbol:    symbol,
-				Side:      market.SideBuy,
-				Price:     decimal.NewFromInt(100),
-				Qty:       decimal.NewFromInt(3),
-				Timestamp: at.Add(time.Duration(i) * time.Second),
-			}}}
-			envelope = signal.Step(envelope)
-		}
+				envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+					Symbol:    symbol,
+					Side:      market.SideBuy,
+					Price:     decimal.NewFromInt(100),
+					Qty:       decimal.NewFromInt(3),
+					Timestamp: at.Add(time.Duration(i) * time.Second),
+				}}}
+				envelope = signal.Step(envelope)
+			}
 
-		reading := envelope.DepthFlow[symbol]
-		So(reading, ShouldNotBeNil)
-		So(reading.Ready, ShouldBeTrue)
-		So(int(reading.Category), ShouldEqual, 1)
-		So(reading.LoadedScore, ShouldBeGreaterThan, 0.6)
-		So(reading.SpoofScore, ShouldEqual, 0)
-		So(reading.ThinScore, ShouldEqual, 0)
-		So(reading.HypothesisSeparation, ShouldBeGreaterThan, 0.3)
+			Convey("DepthFlow is loaded with zero thin and spoof", func() {
+				reading := envelope.DepthFlow[symbol]
+				So(reading, ShouldNotBeNil)
+				So(reading.Ready, ShouldBeTrue)
+				So(int(reading.Category), ShouldEqual, 1)
+				So(reading.LoadedScore, ShouldEqual, 0.6394844651043066)
+				So(reading.SpoofScore, ShouldEqual, 0)
+				So(reading.ThinScore, ShouldEqual, 0)
+				So(reading.HypothesisSeparation, ShouldEqual, 0.3840631894091963)
+			})
+		})
 	})
 }

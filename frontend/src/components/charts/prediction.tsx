@@ -644,13 +644,13 @@ const VectorLane = ({
 	const ghostExtent =
 		ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
 	const ghostSlots = ghost?.map((value, slotIndex) => ({
-		slotId: `ghost-${label}-slot-${slotIndex}`,
+		spositionId: `ghost-${label}-slot-${slotIndex}`,
 		value,
 		index: slotIndex,
 		total: ghost.length,
 	}));
 	const stateSlots = values.map((value, slotIndex) => ({
-		slotId: `state-${label}-slot-${slotIndex}`,
+		spositionId: `state-${label}-slot-${slotIndex}`,
 		value,
 		index: slotIndex,
 		total: values.length,
@@ -669,7 +669,7 @@ const VectorLane = ({
 					<div className="absolute inset-0">
 						{ghostSlots.map((slot) => (
 							<div
-								key={slot.slotId}
+								key={slot.spositionId}
 								className="absolute inset-y-0 right-1 left-1 origin-left"
 								style={{
 									transform: vectorSlotTransform(slot.index, slot.total),
@@ -685,7 +685,7 @@ const VectorLane = ({
 				) : null}
 				{stateSlots.map((slot) => (
 					<div
-						key={slot.slotId}
+						key={slot.spositionId}
 						className="absolute inset-y-0 right-1 left-1 origin-left"
 						style={{ transform: vectorSlotTransform(slot.index, slot.total) }}
 					>

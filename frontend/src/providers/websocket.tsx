@@ -1,5 +1,11 @@
 import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
+import { applyDiagPulse, applyDiagPulses } from "#/collections/diag-burst";
+import {
+	EMPTY_PIPELINE,
+	mergeTopology,
+	type PipelineFrame,
+} from "#/collections/pipeline";
 import type { Position } from "#/collections/types";
 import {
 	ensureLongtailRecorder,
@@ -22,12 +28,60 @@ export { sendCommand, sendRoute } from "#/lib/hub-socket";
 const applyEnvelope = (payload: Record<string, unknown>) => {
 	for (const key of Object.keys(payload)) {
 		const value = payload[key];
+
+		if (key === "diag_pulses") {
+			applyDiagPulses(value);
+			continue;
+		}
+
+		if (key === "diag_pulse") {
+			applyDiagPulse(value);
+			continue;
+		}
+
+		if (key === "pipeline") {
+			atoms.pipeline.set(
+				mergeTopology(
+					(atoms.pipeline.get() as PipelineFrame) ?? EMPTY_PIPELINE,
+					(value as PipelineFrame) ?? EMPTY_PIPELINE,
+				),
+			);
+			continue;
+		}
+
 		const atom = atoms[key];
 
 		if (atom) {
 			// Tier wallets arrive as {paper|virtual|real: reading}.
 			if (value && typeof value === "object" && !Array.isArray(value)) {
-				atom.set({ ...atom.get(), ...value });
+				if (key === "confidence") {
+					const prev = atom.get() as Record<string, unknown>;
+					const patch = value as Record<string, unknown>;
+					const next: Record<string, unknown> = { ...prev, ...patch };
+
+					for (const book of ["virtual", "paper", "real"] as const) {
+						const prior = prev[book];
+						const incoming = patch[book];
+
+						if (
+							prior &&
+							typeof prior === "object" &&
+							incoming &&
+							typeof incoming === "object" &&
+							!Array.isArray(prior) &&
+							!Array.isArray(incoming)
+						) {
+							next[book] = {
+								...(prior as Record<string, unknown>),
+								...(incoming as Record<string, unknown>),
+							};
+						}
+					}
+
+					atom.set(next);
+				} else {
+					atom.set({ ...atom.get(), ...value });
+				}
 			} else {
 				atom.set(value);
 			}

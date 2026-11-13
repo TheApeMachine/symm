@@ -4,26 +4,40 @@ import (
 	"errors"
 	"testing"
 
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/errnie"
 )
 
 func TestRecoverable(t *testing.T) {
-	if Recoverable(nil) {
-		t.Fatal("nil is not recoverable")
-	}
+	Convey("Setup", t, func() {
+		Convey("When err is nil", func() {
+			Convey("Recoverable is false", func() {
+				So(Recoverable(nil), ShouldBeFalse)
+			})
+		})
 
-	dial := errnie.Err(errnie.IO, "[network.websocket] error dialing url", errors.New("dial"))
-	if !Recoverable(dial) {
-		t.Fatalf("dial failure must be recoverable: %v", dial)
-	}
+		Convey("When err is a dial failure", func() {
+			dial := errnie.Err(errnie.IO, "[network.websocket] error dialing url", errors.New("dial"))
 
-	hook := errnie.Err(errnie.IO, "[network.websocket] reconnect hook failed", errors.New("token"))
-	if !Recoverable(hook) {
-		t.Fatalf("hook failure must be recoverable: %v", hook)
-	}
+			Convey("Recoverable is true", func() {
+				So(Recoverable(dial), ShouldBeTrue)
+			})
+		})
 
-	bug := errnie.Err(errnie.Validation, "[broker] corrupt frame", nil)
-	if Recoverable(bug) {
-		t.Fatalf("validation errors are not recoverable: %v", bug)
-	}
+		Convey("When err is a reconnect hook failure", func() {
+			hook := errnie.Err(errnie.IO, "[network.websocket] reconnect hook failed", errors.New("token"))
+
+			Convey("Recoverable is true", func() {
+				So(Recoverable(hook), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is a validation bug", func() {
+			bug := errnie.Err(errnie.Validation, "[broker] corrupt frame", nil)
+
+			Convey("Recoverable is false", func() {
+				So(Recoverable(bug), ShouldBeFalse)
+			})
+		})
+	})
 }

@@ -37,7 +37,7 @@ export const holdNs = (pos: Position) => {
 };
 
 /*
-Match a desk row to the selected ledger. Lots without a tier_key default to
+Match a desk row to the selected ledger. Positions without a tier_key default to
 paper so virtual/real tabs stay empty until labeled.
 */
 export const onTier = (

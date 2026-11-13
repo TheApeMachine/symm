@@ -17,7 +17,7 @@ const sameOpen = (left?: string | null, right?: string | null) => {
 };
 
 /*
-dropClosedTwins removes an open lot when the same trip is already closed
+dropClosedTwins removes an open position when the same trip is already closed
 under another id. History rebuilds the close with a new id and the chart
 keeps the earlier open row otherwise.
 */

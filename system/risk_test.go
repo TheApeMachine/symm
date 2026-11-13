@@ -1,17 +1,35 @@
-package system_test
+package system
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/system"
 )
 
-func TestRisk_Apply(t *testing.T) {
-	Convey("Given a risk config", t, func() {
-		risk := system.NewRisk()
+func TestNewRisk(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewRisk is called", func() {
+			risk := NewRisk()
 
-		Convey("It patches known floors from a gate-lab command", func() {
+			Convey("entry gate defaults land from viper", func() {
+				So(risk.MaxFraction, ShouldEqual, 0.20)
+				So(risk.MinMoverVolumeUSD, ShouldEqual, 10_000.0)
+				So(risk.MinMoverChangePct, ShouldEqual, 0.5)
+				So(risk.MaxEntrySpreadPct, ShouldEqual, 2.0)
+				So(risk.MaxEntryPeakFrac, ShouldEqual, 0.85)
+				So(risk.TapeWindow, ShouldEqual, 10*time.Minute)
+				So(risk.MinBackingRatio, ShouldEqual, 0.6)
+			})
+		})
+	})
+}
+
+func TestApply(t *testing.T) {
+	Convey("Setup", t, func() {
+		risk := NewRisk()
+
+		Convey("When Apply patches floors from a gate-lab command", func() {
 			risk.Apply(map[string]any{
 				"type":                    "risk",
 				"min_mover_volume_usd":    50_000.0,
@@ -24,14 +42,25 @@ func TestRisk_Apply(t *testing.T) {
 				"max_entry_open_drag_pct": 1.1,
 			})
 
-			So(risk.MinMoverVolumeUSD, ShouldEqual, 50_000.0)
-			So(risk.MinMoverChangePct, ShouldEqual, 1.25)
-			So(risk.MaxEntrySpreadPct, ShouldEqual, 0.75)
-			So(risk.MaxEntryPeakFrac, ShouldEqual, 0.85)
-			So(risk.MinTouchBidCash, ShouldEqual, 250.0)
-			So(risk.MinBackingRatio, ShouldEqual, 0.4)
-			So(risk.MinTapeNotionalUSD, ShouldEqual, 250.0)
-			So(risk.MaxEntryOpenDragPct, ShouldEqual, 1.1)
+			Convey("known keys land as finite values", func() {
+				So(risk.MinMoverVolumeUSD, ShouldEqual, 50_000.0)
+				So(risk.MinMoverChangePct, ShouldEqual, 1.25)
+				So(risk.MaxEntrySpreadPct, ShouldEqual, 0.75)
+				So(risk.MaxEntryPeakFrac, ShouldEqual, 0.85)
+				So(risk.MinTouchBidCash, ShouldEqual, 250.0)
+				So(risk.MinBackingRatio, ShouldEqual, 0.4)
+				So(risk.MinTapeNotionalUSD, ShouldEqual, 250.0)
+				So(risk.MaxEntryOpenDragPct, ShouldEqual, 1.1)
+			})
+		})
+
+		Convey("When Apply receives an empty patch", func() {
+			before := risk.MinMoverVolumeUSD
+			risk.Apply(map[string]any{})
+
+			Convey("floors are unchanged", func() {
+				So(risk.MinMoverVolumeUSD, ShouldEqual, before)
+			})
 		})
 	})
 }

@@ -17,7 +17,7 @@ type Learning struct {
 	// PolicyExitMinProfitPct is the fee-net PnL% floor for a tree exit leaf.
 	PolicyExitMinProfitPct float64
 	// ResistanceHoldHalfLifeSec scales win credit by hold duration in seconds
-	// (shorter → more). Defaults to a few hours — typical lot lives.
+	// (shorter → more). Defaults to a few hours — typical position lives.
 	ResistanceHoldHalfLifeSec float64
 	// ResistancePnLRefPct is the fee-net PnL% that earns full win credit.
 	ResistancePnLRefPct      float64

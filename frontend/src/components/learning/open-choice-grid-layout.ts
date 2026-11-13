@@ -59,7 +59,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		if (!surface) return;
 
 		for (const subChart of [...surface.subCharts]) {
-			const lotId = String(subChart.title ?? "");
+			const positionId = String(subChart.title ?? "");
 
 			for (const rs of subChart.renderableSeries.asArray()) {
 				(rs as { dataSeries?: unknown }).dataSeries = undefined;
@@ -67,7 +67,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 
 			surface.removeSubChart(subChart);
 
-			if (lotId) this.restoreLot(lotId);
+			if (positionId) this.restorePosition(positionId);
 		}
 
 		for (const x of surface.xAxes.asArray()) {
@@ -82,7 +82,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		return String(rs.dataSeries?.dataSeriesName ?? "");
 	}
 
-	private lotIdFromSeriesName(name: string) {
+	private positionIdFromSeriesName(name: string) {
 		return name.replace(/::stop-band$/, "");
 	}
 
@@ -123,10 +123,10 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		source.isVisible = false;
 	}
 
-	private attachTip(subChart: SciChartSubSurface, lotId: string) {
+	private attachTip(subChart: SciChartSubSurface, positionId: string) {
 		const tip = this.parentSurface.annotations
 			.asArray()
-			.find((annotation) => annotation.id === `tip:${lotId}`) as
+			.find((annotation) => annotation.id === `tip:${positionId}`) as
 			| NativeTextAnnotation
 			| undefined;
 
@@ -134,7 +134,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 
 		subChart.annotations.add(
 			new NativeTextAnnotation({
-				id: `tip:${lotId}`,
+				id: `tip:${positionId}`,
 				x1: tip.x1,
 				y1: tip.y1,
 				text: tip.text,
@@ -164,13 +164,13 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		const row = Math.floor(panelIndex / this.columns);
 		const col = panelIndex % this.columns;
 		const position = new Rect(col * width, row * height, width, height);
-		const lotId = this.lotIdFromSeriesName(this.seriesName(rs));
+		const positionId = this.positionIdFromSeriesName(this.seriesName(rs));
 		const subChartOptions: I2DSubSurfaceOptions = {
 			id: `subChart-${panelIndex}`,
 			position: new Rect(0, 0, 1, 1),
 			coordinateMode: ESubSurfacePositionCoordinateMode.Relative,
 			padding: Thickness.fromNumber(3),
-			title: lotId,
+			title: positionId,
 			titleStyle: {
 				placeWithinChart: true,
 				fontSize: 12,
@@ -213,11 +213,11 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		// `primary` — that disposes the shared dataSeries and crashes on capacity.
 		this.attachCompanionBand(
 			subChart,
-			this.findByName(`${lotId}::stop-band`),
+			this.findByName(`${positionId}::stop-band`),
 			false,
 			0,
 		);
-		this.attachTip(subChart, lotId);
+		this.attachTip(subChart, positionId);
 
 		const xAxis = subChart.xAxes.get(0);
 		const yAxis = subChart.yAxes.get(0);
@@ -297,17 +297,17 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		}
 	}
 
-	private restoreLot(lotId: string) {
+	private restorePosition(positionId: string) {
 		for (const rs of this.parentSurface.renderableSeries.asArray()) {
 			const name = this.seriesName(rs);
-			if (name === lotId || name.startsWith(`${lotId}::`)) {
+			if (name === positionId || name.startsWith(`${positionId}::`)) {
 				rs.isVisible = true;
 			}
 		}
 
 		const tip = this.parentSurface.annotations
 			.asArray()
-			.find((annotation) => annotation.id === `tip:${lotId}`);
+			.find((annotation) => annotation.id === `tip:${positionId}`);
 		if (tip) tip.isHidden = false;
 	}
 
@@ -319,7 +319,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 			const xAxis = subChart.xAxes.get(0);
 			const yAxis = subChart.yAxes.get(0);
 			const labelColor = xAxis.labelStyle.color ?? TITLE;
-			const lotId = String(subChart.title ?? "");
+			const positionId = String(subChart.title ?? "");
 
 			const animation = new GenericAnimation<TXywhCoordinates>({
 				from: subChart.subPosition as TXywhCoordinates,
@@ -361,7 +361,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 						(rs as { dataSeries?: unknown }).dataSeries = undefined;
 					}
 					this.parentSurface.removeSubChart(subChart);
-					if (lotId) this.restoreLot(lotId);
+					if (positionId) this.restorePosition(positionId);
 				},
 			});
 			this.parentSurface.addAnimation(animation);

@@ -354,7 +354,7 @@ func (execution *Execution) FromMarket(other market.MarketType) market.MarketTyp
 }
 
 /*
-Tradable reports a fill the desk can fold into a lot.
+Tradable reports a fill the desk can fold into a position.
 */
 func (execution *Execution) Tradable() bool {
 	if execution == nil {

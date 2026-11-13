@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -41,15 +40,6 @@ type Instrument struct {
 }
 
 /*
-Level3 passes desk-owned hooks into Instrument so stale marking and socket read
-loops stay in broker/desk, not inside the instrument runtime type.
-*/
-type Level3 struct {
-	Stale  func([]string)
-	Reader func(*network.WebsocketClient)
-}
-
-/*
 NewInstrument blocks startup on the instrument snapshot because every later step
 (subscribe, fee load, order mins) depends on that single channel payload.
 */
@@ -80,7 +70,7 @@ func NewInstrument(
 	instrument.Transition(runtime.BUSY)
 
 	if ws, ok := public.(*network.WebsocketClient); ok && ws != nil {
-		if err := ws.Open(system.Cfg.WebSocket.Endpoints.Public); err != nil {
+		if err := ws.Open(); err != nil {
 			instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] public websocket open failed",
@@ -302,39 +292,22 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
-level3FrameSize is how many symbols one subscribe frame may carry: Kraken's
-level3 subscription-rate budget per rate window divided by the rate-counter
-cost of one symbol at depth (5 at 10, 25 at 100, 100 at 1000).
+SubscribeBooks opens one Level3 socket per symbol batch (market.subscribe.batch),
+stores them in Level3 keyed by symbols joined with "|", and writes one subscribe
+per socket. read is started before the subscribe write so snapshots are not
+rejected. Pace between batches is market.subscribe.pace.
 */
-func level3FrameSize(depth, budget int) (int, error) {
-	cost := map[int]int{10: 5, 100: 25, 1000: 100}[depth]
+func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)) error {
+	errnie.Info("[instrument] subscribing to level3 books")
 
-	if cost == 0 {
-		return 0, errnie.Err(
+	if read == nil {
+		return instrument.Error(errnie.Err(
 			errnie.Validation,
-			fmt.Sprintf("[instrument] level3 depth %d is not one of 10, 100, 1000", depth),
+			"[instrument] level3 reader is required before subscribe",
 			nil,
-		)
+		))
 	}
 
-	if budget < cost {
-		return 0, errnie.Err(
-			errnie.Validation,
-			fmt.Sprintf("[instrument] market.l3_rate_limit %d cannot fit one level3 symbol at depth %d (cost %d)",
-				budget, depth, cost),
-			nil,
-		)
-	}
-
-	return budget / cost, nil
-}
-
-/*
-SubscribeLevel3 writes the Level3 subscription for one batch with a currently
-valid token, split into frames that each fit the venue's snapshot rate
-budget, one frame per rate window across all sockets.
-*/
-func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []string) error {
 	token, err := instrument.auth.Token(instrument.Context())
 
 	if err != nil {
@@ -346,116 +319,15 @@ func (instrument *Instrument) SubscribeLevel3(write func([]byte) error, batch []
 	}
 
 	depth := system.Cfg.Market.Level3.Depth
-	frameSize, err := level3FrameSize(depth, system.Cfg.Market.Level3.RateLimit)
+	batch := system.Cfg.Market.Subscribe.Batch
 
-	if err != nil {
-		return instrument.Error(err)
-	}
-
-	for frame := range slices.Chunk(batch, frameSize) {
-		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(
-			frame, token, depth,
-		))
-
-		if err != nil {
-			return errnie.Err(
-				errnie.IO,
-				"[instrument] level3 subscribe marshal failed",
-				err,
-			)
-		}
-
-		time.Sleep(system.Cfg.Market.Subscribe.Pace)
-
-		if err := write(msg); err != nil {
-			return errnie.Err(
-				errnie.IO,
-				"[instrument] level3 subscribe write failed for "+strings.Join(frame, ","),
-				err,
-			)
-		}
-	}
-
-	return nil
-}
-
-/*
-UnsubscribeLevel3 drops Level3 for one batch on a live socket. Required before
-re-subscribing after a checksum failure: Kraken does not push a new snapshot
-for a symbol that is already subscribed.
-*/
-func (instrument *Instrument) UnsubscribeLevel3(write func([]byte) error, batch []string) error {
-	if len(batch) == 0 {
-		return nil
-	}
-
-	token, err := instrument.auth.Token(instrument.Context())
-
-	if err != nil {
-		return instrument.Error(errnie.Err(
-			errnie.Forbidden,
-			"[instrument] level3 auth token unavailable",
-			err,
-		))
-	}
-
-	msg, err := sonic.Marshal(kraken.NewLevel3Unsubscription(batch, token))
-
-	if err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"[instrument] level3 unsubscribe marshal failed",
-			err,
-		)
-	}
-
-	if err := write(msg); err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"[instrument] level3 unsubscribe write failed for "+strings.Join(batch, ","),
-			err,
-		)
-	}
-
-	return nil
-}
-
-/*
-SubscribeBooks opens the Level3 sockets for the online quote universe and
-issues their paced subscriptions. Level3 runs on its own authenticated socket
-per batch of 200 symbols and feeds the BookManager only; it is the upstream
-that must be seeded before the trade firehose (SubscribeTrades) is opened. 
-A failed resubscribe after a reconnect is logged and returned to the socket, 
-which drops the connection and redials with backoff until a resubscribe 
-succeeds; the batch's books stay stale meanwhile. It never halts the instrument.
-*/
-func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
-	errnie.Info("[instrument] subscribing to level3 books")
-
-	if level3.Reader == nil {
-		return instrument.Error(errnie.Err(
-			errnie.Validation,
-			"[instrument] level3 reader is required before subscribe",
-			nil,
-		))
-	}
-
-	if level3.Stale == nil {
-		return instrument.Error(errnie.Err(
-			errnie.Validation,
-			"[instrument] level3 stale hook is required before subscribe",
-			nil,
-		))
-	}
-
-	stale := level3.Stale
-	for chunk := range slices.Chunk(instrument.symbols, 200) {
+	for chunk := range slices.Chunk(instrument.symbols, batch) {
 		connSymbols := slices.Clone(chunk)
 		batchKey := strings.Join(connSymbols, "|")
 
-		l3Client := network.NewWebsocketClient(instrument.System.Context())
+		l3Client := network.NewWebsocketClient(instrument.System.Context(), instrument.level3URL)
 
-		if err := l3Client.Open(instrument.level3URL); err != nil {
+		if err := l3Client.Open(); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 open failed for "+batchKey,
@@ -464,13 +336,21 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 		}
 
 		instrument.Level3.Store(batchKey, l3Client)
+		read(l3Client)
 
-		// Read before subscribing: unread snapshots make the venue reject
-		// later snapshot requests (measured: 120 of 621 rejected with readers
-		// started after all subscribes, 0 of 621 with readers running).
-		level3.Reader(l3Client)
+		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(connSymbols, token, depth))
 
-		if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
+		if err != nil {
+			return instrument.Error(errnie.Err(
+				errnie.IO,
+				"[instrument] level3 subscribe marshal failed",
+				err,
+			))
+		}
+
+		time.Sleep(system.Cfg.Market.Subscribe.Pace)
+
+		if err := l3Client.Write(msg); err != nil {
 			return instrument.Error(errnie.Err(
 				errnie.IO,
 				"[instrument] level3 subscribe failed for "+batchKey,
@@ -478,35 +358,32 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 			))
 		}
 
-		// The book's view of this batch is only valid while the socket is
-		// live; a drop marks it stale until the resubscribe snapshot lands.
-		l3Client.OnDisconnect(func() {
-			errnie.Warn("[instrument] level3 disconnected, book stale for " + batchKey)
-			stale(connSymbols)
-		})
+		// After the first subscribe: Open's reconnect path re-runs Callback.
+		l3Client.Callback(func() error {
+			fresh, err := instrument.auth.Token(instrument.Context())
 
-		// Open runs any registered reconnect hook, so the hook is registered
-		// only after the initial subscribe was written once and checked.
-		l3Client.OnReconnect(func() error {
-			errnie.Warn("[instrument] level3 resubscribe in flight for " + batchKey)
-
-			if err := instrument.SubscribeLevel3(l3Client.Write, connSymbols); err != nil {
-				stale(connSymbols)
-
+			if err != nil {
 				return errnie.Err(
-					errnie.IO,
-					"[instrument] level3 resubscribe failed, books stale, redialing for "+batchKey,
+					errnie.Forbidden,
+					"[instrument] level3 reconnect token unavailable",
 					err,
 				)
 			}
 
-			errnie.Info("[instrument] level3 stream recovered for " + batchKey)
+			again, err := sonic.Marshal(kraken.NewLevel3Subscription(connSymbols, fresh, depth))
 
-			return nil
+			if err != nil {
+				return errnie.Err(
+					errnie.IO,
+					"[instrument] level3 reconnect marshal failed",
+					err,
+				)
+			}
+
+			return l3Client.Write(again)
 		})
 
 		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
-		time.Sleep(100 * time.Millisecond)
 	}
 
 	instrument.Transition(runtime.WAITING)
@@ -514,72 +391,27 @@ func (instrument *Instrument) SubscribeBooks(level3 Level3) error {
 }
 
 /*
-ResubscribeLevel3 forces a fresh level3 snapshot for one symbol on the socket
-batch that already carries it. Kraken's recovery path after a checksum
-divergence is unsubscribe then subscribe with snapshot; a second subscribe on
-a live channel alone does not replace the book, so the symbol would stay
-invalid while trades keep flowing.
+ResubscribeBooks closes every Level3 socket and runs SubscribeBooks again.
 */
-func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
-	symbol = instrument.normalizer.Name(symbol)
-
-	if symbol == "" {
-		return nil
-	}
-
-	var resErr error
+func (instrument *Instrument) ResubscribeBooks(read func(*network.WebsocketClient)) error {
+	errnie.Warn("[instrument] level3 kill-all resubscribe")
 
 	instrument.Level3.Range(func(key, value any) bool {
-		batchKey, ok := key.(string)
-		if !ok {
-			return true
+		if client, ok := value.(*network.WebsocketClient); ok && client != nil {
+			_ = client.Close()
 		}
 
-		if !slices.Contains(strings.Split(batchKey, "|"), symbol) {
-			return true
-		}
-
-		client, ok := value.(*network.WebsocketClient)
-		if !ok || client == nil {
-			resErr = errnie.Err(
-				errnie.Internal,
-				"[instrument] level3 client missing for "+symbol,
-				nil,
-			)
-			return false
-		}
-
-		errnie.Info("[instrument] level3 unsubscribe+subscribe after book invalidation for " + symbol)
-
-		if err := instrument.UnsubscribeLevel3(client.Write, []string{symbol}); err != nil {
-			resErr = errnie.Err(
-				errnie.IO,
-				"[instrument] level3 invalidation unsubscribe failed for "+symbol,
-				err,
-			)
-			return false
-		}
-
-		if err := instrument.SubscribeLevel3(client.Write, []string{symbol}); err != nil {
-			resErr = errnie.Err(
-				errnie.IO,
-				"[instrument] level3 invalidation resubscribe failed for "+symbol,
-				err,
-			)
-			return false
-		}
-
-		return false
+		instrument.Level3.Delete(key)
+		return true
 	})
 
-	return resErr
+	return instrument.SubscribeBooks(read)
 }
 
 /*
 SubscribeTrades opens the trade firehose on the public socket, the sole frame
 type the workspace pipeline consumes. It is the last startup phase: the
-workspace and every book it reads are already READY. A failed resubscribe after
-a reconnect is returned to the socket, which redials with backoff.
+workspace and every book it reads are already READY.
 */
 func (instrument *Instrument) SubscribeTrades() error {
 	errnie.Info("[instrument] opening the trade firehose")
@@ -610,8 +442,8 @@ func (instrument *Instrument) SubscribeTrades() error {
 		}
 	}
 
-	if reconnector, ok := instrument.public.(interface{ OnReconnect(func() error) }); ok {
-		reconnector.OnReconnect(func() error {
+	if ws, ok := instrument.public.(*network.WebsocketClient); ok {
+		ws.Callback(func() error {
 			errnie.Warn("[instrument] public trade resubscribe in flight")
 
 			for _, msg := range tradeSubs {
@@ -676,31 +508,11 @@ func (instrument *Instrument) Symbols() []string {
 }
 
 /*
-WebSocketToken is the private-socket token for this process's API key.
-Live order entry and the executions subscription use it. Paper does not.
-*/
-func (instrument *Instrument) WebSocketToken(ctx context.Context) (string, error) {
-	return instrument.auth.Token(ctx)
-}
-
-/*
 TakerFee is the account rate from TradeVolume, not the venue default — FeeNet
 and Allocate budgets would lie if this table were empty.
 */
 func (instrument *Instrument) TakerFee(symbol string) *decimal.Decimal {
-	return instrument.fee(instrument.takerFees, symbol)
-}
-
-/*
-fee shares one lookup path for fee tables stored on Instrument without exporting
-the sync.Map or duplicating symbol→decimal parsing at every call site.
-*/
-func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decimal {
-	if table == nil || symbol == "" {
-		return nil
-	}
-
-	val, ok := table.Load(instrument.normalizer.Name(symbol))
+	val, ok := instrument.takerFees.Load(instrument.normalizer.Name(symbol))
 
 	if !ok || val == nil {
 		return nil

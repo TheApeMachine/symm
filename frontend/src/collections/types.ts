@@ -27,7 +27,7 @@ export type Stoploss = {
 	TightenPerPct: number;
 };
 
-/** Kraken spot OrderRequest as embedded on a desk lot. */
+/** Kraken spot OrderRequest as embedded on a desk position. */
 export type PositionOrder = {
 	cl_ord_id?: string;
 	ordertype?: string;
@@ -36,7 +36,7 @@ export type PositionOrder = {
 	price?: string;
 };
 
-/** One execution fill on a desk lot (kraken.ExecutionData). */
+/** One execution fill on a desk position (kraken.ExecutionData). */
 export type PositionFill = {
 	order_id?: string;
 	cl_ord_id?: string;

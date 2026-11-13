@@ -460,7 +460,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 			))
 		}
 
-		// Aggregated envelopes for trie books and closed lots. ListPrefix
+		// Aggregated envelopes for trie books and closed positions. ListPrefix
 		// warns and no-ops on unsupported prefixes.
 		hub.ListPrefix(request.Prefix)
 	default:

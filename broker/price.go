@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,9 +86,29 @@ func NewPrice(
 	}
 
 	if public != nil && host != nil {
+		batch := system.Cfg.WebSocket.TickerBatchSize
+
+		if batch <= 0 {
+			batch = 32
+		}
+
+		cursor := 0
+
 		public.Watch(
 			system.Cfg.WebSocket.Endpoints.Ticker,
-			host.Ticker().Request(),
+			func() map[string]any {
+				symbols, next := price.PulseSymbols(batch, cursor)
+				cursor = next
+
+				if len(symbols) == 0 {
+					return nil
+				}
+
+				return map[string]any{
+					"pair":         strings.Join(symbols, ","),
+					"assetVersion": "1",
+				}
+			},
 			host.Ticker(),
 		)
 	}
@@ -554,21 +575,23 @@ func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) 
 }
 
 /*
-PnL is fee-net profit. exit nil walks the bid book for a mark exit.
+PnL is fee-net profit. Exit wins; else Mark; else a bid-book walk (never stamps Exit).
 */
-func (price *Price) PnL(
-	symbol string,
-	qty, entry, exit *decimal.Decimal,
-) *decimal.Decimal {
-	if qty == nil || entry == nil || qty.Sign() <= 0 || entry.Sign() <= 0 {
+func (price *Price) PnL(position *Position) *decimal.Decimal {
+	if position.Qty == nil || position.Entry == nil ||
+		position.Qty.Sign() <= 0 || position.Entry.Sign() <= 0 {
 		return nil
 	}
 
-	symbol = price.normalizer.Name(symbol)
-	exitPx := exit
+	symbol := price.normalizer.Name(position.Symbol)
+	exitPx := position.Exit
 
 	if exitPx == nil {
-		filled, gross := price.Walk(symbol, *qty, false)
+		exitPx = position.Mark
+	}
+
+	if exitPx == nil {
+		filled, gross := price.Walk(symbol, *position.Qty, false)
 
 		if filled == nil || gross == nil || filled.Sign() <= 0 {
 			return nil
@@ -582,8 +605,8 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	entryGross := entry.Mul(*qty)
-	exitGross := exitPx.Mul(*qty)
+	entryGross := position.Entry.Mul(*position.Qty)
+	exitGross := exitPx.Mul(*position.Qty)
 	feeIn := price.Fee(symbol, &entryGross)
 	feeOut := price.Fee(symbol, &exitGross)
 
@@ -598,17 +621,15 @@ func (price *Price) PnL(
 /*
 PnLPct is PnL as percent of fee-inclusive entry cost.
 */
-func (price *Price) PnLPct(
-	symbol string,
-	qty, entry, exit *decimal.Decimal,
-) *decimal.Decimal {
-	pnl := price.PnL(symbol, qty, entry, exit)
+func (price *Price) PnLPct(position *Position) *decimal.Decimal {
+	pnl := price.PnL(position)
 
 	if pnl == nil {
 		return nil
 	}
 
-	entryGross := entry.Mul(*qty)
+	symbol := price.normalizer.Name(position.Symbol)
+	entryGross := position.Entry.Mul(*position.Qty)
 	feeIn := price.Fee(symbol, &entryGross)
 
 	if feeIn == nil {
@@ -634,11 +655,12 @@ func (price *Price) Allocate(
 ) (*decimal.Decimal, error) {
 	symbol = price.normalizer.Name(symbol)
 
+	// Nil wallet → desk balance, skip venue mins (observe). Callers pass a wallet to enforce.
+	enforceMins := wallet != nil
+
 	if wallet == nil {
 		wallet = price.balance
 	}
-
-	enforceMins := wallet != nil
 
 	if price.Instrument == nil || !price.Instrument.Has(symbol) {
 		return nil, errnie.Err(

@@ -87,7 +87,7 @@ export const ExitPolicyPanel = ({
 				<BoundaryFact
 					label="Peak"
 					short={stop ? `${stop.PeakPnLPct.toFixed(2)}%` : "—"}
-					title="Highest fee-net return this lot has marked."
+					title="Highest fee-net return this position has marked."
 				/>
 				<BoundaryFact
 					label="Floor"

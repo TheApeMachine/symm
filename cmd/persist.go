@@ -9,10 +9,12 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/pipeline"
 )
 
 type tickEnvelopeStore interface {
 	WriteAtPrefixWithEnvelope(key string, envelope *nmruntime.Envelope) (int, error)
+	QueueDepth() int
 }
 
 /*
@@ -59,7 +61,10 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		errnie.Error(errnie.Err(
 			errnie.IO, "failed to write envelope", err,
 		))
+		return envelope
 	}
+
+	pipeline.Wrote(int64(persist.store.QueueDepth()))
 
 	return envelope
 }

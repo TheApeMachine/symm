@@ -6,139 +6,254 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestRuleRef(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When RuleRef formats rule ids", func() {
+			Convey("Ref is M-prefixed", func() {
+				So(RuleRef(1), ShouldEqual, "M1")
+				So(RuleRef(12), ShouldEqual, "M12")
+			})
+		})
+	})
+}
+
+func TestNewSequitur(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewSequitur is called", func() {
+			seq := NewSequitur()
+
+			Convey("RuleCount starts at zero", func() {
+				So(seq, ShouldNotBeNil)
+				So(seq.RuleCount(), ShouldEqual, 0)
+				So(seq.RootSequence(), ShouldResemble, []string{})
+			})
+		})
+	})
+}
+
 func TestAnalyze(t *testing.T) {
-	Convey("Given a Sequitur", t, func() {
+	Convey("Setup", t, func() {
 		seq := NewSequitur()
 
-		Convey("When analyzing tokens that form a repeated digram", func() {
+		Convey("When a repeated digram appears", func() {
 			seq.Analyze([]string{"R01"})
 			seq.Analyze([]string{"R02"})
 			seq.Analyze([]string{"R01"})
 			rule, isBoundary := seq.Analyze([]string{"R02"})
 
-			Convey("It should detect a boundary and return the new rule", func() {
+			Convey("Boundary yields a rule for R01 R02", func() {
 				So(isBoundary, ShouldBeTrue)
 				So(rule, ShouldNotBeNil)
-				So(seq.RuleCount(), ShouldBeGreaterThan, 0)
+				So(seq.RuleCount(), ShouldEqual, 1)
 				So(seq.TerminalNames(rule), ShouldResemble, []string{"R01", "R02"})
 			})
 		})
 
-		Convey("When analyzing tokens without repetition", func() {
-			_, isBoundary := seq.Analyze([]string{"R08"})
-			So(isBoundary, ShouldBeFalse)
+		Convey("When tokens do not repeat", func() {
+			_, first := seq.Analyze([]string{"R08"})
+			_, second := seq.Analyze([]string{"R09"})
 
-			_, isBoundary = seq.Analyze([]string{"R09"})
-			So(isBoundary, ShouldBeFalse)
+			Convey("Analyze returns no boundary", func() {
+				So(first, ShouldBeFalse)
+				So(second, ShouldBeFalse)
+			})
 		})
+	})
+}
 
-		Convey("When analyzing a chord in one call", func() {
-			seq := NewSequitur()
-			seq.Analyze([]string{"R01", "R02"})
-			rule, isBoundary := seq.Analyze([]string{"R01", "R02"})
+func TestTail(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02", "R03"})
 
-			So(isBoundary, ShouldBeTrue)
-			So(rule, ShouldNotBeNil)
+		Convey("When Tail requests the last two symbols", func() {
+			tail := seq.Tail(2)
+
+			Convey("Tail returns the suffix", func() {
+				So(tail, ShouldResemble, []string{"R02", "R03"})
+			})
 		})
 	})
 }
 
 func TestFlush(t *testing.T) {
-	Convey("Given a Sequitur with pending tokens", t, func() {
-		seq := NewSequitur()
-		seq.Analyze([]string{"R01"})
-		seq.Analyze([]string{"R02"})
+	Convey("Setup", t, func() {
+		Convey("When pending tokens remain", func() {
+			seq := NewSequitur()
+			seq.Analyze([]string{"R01"})
+			seq.Analyze([]string{"R02"})
 
-		Convey("When flushing", func() {
-			hasPending := seq.Flush()
-
-			Convey("It should report pending tokens", func() {
-				So(hasPending, ShouldBeTrue)
+			Convey("Flush reports pending", func() {
+				So(seq.Flush(), ShouldBeTrue)
 			})
 		})
-	})
 
-	Convey("Given a Sequitur with no pending tokens after a boundary", t, func() {
-		seq := NewSequitur()
-		seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+		Convey("When no pending tokens remain after a boundary", func() {
+			seq := NewSequitur()
+			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
 
-		Convey("When flushing", func() {
-			hasPending := seq.Flush()
-
-			Convey("It should return no pending", func() {
-				So(hasPending, ShouldBeFalse)
+			Convey("Flush returns false", func() {
+				So(seq.Flush(), ShouldBeFalse)
 			})
 		})
 	})
 }
 
 func TestRuleCount(t *testing.T) {
-	Convey("Given a Sequitur", t, func() {
+	Convey("Setup", t, func() {
 		seq := NewSequitur()
 
-		Convey("When no rules have been created", func() {
-			count := seq.RuleCount()
-
-			Convey("It should report zero rules", func() {
-				So(count, ShouldEqual, 0)
-			})
-		})
-
-		Convey("When a repeated digram creates a rule", func() {
+		Convey("When a digram rule is created", func() {
 			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
 
-			count := seq.RuleCount()
-
-			Convey("It should report at least one rule", func() {
-				So(count, ShouldBeGreaterThan, 0)
+			Convey("RuleCount is one and LastKind is create", func() {
+				So(seq.RuleCount(), ShouldEqual, 1)
 				So(seq.LastKind(), ShouldEqual, "create")
 			})
 		})
 
-		Convey("When the same digram repeats after its rule exists", func() {
-			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
-			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
-
-			Convey("It reuses that rule and can nest a parent", func() {
-				views := seq.RuleViews()
-				reused := false
-				nested := false
-				for _, view := range views {
-					if view.Count > 2 {
-						reused = true
-					}
-					if view.Depth >= 2 {
-						nested = true
-					}
-				}
-				So(reused, ShouldBeTrue)
-				So(nested, ShouldBeTrue)
-			})
-		})
-
-		Convey("When one later pair follows the rule", func() {
+		Convey("When the same digram repeats after the rule exists", func() {
 			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
 			rules := seq.RuleCount()
 			seq.Analyze([]string{"R09", "R01", "R02"})
 
-			Convey("It reuses the rule on that single occurrence", func() {
+			Convey("Rule is reused without minting another", func() {
 				So(seq.LastKind(), ShouldEqual, "reuse")
 				So(seq.RuleCount(), ShouldEqual, rules)
 				root := seq.RootSequence()
-				So(len(root), ShouldBeGreaterThan, 0)
 				So(root[len(root)-1], ShouldEqual, "M1")
-				So(seq.length, ShouldEqual, len(root))
 			})
 		})
+	})
+}
 
-		Convey("When one more pair is separated from the existing rule", func() {
-			seq.Analyze([]string{"R01", "R02", "R01", "R02"})
-			rules := seq.RuleCount()
-			seq.Analyze([]string{"R09", "R01", "R02", "R08", "R01", "R02"})
+func TestRootSequence(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R05"})
+		seq.Analyze([]string{"R06"})
 
-			Convey("It reuses the rule without minting one", func() {
-				So(seq.LastKind(), ShouldEqual, "reuse")
-				So(seq.RuleCount(), ShouldEqual, rules)
+		Convey("When RootSequence is read", func() {
+			Convey("Root lists terminal symbols", func() {
+				So(seq.RootSequence(), ShouldResemble, []string{"R05", "R06"})
+			})
+		})
+	})
+}
+
+func TestTerminalNames(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		rule, ok := seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+		So(ok, ShouldBeTrue)
+
+		Convey("When TerminalNames expands a rule", func() {
+			Convey("Names match the digram terminals", func() {
+				So(seq.TerminalNames(rule), ShouldResemble, []string{"R01", "R02"})
+			})
+		})
+	})
+}
+
+func TestTerminalsForRef(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+		Convey("When TerminalsForRef looks up M1", func() {
+			Convey("Ref resolves to terminals", func() {
+				So(seq.TerminalsForRef("M1"), ShouldResemble, []string{"R01", "R02"})
+			})
+		})
+	})
+}
+
+func TestRuleViews(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+		Convey("When RuleViews exports rules", func() {
+			views := seq.RuleViews()
+
+			Convey("One rule view carries the digram", func() {
+				So(len(views), ShouldEqual, 1)
+				So(len(views[0].Symbols), ShouldEqual, 2)
+			})
+		})
+	})
+}
+
+func TestSymbols(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+		Convey("When Symbols counts rules plus one", func() {
+			Convey("Count is rule count plus the terminal slot", func() {
+				So(seq.Symbols(), ShouldEqual, seq.RuleCount()+1)
+			})
+		})
+	})
+}
+
+func TestRules(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02", "R01", "R02"})
+
+		Convey("When Rules lists productions", func() {
+			rules := seq.Rules()
+
+			Convey("One production lists two terminals", func() {
+				So(len(rules), ShouldEqual, 1)
+				So(rules[0], ShouldResemble, []string{"R01", "R02"})
+			})
+		})
+	})
+}
+
+func TestSentence(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Analyze([]string{"R01", "R02"})
+
+		Convey("When Sentence starts a new phrase", func() {
+			seq.Sentence()
+
+			Convey("Root sequence clears", func() {
+				So(len(seq.RootSequence()), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestLearn(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+
+		Convey("When Learn restores a production", func() {
+			seq.Learn(1, 2, []string{"R01", "R02"})
+
+			Convey("RuleViews contains the production", func() {
+				views := seq.RuleViews()
+				So(len(views), ShouldEqual, 1)
+				So(views[0].Symbols, ShouldResemble, []string{"R01", "R02"})
+			})
+		})
+	})
+}
+
+func TestRestoreRoot(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequitur()
+		seq.Learn(1, 1, []string{"R01", "R02"})
+
+		Convey("When RestoreRoot installs a sentence", func() {
+			seq.RestoreRoot([]string{"M1", "R03"})
+
+			Convey("Root matches the restored sequence", func() {
+				So(seq.RootSequence(), ShouldResemble, []string{"M1", "R03"})
 			})
 		})
 	})

@@ -72,7 +72,7 @@ opening picks the table the surface starts on.
 
 Every table in the warehouse is offered, and the viewer's own UI switches
 between them, but one of them has to be showing when the page opens. Closed
-lots are the usual analytical start; Level3 events are next when lots are
+positions are the usual analytical start; Level3 events are next when positions are
 absent.
 */
 const opening = (tables: string[]): string =>
@@ -92,7 +92,7 @@ Workbench is the analytical surface.
 The viewer is not given a table of its own. It is given a Client backed by a
 Perspective Virtual Server over DuckDB (hub proxy → workbench service), which
 means the pivots, filters, sorts, and expressions configured in its UI are
-compiled into SQL and evaluated against S3 JSON views (open/closed lots and
+compiled into SQL and evaluated against S3 JSON views (open/closed positions and
 Level3 NDJSON), and only the window on screen is transferred.
 */
 export const Workbench = () => {
@@ -179,7 +179,7 @@ export const Workbench = () => {
 					no tables in warehouse
 				</Typography.Label>
 				<Typography.Mono size="s" tone="f4">
-					waiting for lot or level3 views to appear in the warehouse
+					waiting for position or level3 views to appear in the warehouse
 				</Typography.Mono>
 			</Flex.Column>
 		);

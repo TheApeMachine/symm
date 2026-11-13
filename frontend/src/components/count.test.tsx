@@ -6,7 +6,7 @@ import { bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
 import { Count } from "./count";
 
-const lot = (
+const position = (
 	symbol: string,
 	tier_key: "paper" | "virtual" | "real" = "paper",
 ): Position => ({
@@ -35,9 +35,9 @@ const lot = (
 	mark: "1",
 });
 
-const setLots = (lots: Position[]) => {
+const setPositions = (positions: Position[]) => {
 	signals.positions.setState(() =>
-		Object.fromEntries(lots.map((row) => [row.id, row])),
+		Object.fromEntries(positions.map((row) => [row.id, row])),
 	);
 };
 
@@ -48,12 +48,12 @@ afterEach(() => {
 });
 
 describe("Count", () => {
-	it("counts the paper lots the open-positions panel is showing", () => {
+	it("counts the paper positions the open-positions panel is showing", () => {
 		bookAtom.set("paper");
-		setLots([
-			lot("BTC/USD"),
-			lot("SENT/USD"),
-			lot("APE/USD", "virtual"),
+		setPositions([
+			position("BTC/USD"),
+			position("SENT/USD"),
+			position("APE/USD", "virtual"),
 		]);
 
 		const view = render(<Count />);
@@ -61,9 +61,9 @@ describe("Count", () => {
 		expect(view.getByText("2")).toBeTruthy();
 	});
 
-	it("counts virtual lots when that book is selected", () => {
+	it("counts virtual positions when that book is selected", () => {
 		bookAtom.set("virtual");
-		setLots([lot("BTC/USD"), lot("APE/USD", "virtual")]);
+		setPositions([position("BTC/USD"), position("APE/USD", "virtual")]);
 
 		const view = render(<Count />);
 

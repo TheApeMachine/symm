@@ -24,7 +24,7 @@ type ExecutionSurface struct {
 	BestBid       *decimal.Decimal
 	BestAsk       *decimal.Decimal
 	ExecutableQty *decimal.Decimal
-	// ExecutableVWAP is the full-lot liquidation-equivalent GROSS price (raw
+	// ExecutableVWAP is the full-position liquidation-equivalent GROSS price (raw
 	// filled VWAP in price coordinate), comparable to the stoploss's gross
 	// break-even geometry. The fee-net proceeds are ExecutableValue.
 	Gross          *decimal.Decimal
@@ -38,7 +38,7 @@ type ExecutionSurface struct {
 	// BookComplete reports whether a valid, non-crossed authoritative bid side
 	// was readable. FullyExecutable reports whether the complete SellableQty
 	// is executable from the visible valid depth; when false the position does
-	// not possess a full-lot executable mark and protection must own the event.
+	// not possess a full-position executable mark and protection must own the event.
 	BookComplete    bool
 	FullyExecutable bool
 }

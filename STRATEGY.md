@@ -9,11 +9,11 @@ This is how live ticks become trades, paths, and learning updates.
 3. **`Stage`** runs the grid (`Observe`) → 23 region brightness values per symbol.
 4. **`Sequencer`** (Sequitur + shared MDL) turns regions into path letters:
    - **Enter** (flat): regime R06–R11 × posture **R00–R02** → `enter` grammar.
-   - **Hold** (open lot): same regimes × posture **R06–R08** → `hold` grammar.
-   - **Exit** (open lot, parallel step): regimes × posture **R03–R05** → `exit` grammar.
+   - **Hold** (open position): same regimes × posture **R06–R08** → `hold` grammar.
+   - **Exit** (open position, parallel step): regimes × posture **R03–R05** → `exit` grammar.
    - **R12–R14** veto spelling (risk oracle); they never become letters.
 5. **`Model.Evaluate`** collapses Sequitur tails to path keys and queries the **path trie** (`model/paths/`):
-   - `…/enter.bin` — open a lot (paper vs virtual from impulse vs resistance + gate).
+   - `…/enter.bin` — open a position (paper vs virtual from impulse vs resistance + gate).
    - `…/hold.bin` — reinforce staying in the hold sentence (trained on virtual settle).
    - `…/exit.bin` — cognitive profit exit (gate must allow; underwater exits are stop-owned).
 6. **`Gate`** always learns enter/exit hurdles from virtual and paper round trips (ignition, risk, rejection, regime rails, fuzzy path match, salience, emergency exit, stop damage/evaporation, path prune book). Values persist in `model/parameters/gate.bin`; `learning.*` only sets tokenizer geometry and gate rail bounds. Each enter publishes a **`gate`** frame on `training/step/{symbol}`.

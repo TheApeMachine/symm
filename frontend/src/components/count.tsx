@@ -2,18 +2,18 @@ import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
-import { openLots, positionRows } from "#/components/learning/open-positions";
+import { openPositions, positionRows } from "#/components/learning/open-positions";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
 /*
-Count reads the open-lot cardinality for the selected book. The selector
+Count reads the open-position cardinality for the selected book. The selector
 returns a number so mark-only position frames do not re-render the top bar.
 */
 export const Count = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const count = useSelector(signals.positions, (state) =>
-		openLots(positionRows(state as Record<string, Position>), book).length,
+		openPositions(positionRows(state as Record<string, Position>), book).length,
 	);
 
 	return (

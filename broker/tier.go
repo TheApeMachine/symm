@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/store"
@@ -31,7 +32,7 @@ const (
 
 /*
 String is the cache tierKey and hub JSON label; invalid values log because
-corrupt tier keys would write lots under the wrong S3 prefix.
+corrupt tier keys would write positions under the wrong S3 prefix.
 */
 func (tt TierType) String() string {
 	switch tt {
@@ -107,6 +108,7 @@ func NewTier(
 				frame.ToMarket(tier.price.balance)
 			}
 
+			tier.positions.Bound(tier.balance)
 			tier.Hello()
 		})
 
@@ -160,22 +162,87 @@ func NewTier(
 	}
 
 	if client, ok := tier.private.(*network.WebsocketClient); ok {
-		_ = client.Open(system.Cfg.WebSocket.Endpoints.Private)
+		_ = client.Open()
 	}
 
 	return tier
 }
 
 /*
-Hello refreshes marks on open lots and publishes a full positions_snapshot so
+Hello refreshes marks on open positions and publishes a full positions_snapshot so
 balance-driven events show the same PnL kickExit uses, including exchangeClosed.
 */
 func (tier *Tier) Hello() {
+	all := tier.positions.All()
+	positions := make(map[string]*Position, len(all))
+	skipped := 0
+
+	for _, position := range all {
+		if position == nil || position.ID == "" {
+			skipped++
+			symbol := ""
+			if position != nil {
+				symbol = position.Symbol
+			}
+			errnie.Debug("[tier] hello skip position",
+				"tier", tier.Type.String(),
+				"nil", position == nil,
+				"symbol", symbol,
+			)
+			continue
+		}
+
+		errnie.Debug("[tier] hello position",
+			"tier", tier.Type.String(),
+			"id", position.ID,
+			"symbol", position.Symbol,
+			"qty", position.Qty,
+			"closed_at", position.ClosedAt,
+			"entry_path", position.EntryPath,
+		)
+		positions[position.ID] = position
+	}
+
+	unrealized := decimal.Zero
+
+	for _, position := range tier.positions.Open() {
+		if position == nil || tier.price == nil {
+			continue
+		}
+
+		mark := tier.price.Mark(position.Symbol)
+
+		if mark != nil {
+			position.Mark = mark
+			position.PnL = tier.price.PnL(position)
+			position.PnLPct = tier.price.PnLPct(position)
+		}
+
+		if position.PnL != nil {
+			unrealized = unrealized.Add(*position.PnL)
+		}
+	}
+
+	tier.balance.Unrealized = &unrealized
+	reading := tier.balance.Reading()
+
+	errnie.Debug("[tier] hello publish",
+		"tier", tier.Type.String(),
+		"positions", len(all),
+		"published", len(positions),
+		"skipped", skipped,
+		"open", len(tier.positions.Open()),
+		"closed", len(tier.positions.Closed()),
+		"cash", reading["cash"],
+		"unrealized", reading["unrealized"],
+		"equity", reading["equity"],
+	)
+
 	ui.UI.WriteJSON(map[string]any{
 		"tier":      tier.Type.String(),
-		"positions": tier.positions.All(),
+		"positions": positions,
 		"balances": map[string]any{
-			tier.Type.String(): tier.balance.Reading(),
+			tier.Type.String(): reading,
 		},
 		"positions_snapshot": true,
 	})
@@ -203,8 +270,8 @@ func (tier *Tier) Update(data *market.Update) {
 }
 
 /*
-Pending retains flat lots after Remove until strategy records exit_path — the lot
-is closed in cache but the model still needs the handle for attribution.
+Pending retains flat positions after Remove until strategy records exit_path —
+the position is closed in cache but the model still needs the handle for attribution.
 */
 func (tier *Tier) Pending() iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
@@ -359,7 +426,7 @@ func (tier *Tier) Send(position *Position, action string) error {
 	}
 
 	if tier.Type == TierTypeReal {
-		token, err := tier.price.Instrument.WebSocketToken(tier.ctx)
+		token, err := tier.price.Instrument.auth.Token(tier.ctx)
 
 		if err != nil {
 			return errnie.Error(err)
@@ -389,7 +456,7 @@ func (tier *Tier) Send(position *Position, action string) error {
 }
 
 /*
-ackOrder records venue order_id on the lot so fills without cl_ord_id still Owns.
+ackOrder records venue order_id on the position so fills without cl_ord_id still Owns.
 */
 func (tier *Tier) ackOrder(order *kraken.Order) {
 	clOrdID := order.Result.ClOrdID
@@ -423,8 +490,8 @@ func (tier *Tier) ackOrder(order *kraken.Order) {
 }
 
 /*
-Run replays settle for lots restored mid-close after restart so a process bounce
-does not strand Closing lots without a private reader attached.
+Run replays settle for positions restored mid-close after restart so a process bounce
+does not strand Closing positions without a private reader attached.
 */
 func (tier *Tier) Run() {
 	for {

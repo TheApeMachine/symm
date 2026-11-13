@@ -35,33 +35,50 @@ func seedBook(books *broker.BookManager, symbol string, index int64) {
 	})
 }
 
-func TestPumpdumpStep(t *testing.T) {
-	Convey("Step records pump pressure from rising prints", t, func() {
+func TestNewSignal(t *testing.T) {
+	Convey("Setup", t, func() {
+		books := broker.NewBookManager(nil)
+
+		Convey("When NewSignal is called without price heartbeat", func() {
+			signal := pumpdump.NewSignal(context.Background(), books, nil)
+
+			Convey("It returns a usable signal", func() {
+				So(signal, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
 		symbol := "PD/USD"
 		books := broker.NewBookManager(nil)
-		at := time.Now().UTC()
-
 		signal := pumpdump.NewSignal(context.Background(), books, nil)
 		envelope := runtime.NewEnvelope(nil)
+		at := time.Unix(1_700_000_000, 0).UTC()
 
-		for i := range 140 {
-			seedBook(books, symbol, int64(i))
+		Convey("When rising prints hit a climbing book", func() {
+			for i := range 140 {
+				seedBook(books, symbol, int64(i))
 
-			envelope.Trade = &market.Trade{Data: []*market.TradeData{{
-				Symbol:    symbol,
-				Side:      market.SideBuy,
-				Price:     decimal.NewFromFloat(100 + float64(i)),
-				Qty:       decimal.NewFromInt(20),
-				Timestamp: at.Add(time.Duration(i) * time.Second),
-			}}}
-			envelope = signal.Step(envelope)
-		}
+				envelope.Trade = &market.Trade{Data: []*market.TradeData{{
+					Symbol:    symbol,
+					Side:      market.SideBuy,
+					Price:     decimal.NewFromFloat(100 + float64(i)),
+					Qty:       decimal.NewFromInt(20),
+					Timestamp: at.Add(time.Duration(i) * time.Second),
+				}}}
+				envelope = signal.Step(envelope)
+			}
 
-		reading := envelope.Pumpdump[symbol]
-		So(reading, ShouldNotBeNil)
-		So(reading.RVOL, ShouldEqual, 1)
-		So(reading.Compression, ShouldEqual, 0)
-		So(reading.Ignition, ShouldBeGreaterThan, 0.8)
-		So(reading.Trend, ShouldBeGreaterThan, 0.7)
+			Convey("Ignition and trend match seeded climb with RVOL one", func() {
+				reading := envelope.Pumpdump[symbol]
+				So(reading, ShouldNotBeNil)
+				So(reading.RVOL, ShouldEqual, 1)
+				So(reading.Compression, ShouldEqual, 0)
+				So(reading.Ignition, ShouldEqual, 0.8541386215607335)
+				So(reading.Trend, ShouldEqual, 0.7145109815211617)
+			})
+		})
 	})
 }

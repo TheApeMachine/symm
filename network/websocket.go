@@ -4,548 +4,227 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net"
-	"net/http"
+	"io"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"syscall"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/internal/disconnect"
-	"github.com/theapemachine/symm/venue/kraken"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
-WebsocketClient is a reconnecting Kraken WS transport. Disconnects (1006,
-connection reset, ping failure) drop to WAITING and redial with backoff.
-They must not call System.Error: that floods ERROR on every later Read/Write
-while status != READY ("client is not ready").
+WebsocketClient is a reconnecting Kraken WS transport. Disconnects drop to
+WAITING and redial with backoff — never System.Error, or every later Read/Write
+floods "client is not ready".
 */
 type WebsocketClient struct {
 	*runtime.System
 
-	conn         *gorilla.Conn
-	url          string
-	pinger       *Pinger
-	onReconnect  func() error
-	onDisconnect func()
-	backoff      time.Duration
-	// hookBackoff grows with consecutive reconnect hook failures and is
-	// cleared by a hook that succeeds. A dial that succeeds resets backoff,
-	// so a hook that keeps failing behind good dials needs its own.
-	hookBackoff time.Duration
-	lastWarn    time.Time
-	dial        func(url string) (*gorilla.Conn, *http.Response, error)
-	// writeMu serializes WriteMessage; gorilla allows one writer at a time.
-	writeMu sync.Mutex
-	// dialMu serializes ensureReady redials so concurrent Read/Write cannot
-	// open duplicate sockets or race client.conn / backoff.
-	dialMu sync.Mutex
-	// hooking is true while runHook runs. Held only under dialMu; the hook
-	// itself runs unlocked so Subscribe/Write can take writeMu and SoftDown
-	// can drop the socket. Nested ensureReady during a hook must not re-lock
-	// dialMu (deadlock) or nest another dial+hook.
-	hooking bool
-	// recoveryPending is set when a live socket drops; cleared after dial+hook succeed.
-	recoveryPending atomic.Bool
+	conn       *gorilla.Conn
+	rest       *REST
+	url        string
+	pinger     *Pinger
+	writeMu    sync.Mutex
+	dialMu     sync.Mutex
+	maxBackoff time.Duration
+	callbacks  []func() error
 }
 
-func NewWebsocketClient(ctx context.Context) *WebsocketClient {
+func NewWebsocketClient(
+	ctx context.Context,
+	url string,
+) *WebsocketClient {
 	client := &WebsocketClient{
-		backoff: time.Second,
-		dial: func(url string) (*gorilla.Conn, *http.Response, error) {
-			return gorilla.DefaultDialer.Dial(url, nil)
-		},
+		url:        url,
+		maxBackoff: 15 * time.Second,
+		callbacks:  make([]func() error, 0),
 	}
+
 	client.System = runtime.NewSystem(ctx, "network.websocket", client)
-	client.pinger = NewPinger(ctx, client)
+	client.pinger = NewPinger(ctx)
 	return client
 }
 
-/*
-OnReconnect registers a hook invoked after a successful redial (level3
-resubscribe). Nil clears the hook.
-
-A hook failure drops the connection: a redialed socket whose resubscribe
-failed carries no data and would otherwise look healthy while the stream is
-dark. The failure is logged and returned from Open/Read/Write, the client
-waits in WAITING, and the next Read or Write redials with the doubled backoff
-and runs the hook again, so a resubscribe that fails for a while (a token the
-venue refuses until a nonce recovers) does not end the stream for good.
-*/
-func (client *WebsocketClient) OnReconnect(hook func() error) {
-	client.onReconnect = hook
+func (client *WebsocketClient) Callback(hook func() error) {
+	client.callbacks = append(client.callbacks, hook)
 }
 
-/*
-OnDisconnect registers a hook invoked when a live connection drops (before
-any redial). Consumers whose state is only valid while the stream is live
-(a Level3 book) mark it stale here, so readers do not see frozen state for
-the whole backoff window. Nil clears the hook.
-*/
-func (client *WebsocketClient) OnDisconnect(hook func()) {
-	client.onDisconnect = hook
-}
-
-func (client *WebsocketClient) Open(url string) error {
-	client.url = url
-
-	client.dialMu.Lock()
-	err := client.dialLocked()
-	hook := client.onReconnect
+func (client *WebsocketClient) Open() (err error) {
+	client.conn, _, err = gorilla.DefaultDialer.Dial(client.url, nil)
 
 	if err != nil {
-		client.dialMu.Unlock()
-		return err
+		return errnie.Error(err)
 	}
 
-	client.hooking = true
-	client.dialMu.Unlock()
+	status := client.Status()
+	client.pinger.Start(client.conn, &client.writeMu, &status)
 
-	hookErr := client.runHook(hook)
-
-	client.dialMu.Lock()
-	client.hooking = false
-	client.dialMu.Unlock()
-
-	return hookErr
-}
-
-/*
-runHook runs the reconnect hook outside dialMu. A failure drops the
-connection and grows the backoff so the next Read or Write redials and retries
-the hook (see OnReconnect).
-*/
-func (client *WebsocketClient) runHook(hook func() error) error {
-	if hook == nil {
-		client.logRecovery()
-		return nil
+	for _, callback := range client.callbacks {
+		if err := callback(); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
-	hookErr := hook()
-
-	if hookErr == nil {
-		client.hookBackoff = 0
-		client.logRecovery()
-
-		return nil
-	}
-
-	cause := errnie.Err(
-		errnie.IO,
-		"[network.websocket] reconnect hook failed",
-		hookErr,
-	)
-
-	client.closeConnLocked()
-
-	switch client.Status() {
-	case runtime.READY, runtime.ERROR, runtime.BUSY:
-		client.Transition(runtime.WAITING)
-	}
-
-	client.hookBackoff = min(max(2*client.hookBackoff, time.Second), 30*time.Second)
-
-	errnie.Warn("[network.websocket] reconnect hook failed, will retry: " + hookErr.Error())
-
-	return cause
-}
-
-func (client *WebsocketClient) dialLocked() error {
-	if client.url == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[network.websocket] url is required",
-			nil,
-		))
-	}
-
-	client.closeConnLocked()
-
-	conn, _, err := client.dial(client.url)
-
-	if err != nil {
-		client.Transition(runtime.WAITING)
-		return errnie.Err(
-			errnie.IO,
-			"[network.websocket] error dialing url",
-			err,
-		)
-	}
-
-	client.conn = conn
-	client.backoff = time.Second
-	client.Transition(runtime.READY)
-	client.pinger.Start()
 	return nil
 }
 
-/*
-Read returns the next text frame. On disconnect it drops to WAITING and
-returns a soft error so ingress can retry without System.Error floods.
-*/
-func (client *WebsocketClient) Read(keys ...string) (msg []byte, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = client.softDown(fmt.Errorf("[network.websocket] read panic: %v", r))
-		}
-	}()
-
-	if err := client.ensureReady(); err != nil {
-		return nil, err
+func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
+	if client.conn == nil || client.Status() != runtime.READY {
+		return nil, nil
 	}
 
-	conn := client.conn
-
-	if conn == nil {
-		return nil, client.softDown(errnie.Error(errnie.Err(
-			errnie.IO,
-			"[network.websocket] connection missing",
-			nil,
-		)))
-	}
-
-	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return nil, client.softDown(errnie.Err(errnie.IO, "[network.websocket] read deadline reset failed", err))
-	}
-
-	_, message, err := conn.ReadMessage()
+	_, message, err := client.conn.ReadMessage()
 
 	if err != nil {
-		return nil, client.softDown(err)
+		backoff := time.Duration(0)
+
+		if errors.Is(
+			err, io.EOF,
+		) || errors.Is(
+			err, gorilla.ErrReadLimit,
+		) {
+			client.conn.Close()
+			client.Transition(runtime.WAITING)
+
+			for err := client.Open(); err != nil; {
+				time.Sleep(min(backoff+1*time.Second, client.maxBackoff))
+			}
+
+			return client.Read()
+		}
+
+		return nil, errnie.Error(err)
 	}
 
 	return message, nil
 }
 
-/*
-Write sends a text frame. Same soft-disconnect policy as Read.
-Concurrent writers (level3 resubscribe storms) are serialized on writeMu.
-*/
 func (client *WebsocketClient) Write(message []byte) error {
-	if err := client.ensureReady(); err != nil {
-		return err
+	if client.conn == nil || client.Status() != runtime.READY {
+		return errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] not ready for write", nil,
+		))
 	}
 
 	client.writeMu.Lock()
-	conn := client.conn
-
-	if conn == nil {
-		client.writeMu.Unlock()
-
-		return client.softDown(errnie.Error(errnie.Err(
-			errnie.IO,
-			"[network.websocket] connection missing",
-			nil,
-		)))
-	}
-
-	err := conn.WriteMessage(gorilla.TextMessage, message)
+	err := client.conn.WriteMessage(gorilla.TextMessage, message)
 	client.writeMu.Unlock()
 
+	backoff := time.Duration(0)
+
 	if err != nil {
-		return client.softDown(err)
+		if errors.Is(
+			err, syscall.EPIPE,
+		) || errors.Is(
+			err, syscall.ECONNRESET,
+		) || errors.Is(
+			err, syscall.ECONNREFUSED,
+		) || errors.Is(
+			err, gorilla.ErrCloseSent,
+		) || errors.Is(
+			err, io.EOF,
+		) {
+			client.conn.Close()
+			client.Transition(runtime.WAITING)
+
+			for err := client.Open(); err != nil; {
+				time.Sleep(backoff)
+				backoff = min(backoff+1*time.Second, client.maxBackoff)
+			}
+
+			client.Write(message)
+			return nil
+		}
+
+		return errnie.Error(err)
 	}
 
 	return nil
 }
 
 func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
-	resp, err := NewREST().Post(url, body)
+	response, err := client.rest.Post(url, body)
 
 	if err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	if resp == nil {
+	if response == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO, "[network.websocket] empty post response", nil,
 		))
 	}
 
-	return resp.Body(), nil
+	return response.Body(), nil
 }
 
-func (client *WebsocketClient) Watch(
-	url string,
-	body any,
-	dest json.Unmarshaler,
-) {
-	if dest == nil {
-		return
+/*
+Watch polls url on an interval. body may be a value or func() map[string]any
+(ticker rotates pairs). Throttle/rate-limit responses pause further polls.
+*/
+func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler) {
+	interval := 5 * time.Second
+	private := strings.Contains(url, "/private/")
+
+	if private {
+		interval = system.Cfg.WebSocket.PrivateRefresh
 	}
 
-	go func() {
-		interval := 5 * time.Second
-		private := strings.Contains(url, "/private/")
-
-		if private {
-			interval = 15 * time.Second
+	if strings.Contains(url, "/Ticker") {
+		if refresh := system.Cfg.WebSocket.TickerRefresh; refresh > 0 {
+			interval = refresh
 		}
 
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		if max := system.Cfg.WebSocket.TickerBackoffMax; max > 0 {
+			client.maxBackoff = max
+		}
+	}
 
-		backoff := time.Duration(0)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-		poll := func() {
-			if backoff > 0 {
-				select {
-				case <-client.Context().Done():
-					return
-				case <-time.After(backoff):
-				}
+	backoff := time.Duration(0)
+
+	var (
+		err error
+		raw []byte
+	)
+
+	for {
+		select {
+		case <-client.Context().Done():
+			return
+		case <-ticker.C:
+			if err != nil {
+				backoff = backoff + 1*time.Second
+				time.Sleep(min(backoff+1*time.Second, client.maxBackoff))
+				err = nil
 			}
 
-			raw, err := client.Post(url, body)
+			raw, err = client.Post(url, body)
 
 			if err != nil {
-				errnie.Warn("[network.websocket] watch poll failed, will retry: " + err.Error())
-				return
-			}
-
-			if len(raw) == 0 {
-				errnie.Error(errnie.Err(
-					errnie.IO, "[network.websocket] empty post response", nil,
-				))
-				return
+				errnie.Error(err)
+				continue
 			}
 
 			if err := dest.UnmarshalJSON(raw); err != nil {
-				errnie.Error(err)
-				return
-			}
+				errnie.Error(errnie.Err(
+					errnie.IO, "[network.websocket] unmarshal failed", err,
+				))
 
-			if errs := kraken.VenueErrors(raw); len(errs) > 0 {
-				if kraken.RateLimited(errs...) {
-					if backoff == 0 {
-						backoff = 15 * time.Second
-					} else if backoff < 60*time.Second {
-						backoff *= 2
-					}
-
-					return
-				}
-			}
-
-			backoff = 0
-		}
-
-		if !private {
-			poll()
-		}
-
-		for {
-			select {
-			case <-client.Context().Done():
-				return
-			case <-ticker.C:
-				poll()
+				continue
 			}
 		}
-	}()
+	}
 }
 
-func (client *WebsocketClient) writePing() error {
-	conn := client.conn
-	ready := client.Status() == runtime.READY
-
-	if !ready || conn == nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"[network.websocket] not ready for ping",
-			nil,
-		))
-	}
-
-	err := conn.WriteControl(
-		gorilla.PingMessage,
-		nil,
-		time.Now().Add(5*time.Second),
-	)
-
-	if err != nil {
-		return client.softDown(errnie.Err(errnie.IO, "[network.websocket] ping failed", err))
-	}
-
-	return nil
-}
-
-func (client *WebsocketClient) ensureReady() error {
-	if err := client.Context().Err(); err != nil {
-		return err
-	}
-
-	if client.Status() == runtime.READY && client.conn != nil {
-		return nil
-	}
-
-	if client.url == "" {
-		return errnie.Err(
-			errnie.Validation,
-			"[network.websocket] not open",
-			nil,
-		)
-	}
-
-	client.dialMu.Lock()
-
-	if client.Status() == runtime.READY && client.conn != nil {
-		client.dialMu.Unlock()
-		return nil
-	}
-
-	if client.hooking {
-		client.dialMu.Unlock()
-		return errnie.Err(
-			errnie.IO,
-			"[network.websocket] reconnect resubscribe in progress",
-			nil,
-		)
-	}
-
-	wait := min(max(max(client.backoff, client.hookBackoff), time.Second), 30*time.Second)
-	client.dialMu.Unlock()
-
-	select {
-	case <-client.Context().Done():
-		return client.Context().Err()
-	case <-time.After(wait):
-	}
-
-	client.dialMu.Lock()
-
-	if client.Status() == runtime.READY && client.conn != nil {
-		client.dialMu.Unlock()
-		return nil
-	}
-
-	if client.hooking {
-		client.dialMu.Unlock()
-		return errnie.Err(
-			errnie.IO,
-			"[network.websocket] reconnect resubscribe in progress",
-			nil,
-		)
-	}
-
-	client.warnOnce("reconnecting after disconnect")
-	err := client.dialLocked()
-	hook := client.onReconnect
-
-	if err != nil {
-		if client.backoff < 30*time.Second {
-			client.backoff *= 2
-			if client.backoff > 30*time.Second {
-				client.backoff = 30 * time.Second
-			}
-		}
-
-		client.dialMu.Unlock()
-		return err
-	}
-
-	client.hooking = true
-	client.dialMu.Unlock()
-
-	hookErr := client.runHook(hook)
-
-	client.dialMu.Lock()
-	client.hooking = false
-	client.dialMu.Unlock()
-
-	return hookErr
-}
-
-/*
-SoftDown drops the active connection and places the client in WAITING state
-without canceling its context, so subsequent Read operations trigger redial
-with backoff. It invokes the OnDisconnect hook if the connection was live.
-*/
-func (client *WebsocketClient) SoftDown(cause error) error {
-	wasLive := client.conn != nil
-	hook := client.onDisconnect
-
-	client.closeConnLocked()
-
-	switch client.Status() {
-	case runtime.READY, runtime.ERROR, runtime.BUSY:
-		client.Transition(runtime.WAITING)
-	}
-
-	client.warnOnce("disconnected: " + cause.Error())
-
-	if wasLive {
-		client.recoveryPending.Store(true)
-
-		if hook != nil {
-			hook()
-		}
-	}
-
-	if disconnect.Expected(cause) {
-		return cause
-	}
-
-	return errnie.Error(cause)
-}
-
-func (client *WebsocketClient) softDown(cause error) error {
-	return client.SoftDown(cause)
-}
-
-func (client *WebsocketClient) closeConnLocked() {
-	client.writeMu.Lock()
-	defer client.writeMu.Unlock()
-
-	if client.conn == nil {
-		return
-	}
-
-	// Teardown of a socket that already failed reports net.ErrClosed; that
-	// is the expected state, anything else is raised.
-	if err := client.conn.SetReadDeadline(time.Now()); err != nil && !errors.Is(err, net.ErrClosed) {
-		errnie.Error(errnie.Err(errnie.IO, "[network.websocket] read deadline on close failed", err))
-	}
-
-	if err := client.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		errnie.Error(errnie.Err(errnie.IO, "[network.websocket] close failed", err))
-	}
-	client.conn = nil
-	client.pinger.Stop()
-}
-
-func (client *WebsocketClient) logRecovery() {
-	if !client.recoveryPending.Swap(false) {
-		return
-	}
-
-	target := client.url
-
-	if target == "" {
-		target = client.Name()
-	}
-
-	errnie.Info("[network.websocket] stream recovered: " + target)
-}
-
-func (client *WebsocketClient) warnOnce(message string) {
-	now := time.Now()
-	if now.Sub(client.lastWarn) < 5*time.Second {
-		return
-	}
-	client.lastWarn = now
-	errnie.Warn("[network.websocket] " + message)
-}
-
-/*
-Close shuts the socket and cancels the client context.
-*/
 func (client *WebsocketClient) Close() error {
-	client.closeConnLocked()
+	client.pinger.Close()
+	client.conn.Close()
 	return client.System.Close()
 }

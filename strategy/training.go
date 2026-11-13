@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -87,6 +89,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			hot := ignitionHot(envelope.Pumpdump[symbol])
 
+			gridStarted := time.Now()
 			regions, err := training.grid.Observe(
 				symbol,
 				sources,
@@ -97,13 +100,16 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				training.price.BookIntact(symbol),
 				training.price.EntryPeakOK(symbol, hot),
 			)
+			pipeline.Time("grid", time.Since(gridStarted))
 
 			if err != nil {
 				training.Error(err)
 				return
 			}
 
+			cutStarted := time.Now()
 			cut := training.stepCut(symbol, regions)
+			pipeline.Time("sequencer", time.Since(cutStarted))
 
 			mu.Lock()
 			envelope.Regions[symbol] = regions

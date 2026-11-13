@@ -8,42 +8,54 @@ import (
 )
 
 func TestUseCredentials(t *testing.T) {
-	// Placeholder variable names and values only; no real credentials.
 	viper.Set("kraken.credentials.collector.key_env", "SYMM_TEST_COLLECTOR_KEY")
 	viper.Set("kraken.credentials.collector.secret_env", "SYMM_TEST_COLLECTOR_SECRET")
 	viper.Set("kraken.credentials.main.key_env", "SYMM_TEST_MAIN_KEY")
 	viper.Set("kraken.credentials.main.secret_env", "SYMM_TEST_MAIN_SECRET")
-
 	defer processCredentials.Store(nil)
 
-	Convey("Given only the main role's variables set", t, func() {
+	Convey("Setup", t, func() {
 		t.Setenv("SYMM_TEST_MAIN_KEY", "main-key")
 		t.Setenv("SYMM_TEST_MAIN_SECRET", "main-secret")
 		processCredentials.Store(nil)
 
-		Convey("the main role resolves its own pair", func() {
-			So(UseCredentials(RoleMain), ShouldBeNil)
-			keys, err := processKeys()
-			So(err, ShouldBeNil)
-			So(keys.key, ShouldEqual, "main-key")
-			So(keys.secret, ShouldEqual, "main-secret")
+		Convey("When UseCredentials selects the main role", func() {
+			err := UseCredentials(RoleMain)
+			keys, keyErr := processKeys()
+
+			Convey("the main key pair resolves", func() {
+				So(err, ShouldBeNil)
+				So(keyErr, ShouldBeNil)
+				So(keys.key, ShouldEqual, "main-key")
+				So(keys.secret, ShouldEqual, "main-secret")
+			})
 		})
 
-		Convey("the collector role is a startup error naming its variable, not a fall back to main", func() {
+		Convey("When the collector env is unset", func() {
 			err := UseCredentials(RoleCollector)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "SYMM_TEST_COLLECTOR_KEY")
-			_, err = processKeys()
-			So(err, ShouldNotBeNil)
+			_, keyErr := processKeys()
+
+			Convey("the error names the missing variable", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "SYMM_TEST_COLLECTOR_KEY")
+				So(keyErr, ShouldNotBeNil)
+			})
 		})
 
-		Convey("a role without configured variable names is an error", func() {
-			So(UseCredentials("unknown"), ShouldNotBeNil)
+		Convey("When the role is unknown", func() {
+			err := UseCredentials("unknown")
+
+			Convey("configuration is rejected", func() {
+				So(err, ShouldNotBeNil)
+			})
 		})
 
-		Convey("signing without a selected role is an error", func() {
+		Convey("When NewAuthenticatedREST runs without a selected role", func() {
 			_, err := NewAuthenticatedREST()
-			So(err, ShouldNotBeNil)
+
+			Convey("REST construction fails", func() {
+				So(err, ShouldNotBeNil)
+			})
 		})
 	})
 }

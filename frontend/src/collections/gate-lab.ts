@@ -38,7 +38,7 @@ export const ORACLE_GATES: OracleGate[] = [
 		label: "Book integrity",
 		veto: 15,
 		approve: 16,
-		hint: "Can the book carry a lot? Cash, backing, tape uptake, open drag. Veto = thin, fake, or fading; approve = firm.",
+		hint: "Can the book carry a position? Cash, backing, tape uptake, open drag. Veto = thin, fake, or fading; approve = firm.",
 	},
 	{
 		id: "brd",

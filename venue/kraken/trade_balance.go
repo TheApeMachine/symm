@@ -168,18 +168,52 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 }
 
 /*
-ToMarket writes equity and unrealized onto market.Balance. Cash stays on
-Balance REST — never treat equity as spendable here.
+ToMarket writes portfolio value and open UPnL onto market.Balance.
+Cash stays on Balance REST — never treat equity as spendable here.
+
+eb is combined value of all currencies (what the portfolio total is).
+e is margin equity (tb + n) and understates a spot book.
+Unrealized prefers v−c (valuation vs cost) when both land; else n.
 */
 func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType {
 	book, ok := other.(*market.Balance)
 
 	if !ok || book == nil || balance == nil {
+		errnie.Debug("[tradebalance] ToMarket skipped", "ok", ok, "book_nil", book == nil, "self_nil", balance == nil)
 		return other
 	}
 
-	book.Equity = balance.Result.Equity
-	book.Unrealized = balance.Result.UnrealizedPnL
+	book.Equity = balance.Result.EquivalentBalance
+	equitySrc := "eb"
+
+	if book.Equity == nil {
+		book.Equity = balance.Result.Equity
+		equitySrc = "e"
+	}
+
+	unrealizedSrc := "n"
+
+	switch {
+	case balance.Result.Valuation != nil && balance.Result.CostBasis != nil &&
+		(!balance.Result.Valuation.IsZero() || !balance.Result.CostBasis.IsZero()):
+		unrealized := balance.Result.Valuation.Sub(*balance.Result.CostBasis)
+		book.Unrealized = &unrealized
+		unrealizedSrc = "v-c"
+	default:
+		book.Unrealized = balance.Result.UnrealizedPnL
+	}
+
+	errnie.Debug("[tradebalance] ToMarket",
+		"eb", balance.Result.EquivalentBalance,
+		"e", balance.Result.Equity,
+		"n", balance.Result.UnrealizedPnL,
+		"c", balance.Result.CostBasis,
+		"v", balance.Result.Valuation,
+		"equity_src", equitySrc,
+		"equity", book.Equity,
+		"unrealized_src", unrealizedSrc,
+		"unrealized", book.Unrealized,
+	)
 
 	return book
 }
@@ -194,6 +228,7 @@ func (balance *TradeBalance) FromMarket(other market.MarketType) market.MarketTy
 		return balance
 	}
 
+	balance.Result.EquivalentBalance = book.Equity
 	balance.Result.Equity = book.Equity
 	balance.Result.UnrealizedPnL = book.Unrealized
 

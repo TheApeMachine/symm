@@ -1,4 +1,4 @@
-package kraken_test
+package kraken
 
 import (
 	"testing"
@@ -6,11 +6,10 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/venue/kraken"
 )
 
-func TestOrderWebSocketAckUnmarshal(t *testing.T) {
-	Convey("Given a Kraken v2 add_order acknowledgement frame", t, func() {
+func TestUnmarshalJSONOrder(t *testing.T) {
+	Convey("Setup", t, func() {
 		raw := []byte(`{
 			"method":"add_order",
 			"result":{
@@ -24,25 +23,27 @@ func TestOrderWebSocketAckUnmarshal(t *testing.T) {
 			"time_in":"2026-03-06T14:20:01.123456Z",
 			"time_out":"2026-03-06T14:20:01.234567Z"
 		}`)
+		order := NewOrder()
 
-		order := kraken.NewOrder()
-		So(sonic.Unmarshal(raw, order), ShouldBeNil)
+		Convey("When UnmarshalJSON decodes a v2 ack", func() {
+			So(sonic.Unmarshal(raw, order), ShouldBeNil)
 
-		Convey("It decodes venue identifiers and success", func() {
-			So(order.Method, ShouldEqual, "add_order")
-			So(order.Success, ShouldBeTrue)
-			So(order.Error, ShouldEqual, "")
-			So(order.ReqID, ShouldEqual, 901)
-			So(order.Result.OrderID, ShouldEqual, "O3RGN3-S2VJ7-ZNHVNO")
-			So(order.Result.ClOrdID, ShouldEqual, "desk-enter-42")
-			So(order.TimeIn.UTC(), ShouldEqual, time.Date(2026, 3, 6, 14, 20, 1, 123456000, time.UTC))
+			Convey("venue identifiers and success decode", func() {
+				So(order.Method, ShouldEqual, "add_order")
+				So(order.Success, ShouldBeTrue)
+				So(order.Error, ShouldEqual, "")
+				So(order.ReqID, ShouldEqual, 901)
+				So(order.Result.OrderID, ShouldEqual, "O3RGN3-S2VJ7-ZNHVNO")
+				So(order.Result.ClOrdID, ShouldEqual, "desk-enter-42")
+				So(order.TimeIn.UTC(), ShouldEqual, time.Date(2026, 3, 6, 14, 20, 1, 123456000, time.UTC))
+			})
 		})
 	})
 }
 
-func TestAddOrderRequestCommand(t *testing.T) {
-	Convey("Given a limit buy request", t, func() {
-		req := &kraken.AddOrderRequest{
+func TestCommand(t *testing.T) {
+	Convey("Setup", t, func() {
+		req := &AddOrderRequest{
 			Pair:    "BTC/USD",
 			Type:    "buy",
 			OrdType: "limit",
@@ -51,14 +52,17 @@ func TestAddOrderRequestCommand(t *testing.T) {
 			ClOrdId: "enter-btc-1",
 		}
 
-		Convey("Command carries paper CLI limit params", func() {
+		Convey("When Command builds paper CLI argv", func() {
 			cmd := req.Command()
-			So(cmd[0], ShouldEqual, "buy")
-			So(cmd[1], ShouldEqual, "BTC/USD")
-			So(cmd, ShouldContain, "0.25")
-			So(cmd, ShouldContain, "--cl-ord-id")
-			So(cmd, ShouldContain, "enter-btc-1")
-			So(cmd, ShouldContain, "64000.0")
+
+			Convey("limit buy params are present", func() {
+				So(cmd[0], ShouldEqual, "buy")
+				So(cmd[1], ShouldEqual, "BTC/USD")
+				So(cmd, ShouldContain, "0.25")
+				So(cmd, ShouldContain, "--cl-ord-id")
+				So(cmd, ShouldContain, "enter-btc-1")
+				So(cmd, ShouldContain, "64000.0")
+			})
 		})
 	})
 }

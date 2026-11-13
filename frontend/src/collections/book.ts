@@ -6,7 +6,7 @@ bookAtom chooses which trades the dashboard reads. Live mode defaults to real;
 virtual/paper remain available when market.model is paper.
 
 The trie (model/paths) and sequencer stay shared across books — only the
-desk ledgers (balances, lots, tiered decisions) switch with this atom.
+desk ledgers (balances, positions, tiered decisions) switch with this atom.
 */
 export type Book = "paper" | "virtual" | "real";
 

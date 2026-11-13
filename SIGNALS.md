@@ -27,7 +27,7 @@ Wire form in tables: `source/Field` (envelope) or `broker.X/Method`.
 
 ## Action — Enter
 
-Story: open a lot.
+Story: open a position.
 
 | Channel    | Metric                       | Source                 |
 |------------|------------------------------|------------------------|
@@ -49,7 +49,7 @@ Story: open a lot.
 
 ## Action — Hold
 
-Story: stay in an open lot.
+Story: stay in an open position.
 
 | Channel    | Metric                        | Source                |
 |------------|-------------------------------|-----------------------|
@@ -71,7 +71,7 @@ Story: stay in an open lot.
 
 ## Action — Exit
 
-Story: leave an open lot.
+Story: leave an open position.
 
 | Channel    | Metric                         | Source                |
 |------------|--------------------------------|-----------------------|
@@ -127,7 +127,7 @@ Executable width must clear entry and stay tradeable.
 
 ## Oracle — Book Integrity
 
-Desk-lot physics: cash, backing, tape, open drag.
+Desk-position physics: cash, backing, tape, open drag.
 
 | Side    | Metric                    | Source                                                           |
 |---------|---------------------------|------------------------------------------------------------------|
@@ -179,7 +179,7 @@ Lead structure breaking or cohort stress — do not trust the path.
 
 ## Oracle — Capacity
 
-Can the book carry the desk lot without blowing friction / impact.
+Can the book carry the desk position without blowing friction / impact.
 
 | Side    | Metric                           | Source                                                      |
 |---------|----------------------------------|-------------------------------------------------------------|
@@ -337,7 +337,7 @@ used only as intermediates) is omitted unless it is itself a score.
   token's channel width, not by how many pins lit.
 - `grid_pins.go` is the machine-readable mirror of these tables; keep them
   in sync when either moves.
-- Emit policy (`Grid.Emit`): flat books publish Enter + oracles; open lots
+- Emit policy (`Grid.Emit`): flat books publish Enter + oracles; open positions
   publish Hold/Exit + oracles. Each oracle keeps only `max(Veto, Approve)`.
   Support/Opposition stay lit — `Tree.Predict` resolves them against path
   resistance.

@@ -18,7 +18,7 @@ import (
 
 /*
 Position is the durable unit of risk: one symbol per tier cache key, with fills
-as source of truth so wire cumulatives never overwrite multi-print lots.
+as source of truth so wire cumulatives never overwrite multi-print positions.
 */
 type Position struct {
 	*runtime.System
@@ -87,24 +87,19 @@ func NewPosition(
 	}
 }
 
-func (position *Position) pnl() *decimal.Decimal {
-	pnl := decimal.NewFromInt(0)
-
-	for _, fill := range position.Fills {
-		if fill != nil && fill.Side == "buy" {
-			pnl = pnl.Add(*fill.LastPrice)
-		}
-	}
-
-	return &pnl
-}
-
 func (position *Position) qty() *decimal.Decimal {
 	qty := decimal.NewFromInt(0)
 
 	for _, fill := range position.Fills {
-		if fill != nil && fill.Side == "buy" {
+		if fill == nil || fill.LastQty == nil {
+			continue
+		}
+
+		switch fill.Side {
+		case "buy":
 			qty = qty.Add(*fill.LastQty)
+		case "sell":
+			qty = qty.Sub(*fill.LastQty)
 		}
 	}
 
@@ -141,15 +136,17 @@ func (position *Position) Update(price *decimal.Decimal) error {
 		position.mu.Unlock()
 		return errnie.Error(errnie.Err(
 			errnie.Conflict,
-			"[position.Update] closed lot",
+			"[position.Update] closed position",
 			nil,
 		), "symbol", position.Symbol)
 	}
 
 	position.mu.Unlock()
 
-	position.PnL = position.price.PnL(position.Symbol, position.Qty, position.Entry, price)
-	position.PnLPct = position.price.PnLPct(position.Symbol, position.Qty, position.Entry, price)
+	position.Mark = price
+	position.PnL = position.price.PnL(position)
+	position.PnLPct = position.price.PnLPct(position)
+
 	friction := position.price.ExhaustionReading(position.Symbol)
 
 	if room := position.price.ExitRoom(position.Symbol, position.Qty); room != nil {
@@ -262,8 +259,8 @@ func (position *Position) exit() error {
 }
 
 /*
-Apply is the only fill path. Fills are the ledger; Qty/Entry/Sold are folded
-from them. ClosedAt stamps once the lot is flat.
+Apply is the only fill path. Entry fills refresh Qty/Entry/PnL; exit fills only
+stamp ClosedAt once buys and sells net to zero — PnL stays the last mark.
 */
 func (position *Position) Apply(execution market.ExecutionData) {
 	position.mu.Lock()
@@ -276,10 +273,27 @@ func (position *Position) Apply(execution market.ExecutionData) {
 	}
 
 	position.Fills = append(position.Fills, &execution)
-	position.PnL = position.pnl()
 	position.Qty = position.qty()
 	position.Entry = position.entry()
-	position.PnLPct = position.price.PnLPct(
-		position.Symbol, position.Qty, position.Entry, nil,
-	)
+
+	if execution.Side == "sell" {
+		if position.ClosedAt == nil && position.Qty.Sign() == 0 {
+			closedAt := execution.Timestamp
+
+			if closedAt.IsZero() {
+				closedAt = time.Now().UTC()
+			}
+
+			position.ClosedAt = &closedAt
+		}
+
+		return
+	}
+
+	if position.price == nil {
+		return
+	}
+
+	position.PnL = position.price.PnL(position)
+	position.PnLPct = position.price.PnLPct(position)
 }

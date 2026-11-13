@@ -26,14 +26,14 @@ import { asFinite } from "#/lib/format";
 import { trySendCommand } from "#/lib/hub-socket";
 import {
 	deskRowsForStats,
-	ingestDeskClosedLots,
+	ingestDeskClosedPositions,
 	requestClosedPositionHistory,
 } from "#/lib/lifecycle";
 import { stopArmed, stopProximity } from "#/lib/stop-telemetry";
 
 /*
 Longtail samples the path-learning trajectory from live truth the hub already
-publishes: desk lots, confidence, and the model/paths resistance book (plus
+publishes: desk positions, confidence, and the model/paths resistance book (plus
 S3 ListPrefix for those same prefixes). Nothing here invents a parallel
 training aggregate — charts stay empty until those sources have real values.
 */
@@ -146,7 +146,7 @@ export type PolicySnapshot = {
 };
 
 /*
-ExitMix buckets closed-lot triggers into profit / stop / policy / other. Counts
+ExitMix buckets closed-position triggers into profit / stop / policy / other. Counts
 are cumulative for the book at sample time — never an unbounded map.
 */
 export type ExitMix = {
@@ -157,7 +157,7 @@ export type ExitMix = {
 	total: number;
 };
 
-export type OpenLotTelemetry = {
+export type OpenPositionTelemetry = {
 	open: number | null;
 	invalidation: number | null;
 	trailing: number | null;
@@ -186,9 +186,9 @@ export type LongtailSample = {
 		real: ExitMix;
 	};
 	stops: {
-		virtual: OpenLotTelemetry;
-		paper: OpenLotTelemetry;
-		real: OpenLotTelemetry;
+		virtual: OpenPositionTelemetry;
+		paper: OpenPositionTelemetry;
+		real: OpenPositionTelemetry;
 	};
 };
 
@@ -225,7 +225,7 @@ export const emptyExitMix = (): ExitMix => ({
 	total: 0,
 });
 
-export const emptyStops = (): OpenLotTelemetry => ({
+export const emptyStops = (): OpenPositionTelemetry => ({
 	open: null,
 	invalidation: null,
 	trailing: null,
@@ -322,7 +322,7 @@ export const summarizeBook = (rows: Position[], book: Book): BookDeskStats => {
 };
 
 /*
-summarizeStops folds open-lot Stoploss for one book. Legacy field names
+summarizeStops folds open-position Stoploss for one book. Legacy field names
 (invalidation / trailing / damage) map onto floor proximity samples so
 longtail history stays compatible. Exit reason maps are not stored here —
 use summarizeExits so samples stay fixed-size.
@@ -330,7 +330,7 @@ use summarizeExits so samples stay fixed-size.
 export const summarizeStops = (
 	rows: Position[],
 	book: Book,
-): OpenLotTelemetry => {
+): OpenPositionTelemetry => {
 	const open = rows.filter((row) => onTier(row, book) && !isClosed(row));
 	const proximitySamples: number[] = [];
 	let armed = 0;
@@ -466,7 +466,7 @@ export const summarizePolicy = (
 
 /*
 tierStats picks the selected book's desk stats. Paper/real win and edge prefer
-the confidence frame when it has closed lots — that is what arms real.
+the confidence frame when it has closed positions — that is what arms real.
 */
 export const tierStats = (
 	sample: LongtailSample,
@@ -610,7 +610,7 @@ export const buildInsights = (
 			{
 				id: "warmup",
 				title: "Collecting baseline",
-				body: `Waiting on ${book} closed lots, confidence, and the model/paths book from the hub.`,
+				body: `Waiting on ${book} closed positions, confidence, and the model/paths book from the hub.`,
 				tone: "neutral",
 			},
 		];
@@ -625,7 +625,7 @@ export const buildInsights = (
 		title: `${book} trajectory`,
 		body:
 			tier.edge === null && tier.winRate === null
-				? `No settled ${book} lots yet that count toward edge.`
+				? `No settled ${book} positions yet that count toward edge.`
 				: `Win ${tier.winRate === null ? "—" : pct(tier.winRate)}, edge ${tier.edge === null ? "—" : pct(tier.edge)}, ${tier.stats.closed} settled · ${tier.stats.open} open${tier.armed !== null ? ` · real ${tier.armed >= 0.5 ? "armed" : "halted"}` : ""}.`,
 		tone:
 			tier.edge === null
@@ -701,7 +701,7 @@ export const buildInsights = (
 		title: "Stop posture",
 		body:
 			stops.open === null || stops.open === 0
-				? `No open ${book} lots priced.`
+				? `No open ${book} positions priced.`
 				: `${stops.open} open; invalidation ${stops.invalidation === null ? "—" : pct(stops.invalidation)}, trail ${stops.trailing === null ? "—" : pct(stops.trailing)}, damage ${stops.damage === null ? "—" : pct(stops.damage)}; nearest ${stops.maxProximity === null ? "—" : pct(stops.maxProximity)}.`,
 		tone:
 			stops.maxProximity === null
@@ -752,7 +752,7 @@ const pushSample = (sample: LongtailSample) => {
 };
 
 /*
-requestLongtailSources asks the hub for closed lots on every tier (via the
+requestLongtailSources asks the hub for closed positions on every tier (via the
 shared history helper) plus the path resistance book. Bounded ListPrefix
 replies land through the existing paths/closed envelopes.
 */
@@ -773,7 +773,7 @@ export const resetLongtailSourcesRequest = () => {
 
 const captureSample = (at: number): LongtailSample => {
 	const desk = deskRowsForStats();
-	ingestDeskClosedLots(desk);
+	ingestDeskClosedPositions(desk);
 
 	const frame = confidenceAtom.get();
 	const cognition = cognitionStore.state;
@@ -894,7 +894,7 @@ const exitMixFromHistory = (value: unknown): ExitMix => {
 	};
 };
 
-const stopsFromHistory = (value: unknown): OpenLotTelemetry => {
+const stopsFromHistory = (value: unknown): OpenPositionTelemetry => {
 	if (!value || typeof value !== "object") return emptyStops();
 	const row = value as Record<string, unknown>;
 	return {
@@ -991,11 +991,11 @@ const windowIsWarmupOnly = (samples: LongtailSample[]): boolean =>
 		));
 
 /*
-seedFromClosedLots builds a bounded cumulative trajectory from desk/S3 closed
-lots so the charts show improving/worsening before the live 5s window fills.
+seedFromClosedPositions builds a bounded cumulative trajectory from desk/S3 closed
+positions so the charts show improving/worsening before the live 5s window fills.
 Replaces only an empty or warmup-only window — never a live series.
 */
-export const seedFromClosedLots = () => {
+export const seedFromClosedPositions = () => {
 	if (!windowIsWarmupOnly(chartWindow.values())) return false;
 
 	const rows = deskRowsForStats().filter((row) => isClosed(row));
@@ -1086,10 +1086,10 @@ export const ensureLongtailRecorder = () => {
 	}
 
 	requestLongtailSources();
-	seedFromClosedLots();
+	seedFromClosedPositions();
 	recordLongtailSample();
 	recorderHandle = window.setInterval(() => {
-		seedFromClosedLots();
+		seedFromClosedPositions();
 		maybeRecordLongtailSample();
 	}, SAMPLE_EVERY_MS);
 };

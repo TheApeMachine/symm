@@ -1,5 +1,5 @@
 /*
-Human words and tones for a held lot's Stoploss (broker.Stoploss on the wire).
+Human words and tones for a held position's Stoploss (broker.Stoploss on the wire).
 */
 
 import {
@@ -54,7 +54,7 @@ export const heldVerdict = (
 ): { text: string; tone: Tone } => {
 	if (!stop) {
 		return {
-			text: "Waiting for the desk book to price the lot",
+			text: "Waiting for the desk book to price the position",
 			tone: "neutral",
 		};
 	}

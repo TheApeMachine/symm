@@ -212,7 +212,7 @@ const PnlPair = ({
 
 export const Positions = () => {
 	// The store's new state object is the render trigger; the rows decode
-	// from the lot frames it holds.
+	// from the position frames it holds.
 	useSelector(signals.positions, (state) => state);
 	const positions = selectPositions(readPositions());
 	const closed = selectClosed(readPositions());
@@ -235,7 +235,7 @@ export const Positions = () => {
 							onClick={() =>
 								terminalStore.actions.selectFocusSymbol(pos.symbol)
 							}
-							title="Inspect this lot"
+							title="Inspect this position"
 							className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
 						>
 							<Flex.Column className="gap-0">

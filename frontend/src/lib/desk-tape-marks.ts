@@ -1,6 +1,6 @@
 /*
-Tape ticks on a closed desk lot index workspace/tick/aggregate/<epoch>/<tick>.
-A is the entry tick, B entry, C exit (no separate precursor mark on the lot).
+Tape ticks on a closed desk position index workspace/tick/aggregate/<epoch>/<tick>.
+A is the entry tick, B entry, C exit (no separate precursor mark on the position).
 */
 export const tickUint = (value: unknown): number | null => {
 	if (typeof value === "number" && Number.isFinite(value) && value > 0) {

@@ -3,7 +3,7 @@ import type { Position } from "#/collections/types";
 import { CHOICE_TRAIL_LENGTH, chartHeld } from "./open-choice-draw";
 
 describe("open-choice chartHeld", () => {
-	it("keeps open paper lots and drops closed lots", () => {
+	it("keeps open paper positions and drops closed positions", () => {
 		const open = {
 			id: "a",
 			symbol: "DOGE/USD",

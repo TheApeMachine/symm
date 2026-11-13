@@ -7,73 +7,102 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/ipc"
-	_ "github.com/duckdb/duckdb-go/v2"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestWarehouseQuery(t *testing.T) {
-	Convey("Warehouse returns Arrow IPC for lot and level3 views", t, func() {
+func TestExecute(t *testing.T) {
+	Convey("Setup", t, func() {
 		warehouse := local(t)
 		ctx := context.Background()
 
-		stream, err := warehouse.Execute(ctx, `SELECT id, symbol, fills FROM closed_paper`)
-		So(err, ShouldBeNil)
-		So(len(stream), ShouldBeGreaterThan, 0)
+		Convey("When Execute runs a SELECT over fixture views", func() {
+			stream, err := warehouse.Execute(ctx, `SELECT id, symbol, fills FROM closed_paper`)
 
-		reader, err := ipc.NewReader(bytes.NewReader(stream))
-		So(err, ShouldBeNil)
-		defer reader.Release()
+			Convey("Arrow IPC carries the closed position row", func() {
+				So(err, ShouldBeNil)
+				So(len(stream), ShouldEqual, 568)
 
-		So(reader.Next(), ShouldBeTrue)
-		record := reader.Record()
-		So(record.NumRows(), ShouldEqual, 1)
-		So(record.Column(0).(*array.String).Value(0), ShouldEqual, "lot-1")
+				reader, err := ipc.NewReader(bytes.NewReader(stream))
+				So(err, ShouldBeNil)
+				defer reader.Release()
 
-		events, err := warehouse.Execute(ctx, `SELECT symbol, frame_type FROM level3_events ORDER BY symbol`)
-		So(err, ShouldBeNil)
+				So(reader.Next(), ShouldBeTrue)
+				record := reader.Record()
+				So(record.NumRows(), ShouldEqual, 1)
+				So(record.Column(0).(*array.String).Value(0), ShouldEqual, "position-1")
+			})
+		})
 
-		eventReader, err := ipc.NewReader(bytes.NewReader(events))
-		So(err, ShouldBeNil)
-		defer eventReader.Release()
+		Convey("When Execute runs a SELECT over level3 events", func() {
+			events, err := warehouse.Execute(ctx, `SELECT symbol, frame_type FROM level3_events ORDER BY symbol`)
 
-		So(eventReader.Next(), ShouldBeTrue)
-		So(eventReader.Record().NumRows(), ShouldEqual, 2)
+			Convey("Arrow IPC carries both fixture symbols", func() {
+				So(err, ShouldBeNil)
+
+				eventReader, err := ipc.NewReader(bytes.NewReader(events))
+				So(err, ShouldBeNil)
+				defer eventReader.Release()
+
+				So(eventReader.Next(), ShouldBeTrue)
+				So(eventReader.Record().NumRows(), ShouldEqual, 2)
+			})
+		})
+
+		Convey("When Execute runs CREATE OR REPLACE VIEW", func() {
+			empty, err := warehouse.Execute(ctx, `CREATE OR REPLACE VIEW v1 AS SELECT id FROM closed_paper`)
+
+			Convey("The body is empty", func() {
+				So(err, ShouldBeNil)
+				So(len(empty), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When a session view is queried then dropped", func() {
+			_, err := warehouse.Execute(ctx, `CREATE OR REPLACE VIEW v1 AS SELECT id FROM closed_paper`)
+			So(err, ShouldBeNil)
+
+			stream, err := warehouse.Execute(ctx, `SELECT id FROM v1`)
+			So(err, ShouldBeNil)
+			So(len(stream), ShouldEqual, 312)
+
+			dropped, err := warehouse.Execute(ctx, `DROP VIEW v1`)
+
+			Convey("The drop returns an empty body", func() {
+				So(err, ShouldBeNil)
+				So(len(dropped), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When Execute materializes a working table", func() {
+			empty, err := warehouse.Execute(ctx,
+				`CREATE TABLE snap AS SELECT id, symbol FROM closed_paper`)
+
+			Convey("CREATE TABLE returns empty then SELECT streams rows", func() {
+				So(err, ShouldBeNil)
+				So(len(empty), ShouldEqual, 0)
+
+				stream, err := warehouse.Execute(ctx, `SELECT id FROM snap`)
+				So(err, ShouldBeNil)
+				So(len(stream), ShouldEqual, 312)
+
+				dropped, err := warehouse.Execute(ctx, `DROP TABLE snap`)
+				So(err, ShouldBeNil)
+				So(len(dropped), ShouldEqual, 0)
+			})
+		})
 	})
 }
 
-func TestWarehouseExecuteSession(t *testing.T) {
-	Convey("Warehouse materializes and drops views with an empty Arrow body", t, func() {
-		warehouse := local(t)
-		ctx := context.Background()
+func TestClose(t *testing.T) {
+	Convey("Setup", t, func() {
+		warehouse := New()
 
-		empty, err := warehouse.Execute(ctx, `CREATE OR REPLACE VIEW v1 AS SELECT id FROM closed_paper`)
-		So(err, ShouldBeNil)
-		So(len(empty), ShouldEqual, 0)
+		Convey("When Close is called without a prior connect", func() {
+			err := warehouse.Close()
 
-		stream, err := warehouse.Execute(ctx, `SELECT id FROM v1`)
-		So(err, ShouldBeNil)
-		So(len(stream), ShouldBeGreaterThan, 0)
-
-		dropped, err := warehouse.Execute(ctx, `DROP VIEW v1`)
-		So(err, ShouldBeNil)
-		So(len(dropped), ShouldEqual, 0)
-	})
-
-	Convey("Warehouse materializes Perspective working tables", t, func() {
-		warehouse := local(t)
-		ctx := context.Background()
-
-		empty, err := warehouse.Execute(ctx,
-			`CREATE TABLE snap AS SELECT id, symbol FROM closed_paper`)
-		So(err, ShouldBeNil)
-		So(len(empty), ShouldEqual, 0)
-
-		stream, err := warehouse.Execute(ctx, `SELECT id FROM snap`)
-		So(err, ShouldBeNil)
-		So(len(stream), ShouldBeGreaterThan, 0)
-
-		dropped, err := warehouse.Execute(ctx, `DROP TABLE snap`)
-		So(err, ShouldBeNil)
-		So(len(dropped), ShouldEqual, 0)
+			Convey("It succeeds without error", func() {
+				So(err, ShouldBeNil)
+			})
+		})
 	})
 }

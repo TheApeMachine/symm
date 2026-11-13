@@ -64,48 +64,79 @@ func (store *memGrammarStore) ListKeys(prefix string) iter.Seq[string] {
 	}
 }
 
-func TestGrammarCatalogSymbol(t *testing.T) {
-	Convey("The symbol is read from the object key", t, func() {
-		catalog := &GrammarCatalog{}
+func TestNewGrammarCatalog(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewGrammarCatalog is called", func() {
+			catalog := NewGrammarCatalog()
 
-		So(catalog.Symbol(grammarSymbolDir+"BTC-USD.bin"), ShouldEqual, "BTC/USD")
-		So(catalog.ObjectKey("ETH/USD"), ShouldEqual, grammarSymbolDir+"ETH-USD.bin")
+			Convey("ObjectKey round-trips symbols", func() {
+				So(catalog.ObjectKey("ETH/USD"), ShouldEqual, grammarSymbolDir+"ETH-USD.bin")
+				So(catalog.Symbol(grammarSymbolDir+"BTC-USD.bin"), ShouldEqual, "BTC/USD")
+			})
+		})
 	})
 }
 
-func TestGrammarCatalogPersistNoOp(t *testing.T) {
-	Convey("Persist skips when client or symbol is missing", t, func() {
+func TestObjectKey(t *testing.T) {
+	Convey("Setup", t, func() {
+		catalog := NewGrammarCatalog()
+
+		Convey("When ObjectKey encodes a symbol", func() {
+			Convey("Key uses grammar prefix and escaped slash", func() {
+				So(catalog.ObjectKey("BTC/USD"), ShouldEqual, grammarSymbolDir+"BTC-USD.bin")
+			})
+		})
+	})
+}
+
+func TestSymbol(t *testing.T) {
+	Convey("Setup", t, func() {
+		catalog := NewGrammarCatalog()
+
+		Convey("When Symbol decodes an object key", func() {
+			Convey("Symbol restores the trading pair", func() {
+				So(catalog.Symbol(grammarSymbolDir+"BTC-USD.bin"), ShouldEqual, "BTC/USD")
+			})
+		})
+	})
+}
+
+func TestPersist(t *testing.T) {
+	Convey("Setup", t, func() {
 		catalog := NewGrammarCatalog()
 		state := NewSequencer().State()
 
-		So(catalog.Persist(t.Context(), nil, "BTC/USD", state), ShouldBeNil)
-		So(catalog.Persist(t.Context(), nil, "", state), ShouldBeNil)
+		Convey("When client or symbol is missing", func() {
+			Convey("Persist is a no-op", func() {
+				So(catalog.Persist(t.Context(), nil, "BTC/USD", state), ShouldBeNil)
+				So(catalog.Persist(t.Context(), nil, "", state), ShouldBeNil)
+			})
+		})
+
+		Convey("When grammar is written to a mem store", func() {
+			backing := &memGrammarStore{}
+			seq := NewSequencer()
+			_, mutated := seq.Step("R03", 0.7)
+			So(mutated, ShouldBeTrue)
+
+			err := catalog.Persist(t.Context(), backing, "BTC/USD", seq.State())
+
+			key := catalog.ObjectKey("BTC/USD")
+			raw, dlErr := backing.Download(t.Context(), key)
+			restored, attrErr := data.AttributeOk[SequencerState](raw, "state")
+
+			Convey("JSON round-trips root length", func() {
+				So(err, ShouldBeNil)
+				So(dlErr, ShouldBeNil)
+				So(attrErr, ShouldBeNil)
+				So(len(restored.Root), ShouldEqual, len(seq.State().Root))
+			})
+		})
 	})
 }
 
-func TestGrammarCatalogPersistRoundTrip(t *testing.T) {
-	Convey("Persist writes grammar JSON the store can reload", t, func() {
-		backing := &memGrammarStore{}
-		catalog := NewGrammarCatalog()
-		seq := NewSequencer()
-		_, mutated := seq.Step("R03", 0.7)
-		So(mutated, ShouldBeTrue)
-
-		err := catalog.Persist(t.Context(), backing, "BTC/USD", seq.State())
-		So(err, ShouldBeNil)
-
-		key := catalog.ObjectKey("BTC/USD")
-		raw, err := backing.Download(t.Context(), key)
-		So(err, ShouldBeNil)
-
-		restored, err := data.AttributeOk[SequencerState](raw, "state")
-		So(err, ShouldBeNil)
-		So(len(restored.Root), ShouldEqual, len(seq.State().Root))
-	})
-}
-
-func TestGrammarCatalogRestoreCatalog(t *testing.T) {
-	Convey("RestoreCatalog applies every grammar object under the prefix", t, func() {
+func TestRestoreCatalog(t *testing.T) {
+	Convey("Setup", t, func() {
 		backing := &memGrammarStore{}
 		catalog := NewGrammarCatalog()
 
@@ -120,12 +151,16 @@ func TestGrammarCatalogRestoreCatalog(t *testing.T) {
 
 		seen := make(map[string]SequencerState)
 
-		catalog.RestoreCatalog(t.Context(), backing, func(symbol string, state SequencerState) {
-			seen[symbol] = state
-		})
+		Convey("When RestoreCatalog lists persisted keys", func() {
+			catalog.RestoreCatalog(t.Context(), backing, func(symbol string, state SequencerState) {
+				seen[symbol] = state
+			})
 
-		So(len(seen), ShouldEqual, 2)
-		So(len(seen["BTC/USD"].Root), ShouldEqual, len(btc.State().Root))
-		So(len(seen["ETH/USD"].Root), ShouldEqual, len(eth.State().Root))
+			Convey("Every symbol is replayed", func() {
+				So(len(seen), ShouldEqual, 2)
+				So(len(seen["BTC/USD"].Root), ShouldEqual, len(btc.State().Root))
+				So(len(seen["ETH/USD"].Root), ShouldEqual, len(eth.State().Root))
+			})
+		})
 	})
 }
