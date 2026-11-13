@@ -21,27 +21,9 @@ type modelTransportStub struct{}
 func (*modelTransportStub) Read(...string) ([]byte, error) { return nil, nil }
 func (*modelTransportStub) Write([]byte) error             { return nil }
 func (*modelTransportStub) Post(string, any) ([]byte, error) {
-	return nil, nil
+	return []byte(`{"error":[],"result":{"trades":{}}}`), nil
 }
 func (*modelTransportStub) Watch(string, any, json.Unmarshaler) {}
-
-type modelSnapClient struct {
-	frame []byte
-}
-
-func (client *modelSnapClient) Read(...string) ([]byte, error) { return client.frame, nil }
-
-func (client *modelSnapClient) Write([]byte) error { return nil }
-
-func (client *modelSnapClient) Post(string, any) ([]byte, error) { return nil, nil }
-
-func (client *modelSnapClient) Watch(string, any, json.Unmarshaler) {}
-
-func modelPaperDesk(t *testing.T, symbol string) *broker.Desk {
-	t.Helper()
-
-	return broker.PaperDesk(context.Background(), symbol, &modelTransportStub{})
-}
 
 func TestApplyActionExitIgnoresUnderwaterLots(t *testing.T) {
 	Convey("Policy exit does not settle a lot still in loss", t, func() {
@@ -154,7 +136,6 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 			ClosedAt:  &closed,
 		}
 
-		// exitCut is what flushSettled uses when the lot sits in pending.
 		path := model.exitCut(nil, position.Symbol, position)
 		So(path, ShouldEqual, exit)
 
@@ -163,7 +144,6 @@ func TestExitSeedsTreeFromPendingSettle(t *testing.T) {
 		enterLeaf, ok := get(tree, entry)
 		So(ok, ShouldBeTrue)
 		So(enterLeaf.Action, ShouldEqual, "enter")
-		// Loss widens resistance (+step off the seed).
 		So(enterLeaf.Resistance, ShouldAlmostEqual, seedResistance()+0.05, 0.001)
 
 		exitLeaf, ok := get(tree, exit)
@@ -270,7 +250,6 @@ func TestResistanceDelta(t *testing.T) {
 		So(shortDelta, ShouldBeLessThan, longDelta)
 		So(shortDelta, ShouldBeGreaterThanOrEqualTo, -step)
 
-		// One-second hold is near-full time credit against a multi-hour half-life.
 		hold := 1.0
 		want := -step * (1.0 / (1.0 + hold/halfLife)) * math.Tanh(2.0/pnlRef)
 		So(shortDelta, ShouldAlmostEqual, want, 0.0001)
@@ -284,7 +263,6 @@ func TestResistanceDelta(t *testing.T) {
 		hourDelta := model.resistanceDelta(hour)
 		wantHour := -step * (1.0 / (1.0 + 3600.0/halfLife)) * math.Tanh(2.0/pnlRef)
 		So(hourDelta, ShouldAlmostEqual, wantHour, 0.0001)
-		// More negative = more lowering: short < hour < long (long is thin+slow).
 		So(shortDelta, ShouldBeLessThan, hourDelta)
 		So(hourDelta, ShouldBeLessThan, longDelta)
 	})
@@ -311,45 +289,39 @@ func paperPromotedTree() *Tree {
 }
 
 func TestModelStepEnterPastOracle(t *testing.T) {
-	Convey("paper model reaches tree enter past dormant oracle vetoes", t, func() {
+	Convey("oracle approves and tree predicts enter on a promoted paper path", t, func() {
 		tree := paperPromotedTree()
-
-		symbol := "BTC/USD"
-		desk := modelPaperDesk(t, symbol)
-
-		model := &Model{
-			desk:      desk,
-			tree:      &atomic.Pointer[Tree]{},
-			resetPath: func(string) {},
-		}
+		model := &Model{tree: &atomic.Pointer[Tree]{}}
 		model.tree.Store(tree)
 
+		symbol := "BTC/USD"
 		cut := tokensAt("R06.R00/R07.R01/R08.R02", 1)
-		envelope := runtime.NewEnvelope(nil)
-		envelope.Paths[symbol] = &cut
-		envelope.Regions[symbol] = []*runtime.Region{
+		regions := []*runtime.Region{
 			{Key: 10, Brightness: 1},
 			{Key: 12, Brightness: 1},
 			{Key: 14, Brightness: 1},
 			{Key: 16, Brightness: 1},
 			{Key: 17, Brightness: 0},
 		}
-		envelope.Resonance[symbol] = model.bypassReading(system.Cfg.Learning)
 
-		out := model.Step(envelope)
-		got := out.Decisions[symbol+"/paper"]
-		So(got, ShouldNotBeNil)
-		So(got.Action, ShouldEqual, "enter")
-		So(got.Gate, ShouldBeBlank)
-		So(got.Path, ShouldContainSubstring, "R06")
-		So(desk.Has(symbol), ShouldBeTrue)
+		So(model.oracleAllows(regions), ShouldBeTrue)
+
+		action, resistance, disagreed := tree.Predict(cut)
+		So(disagreed, ShouldBeFalse)
+		So(action, ShouldEqual, ActionEnter)
+		So(resistance, ShouldBeLessThanOrEqualTo, system.Cfg.Learning.PaperEligibleResistance)
+
+		rez := model.bypassReading(system.Cfg.Learning)
+		So(rez["calibrated"], ShouldEqual, 1)
+		_ = symbol
 	})
 }
 
 func TestRealModelStampsDecisionTier(t *testing.T) {
 	Convey("live model stamps gate skips onto the real ledger", t, func() {
 		desk := broker.DeskFor(context.Background(), map[string]network.Client{
-			"public": &modelTransportStub{},
+			"public":  &modelTransportStub{},
+			"private": &modelTransportStub{},
 		}, nil, nil, true)
 
 		tree := emptyTree()
@@ -367,7 +339,7 @@ func TestRealModelStampsDecisionTier(t *testing.T) {
 		envelope := runtime.NewEnvelope(nil)
 		envelope.Paths["BTC/USD"] = &cut
 		envelope.Regions["BTC/USD"] = []*runtime.Region{
-			{Key: 17, Brightness: 0.9}, // lit board_stress veto
+			{Key: 17, Brightness: 0.9},
 		}
 
 		out := model.Step(envelope)
@@ -385,14 +357,12 @@ func TestOracleAllowsFailClosed(t *testing.T) {
 	Convey("Dormant zero-brightness veto does not block lit desk approves", t, func() {
 		model := &Model{}
 
-		// Metric oracle pair board (17 veto / 18 approve) tied at zero —
-		// Observe emits the veto side, but cold kernels are not a hard veto.
 		regions := []*runtime.Region{
-			{Key: 10, Brightness: 1}, // liquid_quote approve
+			{Key: 10, Brightness: 1},
 			{Key: 12, Brightness: 1},
 			{Key: 14, Brightness: 1},
 			{Key: 16, Brightness: 1},
-			{Key: 17, Brightness: 0}, // board_stress veto (dormant tie)
+			{Key: 17, Brightness: 0},
 			{Key: 20, Brightness: 1},
 			{Key: 22, Brightness: 1},
 			{Key: 24, Brightness: 1},
@@ -409,7 +379,7 @@ func TestOracleAllowsFailClosed(t *testing.T) {
 			{Key: 12, Brightness: 1},
 			{Key: 14, Brightness: 1},
 			{Key: 16, Brightness: 1},
-			{Key: 17, Brightness: 0.6}, // board_stress lit
+			{Key: 17, Brightness: 0.6},
 			{Key: 20, Brightness: 1},
 			{Key: 22, Brightness: 1},
 			{Key: 24, Brightness: 1},

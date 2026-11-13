@@ -193,10 +193,14 @@ const summarize = (all: Lifecycle[]): LifecycleReport => {
 let snapshot: Snapshot = { report: summarize([]) };
 
 const publish = () => {
-	// Newest round trip first.
-	const all = [...lives.values()].sort((a, b) =>
-		b.opened_at.localeCompare(a.opened_at),
-	);
+	// Newest close first for settled trips; open lots by opened_at.
+	const all = [...lives.values()].sort((a, b) => {
+		const aClose = a.closed_at || a.opened_at;
+		const bClose = b.closed_at || b.opened_at;
+		const byClose = bClose.localeCompare(aClose);
+		if (byClose !== 0) return byClose;
+		return b.opened_at.localeCompare(a.opened_at);
+	});
 	snapshot = { report: summarize(all) };
 	syncOpenPositionCount();
 	for (const listener of listeners) listener();

@@ -21,10 +21,10 @@ Map() feeds logic/resonance Features (compression, exhaustion) for Model story g
 */
 type Signal struct {
 	*runtime.System
-	books  *broker.Book
-	price  *broker.Price
-	algo   *equation.Ignition
-	pulse  atomic.Uint64
+	books *broker.Book
+	price *broker.Price
+	algo  *equation.Ignition
+	pulse atomic.Uint64
 }
 
 /*
@@ -70,6 +70,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		if !ready {
 			return
+		}
+
+		if signal.price != nil {
+			signal.price.NoteExhaustion(symbol, output.Exhaustion)
 		}
 
 		mu.Lock()

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
@@ -37,21 +38,27 @@ BookManager holds per-symbol market books. Venue frames arrive as market.Level3
 (converted at the edge); this type never imports a venue package.
 */
 type BookManager struct {
-	mu        sync.RWMutex
-	lanes     map[string]*bookLane
-	pendingN  atomic.Int64
-	seeded    chan struct{}
-	onInvalid func([]string)
+	mu         sync.RWMutex
+	lanes      map[string]*bookLane
+	pendingN   atomic.Int64
+	seeded     chan struct{}
+	onInvalid  func([]string)
+	normalizer *spot.Normalizer
 }
 
 /*
 NewBookManager exists so boot can register Expect/Wait before the first L3
 frame; pending counts and the seeded signal live here rather than in Price.
 */
-func NewBookManager() *BookManager {
+func NewBookManager(normalizer *spot.Normalizer) *BookManager {
+	if normalizer == nil {
+		normalizer = spot.NewNormalizer()
+	}
+
 	return &BookManager{
-		lanes:  make(map[string]*bookLane),
-		seeded: make(chan struct{}, 1),
+		lanes:      make(map[string]*bookLane),
+		seeded:     make(chan struct{}, 1),
+		normalizer: normalizer,
 	}
 }
 
@@ -77,6 +84,8 @@ func (manager *BookManager) Expect(symbols []string) {
 	pending := int64(0)
 
 	for _, symbol := range symbols {
+		symbol = manager.normalizer.Name(symbol)
+
 		if symbol == "" {
 			continue
 		}
@@ -159,6 +168,8 @@ lookup avoids inventing lanes on read: a missing key must stay "not seeded",
 not flip to an empty book that passed BookIntact checks.
 */
 func (manager *BookManager) lookup(symbol string) *bookLane {
+	symbol = manager.normalizer.Name(symbol)
+
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 
@@ -170,6 +181,8 @@ lane creates on write because resubscribe and invalidation can deliver deltas
 before boot called Expect for that symbol.
 */
 func (manager *BookManager) lane(symbol string) *bookLane {
+	symbol = manager.normalizer.Name(symbol)
+
 	if lane := manager.lookup(symbol); lane != nil {
 		return lane
 	}

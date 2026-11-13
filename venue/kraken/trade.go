@@ -332,3 +332,5 @@ func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
 	type alias TradeSubscription
 	return sonic.Marshal((*alias)(&subscription))
 }
+
+

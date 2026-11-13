@@ -37,7 +37,7 @@ func pushBook(books *broker.BookManager, symbol string, bidQty int64) {
 func TestToxicityStep(t *testing.T) {
 	Convey("Step records hard support after touch refills", t, func() {
 		symbol := "TOX/USD"
-		books := broker.NewBookManager()
+		books := broker.NewBookManager(nil)
 
 		pushBook(books, symbol, 20)
 

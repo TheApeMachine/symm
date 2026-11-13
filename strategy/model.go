@@ -99,8 +99,8 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	var (
-		candMu      sync.Mutex
-		enterCands  []EnterCandidate
+		candMu     sync.Mutex
+		enterCands []EnterCandidate
 	)
 
 	queueEnter := func(cand EnterCandidate) {
@@ -493,17 +493,6 @@ func (model *Model) enterTiers(
 	resistance float64,
 	pathFound, bypass bool,
 ) {
-	if model.desk != nil && model.desk.AwaitingFill(symbol) {
-		decide(&runtime.Decision{
-			Symbol: symbol,
-			Action: "skip",
-			Reason: "awaiting entry fill",
-			Gate:   "tier",
-			Path:   path,
-		})
-		return
-	}
-
 	if model.live {
 		model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
 		return

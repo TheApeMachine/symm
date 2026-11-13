@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/data"
 
 	"github.com/bytedance/sonic"
-	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
@@ -28,16 +27,17 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public    network.Client
-	snapshot  *kraken.Instrument
-	Level3    *sync.Map
-	cache     *sync.Map
-	takerFees *sync.Map
-	quote     string
-	symbols   []string
-	auth      *kraken.Auth
-	excluded  []string
-	level3URL string
+	public     network.Client
+	snapshot   *kraken.Instrument
+	Level3     *sync.Map
+	cache      *sync.Map
+	takerFees  *sync.Map
+	normalizer *spot.Normalizer
+	quote      string
+	symbols    []string
+	auth       *kraken.Auth
+	excluded   []string
+	level3URL  string
 }
 
 /*
@@ -54,18 +54,23 @@ NewInstrument blocks startup on the instrument snapshot because every later step
 (subscribe, fee load, order mins) depends on that single channel payload.
 */
 func NewInstrument(
-	ctx context.Context, public network.Client,
+	ctx context.Context, public network.Client, normalizer *spot.Normalizer,
 ) *Instrument {
+	if normalizer == nil {
+		normalizer = spot.NewNormalizer()
+	}
+
 	instrument := &Instrument{
-		public:    public,
-		Level3:    &sync.Map{},
-		cache:     &sync.Map{},
-		takerFees: &sync.Map{},
-		symbols:   []string{},
-		quote:     system.Cfg.Market.QuoteCurrency,
-		auth:      kraken.NewAuth(),
-		excluded:  append([]string(nil), system.Cfg.Market.Instrument.Excluded...),
-		level3URL: system.Cfg.WebSocket.Endpoints.Level3,
+		public:     public,
+		Level3:     &sync.Map{},
+		cache:      &sync.Map{},
+		takerFees:  &sync.Map{},
+		normalizer: normalizer,
+		symbols:    []string{},
+		quote:      system.Cfg.Market.QuoteCurrency,
+		auth:       kraken.NewAuth(),
+		excluded:   append([]string(nil), system.Cfg.Market.Instrument.Excluded...),
+		level3URL:  system.Cfg.WebSocket.Endpoints.Level3,
 	}
 
 	instrument.System = runtime.NewSystem(
@@ -193,11 +198,13 @@ func (instrument *Instrument) cachePair(pair kraken.InstrumentPair) {
 		return
 	}
 
-	if !slices.Contains(instrument.symbols, pair.Symbol) {
-		instrument.symbols = append(instrument.symbols, pair.Symbol)
+	symbol := instrument.normalizer.Name(pair.Symbol)
+
+	if !slices.Contains(instrument.symbols, symbol) {
+		instrument.symbols = append(instrument.symbols, symbol)
 	}
 
-	instrument.cache.Store(pair.Symbol, pair)
+	instrument.cache.Store(symbol, pair)
 }
 
 /*
@@ -212,8 +219,9 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 			continue
 		}
 
-		instrument.symbols = append(instrument.symbols, pair.Symbol)
-		instrument.cache.Store(pair.Symbol, pair)
+		symbol := instrument.normalizer.Name(pair.Symbol)
+		instrument.symbols = append(instrument.symbols, symbol)
+		instrument.cache.Store(symbol, pair)
 	}
 }
 
@@ -239,61 +247,11 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 }
 
 /*
-NormalizerFor seeds Kraken's spot.Normalizer from the desk instrument cache so
-Price can round Allocate to lot steps and resolve REST pair keys (TradeVolume,
-Balance assets, ticker rows) onto ws symbols — the SDK has no hook into Instrument.
-*/
-func NormalizerFor(instrument *Instrument) *spot.Normalizer {
-	normalizer := spot.NewNormalizer()
-
-	if instrument == nil {
-		return normalizer
-	}
-
-	update := &spot.AssetsManagerUpdate{
-		NewAssets: make(map[string]spot.AssetInfo),
-		NewPairs:  make(map[string]spot.AssetPair),
-	}
-
-	for _, pair := range instrument.Pairs() {
-		update.NewAssets[pair.Base] = spot.AssetInfo{AltName: pair.Base}
-		update.NewAssets[pair.Quote] = spot.AssetInfo{AltName: pair.Quote}
-
-		var tick *sdkdecimal.Decimal
-
-		if pair.TickSize != nil {
-			tick, _ = sdkdecimal.NewFromString(pair.TickSize.String())
-		}
-
-		lotDecimals := int(pair.QtyPrecision)
-
-		if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
-			if exp := pair.QtyIncrement.Exponent(); exp < 0 {
-				lotDecimals = int(-exp)
-			}
-		}
-
-		update.NewPairs[pair.Base+pair.Quote] = spot.AssetPair{
-			WSName:        pair.Symbol,
-			Base:          pair.Base,
-			Quote:         pair.Quote,
-			PairDecimals:  pair.PricePrecision,
-			LotDecimals:   lotDecimals,
-			LotMultiplier: 1,
-			TickSize:      tick,
-		}
-	}
-
-	normalizer.Update(update)
-	return normalizer
-}
-
-/*
 Has guards Allocate and tier enter — symbols outside the quote filter must fail
 before a socket subscription exists.
 */
 func (instrument *Instrument) Has(symbol string) bool {
-	_, ok := instrument.cache.Load(symbol)
+	_, ok := instrument.cache.Load(instrument.normalizer.Name(symbol))
 	return ok
 }
 
@@ -307,7 +265,7 @@ func (instrument *Instrument) SpotOpen(symbol string) bool {
 		return false
 	}
 
-	raw, ok := instrument.cache.Load(symbol)
+	raw, ok := instrument.cache.Load(instrument.normalizer.Name(symbol))
 
 	if !ok {
 		return false
@@ -327,6 +285,7 @@ Pair is the sizing source of QtyMin, CostMin, and increments; missing entries
 log and return empty struct so callers fail loudly on bad symbols.
 */
 func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
+	symbol = instrument.normalizer.Name(symbol)
 	value, ok := instrument.cache.Load(symbol)
 
 	if !ok {
@@ -562,6 +521,8 @@ a live channel alone does not replace the book, so the symbol would stay
 invalid while trades keep flowing.
 */
 func (instrument *Instrument) ResubscribeLevel3(symbol string) error {
+	symbol = instrument.normalizer.Name(symbol)
+
 	if symbol == "" {
 		return nil
 	}
@@ -739,7 +700,7 @@ func (instrument *Instrument) fee(table *sync.Map, symbol string) *decimal.Decim
 		return nil
 	}
 
-	val, ok := table.Load(symbol)
+	val, ok := table.Load(instrument.normalizer.Name(symbol))
 
 	if !ok || val == nil {
 		return nil

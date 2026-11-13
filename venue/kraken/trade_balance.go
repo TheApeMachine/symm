@@ -168,39 +168,34 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 }
 
 /*
-ToMarket projects equity fields into nomagique TradeBalance without treating equity as cash.
+ToMarket writes equity and unrealized onto market.Balance. Cash stays on
+Balance REST — never treat equity as spendable here.
 */
 func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType {
-	book, ok := other.(*market.TradeBalance)
+	book, ok := other.(*market.Balance)
 
 	if !ok || book == nil || balance == nil {
 		return other
 	}
 
-	// TradeBalance is equity/margin accounting only. Spot cash for sizing
-	// lives on Balance — never treat equity as spendable here.
-	return market.NewTradeBalance(map[string]any{
-		"equity":         balance.Result.Equity,
-		"unrealized_pnl": balance.Result.UnrealizedPnL,
-		"available_cash": balance.Result.AvailableCash,
-		"free_margin":    balance.Result.FreeMargin,
-	}).ToMarket(book)
+	book.Equity = balance.Result.Equity
+	book.Unrealized = balance.Result.UnrealizedPnL
+
+	return book
 }
 
 /*
-FromMarket copies hub trade-balance back for paper round-trips.
+FromMarket copies hub equity fields back for paper round-trips.
 */
 func (balance *TradeBalance) FromMarket(other market.MarketType) market.MarketType {
-	book, ok := other.(*market.TradeBalance)
+	book, ok := other.(*market.Balance)
 
 	if !ok || book == nil || balance == nil {
 		return balance
 	}
 
 	balance.Result.Equity = book.Equity
-	balance.Result.UnrealizedPnL = book.UnrealizedPnL
-	balance.Result.AvailableCash = book.AvailableCash
-	balance.Result.FreeMargin = book.FreeMargin
+	balance.Result.UnrealizedPnL = book.Unrealized
 
 	return balance
 }

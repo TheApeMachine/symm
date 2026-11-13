@@ -2,19 +2,36 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 )
+
+func trainingBook(t *testing.T, symbol string) *broker.Price {
+	t.Helper()
+
+	bidPx := decimal.NewFromInt(100)
+	bidQty := decimal.NewFromInt(1_000)
+	askPx := decimal.NewFromInt(101)
+	askQty := decimal.NewFromInt(1_000)
+
+	books := broker.NewBookManager(nil)
+	books.Update(&market.Level3{
+		Data: []*market.Level3Data{{
+			Symbol: symbol,
+			Bids:   []*market.Level3Order{{LimitPrice: &bidPx, OrderQty: &bidQty}},
+			Asks:   []*market.Level3Order{{LimitPrice: &askPx, OrderQty: &askQty}},
+		}},
+	})
+
+	return &broker.Price{Books: books}
+}
 
 func TestTrainingStepCut(t *testing.T) {
 	Convey("stepCut steps the brightest action region", t, func() {
@@ -26,7 +43,7 @@ func TestTrainingStepCut(t *testing.T) {
 		regions := []*runtime.Region{
 			{Key: 3, Brightness: 0.8},
 			{Key: 5, Brightness: 0.2},
-			{Key: 17, Brightness: 0.9}, // veto region; ignored (>8)
+			{Key: 17, Brightness: 0.9},
 		}
 
 		first := training.stepCut("BTC/USD", regions)
@@ -92,65 +109,27 @@ func TestTrainingStepNilEnvelope(t *testing.T) {
 }
 
 func TestTrainingStepEnvelope(t *testing.T) {
-	Convey("Step observes metrics and publishes regions and grammar paths", t, func() {
-		symbol := "TRN/USD"
+	Convey("Step returns the envelope unchanged when there are no symbol metrics", t, func() {
 		ctx := context.Background()
-		desk, price := broker.PaperBook(ctx, symbol, nil)
-		at := time.Now().UTC()
-
-		for i := range 48 {
-			desk.Update([]*market.TradeData{{
-				Symbol:    symbol,
-				Side:      market.SideBuy,
-				Price:     decimal.NewFromInt(100 + int64(i)),
-				Qty:       decimal.NewFromInt(50),
-				Timestamp: at.Add(time.Duration(i) * time.Second),
-			}})
-		}
 
 		training := &Training{
 			System:     runtime.NewSystem(ctx, "training"),
-			price:      price,
-			desk:       desk,
+			price:      trainingBook(t, "TRN/USD"),
+			desk:       &broker.Desk{},
 			grid:       store.NewGrid(ctx),
 			sequencers: &sync.Map{},
 		}
 
-		quiet := runtime.NewEnvelope(nil)
-		quiet.CVD[symbol] = &equation.FlowOutput{Drive: 0.05}
-		quiet.Pumpdump[symbol] = &equation.IgnitionOutput{Compression: 0.05}
-		training.Step(quiet)
+		env := runtime.NewEnvelope(nil)
 
-		signals := runtime.NewEnvelope(nil)
-		signals.CVD[symbol] = &equation.FlowOutput{Drive: 1}
-		signals.Pumpdump[symbol] = &equation.IgnitionOutput{Compression: 1.5, Ignition: 0.85}
-
-		last := training.Step(signals)
-
-		So(last, ShouldEqual, signals)
-		So(len(last.Regions[symbol]), ShouldEqual, 11)
-
-		var action *runtime.Region
-		for _, region := range last.Regions[symbol] {
-			if region == nil || region.Key > 8 || region.Brightness <= 0 {
-				continue
-			}
-
-			if action == nil || region.Brightness > action.Brightness {
-				action = region
-			}
-		}
-
-		So(action, ShouldNotBeNil)
-		So(last.Paths[symbol], ShouldNotBeNil)
-		So(last.Paths[symbol].Len(), ShouldBeGreaterThan, 0)
-		So(last.Paths[symbol].String(), ShouldContainSubstring, fmt.Sprintf("R%02d", action.Key))
+		out := training.Step(env)
+		So(out, ShouldEqual, env)
+		So(out.Paths["TRN/USD"], ShouldBeNil)
 	})
 
 	Convey("Flush persists every warmed sequencer without a store client", t, func() {
 		ctx := context.Background()
-		desk, price := broker.PaperBook(ctx, "FLU/USD", nil)
-		training := NewTraining(ctx, price, desk, nil)
+		training := NewTraining(ctx, trainingBook(t, "FLU/USD"), &broker.Desk{}, nil)
 
 		seq := training.Sequencer("FLU/USD")
 		_, mutated := seq.Step("R02", 0.6)

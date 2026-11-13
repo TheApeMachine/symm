@@ -2,7 +2,6 @@ package kraken
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"time"
 
@@ -73,69 +72,6 @@ func NewExecution() *Execution {
 NewExecutionFromMap builds a wire Execution from a paper CLI model.
 */
 func NewExecutionFromMap(model map[string]any) json.Marshaler {
-	if _, ok := model["trades"]; ok {
-		return executionFromHistory(model)
-	}
-
-	return executionFromEvent(model)
-}
-
-/*
-executionFromHistory maps paper CLI history into a snapshot executions frame
-so tier ledger sync matches live snap_trades on reconnect.
-*/
-func executionFromHistory(model map[string]any) *Execution {
-	history, _ := NewTradesHistoryFromMap(model).(*TradesHistoryResult)
-	data := make([]ExecutionData, 0)
-
-	if history != nil {
-		for id, trade := range history.Trades {
-			data = append(data, ExecutionData{
-				OrderID:     trade.OrderID,
-				ExecID:      id,
-				ExecType:    "trade",
-				Symbol:      trade.Pair,
-				Side:        trade.Type,
-				LastQty:     trade.Volume,
-				LastPrice:   trade.Price,
-				Cost:        trade.Cost,
-				Timestamp:   time.Unix(int64(trade.Time), 0).UTC(),
-				OrderStatus: "filled",
-				CumQty:      trade.Volume,
-				CumCost:     trade.Cost,
-				AvgPrice:    trade.Price,
-				FeeUsdEquiv: trade.Fee,
-			})
-		}
-	}
-
-	slices.SortFunc(data, func(a, b ExecutionData) int {
-		if c := a.Timestamp.Compare(b.Timestamp); c != 0 {
-			return c
-		}
-
-		if a.ExecID < b.ExecID {
-			return -1
-		}
-
-		if a.ExecID > b.ExecID {
-			return 1
-		}
-
-		return 0
-	})
-
-	return &Execution{
-		Channel: "executions",
-		Type:    "snapshot",
-		Data:    data,
-	}
-}
-
-/*
-executionFromEvent maps one paper CLI fill/cancel event into an executions update.
-*/
-func executionFromEvent(model map[string]any) *Execution {
 	var execType string
 	var orderStatus string
 
@@ -266,6 +202,25 @@ func (execution *Execution) Request() map[string]any {
 			"snap_trades": true,
 		},
 	}
+}
+
+func NewExecutionRequest(orderID string) map[string]any {
+	return map[string]any{
+		"method": "private",
+		"params": map[string]any{
+			"channel": "executions",
+		},
+	}
+}
+
+func NewExecutionResult(data []byte) *Execution {
+	var result Execution
+
+	if err := sonic.Unmarshal(data, &result); err != nil {
+		return nil
+	}
+
+	return &result
 }
 
 /*
@@ -418,4 +373,3 @@ func (execution *Execution) Tradable() bool {
 
 	return false
 }
-

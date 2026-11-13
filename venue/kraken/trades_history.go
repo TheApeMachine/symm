@@ -3,6 +3,7 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -10,6 +11,35 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 )
+
+type TradesHistoryRequest struct {
+	Nonce            int    `json:"nonce"`
+	Type             string `json:"type"`
+	Trades           bool   `json:"trades"`
+	ConsolidateTaker bool   `json:"consolidate_taker"`
+	Pair             string `json:"pair"`
+	Limit            int    `json:"limit"`
+	WithoutCount     bool   `json:"without_count"`
+	Ledgers          bool   `json:"ledgers"`
+	RebaseMultiplier string `json:"rebase_multiplier"`
+	Aclass           string `json:"aclass"`
+	WithCursor       bool   `json:"with_cursor"`
+}
+
+func NewTradesHistoryRequest(symbols []string) *TradesHistoryRequest {
+	return &TradesHistoryRequest{
+		Type:             "all",
+		Trades:           false,
+		Pair:             strings.Join(symbols, ","),
+		ConsolidateTaker: true,
+		Limit:            100,
+		WithoutCount:     true,
+		Ledgers:          true,
+		RebaseMultiplier: "1",
+		Aclass:           "currency",
+		WithCursor:       true,
+	}
+}
 
 /*
 HistoryTrade is one closed lot row in TradesHistory REST — broker reconciles
@@ -25,7 +55,46 @@ type HistoryTrade struct {
 	Cost       *decimal.Decimal `json:"cost"`
 	Fee        *decimal.Decimal `json:"fee"`
 	Volume     *decimal.Decimal `json:"vol"`
-	Time       float64          `json:"time"`
+	Time       time.Time        `json:"time"`
+}
+
+/*
+UnmarshalJSON accepts Kraken's unix-seconds float on time.
+*/
+func (trade *HistoryTrade) UnmarshalJSON(data []byte) error {
+	type alias struct {
+		OrderID    string           `json:"ordertxid"`
+		PositionID string           `json:"postxid"`
+		Pair       string           `json:"pair"`
+		Type       string           `json:"type"`
+		OrderType  string           `json:"ordertype"`
+		Price      *decimal.Decimal `json:"price"`
+		Cost       *decimal.Decimal `json:"cost"`
+		Fee        *decimal.Decimal `json:"fee"`
+		Volume     *decimal.Decimal `json:"vol"`
+		Time       float64          `json:"time"`
+	}
+
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*trade = HistoryTrade{
+		OrderID:    decoded.OrderID,
+		PositionID: decoded.PositionID,
+		Pair:       decoded.Pair,
+		Type:       decoded.Type,
+		OrderType:  decoded.OrderType,
+		Price:      decoded.Price,
+		Cost:       decoded.Cost,
+		Fee:        decoded.Fee,
+		Volume:     decoded.Volume,
+		Time:       time.Unix(int64(decoded.Time), 0).UTC(),
+	}
+
+	return nil
 }
 
 /*
@@ -129,6 +198,16 @@ type TradesHistoryResult struct {
 	Cursor TradesHistoryCursor     `json:"cursor"`
 }
 
+func NewTradesHistoryResult(data []byte) *TradesHistoryResult {
+	var result TradesHistoryResult
+
+	if err := sonic.Unmarshal(data, &result); err != nil {
+		return nil
+	}
+
+	return &result
+}
+
 /*
 TradesHistoryCursor is the cursor block when with_cursor is true on the request.
 */
@@ -198,14 +277,14 @@ func NewTradesHistoryFromMap(model map[string]any) json.Marshaler {
 			volume = decimal.NewFromFloat(value)
 		}
 
-		var when float64
+		var when time.Time
 
 		switch value := trade["time"].(type) {
 		case float64:
-			when = value
+			when = time.Unix(int64(value), 0).UTC()
 		case string:
 			if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-				when = float64(parsed.Unix())
+				when = parsed.UTC()
 			}
 		}
 

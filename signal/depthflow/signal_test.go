@@ -42,8 +42,8 @@ func TestDepthflowStep(t *testing.T) {
 		frame, err := json.Marshal(snapshot)
 		So(err, ShouldBeNil)
 
-		instrument := broker.NewInstrument(context.Background(), &depthSnapClient{frame: frame})
-		books := broker.NewBookManager()
+		instrument := broker.NewInstrument(context.Background(), &depthSnapClient{frame: frame}, nil)
+		books := broker.NewBookManager(nil)
 
 		signal := depthflow.NewSignal(context.Background(), books, instrument)
 		envelope := runtime.NewEnvelope(nil)

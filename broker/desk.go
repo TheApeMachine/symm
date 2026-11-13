@@ -4,18 +4,14 @@ import (
 	"context"
 	"errors"
 	"iter"
-	"strings"
-	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
@@ -89,7 +85,6 @@ func DeskFor(
 			venue.NewKraken(quote),
 			nil,
 		)
-		real.live = true
 		tiers[TierTypeReal] = real
 	} else {
 		virtual := NewTier(
@@ -101,7 +96,6 @@ func DeskFor(
 			venue.NewKraken(quote),
 			client,
 		)
-		virtual.live = false
 		paper := NewTier(
 			ctx,
 			TierTypePaper,
@@ -111,7 +105,6 @@ func DeskFor(
 			venue.NewKraken(quote),
 			client,
 		)
-		paper.live = false
 		real := NewTier(
 			ctx,
 			TierTypeReal,
@@ -121,7 +114,6 @@ func DeskFor(
 			venue.NewKraken(quote),
 			client,
 		)
-		real.live = false
 		tiers[TierTypeVirtual] = virtual
 		tiers[TierTypePaper] = paper
 		tiers[TierTypeReal] = real
@@ -180,14 +172,19 @@ func (desk *Desk) pumpLevel3() {
 			}
 
 			desk.l3Symbols = desk.l3Symbols[:0]
+			trades := make([]*market.TradeData, 0)
 
 			for _, row := range book.Data {
 				if row != nil && row.Symbol != "" {
 					desk.l3Symbols = append(desk.l3Symbols, row.Symbol)
+
+					trades = append(trades, &market.TradeData{
+						Symbol: row.Symbol,
+					})
 				}
 			}
 
-			desk.Refresh(desk.l3Symbols)
+			desk.Update(trades)
 		}
 	}
 }
@@ -268,24 +265,6 @@ func (desk *Desk) Feed(buf []byte) {
 }
 
 /*
-OpenPrivate is separated from Run so boot can finish instrument/L3 before
-executions and add_order share one authenticated private socket.
-*/
-func (desk *Desk) OpenPrivate() error {
-	for _, tier := range desk.tiers {
-		if tier == nil || tier.Type != TierTypeReal {
-			continue
-		}
-
-		if err := tier.OpenPrivate(); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
-	return nil
-}
-
-/*
 Start launches Run in the background after OpenPrivate wired sockets — boot
 calls Flush/Hello synchronously before ingress goroutines race fills.
 */
@@ -342,56 +321,8 @@ Hello is the operator-facing book: balance changes and history sync call it so
 the hub stays consistent without every tier mutating UI directly.
 */
 func (desk *Desk) Hello() {
-	ui.UI.WriteJSON(desk.helloFrame())
-}
-
-/*
-helloFrame recomputes marks before JSON so UI lines match what kickExit sees;
-it also merges exchangeClosed trips absent from the tier cache.
-*/
-func (desk *Desk) helloFrame() map[string]any {
-	positions := make(map[string]*Position)
-	balances := make(map[string]any)
-
-	if real := desk.tiers[TierTypeReal]; real != nil {
-		real.Unlocked(desk.tiers[TierTypePaper])
-	}
-
 	for _, tier := range desk.tiers {
-		if tier == nil {
-			continue
-		}
-
-		for _, position := range tier.positions.All() {
-			if position == nil || position.ID == "" {
-				continue
-			}
-
-			positions[position.ID] = position
-		}
-
-		if tier.Type == TierTypeReal {
-			tier.exchangeClosed.Range(func(_, value any) bool {
-				position := value.(*Position)
-
-				if position == nil || position.ID == "" {
-					return true
-				}
-
-				positions[position.ID] = position
-
-				return true
-			})
-		}
-
-		if reading := tier.balanceReading(); reading != nil {
-			balances[tier.Type.String()] = reading
-		}
-	}
-
-	return map[string]any{
-		"positions": positions,
-		"balances":  balances,
+		tier.Hello()
 	}
 }
 
@@ -406,7 +337,7 @@ func (desk *Desk) Flush() error {
 			continue
 		}
 
-		for _, position := range tier.positions.Submitted() {
+		for _, position := range tier.positions.Open() {
 			if position == nil {
 				continue
 			}
@@ -429,77 +360,36 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 			continue
 		}
 
-		if desk.price == nil {
-			errnie.Error(errnie.Err(
-				errnie.UnprocessableContent,
-				"[desk.Update] price is not wired",
-				nil,
-			), "symbol", trade.Symbol)
-			continue
-		}
-
 		desk.price.NoteTrade(trade)
-
-		mark := desk.price.TouchBid(trade.Symbol)
-
-		if mark == nil && desk.Has(trade.Symbol) {
-			mark = desk.price.CloseMark(trade.Symbol)
-		}
+		mark := desk.price.Mark(trade.Symbol)
 
 		if mark == nil {
 			continue
 		}
 
-		desk.mark(trade.Symbol, mark)
-	}
-}
+		for _, tier := range desk.tiers {
+			if tier == nil || tier.positions == nil {
+				continue
+			}
 
-/*
-Refresh marks on bid moves without waiting for a trade print — otherwise stoploss
-would lag when the book reprices in a quiet market.
-*/
-func (desk *Desk) Refresh(symbols []string) {
-	for _, symbol := range symbols {
-		if symbol == "" || desk.price == nil {
-			continue
-		}
-
-		price := desk.price.TouchBid(symbol)
-
-		if price == nil && desk.Has(symbol) {
-			price = desk.price.CloseMark(symbol)
-		}
-
-		if price != nil {
-			desk.mark(symbol, price)
+			for _, position := range tier.positions.Open(trade.Symbol) {
+				_ = position.Update(mark)
+			}
 		}
 	}
 }
 
 /*
-mark skips idle symbols so pumpLevel3 does not publish ledger noise for the
-entire subscribed universe on every L3 delta.
+OpenCount is how many live lots a tier holds — board capacity uses this.
 */
-func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
-	if symbol == "" || price == nil {
-		return
+func (desk *Desk) OpenCount(tt TierType) int {
+	tier := desk.tiers[tt]
+
+	if tier == nil || tier.positions == nil {
+		return 0
 	}
 
-	// L3 frames touch the whole universe; skip tiers with no open lot so
-	// pumpLevel3 does not thrash ledger/hub for idle symbols.
-	if !desk.Has(symbol) {
-		return
-	}
-
-	update := market.NewUpdate(symbol, price)
-
-	for _, tier := range desk.tiers {
-		if tier == nil {
-			continue
-		}
-
-		tier.Update(update)
-	}
+	return len(tier.positions.Open())
 }
 
 /*
@@ -537,7 +427,6 @@ func (desk *Desk) Enter(
 		)
 	}
 
-	tier.Unlocked(desk.tiers[TierTypePaper])
 	return tier.Enter(symbol, path, pathFound)
 }
 
@@ -573,64 +462,6 @@ func (desk *Desk) Has(symbol string) bool {
 
 		if tier.positions.Has(symbol) {
 			return true
-		}
-	}
-
-	return false
-}
-
-/*
-OpenCount is the number of non-flat lots on one tier — board capacity uses this.
-*/
-func (desk *Desk) OpenCount(tt TierType) int {
-	tier := desk.tiers[tt]
-
-	if tier == nil || tier.positions == nil {
-		return 0
-	}
-
-	return tier.positions.OpenCount()
-}
-
-/*
-ChainOnSettle fans settle events to an extra listener on every armed tier.
-*/
-func (desk *Desk) ChainOnSettle(fn func(*Position)) {
-	if desk == nil || fn == nil {
-		return
-	}
-
-	for _, tier := range desk.tiers {
-		if tier == nil || tier.positions == nil {
-			continue
-		}
-
-		tier.positions.ChainOnSettle(fn)
-	}
-}
-
-/*
-AwaitingFill lets strategy defer path learning until Apply owns qty — acting on
-a submitted-but-unfilled lot would attribute fills to the wrong policy epoch.
-*/
-func (desk *Desk) AwaitingFill(symbol string) bool {
-	if symbol == "" {
-		return false
-	}
-
-	for _, tier := range desk.tiers {
-		if tier == nil || tier.positions == nil {
-			continue
-		}
-
-		for _, position := range tier.positions.Submitted(symbol) {
-			if position == nil {
-				continue
-			}
-
-			if position.Qty == nil || position.Qty.Sign() <= 0 {
-				return true
-			}
 		}
 	}
 
@@ -710,94 +541,4 @@ func (desk *Desk) BookStale(symbol string) bool {
 	}
 
 	return desk.price.Books.StaleSymbol(symbol)
-}
-
-/*
-PaperBook stands up a deterministic L3 snapshot and three tiers without Kraken
-so broker tests exercise fill paths without credentials or ws replay.
-*/
-func PaperBook(ctx context.Context, symbol string, transport network.Client) (*Desk, *Price) {
-	qtyMin := decimal.RequireFromString("0.01")
-	step := decimal.RequireFromString("0.01")
-	costMin := decimal.RequireFromString("1")
-	fee := decimal.NewFromFloat(0.26)
-
-	base, quote, _ := strings.Cut(symbol, "/")
-	if quote == "" {
-		quote = "USD"
-	}
-
-	instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}, quote: quote}
-	instrument.cache.Store(symbol, kraken.InstrumentPair{
-		Symbol: symbol, Base: base, Quote: quote, Status: "online",
-		QtyMin: &qtyMin, CostMin: &costMin, QtyIncrement: &step, TickSize: &step,
-	})
-	instrument.takerFees.Store(symbol, &fee)
-
-	books := NewBookManager()
-	bidPx := decimal.NewFromInt(100)
-	bidQty := decimal.NewFromInt(50)
-	askPx := decimal.NewFromInt(101)
-	askQty := decimal.NewFromInt(50)
-
-	books.Update(&market.Level3{
-		Type: "snapshot",
-		Data: []*market.Level3Data{{
-			Symbol: symbol,
-			Bids: []*market.Level3Order{{
-				LimitPrice: &bidPx,
-				OrderQty:   &bidQty,
-			}},
-			Asks: []*market.Level3Order{{
-				LimitPrice: &askPx,
-				OrderQty:   &askQty,
-			}},
-		}},
-	})
-
-	cash := decimal.NewFromInt(100_000)
-	wallet := market.NewBalance(map[string]any{
-		"quote": "USD",
-		"assets": []*market.Asset{
-			market.NewAsset(nil, "USD", cash, decimal.Zero, cash),
-		},
-	})
-
-	host := venue.NewKraken(quote)
-	host.Balance().(*kraken.Balance).Result = map[string]*decimal.Decimal{quote: &cash}
-
-	price := &Price{
-		Instrument: instrument,
-		Books:      books,
-		ticker:     market.NewTicker(nil),
-		tape:       NewTape(),
-		balance:    wallet,
-		normalizer: NormalizerFor(instrument),
-		venue:      host,
-	}
-	price.bindRisk()
-
-	desk := AssembledDesk(price, map[TierType]*Tier{
-		TierTypeVirtual: AssembledTier(ctx, TierTypeVirtual, price, host, transport),
-		TierTypePaper:   AssembledTier(ctx, TierTypePaper, price, host, transport),
-		TierTypeReal:    AssembledTier(ctx, TierTypeReal, price, host, transport),
-	})
-
-	return desk, price
-}
-
-/*
-PaperDesk drops the Price return when tests only assert routing, not sizing math.
-*/
-func PaperDesk(ctx context.Context, symbol string, transport network.Client) *Desk {
-	desk, _ := PaperBook(ctx, symbol, transport)
-
-	return desk
-}
-
-/*
-AssembledDesk wires tiers for cross-package tests without live transports.
-*/
-func AssembledDesk(price *Price, tiers map[TierType]*Tier) *Desk {
-	return &Desk{price: price, tiers: tiers}
 }

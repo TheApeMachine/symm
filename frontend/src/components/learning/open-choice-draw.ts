@@ -371,7 +371,7 @@ export const drawOpenChoiceChart = async (
 			if (!live.has(id)) dropLot(id);
 		}
 
-		legend.sort((a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0));
+		legend.sort((a, b) => a.name.localeCompare(b.name));
 		return legend;
 	};
 

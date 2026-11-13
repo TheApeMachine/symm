@@ -528,6 +528,23 @@ const shownLife = (life: Lifecycle): Lifecycle =>
 		? { ...life, status: "holding" }
 		: life;
 
+/*
+compareClosedHistorically orders settled trips by close time (newest first),
+falling back to open time then id so equal stamps stay stable.
+*/
+const compareClosedHistorically = (left: Lifecycle, right: Lifecycle) => {
+	const leftClose = left.closed_at || left.opened_at;
+	const rightClose = right.closed_at || right.opened_at;
+	const byClose = rightClose.localeCompare(leftClose);
+
+	if (byClose !== 0) return byClose;
+
+	const byOpen = right.opened_at.localeCompare(left.opened_at);
+	if (byOpen !== 0) return byOpen;
+
+	return left.id.localeCompare(right.id);
+};
+
 type TrialWord = "win" | "loss" | "scratch";
 
 const trialWord = (life: Lifecycle): TrialWord | null => {
@@ -758,15 +775,7 @@ export const LifecycleView = () => {
 	const lifecycles = view.lifecycles
 		.filter((life) => life.status === "closed")
 		.map(shownLife)
-		.sort((left, right) => {
-			const leftAt = left.closed_at
-				? Date.parse(left.closed_at)
-				: Date.parse(left.opened_at);
-			const rightAt = right.closed_at
-				? Date.parse(right.closed_at)
-				: Date.parse(right.opened_at);
-			return rightAt - leftAt;
-		});
+		.sort(compareClosedHistorically);
 	const perf = view.performance;
 	const name =
 		book === "virtual" ? "virtual" : book === "real" ? "real" : "paper";

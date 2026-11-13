@@ -38,7 +38,7 @@ func seedBook(books *broker.BookManager, symbol string, bid, ask int64) {
 func TestCVDStep(t *testing.T) {
 	Convey("aggressive buy flow with rising response classifies as drive", t, func() {
 		symbol := "CVD/USD"
-		books := broker.NewBookManager()
+		books := broker.NewBookManager(nil)
 		signal := cvd.NewSignal(context.Background(), books)
 		envelope := runtime.NewEnvelope(nil)
 		at := time.Now().UTC()

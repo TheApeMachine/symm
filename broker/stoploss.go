@@ -1,176 +1,128 @@
 package broker
 
-import "github.com/theapemachine/symm/system"
+import (
+	"time"
 
-/*
-StoplossState is persisted on Position JSON; legacy wire values must keep stable
-numeric ids across restores.
-*/
+	"github.com/theapemachine/symm/system"
+)
+
 type StoplossState int
 
 const (
 	StoplossHealthy StoplossState = iota
 	StoplossArmed
-	// stoplossLegacyTakeProfit kept so Triggered stays wire value 3.
 	stoplossLegacyTakeProfit
 	StoplossTriggered
 )
 
-/*
-Stoploss trails profit on armed lots and sells only when still fee-net green.
-
-Arms above 1%, trails a keep-ratio floor of peak (50% at arm, +5pp keep per
-+1% peak). The latch fires only if mark PnL is still at/above policy min profit;
-otherwise the lot stays open through loss or scratch.
-*/
 type Stoploss struct {
-	State          StoplossState `json:"State"`
-	InitialPnLPct  float64       `json:"InitialPnLPct"`
-	CurrentPnLPct  float64       `json:"CurrentPnLPct"`
-	PreviousPnLPct float64       `json:"PreviousPnLPct"`
-	PeakPnLPct     float64       `json:"PeakPnLPct"`
-	FloorPnLPct    float64       `json:"FloorPnLPct"`
-	ArmPnlPct      float64       `json:"ArmPnlPct"`
-	GivebackPnlPct float64       `json:"GivebackPnlPct"`
-	FloorMinPnlPct float64       `json:"FloorMinPnlPct"`
-	TightenPerPct  float64       `json:"TightenPerPct"`
+	State         StoplossState `json:"State"`
+	InitialPnLPct float64       `json:"InitialPnLPct"`
+	CurrentPnLPct float64       `json:"CurrentPnLPct"`
+	PeakPnLPct    float64       `json:"PeakPnLPct"`
+	ArmPnlPct     float64       `json:"ArmPnlPct"`
+	Ascent        Ascent        `json:"Ascent"`
+	ExhaustScore  float64       `json:"ExhaustScore"`
+	Confirms      int           `json:"Confirms"`
 }
 
-/*
-NewStoploss seeds Initial/Peak from first mark so armed trailing starts from
-observed PnL, not zero, after enter fills.
-*/
-func NewStoploss(PnLPct float64) *Stoploss {
+func NewStoploss(pnlPct float64) *Stoploss {
+	armPct := system.Cfg.Selection.StoplossArmPnlPct
+	if armPct <= 0 {
+		armPct = 1.0 // Default 1% net profit to cover round-trip taker friction
+	}
+
 	return &Stoploss{
-		State:          StoplossHealthy,
-		InitialPnLPct:  PnLPct,
-		CurrentPnLPct:  PnLPct,
-		PeakPnLPct:     PnLPct,
-		FloorPnLPct:    PnLPct,
-		ArmPnlPct:      1.0,
-		GivebackPnlPct: 0.5,
-		FloorMinPnlPct: system.Cfg.Selection.StoplossFloorMinPnlPct,
-		TightenPerPct:  0.05,
+		State:         StoplossHealthy,
+		InitialPnLPct: pnlPct,
+		CurrentPnLPct: pnlPct,
+		PeakPnLPct:    pnlPct,
+		ArmPnlPct:     armPct,
 	}
 }
 
 /*
-Update advances peak, arms above ArmPnlPct, then trails a tightening floor.
+Update evaluates market progress.
+- pnlPct: fee-net PnL percentage.
+- marketFrictionEvidence: optional external signal (e.g. CVD absorption, Hawkes decay, or pumpdump).
 */
-func (stoploss *Stoploss) Update(PnLPct float64) {
-	stoploss.ensureDefaults()
-
-	stoploss.PreviousPnLPct = stoploss.CurrentPnLPct
-	stoploss.CurrentPnLPct = PnLPct
-
-	if stoploss.CurrentPnLPct > stoploss.PeakPnLPct {
-		stoploss.PeakPnLPct = stoploss.CurrentPnLPct
-	}
-
-	// Legacy TakeProfit wire value folds into Armed with the new arm base.
-	if stoploss.State == stoplossLegacyTakeProfit {
-		stoploss.State = StoplossArmed
-		stoploss.GivebackPnlPct = 0.5
-	}
-
-	minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
-
-	if stoploss.State == StoplossArmed || stoploss.State == StoplossTriggered {
-		if stoploss.CurrentPnLPct < minProfit {
-			stoploss.disarmForHold()
-			return
-		}
-	}
-
+func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64) {
 	if stoploss.State == StoplossTriggered {
 		return
 	}
 
-	if stoploss.State == StoplossHealthy &&
-		stoploss.CurrentPnLPct > stoploss.ArmPnlPct {
-		stoploss.State = StoplossArmed
-	}
+	now := time.Now()
 
-	if stoploss.State != StoplossArmed {
+	// RULE 1: Never exit at a loss or before arming. Hold until profit.
+	if pnlPct < stoploss.ArmPnlPct {
+		stoploss.State = StoplossHealthy
+		stoploss.Ascent.Reset()
+		stoploss.ExhaustScore = 0
+		stoploss.Confirms = 0
+		stoploss.CurrentPnLPct = pnlPct
 		return
 	}
 
-	stoploss.trailArmed()
-}
+	stoploss.CurrentPnLPct = pnlPct
 
-/*
-ensureDefaults fills trail knobs missing on lots restored before this schema.
-*/
-func (stoploss *Stoploss) ensureDefaults() {
-	if stoploss.ArmPnlPct <= 0 {
-		stoploss.ArmPnlPct = 1.0
+	if pnlPct > stoploss.PeakPnLPct {
+		stoploss.PeakPnLPct = pnlPct
 	}
 
-	if stoploss.GivebackPnlPct <= 0 {
-		stoploss.GivebackPnlPct = 0.5
+	// Arm once we are safely in fee-net profit
+	stoploss.State = StoplossArmed
+
+	// Feed smoothed kinematic ascent tracker
+	stoploss.Ascent.Note(pnlPct, now)
+	stoploss.ExhaustScore = stoploss.Ascent.Exhaust()
+
+	sel := system.Cfg.Selection
+	nearPeakFrac := sel.StoplossNearPeakFrac
+
+	if nearPeakFrac <= 0 {
+		nearPeakFrac = 0.96 // Must be within 4% of peak (on the crest)
 	}
 
-	if stoploss.FloorMinPnlPct == 0 {
-		stoploss.FloorMinPnlPct = 0.5
+	rateDecayMin := sel.StoplossRateDecayMin
+
+	if rateDecayMin <= 0 {
+		rateDecayMin = 0.70 // Climb velocity slowed by at least 70%
 	}
 
-	if stoploss.TightenPerPct <= 0 {
-		stoploss.TightenPerPct = 0.05
-	}
-}
+	// RULE 2: NOT give-back based.
+	// We MUST be near the peak (on the ascent or plateau, not tumbling down).
+	nearPeak := stoploss.CurrentPnLPct >= (stoploss.PeakPnLPct * nearPeakFrac)
 
-/*
-trailArmed keeps GivebackPnlPct of peak at arm, then raises the keep ratio by
-TightenPerPct for each +1% of peak above Arm, never below FloorMinPnlPct.
-GivebackPnlPct stays the arm base; the live keep is only folded into Floor.
-*/
-func (stoploss *Stoploss) trailArmed() {
-	above := stoploss.PeakPnLPct - stoploss.ArmPnlPct
+	// RULE 3: Kinematic deceleration confirmation
+	kinematicStall := stoploss.ExhaustScore >= rateDecayMin
 
-	if above < 0 {
-		above = 0
-	}
+	// Corroboration: either strong kinematic stall with sufficient sample history,
+	// or kinematic stall confirmed by external microstructure/order flow friction.
+	hasSampleDepth := stoploss.Ascent.Samples >= 4
+	confirmedByMarket := marketFrictionEvidence >= sel.StoplossPumpConfirmMin
 
-	keep := stoploss.GivebackPnlPct + above*stoploss.TightenPerPct
+	if nearPeak && kinematicStall && hasSampleDepth && (confirmedByMarket || stoploss.ExhaustScore >= 0.90) {
+		stoploss.Confirms++
+	} else {
+		// Decay confirms gracefully rather than zeroing out on a single outlier tick
+		if stoploss.Confirms > 0 {
+			stoploss.Confirms--
+		}
 
-	if keep > 1 {
-		keep = 1
-	}
-
-	if keep < 0 {
-		keep = 0
+		return
 	}
 
-	floor := stoploss.PeakPnLPct * keep
+	requiredConfirms := sel.StoplossConfirmMarks
 
-	if stoploss.FloorMinPnlPct >= 0 && floor < stoploss.FloorMinPnlPct {
-		floor = stoploss.FloorMinPnlPct
+	if requiredConfirms <= 0 {
+		requiredConfirms = 3
 	}
 
-	stoploss.FloorPnLPct = floor
-
-	minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
-
-	if stoploss.CurrentPnLPct < stoploss.FloorPnLPct &&
-		stoploss.CurrentPnLPct >= minProfit {
+	if stoploss.Confirms >= requiredConfirms {
 		stoploss.State = StoplossTriggered
 	}
 }
 
-/*
-disarmForHold clears the trail when PnL drops under the policy profit floor so
-the lot can ride back without an armed floor above spot. Re-arms on ArmPnlPct.
-*/
-func (stoploss *Stoploss) disarmForHold() {
-	stoploss.State = StoplossHealthy
-	stoploss.PeakPnLPct = stoploss.CurrentPnLPct
-	stoploss.FloorPnLPct = stoploss.CurrentPnLPct
-}
-
-/*
-Triggered is the latch dischargeStoploss checks — after fire, updates are ignored
-so repeated marks cannot re-enter Armed or spam onSettled.
-*/
 func (stoploss *Stoploss) Triggered() bool {
 	return stoploss.State == StoplossTriggered
 }

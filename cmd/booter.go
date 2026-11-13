@@ -170,10 +170,6 @@ func (booter *Booter) Run() error {
 		return err
 	}
 
-	if err := booter.desk.OpenPrivate(); err != nil {
-		return errnie.Err(errnie.IO, "[booter] private websocket open failed", err)
-	}
-
 	booter.desk.Start()
 
 	if err := booter.openFirehose(); err != nil {
@@ -301,16 +297,6 @@ func (booter *Booter) initTransports() error {
 func (booter *Booter) initMarket() error {
 	ctx := booter.Context()
 
-	booter.instrument = broker.NewInstrument(ctx, booter.public)
-
-	if err := booter.instrument.Error(); err != nil {
-		return errnie.Err(
-			errnie.IO,
-			"booter: instrument registry failed during construction",
-			err,
-		)
-	}
-
 	booter.normalizer = spot.NewNormalizer()
 
 	if err := booter.normalizer.Use(spot.NewREST()); err != nil {
@@ -321,7 +307,17 @@ func (booter *Booter) initMarket() error {
 		)
 	}
 
-	booter.book = broker.NewBookManager()
+	booter.instrument = broker.NewInstrument(ctx, booter.public, booter.normalizer)
+
+	if err := booter.instrument.Error(); err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"booter: instrument registry failed during construction",
+			err,
+		)
+	}
+
+	booter.book = broker.NewBookManager(booter.normalizer)
 
 	booter.price = broker.NewPrice(
 		ctx,
@@ -400,8 +396,6 @@ func (booter *Booter) initPipeline() error {
 			}},
 		},
 	)
-
-	booter.wireSettle(model)
 
 	booter.workspace.Transition(nmruntime.READY)
 
@@ -530,12 +524,4 @@ func (booter *Booter) openFirehose() error {
 	}
 
 	return nil
-}
-
-func (booter *Booter) wireSettle(model *strategy.Model) {
-	if booter.desk == nil || model == nil {
-		return
-	}
-
-	booter.desk.ChainOnSettle(model.NoteSettled)
 }

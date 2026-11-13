@@ -38,7 +38,7 @@ func seedBook(books *broker.BookManager, symbol string, index int64) {
 func TestPumpdumpStep(t *testing.T) {
 	Convey("Step records pump pressure from rising prints", t, func() {
 		symbol := "PD/USD"
-		books := broker.NewBookManager()
+		books := broker.NewBookManager(nil)
 		at := time.Now().UTC()
 
 		signal := pumpdump.NewSignal(context.Background(), books, nil)

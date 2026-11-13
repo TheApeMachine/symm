@@ -109,7 +109,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		now := time.Now()
 
 		for _, symbol := range symbols {
-			mark := signal.price.CloseMark(symbol)
+			mark := signal.price.Mark(symbol)
 
 			if mark == nil || mark.Sign() <= 0 {
 				continue

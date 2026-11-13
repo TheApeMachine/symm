@@ -37,7 +37,7 @@ func seedBook(books *broker.BookManager, symbol string) {
 func TestMorphologyStep(t *testing.T) {
 	Convey("Step records morphology from book-shaped trades", t, func() {
 		symbol := "MOR/USD"
-		books := broker.NewBookManager()
+		books := broker.NewBookManager(nil)
 		seedBook(books, symbol)
 
 		signal := morphology.NewSignal(context.Background(), books)

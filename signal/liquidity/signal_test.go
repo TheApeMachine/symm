@@ -37,7 +37,7 @@ func seedBook(books *broker.BookManager, symbol string, bid, ask, bidQty, askQty
 
 func TestLiquidityStep(t *testing.T) {
 	Convey("Step records liquidity once depth peers exist", t, func() {
-		books := broker.NewBookManager()
+		books := broker.NewBookManager(nil)
 		symbols := []string{"L1/USD", "L2/USD", "L3/USD", "L4/USD"}
 		seedBook(books, symbols[0], 20, 21, 200, 20)
 		seedBook(books, symbols[1], 30, 31, 40, 8)
