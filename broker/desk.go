@@ -389,8 +389,8 @@ func (desk *Desk) Flush() error {
 
 /*
 Update records tape flow and marks open positions from the executable bid.
-Level3 and public trades both land here — each successful mark is pushed to
-the hub (not only Hello on balance).
+Level3 and public trades both land here — any touch publishes via Hello so the
+hub always receives a full positions_snapshot, never a per-symbol delta.
 */
 func (desk *Desk) Update(trades []*market.TradeData) {
 	for _, trade := range trades {
@@ -417,7 +417,7 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 				continue
 			}
 
-			touched := make(map[string]*Position)
+			touched := false
 
 			for _, position := range tier.positions.Open(symbol) {
 				if err := position.Update(mark); err != nil {
@@ -425,17 +425,12 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 				}
 
 				_ = tier.positions.Save(position)
-				touched[position.ID] = position
+				touched = true
 			}
 
-			if len(touched) == 0 {
-				continue
+			if touched {
+				tier.Hello()
 			}
-
-			ui.UI.WriteJSON(map[string]any{
-				"tier":      tier.Type.String(),
-				"positions": touched,
-			})
 		}
 	}
 }

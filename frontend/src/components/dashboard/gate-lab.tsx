@@ -15,7 +15,7 @@ import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Input } from "#/components/ui/input";
 import { Typography } from "#/components/ui/typography";
-import { trySendCommand } from "#/lib/hub-socket";
+import { trySendCommand } from "#/providers/websocket";
 import { cn } from "#/lib/utils";
 
 const RISK_FIELDS: Array<{

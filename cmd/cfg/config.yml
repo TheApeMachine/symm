@@ -182,13 +182,13 @@ market:
     record: true
     record_flush_bytes: 4194304
     record_flush_lines: 2000
-  # Level3 subscribe frames are sized to one second of l3_rate_limit (40
-  # symbols at depth 10, cost 5 each; Kraken's limit is per second). Measured:
-  # at 1s Kraken silently drops every other full-budget frame (no ack, no
-  # error; 208 of 621 never seeded), so frames go out every 2s.
+  # batch = symbols per Level3 socket. Subscribe writes are still capped to
+  # one second of l3_rate_limit (40 symbols at depth 10, cost 5 each) and
+  # paced below. Measured: at 1s Kraken silently drops every other full-budget
+  # frame (no ack, no error; 208 of 621 never seeded), so frames go out every 2s.
   subscribe:
     pace: 2s
-    batch: 40
+    batch: 200
 
 ui:
   addr: 127.0.0.1:8765
@@ -196,6 +196,7 @@ ui:
     # Upper bound for one ordered dashboard batch. Later frames remain queued
     # for the next message; no telemetry record is truncated or discarded.
     max_message_bytes: 4194304
+    queue_frames: 64
 
 risk:
   # Upper bound on quote cash one desk entry may spend (Enter / Quote).
@@ -228,7 +229,7 @@ risk:
 
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.
-  max_open_positions: 5
+  max_open_positions: 100
   max_enters_per_tick: 1
   # Accumulation vs ignition range caps (dual peak oracles in training).
   max_accum_peak_frac: 0.35

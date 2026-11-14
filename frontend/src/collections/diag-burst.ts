@@ -1,5 +1,5 @@
 import { createStore } from "@tanstack/store";
-import { atoms } from "#/collections/app";
+import { atoms, direct } from "#/collections/app";
 import type { PipelineFrame, PipelineNode } from "#/collections/pipeline";
 
 /*
@@ -107,4 +107,12 @@ export const isBursting = (
 	if (!id) return false;
 	const at = bursts[id];
 	return typeof at === "number" && now - at < BURST_MS;
+};
+
+direct.diag_pulses = (value) => {
+	applyDiagPulses(value);
+};
+
+direct.diag_pulse = (value) => {
+	applyDiagPulse(value);
 };

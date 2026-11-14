@@ -1,7 +1,7 @@
 import { createStore } from "@tanstack/store";
 import { triePrefix } from "#/collections/book";
 import { filterExploreKeys } from "#/components/learning/explore-path";
-import { trySendCommand } from "#/lib/hub-socket";
+import { trySendCommand } from "#/providers/websocket";
 import { tryDecodeJsonBytes } from "#/lib/json-bytes";
 
 /*

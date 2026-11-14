@@ -8,8 +8,8 @@ import type {
 
 /*
 SciChart's ESM is broken under Node SSR. Lazy-load so the route module can
-evaluate without pulling scichart-react in. The surface owns the store
-subscription — React only hosts chrome (layout toggle + legend).
+evaluate without pulling scichart-react in. Hub marks push into series;
+React only hosts chrome (layout toggle + legend).
 */
 const OpenChoiceSciChart = lazy(() =>
 	import("./open-choice-scichart").then((module) => ({
@@ -48,7 +48,7 @@ export const OpenChoiceChart = () => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Store → SciChart fifo series per open position. Toggle grid per position.
+						Full open-position snapshots → one SciChart series each. Toggle grid per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">

@@ -7,7 +7,7 @@ import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
-import { trySendCommand } from "#/lib/hub-socket";
+import { trySendCommand } from "#/providers/websocket";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 /*

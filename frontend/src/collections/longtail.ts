@@ -23,7 +23,7 @@ import {
 	isPathBookKey,
 } from "#/components/learning/explore-path";
 import { asFinite } from "#/lib/format";
-import { trySendCommand } from "#/lib/hub-socket";
+import { trySendCommand } from "#/providers/websocket";
 import {
 	deskRowsForStats,
 	ingestDeskClosedPositions,

@@ -27,6 +27,10 @@ func NewPinger(ctx context.Context) *Pinger {
 func (pinger *Pinger) Start(
 	conn *gorilla.Conn, writeMu *sync.Mutex, status *runtime.Stage,
 ) {
+	pinger.conn = conn
+	pinger.writeMu = writeMu
+	pinger.Transition(runtime.READY)
+
 	go func() {
 		ticker := time.NewTicker(system.Cfg.WebSocket.PingInterval)
 		defer ticker.Stop()
@@ -38,7 +42,7 @@ func (pinger *Pinger) Start(
 			case <-ticker.C:
 				pinger.writeMu.Lock()
 
-				if pinger.conn != nil && *status == runtime.READY {
+				if pinger.conn != nil && pinger.Status() == runtime.READY {
 					errnie.Error(pinger.conn.WriteControl(
 						gorilla.PingMessage,
 						nil,

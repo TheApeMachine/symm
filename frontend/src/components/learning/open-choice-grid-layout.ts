@@ -83,12 +83,12 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 	}
 
 	private positionIdFromSeriesName(name: string) {
-		return name.replace(/::stop-band$/, "");
+		return name.replace(/::(range|stop)-band$/, "");
 	}
 
 	private isCompanion(rs: { dataSeries?: { dataSeriesName?: string } | null }) {
 		const name = this.seriesName(rs);
-		return name.includes("::stop-band");
+		return /::(range|stop)-band$/.test(name);
 	}
 
 	private findByName(name: string) {
@@ -209,13 +209,19 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		primary.dataSeries = rs.dataSeries;
 		rs.isVisible = false;
 
-		// Insert floor bands beneath the mark path (index 0 / 1). Do not remove
-		// `primary` — that disposes the shared dataSeries and crashes on capacity.
+		// Range + stop bands under the mark path. Do not remove `primary` —
+		// that disposes the shared dataSeries and crashes on capacity.
+		this.attachCompanionBand(
+			subChart,
+			this.findByName(`${positionId}::range-band`),
+			false,
+			0,
+		);
 		this.attachCompanionBand(
 			subChart,
 			this.findByName(`${positionId}::stop-band`),
-			false,
-			0,
+			true,
+			1,
 		);
 		this.attachTip(subChart, positionId);
 

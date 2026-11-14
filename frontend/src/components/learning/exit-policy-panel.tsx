@@ -13,6 +13,7 @@ import {
 	buildStopChecks,
 	heldVerdict,
 	meterTone,
+	nearPeakFloor,
 	stateTone,
 	stopArmed,
 	stopRoom,
@@ -90,12 +91,14 @@ export const ExitPolicyPanel = ({
 					title="Highest fee-net return this position has marked."
 				/>
 				<BoundaryFact
-					label="Floor"
-					short={armed && stop ? `${stop.FloorPnLPct.toFixed(2)}%` : "not set"}
+					label="Crest"
+					short={
+						armed && stop ? `${nearPeakFloor(stop).toFixed(2)}%` : "not armed"
+					}
 					title={
 						armed && stop
-							? `Profit floor — ${stopRoom(stop).toFixed(2)}pp room on this mark.`
-							: "Floor has not armed yet."
+							? `Near-peak floor — ${stopRoom(stop).toFixed(2)}pp still in crest.`
+							: "Crest corridor arms with the stoploss."
 					}
 				/>
 				<BoundaryFact

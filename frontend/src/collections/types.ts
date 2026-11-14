@@ -14,17 +14,24 @@ export const STOPLOSS_HEALTHY = 0;
 export const STOPLOSS_ARMED = 1;
 export const STOPLOSS_TRIGGERED = 3;
 
+/** Matches broker.Ascent — climb kinematics used for exhaustion. */
+export type Ascent = {
+	PeakVelocity: number;
+	SmoothVelocity: number;
+	LastPnLPct: number;
+	LastTime?: string;
+	Samples: number;
+};
+
 export type Stoploss = {
 	State: StoplossState | number;
 	InitialPnLPct: number;
 	CurrentPnLPct: number;
-	PreviousPnLPct: number;
 	PeakPnLPct: number;
-	FloorPnLPct: number;
 	ArmPnlPct: number;
-	GivebackPnlPct: number;
-	FloorMinPnlPct: number;
-	TightenPerPct: number;
+	Ascent?: Ascent;
+	ExhaustScore: number;
+	Confirms: number;
 };
 
 /** Kraken spot OrderRequest as embedded on a desk position. */

@@ -292,10 +292,10 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
-SubscribeBooks opens one Level3 socket per symbol batch (market.subscribe.batch),
-stores them in Level3 keyed by symbols joined with "|", and writes one subscribe
-per socket. read is started before the subscribe write so snapshots are not
-rejected. Pace between batches is market.subscribe.pace.
+SubscribeBooks opens one Level3 socket per market.subscribe.batch symbols.
+Subscribe writes stay within l3_rate_limit (cost 5/symbol at depth 10), paced
+by market.subscribe.pace, so a large socket batch does not blow the venue
+budget. read starts before the first write so snapshots are not rejected.
 */
 func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)) error {
 	errnie.Info("[instrument] subscribing to level3 books")
@@ -320,6 +320,15 @@ func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)
 
 	depth := system.Cfg.Market.Level3.Depth
 	batch := system.Cfg.Market.Subscribe.Batch
+	frame := system.Cfg.Market.Level3.RateLimit / 5
+
+	if frame <= 0 {
+		frame = batch
+	}
+
+	if frame > batch {
+		frame = batch
+	}
 
 	for chunk := range slices.Chunk(instrument.symbols, batch) {
 		connSymbols := slices.Clone(chunk)
@@ -338,24 +347,8 @@ func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)
 		instrument.Level3.Store(batchKey, l3Client)
 		read(l3Client)
 
-		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(connSymbols, token, depth))
-
-		if err != nil {
-			return instrument.Error(errnie.Err(
-				errnie.IO,
-				"[instrument] level3 subscribe marshal failed",
-				err,
-			))
-		}
-
-		time.Sleep(system.Cfg.Market.Subscribe.Pace)
-
-		if err := l3Client.Write(msg); err != nil {
-			return instrument.Error(errnie.Err(
-				errnie.IO,
-				"[instrument] level3 subscribe failed for "+batchKey,
-				err,
-			))
+		if err := instrument.writeLevel3(l3Client, connSymbols, token, depth, frame); err != nil {
+			return instrument.Error(err)
 		}
 
 		// After the first subscribe: Open's reconnect path re-runs Callback.
@@ -370,23 +363,47 @@ func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)
 				)
 			}
 
-			again, err := sonic.Marshal(kraken.NewLevel3Subscription(connSymbols, fresh, depth))
-
-			if err != nil {
-				return errnie.Err(
-					errnie.IO,
-					"[instrument] level3 reconnect marshal failed",
-					err,
-				)
-			}
-
-			return l3Client.Write(again)
+			return instrument.writeLevel3(l3Client, connSymbols, fresh, depth, frame)
 		})
 
 		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
 	}
 
 	instrument.Transition(runtime.WAITING)
+	return nil
+}
+
+/*
+writeLevel3 sends paced, rate-limit-sized subscribe frames for one socket.
+*/
+func (instrument *Instrument) writeLevel3(
+	client *network.WebsocketClient,
+	symbols []string,
+	token string,
+	depth, frame int,
+) error {
+	for chunk := range slices.Chunk(symbols, frame) {
+		msg, err := sonic.Marshal(kraken.NewLevel3Subscription(chunk, token, depth))
+
+		if err != nil {
+			return errnie.Err(
+				errnie.IO,
+				"[instrument] level3 subscribe marshal failed",
+				err,
+			)
+		}
+
+		time.Sleep(system.Cfg.Market.Subscribe.Pace)
+
+		if err := client.Write(msg); err != nil {
+			return errnie.Err(
+				errnie.IO,
+				"[instrument] level3 subscribe failed",
+				err,
+			)
+		}
+	}
+
 	return nil
 }
 

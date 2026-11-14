@@ -17,7 +17,7 @@ import { GateLab, GateLabToggle } from "./gate-lab";
 
 const send = vi.fn();
 
-vi.mock("#/lib/hub-socket", () => ({
+vi.mock("#/providers/websocket", () => ({
 	trySendCommand: (command: Record<string, unknown>) => {
 		send(command);
 		return true;

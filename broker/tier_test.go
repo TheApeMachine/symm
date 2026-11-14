@@ -88,9 +88,10 @@ func TestTierUpdate(t *testing.T) {
 		tier.positions.Add(testSymbol, pos, true)
 
 		Convey("When Update carries a new bid mark", func() {
+			tier.price.Books.Update(level3Snapshot(testSymbol, "120", "121"))
 			tier.Update(&market.Update{Symbol: testSymbol, Price: dec("120")})
 
-			Convey("Position PnL matches fee-net 100 → 120", func() {
+			Convey("Position PnL matches fee-net 100 → 120 via Hello snapshot", func() {
 				So(pos.Mark.String(), ShouldEqual, "120")
 				So(pos.PnL.String(), ShouldEqual, "19.12")
 				So(pos.PnLPct.String(), ShouldEqual, "19.04382470119522")

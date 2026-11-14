@@ -17,7 +17,7 @@ type UIWebSocket struct {
 func NewUI() *UI {
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4194304)
-	viper.SetDefault("ui.websocket.queue_frames", 256)
+	viper.SetDefault("ui.websocket.queue_frames", 64)
 
 	return &UI{
 		Addr: viper.GetString("ui.addr"),

@@ -169,54 +169,20 @@ func NewTier(
 }
 
 /*
-Hello refreshes marks on open positions and publishes a full positions_snapshot so
-balance-driven events show the same PnL kickExit uses, including exchangeClosed.
+Hello publishes a full positions_snapshot of open positions as an id-keyed map
+(hub/UI contract). Marks and PnL are owned by Update — Hello only sums and ships.
 */
 func (tier *Tier) Hello() {
-	all := tier.positions.All()
-	positions := make(map[string]*Position, len(all))
-	skipped := 0
-
-	for _, position := range all {
-		if position == nil || position.ID == "" {
-			skipped++
-			symbol := ""
-			if position != nil {
-				symbol = position.Symbol
-			}
-			errnie.Debug("[tier] hello skip position",
-				"tier", tier.Type.String(),
-				"nil", position == nil,
-				"symbol", symbol,
-			)
-			continue
-		}
-
-		errnie.Debug("[tier] hello position",
-			"tier", tier.Type.String(),
-			"id", position.ID,
-			"symbol", position.Symbol,
-			"qty", position.Qty,
-			"closed_at", position.ClosedAt,
-			"entry_path", position.EntryPath,
-		)
-		positions[position.ID] = position
-	}
-
+	open := tier.positions.Open()
+	positions := make(map[string]*Position, len(open))
 	unrealized := decimal.Zero
 
-	for _, position := range tier.positions.Open() {
-		if position == nil || tier.price == nil {
+	for _, position := range open {
+		if position == nil || position.ID == "" {
 			continue
 		}
 
-		mark := tier.price.Mark(position.Symbol)
-
-		if mark != nil {
-			position.Mark = mark
-			position.PnL = tier.price.PnL(position)
-			position.PnLPct = tier.price.PnLPct(position)
-		}
+		positions[position.ID] = position
 
 		if position.PnL != nil {
 			unrealized = unrealized.Add(*position.PnL)
@@ -225,18 +191,6 @@ func (tier *Tier) Hello() {
 
 	tier.balance.Unrealized = &unrealized
 	reading := tier.balance.Reading()
-
-	errnie.Debug("[tier] hello publish",
-		"tier", tier.Type.String(),
-		"positions", len(all),
-		"published", len(positions),
-		"skipped", skipped,
-		"open", len(tier.positions.Open()),
-		"closed", len(tier.positions.Closed()),
-		"cash", reading["cash"],
-		"unrealized", reading["unrealized"],
-		"equity", reading["equity"],
-	)
 
 	ui.UI.WriteJSON(map[string]any{
 		"tier":      tier.Type.String(),
@@ -249,23 +203,21 @@ func (tier *Tier) Hello() {
 }
 
 /*
-Update runs on bid marks, not prints, so stoploss advances when the book moves.
+Update marks the symbol's open positions, then Hello so the hub always gets a
+full positions_snapshot with current PnL / PnLPct — never a sparse delta.
 */
 func (tier *Tier) Update(data *market.Update) {
-	touched := make(map[string]*Position)
+	touched := false
 
 	for _, position := range tier.positions.Open(data.Symbol) {
 		if err := position.Update(data.Price); err == nil {
 			tier.positions.Save(position)
-			touched[position.ID] = position
+			touched = true
 		}
 	}
 
-	if len(touched) > 0 {
-		ui.UI.WriteJSON(map[string]any{
-			"tier":      tier.Type.String(),
-			"positions": touched,
-		})
+	if touched {
+		tier.Hello()
 	}
 }
 
