@@ -22,23 +22,8 @@ type Ascent struct {
 }
 
 /*
-Seed stores the latest pre-arm PnL so a gap through the arm floor has a real
-initial upward delta instead of starting blind with PeakVelocity == 0.
-*/
-func (ascent *Ascent) Seed(pnlPct float64, at time.Time) {
-	if at.IsZero() {
-		at = time.Now()
-	}
-
-	*ascent = Ascent{
-		LastPnLPct: pnlPct,
-		LastTime:   at,
-	}
-}
-
-/*
-Note advances velocity with the latest PnL. Unchanged PnL is ignored so L3
-noise does not invent climb decay.
+Note advances velocity with the latest post-arm PnL. Unchanged PnL is ignored
+so L3 noise does not invent climb decay.
 */
 func (ascent *Ascent) Note(pnlPct float64, at time.Time) {
 	if at.IsZero() {
@@ -70,23 +55,8 @@ func (ascent *Ascent) Note(pnlPct float64, at time.Time) {
 	deltaPnL := pnlPct - ascent.LastPnLPct
 	ascent.LastPnLPct = pnlPct
 	ascent.LastTime = at
-
-	// Seeded pre-arm (Samples == 0 with LastTime set): first post-arm delta.
-	if ascent.Samples == 0 {
-		ascent.Samples = 2
-		ascent.SmoothDelta = deltaPnL
-		ascent.MeanDt = dt
-
-		if deltaPnL > 0 {
-			ascent.MeanUp = deltaPnL
-		}
-
-		ascent.SmoothVelocity = ascent.SmoothDelta / ascent.MeanDt
-		return
-	}
-
 	ascent.Samples++
-	alpha := 2.0 / (math.Sqrt(float64(ascent.Samples)) + 1.0)
+	alpha := 1.0 / (1.0 + math.Sqrt(float64(ascent.Samples)))
 
 	if ascent.Samples == 2 {
 		ascent.SmoothDelta = deltaPnL
@@ -104,7 +74,11 @@ func (ascent *Ascent) Note(pnlPct float64, at time.Time) {
 	ascent.MeanDt = (1-alpha)*ascent.MeanDt + alpha*dt
 
 	if deltaPnL > 0 {
-		ascent.MeanUp = (1-alpha)*ascent.MeanUp + alpha*deltaPnL
+		if ascent.MeanUp == 0 {
+			ascent.MeanUp = deltaPnL
+		} else {
+			ascent.MeanUp = (1-alpha)*ascent.MeanUp + alpha*deltaPnL
+		}
 	}
 
 	if ascent.MeanDt > 0 {

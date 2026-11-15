@@ -128,9 +128,9 @@ func (position *Position) entry() *decimal.Decimal {
 }
 
 /*
-Update marks a READY position. PnL always uses the best available mark so the
-hub chart gets a y on every Hello. Stoploss only arms/triggers when the visible
-book can absorb the full Qty (Walk VWAP). Other stages are a silent no-op.
+Update stamps Mark from the bid hint for the chart, then exact book PnL/PnLPct.
+Stoploss arms above fee-net break-even (PnLPct > 0). Incomplete books leave
+PnL nil and skip the stop. Other stages are a silent no-op.
 */
 func (position *Position) Update(hint *decimal.Decimal) error {
 	if hint == nil {
@@ -145,42 +145,36 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 		return nil
 	}
 
-	if position.Qty == nil || position.Qty.Sign() <= 0 || position.price == nil {
+	position.mu.Lock()
+
+	if position.Status() != runtime.READY ||
+		position.Qty == nil || position.Qty.Sign() <= 0 || position.price == nil {
+		position.mu.Unlock()
 		return nil
 	}
 
-	vwap, fully := position.price.Liquidation(position.Symbol, position.Qty)
-
-	if fully && vwap != nil {
-		position.Mark = vwap
-	} else {
-		position.Mark = hint
-	}
-
+	position.Mark = hint
 	position.PnL = position.price.PnL(position)
 	position.PnLPct = position.price.PnLPct(position)
 
-	if position.PnLPct == nil || !fully {
+	if position.PnLPct == nil {
+		position.mu.Unlock()
 		return nil
 	}
 
+	qty := *position.Qty
 	friction := position.price.ExhaustionReading(position.Symbol)
 
-	if room := position.price.ExitRoom(position.Symbol, position.Qty); room != nil {
+	if room := position.price.ExitRoom(position.Symbol, &qty); room != nil {
 		if r, _ := room.Float64(); r > 0 {
 			friction = math.Max(friction, 1/(1+r))
 		}
 	}
 
-	position.mu.Lock()
-
 	pnlpct, _ := position.PnLPct.Float64()
-	arm := position.price.StoplossArmPctFor(position.Symbol, position.Qty)
 
 	if position.Stoploss == nil {
-		position.Stoploss = NewStoploss(pnlpct, arm)
-	} else if arm > position.Stoploss.ArmPnlPct {
-		position.Stoploss.ArmPnlPct = arm
+		position.Stoploss = NewStoploss(pnlpct, 0)
 	}
 
 	position.Stoploss.Update(pnlpct, friction)
@@ -201,8 +195,9 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 }
 
 /*
-AbortExit cancels a pending sell after the pre-send guard refuses a loss exit.
-BUSY → READY so marks resume; Stoploss re-seeds Healthy.
+AbortExit cancels a pending or unfilled sell after a profit-floor abort,
+reject, or IOC expiration. BUSY → READY so marks resume; ExitOrder clears so
+the next trigger mints a fresh ClOrdId.
 */
 func (position *Position) AbortExit() {
 	if position == nil {
@@ -219,10 +214,97 @@ func (position *Position) AbortExit() {
 	position.ExitPath = ""
 	position.ExitTrigger = ""
 	position.ExitVenueOrderID = ""
+	position.ExitOrder = nil
 
 	if position.Status() == runtime.BUSY {
 		position.Transition(runtime.READY)
 	}
+}
+
+/*
+HasExitOrder reports whether an exit order slot is currently armed.
+*/
+func (position *Position) HasExitOrder() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	return position.ExitOrder != nil
+}
+
+/*
+ExitAttempt returns the number of exit attempts armed so far.
+*/
+func (position *Position) ExitAttempt() int {
+	if position == nil {
+		return 0
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	return position.ExitAttempts
+}
+
+func (position *Position) snapshotPnL() (string, *decimal.Decimal) {
+	if position == nil {
+		return "", nil
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	return position.ID, position.PnL
+}
+
+func (position *Position) remainingQty() decimal.Decimal {
+	if position == nil {
+		return decimal.Zero
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.Qty == nil {
+		return decimal.Zero
+	}
+
+	return *position.Qty
+}
+
+func (position *Position) isExitOrder(data *market.ExecutionData) bool {
+	if position == nil || data == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if data.ClientOrderID != "" && position.ExitOrder != nil &&
+		position.ExitOrder.ClOrdId == data.ClientOrderID {
+		return true
+	}
+
+	return data.OrderID != "" && data.OrderID == position.ExitVenueOrderID
+}
+
+func (position *Position) isEntryOrder(data *market.ExecutionData) bool {
+	if position == nil || data == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if data.ClientOrderID != "" && position.EntryOrder != nil &&
+		position.EntryOrder.ClOrdId == data.ClientOrderID {
+		return true
+	}
+
+	return data.OrderID != "" && data.OrderID == position.EntryVenueOrderID
 }
 
 /*
@@ -270,27 +352,40 @@ func (position *Position) Enter(
 }
 
 /*
-Exit arms Closing and moves READY → BUSY. ClosedAt / DONE wait for exit fills.
+exit arms a market sell and moves READY → BUSY. force stamps trigger "manual"
+so real Send keeps the market flatten instead of the break-even IOC limit.
 */
-func (position *Position) exit() error {
+func (position *Position) exit(force bool) error {
+	trigger := "policy exit match"
+
+	if force {
+		trigger = "manual"
+	} else if position.ExitPath != "" {
+		trigger = "policy exit match " + position.ExitPath
+	}
+
 	position.mu.Lock()
 	defer position.mu.Unlock()
+
+	vol := ""
+
+	if position.Qty != nil {
+		vol = position.Qty.String()
+	}
 
 	if position.ExitOrder == nil {
 		position.ExitOrder = &spot.OrderRequest{
 			ClOrdId:   uuid.NewString(),
 			OrderType: "market",
 			Type:      "sell",
-			Volume:    position.Qty.String(),
+			Volume:    vol,
 		}
+	} else if vol != "" {
+		position.ExitOrder.Volume = vol
 	}
 
-	position.ExitTrigger = "policy exit match " + position.ExitPath
-
-	if position.ExitOrder != nil && position.Qty != nil {
-		position.ExitOrder.Volume = position.Qty.String()
-	}
-
+	position.ExitAttempts++
+	position.ExitTrigger = trigger
 	position.Transition(runtime.BUSY)
 
 	return nil
@@ -323,6 +418,9 @@ func (position *Position) Bind(txid, side string, order *spot.OrderRequest) {
 		return
 	}
 
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	switch side {
 	case "buy":
 		if position.EntryOrder == nil {
@@ -348,9 +446,12 @@ owns is true when this fill belongs to the position. No order id means refuse �
 symbol-only matching flats real holdings on unrelated account prints.
 */
 func (position *Position) owns(data *market.ExecutionData) bool {
-	if data == nil {
+	if position == nil || data == nil {
 		return false
 	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
 
 	if data.ClientOrderID != "" {
 		if position.EntryOrder != nil && position.EntryOrder.ClOrdId == data.ClientOrderID {
@@ -385,6 +486,11 @@ Apply is the only fill path. Entry fills refresh Qty/Entry/PnL; exit fills only
 stamp ClosedAt once buys and sells net to zero — PnL stays the last mark.
 */
 func (position *Position) Apply(execution market.ExecutionData) {
+	if (execution.ExecType != "" && execution.ExecType != "trade") ||
+		execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
+		return
+	}
+
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
@@ -399,7 +505,7 @@ func (position *Position) Apply(execution market.ExecutionData) {
 	position.Entry = position.entry()
 
 	if execution.Side == "sell" {
-		if position.ClosedAt == nil && position.Qty.Sign() == 0 {
+		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
 			position.ClosedAt = &execution.Timestamp
 			position.Transition(runtime.DONE)
 		}

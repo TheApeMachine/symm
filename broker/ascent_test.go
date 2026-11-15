@@ -50,15 +50,16 @@ func TestAscentNote(t *testing.T) {
 			})
 		})
 
-		Convey("When Seed precedes a gap through the arm", func() {
-			ascent.Seed(-0.5, t0)
-			ascent.Note(4.0, t0.Add(time.Second))
+		Convey("When a small pullback follows a climb at sample 4", func() {
+			ascent.Note(1.0, t0)
+			ascent.Note(1.5, t0.Add(time.Second))
+			ascent.Note(1.55, t0.Add(2*time.Second))
+			ascent.Note(1.45, t0.Add(3*time.Second))
 
-			Convey("Seeded anchor yields Samples 2 with a real upward delta", func() {
-				So(ascent.Samples, ShouldEqual, 2)
-				So(ascent.SmoothDelta, ShouldEqual, 4.5)
-				So(ascent.MeanUp, ShouldEqual, 4.5)
-				So(ascent.PeakVelocity, ShouldEqual, 0)
+			Convey("SmoothVelocity remains positive instead of collapsing to 1.0 exhaust", func() {
+				So(ascent.Samples, ShouldEqual, 4)
+				So(ascent.SmoothVelocity, ShouldBeGreaterThan, 0)
+				So(ascent.Exhaust(), ShouldBeLessThan, 1.0)
 			})
 		})
 

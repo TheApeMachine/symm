@@ -117,6 +117,7 @@ func (ticker *Ticker) ToMarket(other market.MarketType) market.MarketType {
 			High24h:   row.High24h(),
 			Low24h:    row.Low24h(),
 			Last:      row.LastTrade(),
+			Open:      parseFloat(row.Open),
 		}
 	}
 

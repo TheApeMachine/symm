@@ -149,6 +149,29 @@ export type DirectSink = (
 export const direct: Record<string, DirectSink> = {};
 
 /*
+applyPositionsSnapshot replaces one tier's open book. Omitted ids are gone —
+exit Hello (BUSY omitted server-side) clears the row; the chart push drops
+series + legend from the same store update.
+*/
+export const applyPositionsSnapshot = (
+	prev: Record<string, Position> | null | undefined,
+	marks: Record<string, Position>,
+	tier: string,
+): Record<string, Position> => {
+	const next: Record<string, Position> = {};
+	for (const [id, pos] of Object.entries(prev ?? {})) {
+		if (!pos) continue;
+		const posTier =
+			typeof pos.tier_key === "string" && pos.tier_key !== ""
+				? pos.tier_key
+				: "paper";
+		if (!tier || posTier === tier) continue;
+		next[id] = pos;
+	}
+	return { ...next, ...marks };
+};
+
+/*
 positions_snapshot replaces one tier's open book in the store. The chart
 subscribes to signals.positions — no side-channel push.
 */
@@ -159,18 +182,7 @@ direct.positions = (value, payload) => {
 
 	signals.positions.setState((prev: Record<string, Position> | null) => {
 		if (!snapshot) return { ...(prev ?? {}), ...marks };
-
-		const next: Record<string, Position> = {};
-		for (const [id, pos] of Object.entries(prev ?? {})) {
-			if (!pos) continue;
-			const posTier =
-				typeof pos.tier_key === "string" && pos.tier_key !== ""
-					? pos.tier_key
-					: "paper";
-			if (!tier || posTier === tier) continue;
-			next[id] = pos;
-		}
-		return { ...next, ...marks };
+		return applyPositionsSnapshot(prev, marks, tier);
 	});
 };
 

@@ -18,9 +18,20 @@ func TestIgnitionHot(t *testing.T) {
 			})
 		})
 
-		Convey("When precursor crosses the floor", func() {
+		Convey("When precursor alone crosses without ignition", func() {
 			reading := &equation.IgnitionOutput{
 				Precursor: sel.IgnitionPrecursorMin,
+			}
+
+			Convey("ignitionHot is false", func() {
+				So(ignitionHot(reading), ShouldBeFalse)
+			})
+		})
+
+		Convey("When ignition and precursor clear together", func() {
+			reading := &equation.IgnitionOutput{
+				Precursor: sel.IgnitionPrecursorMin,
+				Ignition:  sel.IgnitionIgnitionMin,
 			}
 
 			Convey("ignitionHot is true", func() {
@@ -47,6 +58,7 @@ func BenchmarkIgnitionHot(b *testing.B) {
 	reading := &equation.IgnitionOutput{
 		Precursor:   sel.IgnitionPrecursorMin,
 		Compression: sel.IgnitionCompressionMin,
+		Ignition:    sel.IgnitionIgnitionMin,
 	}
 
 	b.ResetTimer()

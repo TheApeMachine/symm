@@ -1,32 +1,40 @@
 package system
 
-import "github.com/spf13/viper"
+import (
+	"time"
+
+	"github.com/spf13/viper"
+)
 
 /*
 Selection configures cross-sectional board ranking, capacity limits, dual peak
 caps, ignition thresholds, and rotation.
 */
 type Selection struct {
-	MaxOpenPositions        int
-	MaxEntersPerTick        int
-	MaxAccumPeakFrac        float64
-	MaxIgnitionPeakFrac     float64
-	IgnitionPrecursorMin    float64
-	IgnitionCompressionMin  float64
-	IgnitionIgnitionMin     float64
-	WeightPeakScore         float64
-	WeightPrecursor         float64
-	WeightTapeUptake        float64
-	WeightSpread            float64
-	WeightPeakFrac          float64
-	WeightRotation          float64
-	HeartbeatBatch          int
-	RotationCloseBoost      float64
+	MaxOpenPositions       int
+	MaxEntersPerTick       int
+	MinBoardScore          float64
+	BoardPeerWindow        time.Duration
+	MaxAccumPeakFrac       float64
+	MaxIgnitionPeakFrac    float64
+	IgnitionPrecursorMin   float64
+	IgnitionCompressionMin float64
+	IgnitionIgnitionMin    float64
+	WeightPeakScore        float64
+	WeightPrecursor        float64
+	WeightTapeUptake       float64
+	WeightSpread           float64
+	WeightPeakFrac         float64
+	WeightRotation         float64
+	HeartbeatBatch         int
+	RotationCloseBoost     float64
 }
 
 func NewSelection() *Selection {
 	viper.SetDefault("selection.max_open_positions", 5)
 	viper.SetDefault("selection.max_enters_per_tick", 1)
+	viper.SetDefault("selection.min_board_score", 1.5)
+	viper.SetDefault("selection.board_peer_window", 2*time.Second)
 	viper.SetDefault("selection.max_accum_peak_frac", 0.35)
 	viper.SetDefault("selection.max_ignition_peak_frac", 0.85)
 	viper.SetDefault("selection.ignition_precursor_min", 0.55)
@@ -44,6 +52,8 @@ func NewSelection() *Selection {
 	return &Selection{
 		MaxOpenPositions:       viper.GetInt("selection.max_open_positions"),
 		MaxEntersPerTick:       viper.GetInt("selection.max_enters_per_tick"),
+		MinBoardScore:          viper.GetFloat64("selection.min_board_score"),
+		BoardPeerWindow:        viper.GetDuration("selection.board_peer_window"),
 		MaxAccumPeakFrac:       viper.GetFloat64("selection.max_accum_peak_frac"),
 		MaxIgnitionPeakFrac:    viper.GetFloat64("selection.max_ignition_peak_frac"),
 		IgnitionPrecursorMin:   viper.GetFloat64("selection.ignition_precursor_min"),

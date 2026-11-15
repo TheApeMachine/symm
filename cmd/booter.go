@@ -384,6 +384,27 @@ func (booter *Booter) initMarket() error {
 
 	booter.desk = broker.NewDesk(ctx, transports, booter.price, booter.store)
 
+	ui.UI.OnExit(func(book, id, symbol string) error {
+		tt := broker.TierTypePaper
+
+		switch book {
+		case "virtual":
+			tt = broker.TierTypeVirtual
+		case "real":
+			tt = broker.TierTypeReal
+		}
+
+		position := booter.desk.GetPosition(tt, symbol)
+
+		if position == nil {
+			return errnie.Error(errnie.Err(
+				errnie.NotFound, "[booter] position not found", nil,
+			))
+		}
+
+		return booter.desk.Exit(tt, position, true)
+	})
+
 	ui.UI.RegisterCallback(func() {
 		// Topology first so a busy Hello fan-out cannot crowd it out of the
 		// hub queue on refresh.

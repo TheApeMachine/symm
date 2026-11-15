@@ -76,7 +76,8 @@ func TestStep(t *testing.T) {
 				So(reading, ShouldNotBeNil)
 				So(reading.RVOL, ShouldEqual, 1)
 				So(reading.Compression, ShouldEqual, 0)
-				So(reading.Ignition, ShouldEqual, 0.8541386215607335)
+				// Squashed rvol/precursor geomean — raw 1.0/1.0 no longer claims ~0.85.
+				So(reading.Ignition, ShouldEqual, 0.45924713059653055)
 				So(reading.Trend, ShouldEqual, 0.7145109815211617)
 			})
 		})

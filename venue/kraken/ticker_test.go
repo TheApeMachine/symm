@@ -73,6 +73,7 @@ func TestUnmarshalJSONTicker(t *testing.T) {
 				So(row.Last, ShouldEqual, 2.10)
 				So(row.High24h, ShouldEqual, 2.30)
 				So(row.Low24h, ShouldEqual, 1.80)
+				So(row.Open, ShouldBeGreaterThan, 0)
 			})
 		})
 	})

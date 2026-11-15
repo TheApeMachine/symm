@@ -98,7 +98,6 @@ export type Position = {
 	fee_out?: string | number;
 	pnl?: string | number;
 	pnl_pct?: string | number;
-	closing?: boolean;
 	tier_key?: "paper" | "virtual" | "real" | string;
 	stoploss?: Stoploss;
 };

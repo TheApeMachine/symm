@@ -177,6 +177,43 @@ func TestMarkPaused(t *testing.T) {
 	}))
 }
 
+func TestBookManagerAll(t *testing.T) {
+	Convey("Setup", t, withBookManager(func(mgr *BookManager) {
+		mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+
+		Convey("When All walks seeded books", func() {
+			var seen []*market.Book
+			for book := range mgr.All() {
+				seen = append(seen, book)
+			}
+
+			Convey("The live book is yielded", func() {
+				So(len(seen), ShouldEqual, 1)
+			})
+		})
+	}))
+}
+
+func TestApplyOrderDelete(t *testing.T) {
+	Convey("Setup", t, withBookManager(func(mgr *BookManager) {
+		mgr.Update(level3Snapshot(testSymbol, "100", "101"))
+		book := mgr.Get(testSymbol)
+		px := decimal.RequireFromString("100")
+		qty := decimal.RequireFromString("10")
+
+		Convey("When a delete event arrives", func() {
+			mgr.applyOrder(book, market.SideBid, &market.Level3Order{
+				OrderID: "b1", Event: "delete", LimitPrice: &px, OrderQty: &qty,
+				Timestamp: time.Unix(2, 0),
+			})
+
+			Convey("The bid level is removed", func() {
+				So(book, ShouldNotBeNil)
+			})
+		})
+	}))
+}
+
 func TestStale(t *testing.T) {
 	Convey("Setup", t, withBookManager(func(mgr *BookManager) {
 		mgr.Update(level3Snapshot(testSymbol, "100", "101"))

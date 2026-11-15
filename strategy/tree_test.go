@@ -113,10 +113,10 @@ func TestNewTree(t *testing.T) {
 func TestPredict(t *testing.T) {
 	Convey("Setup", t, withTree(func(tree *Tree) {
 		Convey("When the cut is shorter than min path length", func() {
-			predicted, strength, disagreed := tree.Predict(tokensAt("R06.R00", 1.0))
+			predicted, strength, matched := tree.Predict(tokensAt("R06.R00", 1.0))
 
-			Convey("Predict returns ActionNone without disagreement", func() {
-				So(disagreed, ShouldBeFalse)
+			Convey("Predict returns ActionNone without a match", func() {
+				So(matched, ShouldBeFalse)
 				So(predicted, ShouldEqual, ActionNone)
 				So(strength, ShouldEqual, 0.0)
 			})
@@ -128,34 +128,34 @@ func TestPredict(t *testing.T) {
 				"R06.R00/R07.R01/R08.R02",
 			} {
 				Convey(fmt.Sprintf("When brightness for %s clears resistance", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 1.0))
+					predicted, strength, matched := tree.Predict(tokensAt(prefix, 1.0))
 
 					Convey("Predict returns ActionEnter", func() {
-						So(disagreed, ShouldBeFalse)
+						So(matched, ShouldBeTrue)
 						So(predicted, ShouldEqual, ActionEnter)
 						So(strength, ShouldEqual, 0.75)
 					})
 				})
 
 				Convey(fmt.Sprintf("When brightness for %s is below resistance", prefix), func() {
-					predicted, strength, disagreed := tree.Predict(tokensAt(prefix, 0.5))
+					predicted, strength, matched := tree.Predict(tokensAt(prefix, 0.5))
 
-					Convey("Predict returns ActionNone", func() {
-						So(disagreed, ShouldBeFalse)
+					Convey("Predict returns ActionNone with matched veto", func() {
+						So(matched, ShouldBeTrue)
 						So(predicted, ShouldEqual, ActionNone)
-						So(strength, ShouldEqual, 0.0)
+						So(strength, ShouldEqual, 0.75)
 					})
 				})
 			}
 		})
 
 		Convey("When an exit extension sits under a hold path", func() {
-			predicted, strength, disagreed := tree.Predict(
+			predicted, strength, matched := tree.Predict(
 				tokensAt("R09.R01/R10.R02", 1.0),
 			)
 
 			Convey("Predict reads the hold leaf only", func() {
-				So(disagreed, ShouldBeFalse)
+				So(matched, ShouldBeTrue)
 				So(predicted, ShouldEqual, ActionHold)
 				So(strength, ShouldEqual, 0.75)
 				_, ok := get(tree, "R09.R01/R10.R02/R11.R03")
@@ -168,12 +168,12 @@ func TestPredict(t *testing.T) {
 			path := "R06.R00/R07.R01"
 			put(tree, path, leaf(ActionEnter, 0.85))
 
-			predicted, strength, disagreed := tree.Predict(tokensAt(path, 1.0))
+			predicted, strength, matched := tree.Predict(tokensAt(path, 1.0))
 
-			Convey("Leaf is pruned and Predict returns ActionNone", func() {
-				So(disagreed, ShouldBeFalse)
+			Convey("Leaf is pruned and Predict returns matched ActionNone", func() {
+				So(matched, ShouldBeTrue)
 				So(predicted, ShouldEqual, ActionNone)
-				So(strength, ShouldEqual, 0.0)
+				So(strength, ShouldEqual, 0.85)
 				_, ok := get(tree, path)
 				So(ok, ShouldBeFalse)
 			})

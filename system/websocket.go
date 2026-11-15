@@ -45,9 +45,9 @@ func NewWebSocket() *WebSocket {
 	viper.SetDefault("system.websocket.private_refresh", 5*time.Second)
 	// Unfiltered / multi-pair public Ticker often returns EService:Unavailable;
 	// refresh a round-robin slice and back off on hard failures.
-	viper.SetDefault("system.websocket.ticker_refresh", time.Minute)
+	viper.SetDefault("system.websocket.ticker_refresh", 30*time.Second)
 	viper.SetDefault("system.websocket.ticker_backoff_max", 15*time.Minute)
-	viper.SetDefault("system.websocket.ticker_batch_size", 32)
+	viper.SetDefault("system.websocket.ticker_batch_size", 128)
 
 	return &WebSocket{
 		Endpoints: &Endpoints{

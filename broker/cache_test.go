@@ -234,6 +234,21 @@ func TestBound(t *testing.T) {
 	}))
 }
 
+func TestGet(t *testing.T) {
+	Convey("Setup", t, withEmptyCache(func(cache *Cache) {
+		pos := NewPosition(cache.Context(), testSymbol, "paper", "path", nil, nil, nil)
+		cache.open.Store(testSymbol, pos)
+
+		Convey("When the symbol is open", func() {
+			So(cache.Get(testSymbol), ShouldEqual, pos)
+		})
+
+		Convey("When the symbol is missing", func() {
+			So(cache.Get("MISSING"), ShouldBeNil)
+		})
+	}))
+}
+
 func TestAll(t *testing.T) {
 	Convey("Setup", t, withEmptyCache(func(cache *Cache) {
 		Convey("When open and closed lanes both hold rows", func() {

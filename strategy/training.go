@@ -95,7 +95,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				sources,
 				training.desk.Has(symbol),
 				training.price.MoverVolumeOK(symbol),
-				training.price.ChangePct(symbol) >= risk.MinMoverChangePct,
+				training.price.SessionMoveOK(symbol),
 				spreadOK,
 				training.price.BookIntact(symbol),
 				training.price.EntryPeakOK(symbol, hot),

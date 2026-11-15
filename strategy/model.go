@@ -247,29 +247,46 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			treeStarted := time.Now()
-			action, resistance, disagreed := model.tree.Load().Predict(*cut)
+			action, resistance, matched := model.tree.Load().Predict(*cut)
 			pipeline.Time("tree", time.Since(treeStarted))
 			minEnter := learn.MinEnterZ
 
 			bullish := bypass || (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
 
-			if disagreed {
+			minPath := learn.MinPathLength
+
+			// Matched + ActionNone: leaf existed but brightness lost to resistance
+			// (or the leaf was pruned). That is a veto, not an unexplored cold path.
+			if matched && action == ActionNone {
+				if len(open) > 0 && path != "" && cut.Len() >= minPath {
+					for _, position := range open {
+						model.Hold(position, path)
+					}
+
+					decide(&runtime.Decision{
+						Symbol: symbol,
+						Action: "hold",
+						Reason: "path resistance veto — holding open",
+						Gate:   "tree",
+						Path:   path,
+					})
+					return
+				}
+
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
-					Reason: "tree leaves disagree under cut",
+					Reason: "path resistance veto",
 					Gate:   "tree",
 					Path:   path,
 				})
 				return
 			}
 
-			minPath := learn.MinPathLength
-
-			// Cold explore (no ENTER leaf) needs a full-length cut — a 1-token
+			// Cold explore (no leaf) needs a full-length cut — a 1-token
 			// flicker is not a choice. Bypass does not shorten that bar.
 			wantEnter := action == ActionEnter ||
-				(action == ActionNone && bullish && cut.Len() >= minPath)
+				(action == ActionNone && !matched && bullish && cut.Len() >= minPath)
 
 			if action != ActionNone {
 				model.applyAction(decide, queueEnter, symbol, path, action, resistance, bullish, bypass, open)
@@ -770,7 +787,7 @@ func (model *Model) submitExit(position *broker.Position, path string) {
 		return
 	}
 
-	if err := model.desk.Exit(model.tierOf(position), position); err != nil {
+	if err := model.desk.Exit(model.tierOf(position), position, false); err != nil {
 		return
 	}
 

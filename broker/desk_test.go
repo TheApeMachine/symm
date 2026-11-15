@@ -2,10 +2,12 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
@@ -189,7 +191,7 @@ func TestDeskExit(t *testing.T) {
 
 		Convey("When Exit routes through paper", func() {
 			setBook(desk.price, "120", "121", "30")
-			err := desk.Exit(TierTypePaper, pos)
+			err := desk.Exit(TierTypePaper, pos, false)
 
 			Convey("Closing is armed", func() {
 				So(err, ShouldBeNil)
@@ -198,11 +200,35 @@ func TestDeskExit(t *testing.T) {
 		})
 
 		Convey("When Exit targets an unknown tier", func() {
-			err := desk.Exit(TierType(99), pos)
+			err := desk.Exit(TierType(99), pos, false)
 
 			Convey("Desk returns not-found", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "[desk.Exit] unknown tier")
+			})
+		})
+	}))
+}
+
+func TestDeskForceExit(t *testing.T) {
+	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
+		paper := desk.tiers[TierTypePaper]
+		pos := NewPosition(t.Context(), testSymbol, "paper", "path", desk.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		paper.positions.Add(testSymbol, pos, true)
+
+		Convey("When Exit force dumps an underwater row", func() {
+			setBook(desk.price, "100", "101", "30")
+			err := desk.Exit(TierTypePaper, pos, true)
+
+			Convey("Manual exit arms BUSY", func() {
+				So(err, ShouldBeNil)
+				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
+				So(pos.ExitTrigger, ShouldEqual, "manual")
 			})
 		})
 	}))
@@ -302,7 +328,7 @@ func TestDeskApply(t *testing.T) {
 					ExecID: "b1", Side: "buy", Symbol: testSymbol,
 					ClientOrderID: "enter-1",
 					LastQty:       dec("1"), LastPrice: dec("100"),
-					Timestamp:     time.Unix(1, 0).UTC(),
+					Timestamp: time.Unix(1, 0).UTC(),
 				}},
 			})
 
@@ -323,8 +349,167 @@ func TestDeskBookStale(t *testing.T) {
 		Convey("When the symbol has a live book", func() {
 			So(desk.BookStale(testSymbol), ShouldBeFalse)
 		})
+
+		Convey("When the book is marked stale", func() {
+			desk.price.Books.Stale([]string{testSymbol})
+			So(desk.BookStale(testSymbol), ShouldBeTrue)
+		})
 	}))
 }
+
+func TestDeskFeed(t *testing.T) {
+	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
+		Convey("When Feed gets a level3 frame", func() {
+			desk.Feed([]byte(`{
+				"channel":"level3",
+				"type":"snapshot",
+				"data":[{
+					"symbol":"BTC/USD",
+					"checksum":0,
+					"bids":[{"order_id":"b1","limit_price":100,"order_qty":10,"timestamp":"2024-01-02T12:00:00Z"}],
+					"asks":[{"order_id":"a1","limit_price":101,"order_qty":10,"timestamp":"2024-01-02T12:00:00Z"}]
+				}]
+			}`))
+
+			Convey("The book is enqueued and applied", func() {
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) {
+					if desk.price.Books.Get(testSymbol) != nil {
+						break
+					}
+					time.Sleep(5 * time.Millisecond)
+				}
+				So(desk.price.Books.Get(testSymbol), ShouldNotBeNil)
+			})
+		})
+
+		Convey("When Feed gets a non-level3 frame", func() {
+			So(func() { desk.Feed([]byte(`{"channel":"trade"}`)) }, ShouldNotPanic)
+		})
+
+		Convey("When Feed gets invalid JSON", func() {
+			So(func() { desk.Feed([]byte(`not-json`)) }, ShouldNotPanic)
+		})
+	}))
+}
+
+func TestDeskOnTrade(t *testing.T) {
+	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
+		seen := make(chan *market.Trade, 1)
+		desk.OnTrade(func(trade *market.Trade) { seen <- trade })
+
+		Convey("When a trade is enqueued", func() {
+			trade := market.NewTrade("", "", nil)
+			trade.Data = []*market.TradeData{{
+				Symbol: testSymbol,
+				Price:  decimal.RequireFromString("100"),
+				Qty:    decimal.RequireFromString("1"),
+			}}
+			desk.enqueueTrade(trade)
+
+			Convey("OnTrade receives the print", func() {
+				select {
+				case got := <-seen:
+					So(got, ShouldEqual, trade)
+				case <-time.After(2 * time.Second):
+					So("onTrade", ShouldEqual, "timed out")
+				}
+			})
+		})
+
+		Convey("When enqueueTrade gets nil", func() {
+			So(func() { desk.enqueueTrade(nil) }, ShouldNotPanic)
+		})
+
+		Convey("When the trade ring is full", func() {
+			desk.OnTrade(nil)
+			for i := 0; i < tradeQueueFrames+2; i++ {
+				desk.enqueueTrade(market.NewTrade("", "", nil))
+			}
+
+			Convey("Oldest frames are dropped without blocking", func() {
+				So(len(desk.tradeCh) <= tradeQueueFrames, ShouldBeTrue)
+			})
+		})
+	}))
+}
+
+func TestDeskIngest(t *testing.T) {
+	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
+		seen := make(chan struct{}, 1)
+		desk.OnTrade(func(*market.Trade) { seen <- struct{}{} })
+
+		Convey("When ingest gets a kraken trade frame", func() {
+			raw := []byte(`{
+				"channel":"trade",
+				"type":"update",
+				"data":[{
+					"symbol":"BTC/USD",
+					"side":"buy",
+					"price":"100",
+					"qty":1,
+					"ord_type":"market",
+					"trade_id":1,
+					"timestamp":"2024-01-02T12:00:00Z"
+				}]
+			}`)
+			desk.ingest(desk.venue.Read(raw))
+
+			Convey("The trade pump fires OnTrade", func() {
+				select {
+				case <-seen:
+				case <-time.After(2 * time.Second):
+					So("ingest trade", ShouldEqual, "timed out")
+				}
+			})
+		})
+
+		Convey("When ingest gets nil", func() {
+			So(func() { desk.ingest(nil) }, ShouldNotPanic)
+		})
+	}))
+}
+
+func TestDeskStartRun(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		withDesk(ctx, false, func(desk *Desk) {
+			block := &blockUntilDoneClient{done: ctx.Done()}
+			desk.public = block
+			for _, tier := range desk.tiers {
+				if tier != nil {
+					tier.private = block
+				}
+			}
+
+			Convey("When Start launches Run and context cancels", func() {
+				desk.Start()
+				cancel()
+				time.Sleep(50 * time.Millisecond)
+
+				Convey("Run exits without panic", func() {
+					So(true, ShouldBeTrue)
+				})
+			})
+		})()
+	})
+}
+
+type blockUntilDoneClient struct {
+	done <-chan struct{}
+}
+
+func (c *blockUntilDoneClient) Read(...string) ([]byte, error) {
+	<-c.done
+	return nil, context.Canceled
+}
+func (c *blockUntilDoneClient) Write([]byte) error { return nil }
+func (c *blockUntilDoneClient) Post(string, any) ([]byte, error) {
+	return []byte(`{"error":[],"result":{"trades":{}}}`), nil
+}
+func (c *blockUntilDoneClient) Watch(string, any, json.Unmarshaler, func()) {}
 
 func BenchmarkNewDesk(b *testing.B) {
 	ctx := context.Background()
@@ -470,7 +655,7 @@ func BenchmarkDeskExit(b *testing.B) {
 			pos := NewPosition(ctx, testSymbol, "paper", "path", desk.price, nil, nil)
 			pos.ExitPath = "R00/M1"
 			paper.positions.Add(testSymbol, pos, true)
-			_ = desk.Exit(TierTypePaper, pos)
+			_ = desk.Exit(TierTypePaper, pos, false)
 		})()
 	}
 }

@@ -112,6 +112,10 @@ const withAlpha = (hex: string, alpha: number) => {
 	return `rgba(${r},${g},${b},${alpha})`;
 };
 
+/*
+chartHeld is what open-choice paints. Hello only snapshots READY rows, so a
+ForceExit Hello drops the id from the store and push() clears series/legend.
+*/
 export const chartHeld = (pos: Position, book: Book) =>
 	onTier(pos, book) && !isClosed(pos);
 
@@ -159,6 +163,7 @@ type Series = {
 export type OpenChoiceLegendItem = {
 	id: string;
 	name: string;
+	tier: string;
 	stroke: string;
 	pnlMoney?: number;
 	pnlPct?: number;
@@ -248,19 +253,20 @@ export const drawOpenChoiceChart = async (
 
 	const drop = (id: string) => {
 		const s = series.get(id);
-		if (!s) return;
-		sciChartSurface.renderableSeries.remove(s.line);
-		s.line.delete();
-		if (s.range) {
-			sciChartSurface.renderableSeries.remove(s.range);
-			s.range.delete();
+		if (s) {
+			sciChartSurface.renderableSeries.remove(s.line);
+			s.line.delete();
+			if (s.range) {
+				sciChartSurface.renderableSeries.remove(s.range);
+				s.range.delete();
+			}
+			if (s.stop) {
+				sciChartSurface.renderableSeries.remove(s.stop);
+				s.stop.delete();
+			}
+			if (s.tip) sciChartSurface.annotations.remove(s.tip);
+			series.delete(id);
 		}
-		if (s.stop) {
-			sciChartSurface.renderableSeries.remove(s.stop);
-			s.stop.delete();
-		}
-		if (s.tip) sciChartSurface.annotations.remove(s.tip);
-		series.delete(id);
 		legend.delete(id);
 		strokes.delete(id);
 	};
@@ -402,7 +408,7 @@ export const drawOpenChoiceChart = async (
 			if (pos && chartHeld(pos, book)) held.add(pos.id);
 		}
 
-		for (const id of [...series.keys()]) {
+		for (const id of new Set([...series.keys(), ...legend.keys()])) {
 			if (!held.has(id)) drop(id);
 		}
 
@@ -449,6 +455,7 @@ export const drawOpenChoiceChart = async (
 			legend.set(id, {
 				id,
 				name: pos.symbol,
+				tier: tierOf(pos),
 				stroke,
 				pnlMoney: asFinite(pos.pnl) ?? undefined,
 				pnlPct: asFinite(pos.pnl_pct) ?? undefined,

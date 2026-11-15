@@ -33,17 +33,34 @@ func TestStoplossUpdate(t *testing.T) {
 			sl.PeakPnLPct = 3.0
 			sl.Confirms = 1
 			sl.Ascent.Samples = 5
+			sl.Ascent.MeanUp = 4.0
+			sl.Ascent.LastPnLPct = 2.5
 
 			sl.Update(0.5, 0)
 
-			Convey("State resets to healthy and seeds the pre-arm anchor", func() {
+			Convey("State resets to healthy and clears ascent", func() {
 				So(sl.State, ShouldEqual, StoplossHealthy)
 				So(sl.CurrentPnLPct, ShouldEqual, 0.5)
 				So(sl.PeakPnLPct, ShouldEqual, 0.5)
 				So(sl.Confirms, ShouldEqual, 0)
 				So(sl.ExhaustScore, ShouldEqual, 0)
 				So(sl.Ascent.Samples, ShouldEqual, 0)
-				So(sl.Ascent.LastPnLPct, ShouldEqual, 0.5)
+				So(sl.Ascent.MeanUp, ShouldEqual, 0)
+				So(sl.Ascent.LastPnLPct, ShouldEqual, 0)
+			})
+		})
+
+		Convey("When an underwater position gaps above arm", func() {
+			sl := NewStoploss(-5.0, 1.0)
+			sl.Update(-5.0, 0)
+			sl.Update(2.0, 0)
+
+			Convey("Ascent starts fresh post-arm without underwater jump contamination", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Ascent.Samples, ShouldEqual, 1)
+				So(sl.Ascent.MeanUp, ShouldEqual, 0)
+				So(sl.PeakPnLPct, ShouldEqual, 2.0)
+				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
 
@@ -60,12 +77,12 @@ func TestStoplossUpdate(t *testing.T) {
 			})
 		})
 
-		Convey("When arm floor is zero", func() {
+		Convey("When arm floor is fee-net break-even", func() {
 			sl := NewStoploss(0.5, 0)
 			sl.Update(1.5, 1)
 
-			Convey("Update refuses to arm or trigger", func() {
-				So(sl.State, ShouldEqual, StoplossHealthy)
+			Convey("Strictly green PnLPct arms", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
 				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
@@ -91,6 +108,22 @@ func TestStoplossUpdate(t *testing.T) {
 			})
 		})
 
+		Convey("When a climb sees one small pullback at sample 4 without friction", func() {
+			sl := NewStoploss(0.5, 0.8)
+			sl.Update(1.0, 0)
+			time.Sleep(10 * time.Millisecond)
+			sl.Update(1.5, 0)
+			time.Sleep(10 * time.Millisecond)
+			sl.Update(1.55, 0)
+			time.Sleep(10 * time.Millisecond)
+			sl.Update(1.45, 0)
+
+			Convey("Stoploss stays armed instead of hair-triggering on a single dip", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
+
 		Convey("When state is already triggered", func() {
 			sl := NewStoploss(3.0, 1.0)
 			sl.State = StoplossTriggered
@@ -112,14 +145,15 @@ func TestStoplossUpdate(t *testing.T) {
 			for i := range 5 {
 				pnl := 1.0 + float64(i)*0.3
 				sl.Update(pnl, 0)
-				time.Sleep(60 * time.Millisecond)
+				time.Sleep(20 * time.Millisecond)
 			}
 
 			Convey("State is armed and peak tracks the climb", func() {
+				// 1.0 is at the arm floor (not strictly above) — four green ticks remain.
 				So(sl.State, ShouldEqual, StoplossArmed)
 				So(sl.PeakPnLPct, ShouldEqual, 2.2)
 				So(sl.CurrentPnLPct, ShouldEqual, 2.2)
-				So(sl.Ascent.Samples, ShouldEqual, 5)
+				So(sl.Ascent.Samples, ShouldEqual, 4)
 				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
@@ -135,7 +169,7 @@ func TestStoplossUpdate(t *testing.T) {
 			sl.Ascent.MeanUp = 0.2
 			sl.Ascent.LastPnLPct = 3.0
 			sl.Ascent.LastTime = time.Now().Add(-time.Second)
-			// Exhaust = 0.5 → trail needs giveback >= climb * 0.5 = 1.0
+			// Exhaust = 0.5 -> trail needs giveback >= climb * 0.5 = 1.0
 			sl.Update(2.0, 0)
 
 			Convey("Trail exit trips", func() {
@@ -182,6 +216,25 @@ func TestTriggered(t *testing.T) {
 
 			Convey("Triggered is true", func() {
 				So(sl.Triggered(), ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestStoplossReset(t *testing.T) {
+	Convey("Setup", t, func() {
+		sl := NewStoploss(2.5, 1.0)
+		sl.State = StoplossTriggered
+		sl.PeakPnLPct = 4.0
+
+		Convey("When Reset clears a cancelled exit", func() {
+			sl.Reset()
+
+			Convey("State returns to Healthy with the prior arm", func() {
+				So(sl.State, ShouldEqual, StoplossHealthy)
+				So(sl.ArmPnlPct, ShouldEqual, 1.0)
+				So(sl.CurrentPnLPct, ShouldEqual, 2.5)
+				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
 	})

@@ -38,7 +38,8 @@ type Stoploss struct {
 }
 
 /*
-NewStoploss arms against armPct — live book friction / fee floor in PnL points.
+NewStoploss arms against armPct. Zero is fee-net break-even (PnLPct already
+nets fees); only strictly green prints may arm.
 */
 func NewStoploss(pnlPct, armPct float64) *Stoploss {
 	return &Stoploss{
@@ -54,7 +55,8 @@ func NewStoploss(pnlPct, armPct float64) *Stoploss {
 /*
 Update evaluates progress from this position's own climb and ascent.
 Exit when ExhaustScore + marketFrictionEvidence >= 1 (friction covers remaining
-climb velocity), never on unchanged PnL or before Samples >= 2.
+climb velocity), never on unchanged PnL, before Samples >= 2, or at/below the
+arm floor (0 = fee-net break-even).
 */
 func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64) {
 	if stoploss.State == StoplossTriggered {
@@ -63,10 +65,10 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 
 	now := time.Now()
 
-	if stoploss.ArmPnlPct <= 0 || pnlPct < stoploss.ArmPnlPct {
+	if pnlPct <= stoploss.ArmPnlPct {
 		stoploss.State = StoplossHealthy
 		stoploss.Regime = StoplossRegimeClimb
-		stoploss.Ascent.Seed(pnlPct, now)
+		stoploss.Ascent.Reset()
 		stoploss.ExhaustScore = 0
 		stoploss.Confirms = 0
 		stoploss.CurrentPnLPct = pnlPct
@@ -79,7 +81,7 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 
 	stoploss.CurrentPnLPct = pnlPct
 
-	if pnlPct > stoploss.PeakPnLPct {
+	if stoploss.State == StoplossHealthy || pnlPct > stoploss.PeakPnLPct {
 		stoploss.PeakPnLPct = pnlPct
 	}
 
@@ -98,7 +100,8 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 
 	if stoploss.Regime == StoplossRegimeClimb && stoploss.Ascent.PeakVelocity > 0 {
 		nearPeak := (giveback <= meanUp || giveback == 0) && deltaPnL <= 0
-		crestExit := nearPeak && stoploss.ExhaustScore+marketFrictionEvidence >= 1
+		crestExit := climb > meanUp && nearPeak &&
+			stoploss.ExhaustScore+marketFrictionEvidence >= 1
 		health := math.Max(stoploss.ExhaustScore, marketFrictionEvidence)
 		trailExit := climb > meanUp && giveback > meanUp &&
 			giveback >= climb*(1-health)
@@ -141,5 +144,4 @@ func (stoploss *Stoploss) Reset() {
 	pnl := stoploss.CurrentPnLPct
 	arm := stoploss.ArmPnlPct
 	*stoploss = *NewStoploss(pnl, arm)
-	stoploss.Ascent.Seed(pnl, time.Now())
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -148,6 +149,8 @@ func NewTier(
 /*
 Hello publishes a full positions_snapshot of open positions as an id-keyed map
 (hub/UI contract). Marks and PnL are owned by Update — Hello only sums and ships.
+Only READY rows ship: WAITING/BUSY stay in the desk cache, but Status gates the
+snapshot so the hub chart/legend drop on the same Hello that arms an exit.
 */
 func (tier *Tier) Hello() {
 	open := tier.positions.Open()
@@ -155,15 +158,27 @@ func (tier *Tier) Hello() {
 	unrealized := decimal.Zero
 
 	for _, position := range open {
-		if position == nil || position.ID == "" {
+		if position == nil {
 			continue
 		}
 
-		positions[position.ID] = position
+		id, pnl := position.snapshotPnL()
 
-		if position.PnL != nil {
-			unrealized = unrealized.Add(*position.PnL)
+		if id == "" {
+			continue
 		}
+
+		if pnl != nil {
+			unrealized = unrealized.Add(*pnl)
+		}
+
+		// Status is the gate — BUSY/WAITING stay cached, but the hub snapshot
+		// only carries READY so chart/legend follow Hello without a Closing flag.
+		if position.Status() != runtime.READY {
+			continue
+		}
+
+		positions[id] = position
 	}
 
 	tier.balance.Unrealized = &unrealized
@@ -251,6 +266,14 @@ func (tier *Tier) Enter(
 		)
 	}
 
+	if tier.price != nil && !tier.price.EntryDragOK(symbol) {
+		return errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.Tier.Enter] open drag exceeds max_entry_open_drag_pct",
+			nil,
+		)
+	}
+
 	qty, err := tier.price.Allocate(symbol, tier.balance)
 
 	if err != nil || qty == nil || qty.Sign() <= 0 {
@@ -298,20 +321,36 @@ the same sell path as stoploss settle rather than mutating cache timestamps alon
 Pre-send: re-walk the live book — refuse a loss or incomplete liquidation.
 */
 func (tier *Tier) Exit(
-	position *Position,
+	position *Position, force bool,
 ) error {
-	if !tier.exitStillProfitable(position) {
-		tier.abortExit(position)
-		return nil
+	if position == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[broker.Tier.Exit] position is nil",
+			nil,
+		))
 	}
 
-	if err := position.exit(); err != nil {
+	if !force {
+		if pnl := tier.price.PnL(position); pnl == nil || pnl.Sign() <= 0 {
+			tier.abortExit(position)
+			return errnie.Error(errnie.Err(
+				errnie.Forbidden,
+				"[broker.Tier.Exit] position is not profitable",
+				nil,
+			))
+		}
+	}
+
+	err := position.exit(force)
+
+	if err != nil {
 		return errnie.Error(err)
 	}
 
 	if err := tier.Send(position, "exit"); err != nil {
-		// Keep Closing: Write may have delivered the sell. Clearing here
-		// allows a second Send while the first fill is in flight.
+		// Keep Closing unless Send itself aborted: Write may have delivered the
+		// sell. Clearing on uncertain send allows a double sell in flight.
 		return errnie.Error(err)
 	}
 
@@ -321,45 +360,6 @@ func (tier *Tier) Exit(
 
 	tier.Hello()
 	return nil
-}
-
-/*
-exitStillProfitable re-walks Qty against live bids. Refuses when the book cannot
-absorb the full position or fee-net PnL% sits at/below the arm floor (or <= 0).
-*/
-func (tier *Tier) exitStillProfitable(position *Position) bool {
-	if position == nil || tier.price == nil ||
-		position.Qty == nil || position.Qty.Sign() <= 0 {
-		return false
-	}
-
-	vwap, fully := tier.price.Liquidation(position.Symbol, position.Qty)
-
-	if !fully || vwap == nil {
-		return false
-	}
-
-	position.Mark = vwap
-	position.PnL = tier.price.PnL(position)
-	position.PnLPct = tier.price.PnLPct(position)
-
-	if position.PnLPct == nil {
-		return false
-	}
-
-	pnl, _ := position.PnLPct.Float64()
-
-	if pnl <= 0 {
-		return false
-	}
-
-	arm := tier.price.StoplossArmPctFor(position.Symbol, position.Qty)
-
-	if position.Stoploss != nil && position.Stoploss.ArmPnlPct > arm {
-		arm = position.Stoploss.ArmPnlPct
-	}
-
-	return pnl >= arm
 }
 
 /*
@@ -393,7 +393,8 @@ func (tier *Tier) apply(execution *market.Execution) {
 
 /*
 fold applies only fills this position owns. Foreign/symbol-only prints must not
-flat real money. Flat sells move open → pending after the exchange fill.
+flat real money. Flat sells move open → pending after the exchange fill;
+canceled/expired IOC exits with remaining Qty return BUSY → READY.
 */
 func (tier *Tier) fold(execution *market.Execution) bool {
 	if execution == nil {
@@ -408,6 +409,7 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 		}
 
 		applied := false
+		abortedOrDropped := false
 
 		for _, data := range execution.Data {
 			if data == nil || tier.normalizer.Name(
@@ -418,8 +420,40 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 				continue
 			}
 
-			position.Apply(*data)
-			applied = true
+			execType := strings.ToLower(data.ExecType)
+			orderStatus := strings.ToLower(data.OrderStatus)
+			isCancel := execType == "canceled" || execType == "expired" ||
+				orderStatus == "canceled" || orderStatus == "expired"
+
+			if isCancel {
+				if position.isExitOrder(data) && position.remainingQty().Sign() > 0 {
+					tier.abortExit(position)
+					touched = true
+					abortedOrDropped = true
+					break
+				}
+
+				if position.isEntryOrder(data) && position.remainingQty().Sign() <= 0 {
+					tier.positions.Drop(position.Symbol)
+					touched = true
+					abortedOrDropped = true
+					break
+				}
+
+				continue
+			}
+
+			if (execType == "" || execType == "trade") &&
+				data.LastQty != nil && data.LastQty.Sign() > 0 {
+				position.Apply(*data)
+				applied = true
+			}
+		}
+
+		if abortedOrDropped {
+			if !applied {
+				continue
+			}
 		}
 
 		if !applied {
@@ -428,7 +462,11 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 
 		touched = true
 
-		if position.ClosedAt != nil {
+		position.mu.Lock()
+		closed := position.ClosedAt != nil
+		position.mu.Unlock()
+
+		if closed {
 			tier.pending.Store(position.Symbol, position)
 			tier.positions.Remove(position.Symbol)
 			continue
@@ -439,7 +477,9 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 			mark := tier.price.Mark(position.Symbol)
 
 			if mark == nil {
+				position.mu.Lock()
 				mark = position.Entry
+				position.mu.Unlock()
 			}
 
 			if mark != nil {
@@ -474,8 +514,8 @@ func (tier *Tier) settle(position *Position) {
 }
 
 /*
-Send is the only wire exit for real orders; token failures drop pending enters
-but clear exit cl_ord_id so kickExit can remint after auth heals.
+Send writes the enter/exit add_order. Policy exits are gated by exact book PnL
+before Send; the wire order stays the market sell on ExitOrder.
 */
 func (tier *Tier) Send(position *Position, action string) error {
 	position.mu.Lock()
@@ -575,6 +615,52 @@ func (tier *Tier) ackOrder(order *kraken.Order) {
 }
 
 /*
+rejectOrder handles failed add_order acks: aborts exit back to READY so the
+position holds and can re-arm, or drops an unfilled rejected enter.
+*/
+func (tier *Tier) rejectOrder(order *kraken.Order) {
+	if order == nil {
+		return
+	}
+
+	errnie.Error(errnie.Err(
+		errnie.IO,
+		"[broker.Tier.rejectOrder] add_order rejected: "+order.Error,
+		nil,
+	).With("cl_ord_id", order.Result.ClOrdID))
+
+	clOrdID := order.Result.ClOrdID
+
+	if clOrdID == "" {
+		return
+	}
+
+	for _, position := range tier.positions.Open() {
+		if position == nil {
+			continue
+		}
+
+		position.mu.Lock()
+		isExit := position.ExitOrder != nil && position.ExitOrder.ClOrdId == clOrdID
+		isEntry := position.EntryOrder != nil && position.EntryOrder.ClOrdId == clOrdID
+		hasQty := position.Qty != nil && position.Qty.Sign() > 0
+		symbol := position.Symbol
+		position.mu.Unlock()
+
+		if isExit {
+			tier.abortExit(position)
+			return
+		}
+
+		if isEntry && !hasQty {
+			tier.positions.Drop(symbol)
+			tier.Hello()
+			return
+		}
+	}
+}
+
+/*
 Run reads the private socket, demuxes via venue.Read, then ingest acts on the frame.
 */
 func (tier *Tier) Run() {
@@ -639,6 +725,8 @@ func (tier *Tier) ingest(frame market.MarketType) {
 	case *kraken.Order:
 		if typed.Success {
 			tier.ackOrder(typed)
+		} else {
+			tier.rejectOrder(typed)
 		}
 	}
 }

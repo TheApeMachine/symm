@@ -7,16 +7,15 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	cvd: {
 		drive: [0],
 		net_fraction: [0],
-		balance: [1],
+		balance: [2],
 		starvation: [2],
 		absorption: [3],
-		net: [3],
 		value: [0],
 	},
 	pumpdump: {
 		compression: [0, 18],
 		precursor: [0],
-		rvol: [2],
+		rvol: [0],
 		exhaustion: [3, 8, 17],
 		ignition: [6],
 		trend: [5],
@@ -42,7 +41,8 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		strength: [1],
 	},
 	depthflow: {
-		loaded_score: [2, 5, 7],
+		loaded_score: [5, 7],
+		ask_loaded_score: [2],
 		thin_score: [4, 8, 18, 21],
 		spoof_score: [4],
 		hypothesis_separation: [6],

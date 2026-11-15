@@ -88,6 +88,7 @@ type Hub struct {
 	connected      atomic.Bool
 	connectedSince atomic.Int64
 	callbacks      []func()
+	exitHandler    func(book, id, symbol string) error
 	commit         atomic.Value
 	store          *store.Client
 	ownStore       bool
@@ -234,6 +235,7 @@ func (hub *Hub) wsHandler() fiber.Handler {
 			}
 
 			if err := hub.handleCommand(payload); err != nil {
+				errnie.Error(err)
 				continue
 			}
 		}
@@ -419,6 +421,18 @@ func (hub *Hub) RegisterCallback(callback func()) {
 }
 
 /*
+OnExit wires the desk ForceExit path for dashboard manual flattens. Booter sets
+this after NewDesk so the hub never imports broker (broker already imports ui).
+*/
+func (hub *Hub) OnExit(handler func(book, id, symbol string) error) {
+	if hub == nil {
+		return
+	}
+
+	hub.exitHandler = handler
+}
+
+/*
 handleCommand dispatches one inbound JSON command from the dashboard socket.
 A command that does not decode, or names no known type, is logged with its
 raw text and returned as an error.
@@ -427,6 +441,7 @@ func (hub *Hub) handleCommand(payload []byte) error {
 	var request struct {
 		Type      string `json:"type"`
 		Symbol    string `json:"symbol"`
+		ID        string `json:"id"`
 		Route     string `json:"route"`
 		Run       string `json:"run"`
 		Class     string `json:"class"`
@@ -451,6 +466,24 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		types.SetFocus(request.Symbol)
 	case "route":
 		types.SetRoute(request.Route)
+	case "exit":
+		if hub.exitHandler == nil {
+			return errnie.Error(errnie.Err(
+				errnie.ServiceUnavailable,
+				"[hub] exit command with no desk handler",
+				nil,
+			))
+		}
+
+		if request.ID == "" && request.Symbol == "" {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"[hub] exit command needs id or symbol",
+				nil,
+			))
+		}
+
+		return errnie.Error(hub.exitHandler(request.Book, request.ID, request.Symbol))
 	case "risk":
 		var patch map[string]any
 		if err := sonic.Unmarshal(payload, &patch); err != nil {

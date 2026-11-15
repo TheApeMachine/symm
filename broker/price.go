@@ -37,6 +37,7 @@ type Price struct {
 	balance    *market.Balance
 	normalizer *spot.Normalizer
 	exhaustion sync.Map // symbol → float64 pumpdump reading
+	lastPrint  sync.Map // symbol → time.Time latest aggressive print
 }
 
 /*
@@ -137,15 +138,48 @@ func (price *Price) VolumeUSD(symbol string) float64 {
 	return price.ticker.VolumeUSD(price.normalizer.Name(symbol))
 }
 
+/*
+ChangePct is session open → live mark when both exist, else the REST open→last
+reading. Mark keeps day-move oracles current between ticker batches.
+*/
 func (price *Price) ChangePct(symbol string) float64 {
-	return price.ticker.ChangePct(price.normalizer.Name(symbol))
+	name := price.normalizer.Name(symbol)
+	row := price.ticker.Of(name)
+
+	if row == nil {
+		return 0
+	}
+
+	open := row.Open
+
+	if open <= 0 {
+		return row.ChangePct
+	}
+
+	last := row.Last
+
+	if mark := price.Mark(name); mark != nil && mark.Sign() > 0 {
+		last = mark.InexactFloat64()
+	}
+
+	if last <= 0 {
+		return row.ChangePct
+	}
+
+	return (last - open) / open * 100
 }
 
 /*
 Mark is the best bid — what a long can hit now.
 */
 func (price *Price) Mark(symbol string) (bid *decimal.Decimal) {
-	symbol = price.normalizer.Name(symbol)
+	if price == nil || price.Books == nil {
+		return nil
+	}
+
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
 
 	price.Books.Book(symbol, func(book *market.Book) {
 		bid = book.BidPrice()
@@ -161,11 +195,13 @@ Returns filled base size and gross quote notional.
 func (price *Price) Walk(
 	symbol string, qty decimal.Decimal, buy bool,
 ) (filled, gross *decimal.Decimal) {
-	if qty.Sign() <= 0 {
+	if price == nil || price.Books == nil || qty.Sign() <= 0 {
 		return nil, nil
 	}
 
-	symbol = price.normalizer.Name(symbol)
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
 
 	price.Books.Book(symbol, func(book *market.Book) {
 		if book == nil {
@@ -208,109 +244,6 @@ func (price *Price) Walk(
 	})
 
 	return filled, gross
-}
-
-/*
-Liquidation walks the full sellable qty against live bids.
-fully is true only when the visible book absorbs every unit.
-*/
-func (price *Price) Liquidation(
-	symbol string, qty *decimal.Decimal,
-) (vwap *decimal.Decimal, fully bool) {
-	if price == nil || qty == nil || qty.Sign() <= 0 {
-		return nil, false
-	}
-
-	filled, gross := price.Walk(symbol, *qty, false)
-
-	if filled == nil || gross == nil || filled.Sign() <= 0 {
-		return nil, false
-	}
-
-	v := gross.Div(*filled)
-	return &v, filled.Cmp(*qty) >= 0
-}
-
-/*
-WalkImpactPct is how much worse full-qty sell VWAP is vs best bid, in percent.
-*/
-func (price *Price) WalkImpactPct(symbol string, qty *decimal.Decimal) float64 {
-	best := price.Mark(symbol)
-	vwap, ok := price.Liquidation(symbol, qty)
-
-	if !ok || best == nil || vwap == nil || best.Sign() <= 0 {
-		return 0
-	}
-
-	impact, _ := best.Sub(*vwap).Div(*best).Mul(decimalHundred).Float64()
-
-	if impact < 0 {
-		return 0
-	}
-
-	return impact
-}
-
-/*
-StoplossArmPct is the minimum fee-net PnL% before a position may arm — the
-larger of live spread, full-qty walk impact, and round-trip taker fee, floored
-by one tick as a percent of mark so ArmPnlPct is never zero.
-*/
-func (price *Price) StoplossArmPct(symbol string) float64 {
-	if price == nil || price.normalizer == nil {
-		return 0
-	}
-
-	symbol = price.normalizer.Name(symbol)
-	arm := 0.0
-
-	if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
-		if v, _ := spread.Float64(); v > arm {
-			arm = v
-		}
-	}
-
-	if price.Instrument != nil {
-		if rate := price.Instrument.TakerFee(symbol); rate != nil {
-			if fee, _ := rate.Mul(decimal.NewFromInt(2)).Float64(); fee > arm {
-				arm = fee
-			}
-		}
-	}
-
-	if mark := price.Mark(symbol); mark != nil && mark.Sign() > 0 {
-		unit := *mark
-
-		if price.Instrument != nil {
-			pair := price.Instrument.Pair(symbol)
-
-			switch {
-			case pair.TickSize != nil && pair.TickSize.Sign() > 0:
-				unit = *pair.TickSize
-			case pair.PriceIncrement != nil && pair.PriceIncrement.Sign() > 0:
-				unit = *pair.PriceIncrement
-			}
-		}
-
-		if tick, _ := unit.Div(*mark).Mul(decimalHundred).Float64(); tick > arm {
-			arm = tick
-		}
-	}
-
-	return arm
-}
-
-/*
-StoplossArmPctFor sizes the arm floor with this position's walk impact.
-*/
-func (price *Price) StoplossArmPctFor(symbol string, qty *decimal.Decimal) float64 {
-	arm := price.StoplossArmPct(symbol)
-
-	if impact := price.WalkImpactPct(symbol, qty); impact > arm {
-		return impact
-	}
-
-	return arm
 }
 
 /*
@@ -402,7 +335,9 @@ func (price *Price) ExhaustionReading(symbol string) float64 {
 }
 
 /*
-NoteTrade feeds tape uptake from print notional.
+NoteTrade feeds tape uptake from aggressive buy notional only. Sell prints on a
+quiet pair must not keep BookIntact true for the rest of the tape window.
+Every print (buy or sell) still stamps LastPrintAt for correlation heartbeats.
 */
 func (price *Price) NoteTrade(trade *market.TradeData) {
 	if trade == nil || trade.Price.Sign() <= 0 || trade.Qty.Sign() <= 0 {
@@ -415,11 +350,51 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 		at = time.Now()
 	}
 
+	name := price.normalizer.Name(trade.Symbol)
+	price.notePrint(name, at)
+
+	if trade.Side != market.SideBuy {
+		return
+	}
+
 	price.tape.Note(
-		price.normalizer.Name(trade.Symbol),
+		name,
 		trade.Price.Mul(trade.Qty).InexactFloat64(),
 		at,
 	)
+}
+
+func (price *Price) notePrint(symbol string, at time.Time) {
+	if symbol == "" || at.IsZero() {
+		return
+	}
+
+	if raw, ok := price.lastPrint.Load(symbol); ok {
+		if prev, ok := raw.(time.Time); ok && !at.After(prev) {
+			return
+		}
+	}
+
+	price.lastPrint.Store(symbol, at)
+}
+
+/*
+LastPrintAt is the newest trade timestamp for a symbol — correlation heartbeats
+prefer this over a frozen resting touch order time.
+*/
+func (price *Price) LastPrintAt(symbol string) time.Time {
+	if price == nil {
+		return time.Time{}
+	}
+
+	raw, ok := price.lastPrint.Load(price.normalizer.Name(symbol))
+
+	if !ok {
+		return time.Time{}
+	}
+
+	at, _ := raw.(time.Time)
+	return at
 }
 
 /*
@@ -454,10 +429,13 @@ func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 }
 
 /*
-PeakFrac is last's place in the 24h high–low range (0 at low, 1 at high).
+PeakFrac is mark's place in the 24h high–low range (0 at low, 1 at high).
+Live bid marks beat stale REST Last so peak vetoes track the tape, not the
+last ticker batch from ~20 minutes ago.
 */
 func (price *Price) PeakFrac(symbol string) (float64, bool) {
-	row := price.ticker.Of(price.normalizer.Name(symbol))
+	name := price.normalizer.Name(symbol)
+	row := price.ticker.Of(name)
 
 	if row == nil {
 		return 0, false
@@ -465,11 +443,75 @@ func (price *Price) PeakFrac(symbol string) (float64, bool) {
 
 	span := row.High24h - row.Low24h
 
-	if span <= 0 || row.Last <= 0 {
+	if span <= 0 {
 		return 0, false
 	}
 
-	return (row.Last - row.Low24h) / span, true
+	last := row.Last
+
+	if mark := price.Mark(name); mark != nil && mark.Sign() > 0 {
+		last = mark.InexactFloat64()
+	}
+
+	if last <= 0 {
+		return 0, false
+	}
+
+	return (last - row.Low24h) / span, true
+}
+
+/*
+EntryOpenDragPct is fee-net close-now PnL% after buying the touch ask and marking
+at the bid — the immediate drag a market enter eats before any move.
+*/
+func (price *Price) EntryOpenDragPct(symbol string) (float64, bool) {
+	symbol = price.normalizer.Name(symbol)
+
+	var bid, ask *decimal.Decimal
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+
+		bid = book.BidPrice()
+		ask = book.AskPrice()
+	})
+
+	if bid == nil || ask == nil || bid.Sign() <= 0 || ask.Sign() <= 0 {
+		return 0, false
+	}
+
+	feeIn := price.Fee(symbol, ask)
+	feeOut := price.Fee(symbol, bid)
+
+	if feeIn == nil || feeOut == nil {
+		return 0, false
+	}
+
+	cost := ask.Add(*feeIn)
+
+	if cost.Sign() <= 0 {
+		return 0, false
+	}
+
+	pnl := bid.Sub(*feeOut).Sub(cost)
+	return pnl.Div(cost).Mul(decimalHundred).InexactFloat64(), true
+}
+
+/*
+EntryDragOK is true when immediate open drag is no worse than MaxEntryOpenDragPct.
+*/
+func (price *Price) EntryDragOK(symbol string) bool {
+	max := system.Cfg.Risk.MaxEntryOpenDragPct
+
+	if max <= 0 {
+		return true
+	}
+
+	drag, ok := price.EntryOpenDragPct(symbol)
+
+	return ok && drag >= -max
 }
 
 /*
@@ -492,13 +534,35 @@ func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
 }
 
 /*
-MoverVolumeOK accepts 24h ticker turnover or an accelerating desk tape.
+MoverVolumeOK requires live tape activity. Stale 24h VolumeUSD alone must not
+pass a name that printed its volume hours ago and has been quiet since.
 */
 func (price *Price) MoverVolumeOK(symbol string) bool {
 	risk := system.Cfg.Risk
+	recent, prior := price.TapeUptake(symbol, time.Now())
 
-	if price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD {
+	if recent < risk.MinTapeNotionalUSD {
+		return false
+	}
+
+	if recent > prior {
 		return true
+	}
+
+	// Established 24h turnover still needs recent prints so the REST volume
+	// figure cannot clear quiet flat-liners by itself.
+	return price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD
+}
+
+/*
+SessionMoveOK is the day-move gate: live open→mark clears the floor and the
+tape is still accelerating, so a morning nudge that has flat-lined fails.
+*/
+func (price *Price) SessionMoveOK(symbol string) bool {
+	risk := system.Cfg.Risk
+
+	if price.ChangePct(symbol) < risk.MinMoverChangePct {
+		return false
 	}
 
 	recent, prior := price.TapeUptake(symbol, time.Now())
@@ -662,10 +726,12 @@ func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) 
 }
 
 /*
-PnL is fee-net profit. Exit wins; else Mark; else a bid-book walk (never stamps Exit).
+PnL is exact fee-net profit: realized Exit when set, otherwise the full-qty
+bid walk. Mark is never used. Incomplete books return nil.
 */
 func (price *Price) PnL(position *Position) *decimal.Decimal {
-	if position.Qty == nil || position.Entry == nil ||
+	if position == nil || price == nil || price.normalizer == nil ||
+		position.Qty == nil || position.Entry == nil ||
 		position.Qty.Sign() <= 0 || position.Entry.Sign() <= 0 {
 		return nil
 	}
@@ -674,13 +740,9 @@ func (price *Price) PnL(position *Position) *decimal.Decimal {
 	exitPx := position.Exit
 
 	if exitPx == nil {
-		exitPx = position.Mark
-	}
-
-	if exitPx == nil {
 		filled, gross := price.Walk(symbol, *position.Qty, false)
 
-		if filled == nil || gross == nil || filled.Sign() <= 0 {
+		if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 {
 			return nil
 		}
 
@@ -706,7 +768,8 @@ func (price *Price) PnL(position *Position) *decimal.Decimal {
 }
 
 /*
-PnLPct is PnL as percent of fee-inclusive entry cost.
+PnLPct is exact fee-net PnL as percent of fee-inclusive entry cost. Zero is
+break-even after fees.
 */
 func (price *Price) PnLPct(position *Position) *decimal.Decimal {
 	pnl := price.PnL(position)

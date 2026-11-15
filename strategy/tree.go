@@ -145,6 +145,10 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 Predict reads the exact path leaf. WalkPrefix would also visit exit extensions
 of an enter key (and byte-prefixes such as R01 vs R010) and treat them as the
 same decision. Tail brightness must beat that leaf; resistance above 0.8 prunes it.
+
+The third return is matched: true when a leaf existed for this path. Matched but
+ActionNone means resistance vetoed or pruned the leaf — Model must not treat that
+as an unexplored cold path and enter anyway.
 */
 func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	min := system.Cfg.Learning.MinPathLength
@@ -162,14 +166,14 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 
 	if decision.Resistance > 0.8 {
 		tree.Delete(path)
-		return ActionNone, 0, false
+		return ActionNone, decision.Resistance, true
 	}
 
 	if tokens.Last().Brightness <= decision.Resistance {
-		return ActionNone, 0, false
+		return ActionNone, decision.Resistance, true
 	}
 
-	return NewAction(decision.Action), decision.Resistance, false
+	return NewAction(decision.Action), decision.Resistance, true
 }
 
 /*

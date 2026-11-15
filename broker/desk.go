@@ -478,7 +478,7 @@ Exit routes policy exits through the tier that holds the cache row so Send uses
 the correct private socket and fill matching stays on that lane's positions.
 */
 func (desk *Desk) Exit(
-	tt TierType, position *Position,
+	tt TierType, position *Position, force bool,
 ) error {
 	tier := desk.tiers[tt]
 
@@ -490,7 +490,20 @@ func (desk *Desk) Exit(
 		))
 	}
 
-	return errnie.Error(tier.Exit(position))
+	return errnie.Error(tier.Exit(position, force))
+}
+
+/*
+GetPosition returns the position by tier and symbol.
+*/
+func (desk *Desk) GetPosition(tt TierType, symbol string) *Position {
+	tier := desk.tiers[tt]
+
+	if tier == nil {
+		return nil
+	}
+
+	return tier.positions.Get(symbol)
 }
 
 /*

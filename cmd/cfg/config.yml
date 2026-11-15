@@ -46,9 +46,10 @@ system:
     # Public Ticker REST poll. Kraken's unfiltered (and often multi-pair)
     # Ticker returns EService:Unavailable, so each cycle covers a slice of
     # desk symbols and hard failures back off up to ticker_backoff_max.
-    ticker_refresh: 1m
+    # ~640 pairs / 128 ≈ 5 cycles → full universe refresh in ~2.5m.
+    ticker_refresh: 30s
     ticker_backoff_max: 15m
-    ticker_batch_size: 32
+    ticker_batch_size: 128
 
 resonance:
   # The resonance solver's pace and layer depth for the per-symbol coder.
@@ -219,9 +220,9 @@ risk:
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
   # Each half of the tape comparison. Last window must beat the one before it.
-  tape_window: 15m
+  tape_window: 5m
   # Quote dollars the last window must clear, on top of beating the prior window.
-  min_tape_notional_usd: 100
+  min_tape_notional_usd: 500
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
@@ -229,14 +230,18 @@ risk:
 
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.
-  max_open_positions: 100
+  max_open_positions: 5
   max_enters_per_tick: 1
+  # Lone 1-of-1 trade frames must still clear this board floor.
+  min_board_score: 1.5
+  # Recent peer scores compete across single-symbol trade frames.
+  board_peer_window: 2s
   # Accumulation vs ignition range caps (dual peak oracles in training).
   max_accum_peak_frac: 0.35
   max_ignition_peak_frac: 0.85
   ignition_precursor_min: 0.55
   ignition_compression_min: 0.55
-  ignition_ignition_min: 0.45
+  ignition_ignition_min: 0.55
   weight_peak_score: 1.25
   weight_precursor: 1.0
   weight_tape_uptake: 0.75

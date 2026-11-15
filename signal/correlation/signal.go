@@ -2,6 +2,7 @@ package correlation
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,15 +17,23 @@ import (
 )
 
 /*
+heartbeatStale is how old a touch/print clock may be before a quiet-symbol
+heartbeat is skipped. Frozen resting-order timestamps must not keep feeding the
+cohort with stale bid marks.
+*/
+const heartbeatStale = 30 * time.Second
+
+/*
 Signal is the Correlation disruptor stage — outcomes land on envelope.Correlation and
 Map() feeds logic/resonance Features (herd_score, peak_score) for Model story gates.
 */
 type Signal struct {
 	*runtime.System
-	sample  *algorithm.CohortSample
-	process *equation.Cohort
-	price   *broker.Price
-	pulse   atomic.Uint64
+	sample   *algorithm.CohortSample
+	process  *equation.Cohort
+	price    *broker.Price
+	pulse    atomic.Uint64
+	lastMark sync.Map // symbol → float64 last heartbeat mark
 }
 
 /*
@@ -82,18 +91,28 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		start := int(signal.pulse.Load())
 		symbols, next := signal.price.PulseSymbols(batch, start)
+		now := time.Now()
 
 		for _, symbol := range symbols {
 			mark := signal.price.Mark(symbol)
-			at := signal.quoteTime(symbol)
+			at := signal.quoteTime(symbol, now)
 
 			if mark == nil || mark.Sign() <= 0 || at.IsZero() {
 				continue
 			}
 
+			px := mark.InexactFloat64()
+
+			if raw, ok := signal.lastMark.Load(symbol); ok {
+				if prev, ok := raw.(float64); ok && prev == px {
+					continue
+				}
+			}
+
+			signal.lastMark.Store(symbol, px)
 			inputs = append(inputs, algorithm.CohortSampleInput{
 				Symbol: symbol,
-				Price:  mark.InexactFloat64(),
+				Price:  px,
 				At:     at,
 			})
 		}
@@ -131,29 +150,40 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 /*
-quoteTime is the latest exchange touch time. Heartbeats without it are skipped
-so a local clock cannot walk the cohort sample backwards.
+quoteTime is the newest of last print and live touch time, and only when that
+clock is fresh. Resting BestBid/BestAsk timestamps freeze when the touch order
+does not change — those must not keep walking the cohort with stale bids.
 */
-func (signal *Signal) quoteTime(symbol string) time.Time {
+func (signal *Signal) quoteTime(symbol string, now time.Time) time.Time {
 	var at time.Time
 
-	if signal.price == nil || signal.price.Books == nil {
+	if signal.price == nil {
 		return at
 	}
 
-	signal.price.Books.Book(symbol, func(book *market.Book) {
-		if book == nil {
-			return
-		}
+	if print := signal.price.LastPrintAt(symbol); !print.IsZero() {
+		at = print
+	}
 
-		if bid := book.BestBid(); bid != nil && !bid.Timestamp.IsZero() && bid.Timestamp.After(at) {
-			at = bid.Timestamp
-		}
+	if signal.price.Books != nil {
+		signal.price.Books.Book(symbol, func(book *market.Book) {
+			if book == nil {
+				return
+			}
 
-		if ask := book.BestAsk(); ask != nil && !ask.Timestamp.IsZero() && ask.Timestamp.After(at) {
-			at = ask.Timestamp
-		}
-	})
+			if bid := book.BestBid(); bid != nil && !bid.Timestamp.IsZero() && bid.Timestamp.After(at) {
+				at = bid.Timestamp
+			}
+
+			if ask := book.BestAsk(); ask != nil && !ask.Timestamp.IsZero() && ask.Timestamp.After(at) {
+				at = ask.Timestamp
+			}
+		})
+	}
+
+	if at.IsZero() || now.Sub(at) > heartbeatStale {
+		return time.Time{}
+	}
 
 	return at
 }

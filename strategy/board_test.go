@@ -88,6 +88,33 @@ func TestPlace(t *testing.T) {
 			})
 		})
 
+		Convey("When a lone candidate sits below the board floor", func() {
+			var entered []string
+			var skipped string
+			enter := func(cand EnterCandidate) {
+				entered = append(entered, cand.Symbol)
+			}
+
+			envelope := runtime.NewEnvelope(nil)
+			envelope.Correlation["FLAT/USD"] = &equation.CohortOutput{PeakScore: 0.1}
+			candidates := []EnterCandidate{{
+				Symbol: "FLAT/USD",
+				Path:   "p",
+				Decide: func(d *runtime.Decision) {
+					if d != nil {
+						skipped = d.Reason
+					}
+				},
+			}}
+
+			board.Place(candidates, envelope, nil, nil, false, enter)
+
+			Convey("Place skips instead of free 1-of-1 enter", func() {
+				So(entered, ShouldBeEmpty)
+				So(skipped, ShouldEqual, "board score below floor")
+			})
+		})
+
 		Convey("When enter callback is nil", func() {
 			envelope := runtime.NewEnvelope(nil)
 			candidates := []EnterCandidate{{Symbol: "X/USD", Path: "p"}}

@@ -375,10 +375,10 @@ func TestPredictIntegration(t *testing.T) {
 		Convey("When oracle approves a promoted paper path", func() {
 			So(model.oracleAllows(regions), ShouldBeTrue)
 
-			action, resistance, disagreed := tree.Predict(cut)
+			action, resistance, matched := tree.Predict(cut)
 
 			Convey("Tree predicts enter within paper resistance", func() {
-				So(disagreed, ShouldBeFalse)
+				So(matched, ShouldBeTrue)
 				So(action, ShouldEqual, ActionEnter)
 				So(resistance, ShouldEqual, 0.15)
 			})

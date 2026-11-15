@@ -1,6 +1,9 @@
+import { useSelector } from "@tanstack/react-store";
 import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import { bookAtom, type Book, isBook } from "#/collections/book";
 import { moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { trySendCommand } from "#/providers/websocket";
 import type {
 	OpenChoiceChartApi,
 	OpenChoiceLegendItem,
@@ -17,9 +20,14 @@ const OpenChoiceSciChart = lazy(() =>
 	})),
 );
 
+const exitBook = (item: OpenChoiceLegendItem, selected: Book): Book =>
+	isBook(item.tier) ? item.tier : selected;
+
 export const OpenChoiceChart = () => {
+	const book = useSelector(bookAtom, (state) => state);
 	const [isGrid, setIsGrid] = useState(false);
 	const [legend, setLegend] = useState<OpenChoiceLegendItem[]>([]);
+	const [exiting, setExiting] = useState<Record<string, boolean>>({});
 	const legendKey = useRef("");
 	const apiRef = useRef<OpenChoiceChartApi | null>(null);
 
@@ -33,11 +41,38 @@ export const OpenChoiceChart = () => {
 		if (key === legendKey.current) return;
 		legendKey.current = key;
 		setLegend(items);
+		setExiting((prev) => {
+			const next: Record<string, boolean> = {};
+			for (const item of items) {
+				if (prev[item.id]) next[item.id] = true;
+			}
+			return next;
+		});
 	}, []);
 
 	const setLayout = (grid: boolean) => {
 		apiRef.current?.setIsGridLayoutMode(grid);
 		setIsGrid(grid);
+	};
+
+	const exitPosition = (item: OpenChoiceLegendItem) => {
+		if (exiting[item.id]) return;
+
+		setExiting((prev) => ({ ...prev, [item.id]: true }));
+		const ok = trySendCommand({
+			type: "exit",
+			id: item.id,
+			symbol: item.name,
+			book: exitBook(item, book),
+		});
+
+		if (!ok) {
+			setExiting((prev) => {
+				const next = { ...prev };
+				delete next[item.id];
+				return next;
+			});
+		}
 	};
 
 	return (
@@ -141,6 +176,21 @@ export const OpenChoiceChart = () => {
 								<span className="tabular-nums text-(--f4)">
 									{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
 								</span>
+								<button
+									type="button"
+									aria-label={`Exit ${item.name}`}
+									title={`Manually exit ${item.name}`}
+									disabled={Boolean(exiting[item.id])}
+									onClick={() => exitPosition(item)}
+									className={cn(
+										"ml-0.5 rounded border border-(--line) px-1 py-px text-[9px] uppercase tracking-wide transition-colors",
+										exiting[item.id]
+											? "cursor-wait text-(--f4)"
+											: "cursor-pointer text-(--f3) hover:border-(--down) hover:text-(--down)",
+									)}
+								>
+									{exiting[item.id] ? "…" : "exit"}
+								</button>
 							</span>
 						);
 					})}
