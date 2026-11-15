@@ -70,21 +70,6 @@ func NewPrice(
 		return price
 	}
 
-	if host != nil {
-		host.Ticker().OnChange(func(frame market.MarketType) {
-			batch := market.NewTicker(nil)
-			frame.ToMarket(batch)
-
-			for pair, row := range batch.Rows {
-				if row == nil {
-					continue
-				}
-
-				price.ticker.Set(price.normalizer.Name(pair), row)
-			}
-		})
-	}
-
 	if public != nil && host != nil {
 		batch := system.Cfg.WebSocket.TickerBatchSize
 
@@ -93,6 +78,7 @@ func NewPrice(
 		}
 
 		cursor := 0
+		ticker := host.Ticker()
 
 		public.Watch(
 			system.Cfg.WebSocket.Endpoints.Ticker,
@@ -109,7 +95,8 @@ func NewPrice(
 					"assetVersion": "1",
 				}
 			},
-			host.Ticker(),
+			ticker,
+			func() { price.applyTicker(ticker) },
 		)
 	}
 
@@ -124,6 +111,26 @@ func (price *Price) SetTicker(row *market.TickerData) {
 	}
 
 	price.ticker.Set(price.normalizer.Name(row.Symbol), row)
+}
+
+/*
+applyTicker folds a decoded venue ticker frame into the live reference book.
+*/
+func (price *Price) applyTicker(frame market.MarketType) {
+	if frame == nil {
+		return
+	}
+
+	batch := market.NewTicker(nil)
+	frame.ToMarket(batch)
+
+	for pair, row := range batch.Rows {
+		if row == nil {
+			continue
+		}
+
+		price.ticker.Set(price.normalizer.Name(pair), row)
+	}
 }
 
 func (price *Price) VolumeUSD(symbol string) float64 {
@@ -201,6 +208,109 @@ func (price *Price) Walk(
 	})
 
 	return filled, gross
+}
+
+/*
+Liquidation walks the full sellable qty against live bids.
+fully is true only when the visible book absorbs every unit.
+*/
+func (price *Price) Liquidation(
+	symbol string, qty *decimal.Decimal,
+) (vwap *decimal.Decimal, fully bool) {
+	if price == nil || qty == nil || qty.Sign() <= 0 {
+		return nil, false
+	}
+
+	filled, gross := price.Walk(symbol, *qty, false)
+
+	if filled == nil || gross == nil || filled.Sign() <= 0 {
+		return nil, false
+	}
+
+	v := gross.Div(*filled)
+	return &v, filled.Cmp(*qty) >= 0
+}
+
+/*
+WalkImpactPct is how much worse full-qty sell VWAP is vs best bid, in percent.
+*/
+func (price *Price) WalkImpactPct(symbol string, qty *decimal.Decimal) float64 {
+	best := price.Mark(symbol)
+	vwap, ok := price.Liquidation(symbol, qty)
+
+	if !ok || best == nil || vwap == nil || best.Sign() <= 0 {
+		return 0
+	}
+
+	impact, _ := best.Sub(*vwap).Div(*best).Mul(decimalHundred).Float64()
+
+	if impact < 0 {
+		return 0
+	}
+
+	return impact
+}
+
+/*
+StoplossArmPct is the minimum fee-net PnL% before a position may arm — the
+larger of live spread, full-qty walk impact, and round-trip taker fee, floored
+by one tick as a percent of mark so ArmPnlPct is never zero.
+*/
+func (price *Price) StoplossArmPct(symbol string) float64 {
+	if price == nil || price.normalizer == nil {
+		return 0
+	}
+
+	symbol = price.normalizer.Name(symbol)
+	arm := 0.0
+
+	if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
+		if v, _ := spread.Float64(); v > arm {
+			arm = v
+		}
+	}
+
+	if price.Instrument != nil {
+		if rate := price.Instrument.TakerFee(symbol); rate != nil {
+			if fee, _ := rate.Mul(decimal.NewFromInt(2)).Float64(); fee > arm {
+				arm = fee
+			}
+		}
+	}
+
+	if mark := price.Mark(symbol); mark != nil && mark.Sign() > 0 {
+		unit := *mark
+
+		if price.Instrument != nil {
+			pair := price.Instrument.Pair(symbol)
+
+			switch {
+			case pair.TickSize != nil && pair.TickSize.Sign() > 0:
+				unit = *pair.TickSize
+			case pair.PriceIncrement != nil && pair.PriceIncrement.Sign() > 0:
+				unit = *pair.PriceIncrement
+			}
+		}
+
+		if tick, _ := unit.Div(*mark).Mul(decimalHundred).Float64(); tick > arm {
+			arm = tick
+		}
+	}
+
+	return arm
+}
+
+/*
+StoplossArmPctFor sizes the arm floor with this position's walk impact.
+*/
+func (price *Price) StoplossArmPctFor(symbol string, qty *decimal.Decimal) float64 {
+	arm := price.StoplossArmPct(symbol)
+
+	if impact := price.WalkImpactPct(symbol, qty); impact > arm {
+		return impact
+	}
+
+	return arm
 }
 
 /*

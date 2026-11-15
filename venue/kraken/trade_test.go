@@ -42,14 +42,11 @@ func TestUnmarshalJSONTrade(t *testing.T) {
 			}]
 		}`)
 		trade := NewTrade()
-		called := 0
-		trade.OnChange(func(_ market.MarketType) { called++ })
 
 		Convey("When a trade websocket frame arrives", func() {
 			So(trade.UnmarshalJSON(raw), ShouldBeNil)
 
-			Convey("tape fields decode and OnChange fires", func() {
-				So(called, ShouldEqual, 1)
+			Convey("tape fields decode", func() {
 				So(trade.Data, ShouldHaveLength, 1)
 				So(trade.Data[0].Symbol, ShouldEqual, "BTC/USD")
 				So(trade.Data[0].Side, ShouldEqual, "buy")

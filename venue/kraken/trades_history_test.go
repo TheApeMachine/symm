@@ -6,7 +6,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/market"
 )
 
 func TestNewTradesHistoryRequest(t *testing.T) {
@@ -84,8 +83,6 @@ func TestUnmarshalJSONHistoryTrade(t *testing.T) {
 func TestUnmarshalJSONTradesHistory(t *testing.T) {
 	Convey("Setup", t, func() {
 		history := NewTradesHistory()
-		called := 0
-		history.OnChange(func(_ market.MarketType) { called++ })
 
 		raw := []byte(`{
 			"error":[],
@@ -106,8 +103,7 @@ func TestUnmarshalJSONTradesHistory(t *testing.T) {
 		Convey("When TradesHistory REST JSON arrives", func() {
 			So(history.UnmarshalJSON(raw), ShouldBeNil)
 
-			Convey("trades map and OnChange fire", func() {
-				So(called, ShouldEqual, 1)
+			Convey("trades map decodes", func() {
 				So(history.Result.Trades["T1"].Pair, ShouldEqual, "BTC/USD")
 				So(history.Result.Cursor.Next, ShouldEqual, "abc")
 			})

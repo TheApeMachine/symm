@@ -131,12 +131,6 @@ func NewDesk(
 	go desk.pumpLevel3()
 	go desk.pumpTrade()
 
-	host.Trade().OnChange(func(frame market.MarketType) {
-		trade := market.NewTrade("", "", nil)
-		frame.ToMarket(trade)
-		desk.enqueueTrade(trade)
-	})
-
 	desk.publishModes()
 	desk.Transition(runtime.READY)
 	return desk
@@ -313,7 +307,23 @@ func (desk *Desk) Run() {
 		}
 
 		pipeline.Hit("trade")
-		desk.venue.Read(buf)
+		desk.ingest(desk.venue.Read(buf))
+	}
+}
+
+/*
+ingest applies one decoded public frame. venue.Read only demuxes.
+*/
+func (desk *Desk) ingest(frame market.MarketType) {
+	if frame == nil {
+		return
+	}
+
+	switch typed := frame.(type) {
+	case *kraken.Trade:
+		trade := market.NewTrade("", "", nil)
+		typed.ToMarket(trade)
+		desk.enqueueTrade(trade)
 	}
 }
 
@@ -394,13 +404,8 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 
 		desk.price.NoteTrade(trade)
-
 		symbol := trade.Symbol
-
-		if desk.price.normalizer != nil {
-			symbol = desk.price.normalizer.Name(symbol)
-		}
-
+		symbol = desk.price.normalizer.Name(symbol)
 		mark := desk.price.Mark(symbol)
 
 		if mark == nil {
@@ -408,28 +413,11 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 
 		for _, tier := range desk.tiers {
-			if tier == nil || tier.positions == nil {
+			if tier == nil {
 				continue
 			}
 
-			touched := false
-
-			for _, position := range tier.positions.Open(symbol) {
-				if !position.Live() {
-					continue
-				}
-
-				if err := position.Update(mark); err != nil {
-					continue
-				}
-
-				_ = tier.positions.Save(position)
-				touched = true
-			}
-
-			if touched {
-				tier.Hello()
-			}
+			tier.Update(symbol, mark)
 		}
 	}
 }
@@ -475,14 +463,14 @@ func (desk *Desk) Enter(
 	tier := desk.tiers[tt]
 
 	if tier == nil {
-		return errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"[desk.Enter] unknown tier",
 			nil,
-		)
+		))
 	}
 
-	return tier.Enter(symbol, path, pathFound)
+	return errnie.Error(tier.Enter(symbol, path, pathFound))
 }
 
 /*
@@ -490,19 +478,19 @@ Exit routes policy exits through the tier that holds the cache row so Send uses
 the correct private socket and fill matching stays on that lane's positions.
 */
 func (desk *Desk) Exit(
-	tier TierType, position *Position,
+	tt TierType, position *Position,
 ) error {
-	t := desk.tiers[tier]
+	tier := desk.tiers[tt]
 
-	if t == nil {
-		return errnie.Err(
+	if tier == nil {
+		return errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"[desk.Exit] unknown tier",
 			nil,
-		)
+		))
 	}
 
-	return t.Exit(position)
+	return errnie.Error(tier.Exit(position))
 }
 
 /*
@@ -527,9 +515,9 @@ func (desk *Desk) Has(symbol string) bool {
 Positions exposes filled opens to strategy without Submitted noise from pending
 enters still awaiting venue buy prints.
 */
-func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
+func (desk *Desk) Positions(tt TierType, symbol string) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
-		tier := desk.tiers[tier]
+		tier := desk.tiers[tt]
 
 		if tier == nil {
 			return
@@ -547,9 +535,9 @@ func (desk *Desk) Positions(tier TierType, symbol string) iter.Seq[*Position] {
 Pending holds flat sells until the model records exit_path — Remove ran but
 learning still needs the position handle for attribution before ClearPending.
 */
-func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
+func (desk *Desk) Pending(tt TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
-		tier := desk.tiers[tier]
+		tier := desk.tiers[tt]
 
 		if tier == nil {
 			return
@@ -567,9 +555,9 @@ func (desk *Desk) Pending(tier TierType) iter.Seq[*Position] {
 ClearPending frees pending map memory and lets the symbol re-enter after the
 model finished writing exit_path into its tables.
 */
-func (desk *Desk) ClearPending(tier TierType, symbol string) {
-	if t := desk.tiers[tier]; t != nil {
-		t.ClearPending(symbol)
+func (desk *Desk) ClearPending(tt TierType, symbol string) {
+	if tier := desk.tiers[tt]; tier != nil {
+		tier.ClearPending(symbol)
 	}
 }
 

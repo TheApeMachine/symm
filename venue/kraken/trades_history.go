@@ -100,7 +100,6 @@ fills without trusting only the executions websocket.
 type TradesHistory struct {
 	Error    []any             `json:"error"`
 	Result   TradesHistoryResult `json:"result"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -114,12 +113,6 @@ func NewTradesHistory() *TradesHistory {
 	}
 }
 
-/*
-OnChange wires tier history ingest after each REST decode.
-*/
-func (history *TradesHistory) OnChange(fn func(market.MarketType)) {
-	history.onChange = fn
-}
 
 /*
 Request asks for all types without embedded trades — map is built from top-level trades.
@@ -134,7 +127,7 @@ func (history *TradesHistory) Request() map[string]any {
 }
 
 /*
-UnmarshalJSON surfaces venue errors and fires OnChange after Trades is allocated.
+UnmarshalJSON surfaces venue errors after Trades is allocated.
 */
 func (history *TradesHistory) UnmarshalJSON(data []byte) error {
 	type alias TradesHistory
@@ -150,23 +143,18 @@ func (history *TradesHistory) UnmarshalJSON(data []byte) error {
 		).With("error", decoded.Error)
 	}
 
-	onChange := history.onChange
 	*history = TradesHistory(decoded)
-	history.onChange = onChange
 
 	if history.Result.Trades == nil {
 		history.Result.Trades = make(map[string]HistoryTrade)
 	}
 
-	if history.onChange != nil {
-		history.onChange(history)
-	}
 
 	return nil
 }
 
 /*
-MarshalJSON aliases TradesHistory so onChange stays off cached REST payloads.
+MarshalJSON aliases TradesHistory for cached REST payloads.
 */
 func (history *TradesHistory) MarshalJSON() ([]byte, error) {
 	type alias TradesHistory
@@ -233,7 +221,7 @@ func (result *TradesHistoryResult) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON decodes TradesHistoryResult without running OnChange — nested in TradesHistory.
+UnmarshalJSON decodes TradesHistoryResult nested in TradesHistory.
 */
 func (result *TradesHistoryResult) UnmarshalJSON(data []byte) error {
 	type alias TradesHistoryResult

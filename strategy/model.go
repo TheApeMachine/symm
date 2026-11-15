@@ -205,7 +205,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				supported < learn.MinSupportedHorizon ||
 				!hasPrecision ||
 				precision < learn.MinTaskRelativePrecision ||
-				surprise > learn.MinSurprise) {
+				surprise < learn.MinSurprise) {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -597,8 +597,8 @@ func (model *Model) gateReason(
 		return "task-relative precision below threshold"
 	}
 
-	if surprise > learn.MinSurprise {
-		return "surprise above threshold"
+	if surprise < learn.MinSurprise {
+		return "surprise below threshold"
 	}
 
 	return "resonance gate"
@@ -708,7 +708,7 @@ func (model *Model) Exit(position *broker.Position, path string) {
 
 		// Flat grammar still has to sell a stoploss that already armed Closing.
 		// Attribution can land on HoldPaths once the fill settles.
-		if path == "" && !position.Closing {
+		if path == "" && position.Status() != runtime.BUSY {
 			return
 		}
 
@@ -758,7 +758,7 @@ func (model *Model) submitExit(position *broker.Position, path string) {
 		if _, ok := model.exitSent.Load(position.ID); ok {
 			// Venue reject clears Closing so the sell can remint; otherwise the
 			// prior Send already left Closing armed and must not double-fire.
-			if position.Closing {
+			if position.Status() == runtime.BUSY {
 				return
 			}
 

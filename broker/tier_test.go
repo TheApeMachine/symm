@@ -7,16 +7,18 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 )
 
 func withTier(ctx context.Context, tt TierType, f func(*Tier)) func() {
 	return func() {
 		withPrice(func(price *Price) {
+			private := &historyClient{trades: []byte(`{"error":[],"result":{"trades":{}}}`)}
 			tier := NewTier(
 				ctx,
 				tt,
 				nil,
-				nil,
+				private,
 				price,
 				nil,
 				nil,
@@ -45,7 +47,7 @@ func TestTierTypeString(t *testing.T) {
 
 func TestNewTier(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
-		Convey("When a transport-less paper tier is constructed", func() {
+		Convey("When a paper tier is constructed", func() {
 			So(tier, ShouldNotBeNil)
 			So(tier.Type, ShouldEqual, TierTypePaper)
 			So(tier.positions, ShouldNotBeNil)
@@ -89,7 +91,7 @@ func TestTierUpdate(t *testing.T) {
 
 		Convey("When Update carries a new bid mark", func() {
 			tier.price.Books.Update(level3Snapshot(testSymbol, "120", "121"))
-			tier.Update(&market.Update{Symbol: testSymbol, Price: dec("120")})
+			tier.Update(testSymbol, dec("120"))
 
 			Convey("Position PnL matches fee-net 100 → 120 via Hello snapshot", func() {
 				So(pos.Mark.String(), ShouldEqual, "120")
@@ -131,14 +133,20 @@ func TestTierExit(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
 		pos.ExitPath = "R00/M1"
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
 		tier.positions.Add(testSymbol, pos, true)
 
-		Convey("When Exit is called on an open row", func() {
+		Convey("When Exit is called on a READY row", func() {
+			setBook(tier.price, "120", "121", "30")
 			err := tier.Exit(pos)
 
 			Convey("Closing is armed", func() {
 				So(err, ShouldBeNil)
-				So(pos.Closing, ShouldBeTrue)
+				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 				So(pos.ExitTrigger, ShouldEqual, "policy exit match R00/M1")
 			})
 		})
@@ -215,7 +223,7 @@ func TestTierSettle(t *testing.T) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
 		tier.positions.Add(testSymbol, pos, true)
 
-		Convey("When settle arms a stoploss seat", func() {
+		Convey("When settle arms a stoploss position", func() {
 			tier.settle(pos)
 
 			Convey("Open stays until the exit fill; pending is armed", func() {
@@ -285,13 +293,13 @@ func BenchmarkTierUpdate(b *testing.B) {
 		})
 		t.positions.Add(testSymbol, pos, true)
 	})()
-	upd := &market.Update{Symbol: testSymbol, Price: dec("120")}
+	mark := dec("120")
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for b.Loop() {
-		tier.Update(upd)
+		tier.Update(testSymbol, mark)
 	}
 }
 

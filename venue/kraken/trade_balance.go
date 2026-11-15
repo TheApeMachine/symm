@@ -37,7 +37,6 @@ unrealized here; spendable spot remains on Balance only.
 type TradeBalance struct {
 	Error    []string           `json:"error"`
 	Result   TradeBalanceResult `json:"result"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -120,15 +119,9 @@ func (balance *TradeBalance) Request() map[string]any {
 	}
 }
 
-/*
-OnChange wires tier exchange equity display after each decode.
-*/
-func (balance *TradeBalance) OnChange(fn func(market.MarketType)) {
-	balance.onChange = fn
-}
 
 /*
-MarshalJSON aliases TradeBalance so onChange stays off cached REST payloads.
+MarshalJSON aliases TradeBalance for cached REST payloads.
 */
 func (balance *TradeBalance) MarshalJSON() ([]byte, error) {
 	type alias TradeBalance
@@ -156,13 +149,8 @@ func (balance *TradeBalance) UnmarshalJSON(data []byte) error {
 		).With("error", decoded.Error))
 	}
 
-	onChange := balance.onChange
 	*balance = TradeBalance(decoded)
-	balance.onChange = onChange
 
-	if balance.onChange != nil {
-		balance.onChange(balance)
-	}
 
 	return nil
 }

@@ -31,7 +31,6 @@ Ticker is public REST /0/public/Ticker decoded for strategy volume and range gat
 type Ticker struct {
 	Error    []any                `json:"error"`
 	Result   map[string]TickerRow `json:"result"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -41,12 +40,6 @@ func NewTicker() *Ticker {
 	return &Ticker{Result: make(map[string]TickerRow)}
 }
 
-/*
-OnChange wires desk Price reference stats after each ticker decode.
-*/
-func (ticker *Ticker) OnChange(fn func(market.MarketType)) {
-	ticker.onChange = fn
-}
 
 /*
 Request is empty — pair list is bound on the REST client URL, not this body.
@@ -56,7 +49,7 @@ func (ticker *Ticker) Request() map[string]any {
 }
 
 /*
-MarshalJSON aliases Ticker so onChange stays off cached REST payloads.
+MarshalJSON aliases Ticker for cached REST payloads.
 */
 func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 	type alias Ticker
@@ -64,7 +57,7 @@ func (ticker *Ticker) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON rejects empty or erroreous REST frames before firing OnChange.
+UnmarshalJSON rejects empty or erroneous REST frames.
 */
 func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 	type alias Ticker
@@ -94,17 +87,12 @@ func (ticker *Ticker) UnmarshalJSON(data []byte) error {
 		)
 	}
 
-	onChange := ticker.onChange
 	*ticker = Ticker(decoded)
-	ticker.onChange = onChange
 
 	if ticker.Result == nil {
 		ticker.Result = make(map[string]TickerRow)
 	}
 
-	if ticker.onChange != nil {
-		ticker.onChange(ticker)
-	}
 
 	return nil
 }
@@ -147,7 +135,7 @@ func (ticker *Ticker) FromMarket(other market.MarketType) market.MarketType {
 }
 
 /*
-ParseTicker is a helper for collectors that only need Result rows without OnChange.
+ParseTicker is a helper for collectors that only need Result rows.
 */
 func ParseTicker(buf []byte) (map[string]TickerRow, error) {
 	ticker := NewTicker()

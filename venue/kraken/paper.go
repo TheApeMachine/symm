@@ -232,6 +232,7 @@ func (paper *Paper) Watch(
 	url string,
 	body any,
 	dest json.Unmarshaler,
+	after func(),
 ) {
 	if dest == nil {
 		return
@@ -255,10 +256,13 @@ func (paper *Paper) Watch(
 				continue
 			}
 
-			err = json.Unmarshal(response, dest)
-
-			if err != nil {
+			if err := dest.UnmarshalJSON(response); err != nil {
 				errnie.Error(err)
+				continue
+			}
+
+			if after != nil {
+				after()
 			}
 		}
 	}()

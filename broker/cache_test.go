@@ -3,24 +3,35 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 )
 
 type historyClient struct {
-	body []byte
+	trades []byte
+	orders []byte
 }
 
 func (c *historyClient) Read(...string) ([]byte, error) { return nil, nil }
 func (c *historyClient) Write([]byte) error             { return nil }
-func (c *historyClient) Post(string, any) ([]byte, error) {
-	return c.body, nil
+func (c *historyClient) Post(url string, _ any) ([]byte, error) {
+	if strings.Contains(url, "QueryOrders") {
+		if len(c.orders) == 0 {
+			return []byte(`{"error":[],"result":{}}`), nil
+		}
+
+		return c.orders, nil
+	}
+
+	return c.trades, nil
 }
-func (c *historyClient) Watch(string, any, json.Unmarshaler) {}
+func (c *historyClient) Watch(string, any, json.Unmarshaler, func()) {}
 
 const historyTwoClosed = `{
 	"error": [],
@@ -139,7 +150,7 @@ func withHistory(body string, f func(*Cache)) func() {
 		cache := NewCache(
 			context.Background(),
 			"real",
-			&historyClient{body: []byte(body)},
+			&historyClient{trades: []byte(body)},
 			nil,
 			nil,
 			nil,
@@ -194,6 +205,30 @@ func TestBound(t *testing.T) {
 				So(open[0].Symbol, ShouldEqual, "BERAUSD")
 				So(open[0].Qty.String(), ShouldEqual, "10")
 				So(len(cache.Closed()), ShouldEqual, 0)
+			})
+		})
+	}))
+
+	Convey("Setup waiting position", t, withEmptyCache(func(cache *Cache) {
+		pos := NewPosition(cache.Context(), testSymbol, "paper", "path", nil, nil, nil)
+		So(pos.Enter("R00/M1", dec("1"), nil), ShouldBeNil)
+		So(pos.Status(), ShouldEqual, runtime.WAITING)
+		cache.open.Store(testSymbol, pos)
+
+		book := market.NewBalance(map[string]any{
+			"quote": "USD",
+			"assets": []*market.Asset{
+				market.NewAsset(nil, "ETH", decimal.NewFromInt(1), decimal.Zero, decimal.NewFromInt(1)),
+			},
+		})
+
+		Convey("When Bound sees a WAITING enter not yet in the wallet", func() {
+			cache.Bound(book)
+
+			Convey("The position stays open until fill or Drop", func() {
+				So(cache.Has(testSymbol), ShouldBeTrue)
+				So(len(cache.Open()), ShouldEqual, 1)
+				So(cache.Open()[0].Status(), ShouldEqual, runtime.WAITING)
 			})
 		})
 	}))
@@ -347,7 +382,7 @@ func BenchmarkNewCache(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = NewCache(ctx, "real", &historyClient{body: body}, nil, nil, nil)
+		_ = NewCache(ctx, "real", &historyClient{trades: body}, nil, nil, nil)
 	}
 }
 

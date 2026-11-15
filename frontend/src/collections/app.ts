@@ -148,19 +148,10 @@ export type DirectSink = (
 
 export const direct: Record<string, DirectSink> = {};
 
-export type OpenChoiceSink = {
-	push: (
-		marks: Record<string, Position>,
-		opts?: { snapshot?: boolean; tier?: string },
-	) => void;
-};
-
-let openChoice: OpenChoiceSink | null = null;
-
-export const bindOpenChoice = (next: OpenChoiceSink | null) => {
-	openChoice = next;
-};
-
+/*
+positions_snapshot replaces one tier's open book in the store. The chart
+subscribes to signals.positions — no side-channel push.
+*/
 direct.positions = (value, payload) => {
 	const marks = value as Record<string, Position>;
 	const snapshot = payload.positions_snapshot === true;
@@ -181,9 +172,6 @@ direct.positions = (value, payload) => {
 		}
 		return { ...next, ...marks };
 	});
-
-	// Push after the store write so a late chart bind can re-seed from state.
-	openChoice?.push(marks, { snapshot, tier });
 };
 
 direct.pipeline = (value) => {

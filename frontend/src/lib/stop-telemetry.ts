@@ -1,7 +1,7 @@
 /*
 Human words and tones for a held position's Stoploss (broker.Stoploss on the wire).
-Exit arms in fee-net profit, then confirms near the crest (Peak × nearPeakFrac)
-with kinematic exhaustion — not a trailing floor giveback.
+Arm floor is fee-derived; crest uses MeanUp / ExhaustScore from this climb —
+not fixed selection knobs.
 */
 
 import {
@@ -16,12 +16,6 @@ export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
 export type MeterTone = "success" | "warning" | "error" | "info" | "disabled";
 
-/** Matches system.Cfg.Selection.StoplossNearPeakFrac default. */
-export const NEAR_PEAK_FRAC = 0.98;
-
-/** Matches system.Cfg.Selection.StoplossConfirmMarks default. */
-export const CONFIRM_MARKS = 3;
-
 export const meterTone = (tone: Tone): MeterTone =>
 	tone === "good"
 		? "success"
@@ -33,20 +27,24 @@ export const meterTone = (tone: Tone): MeterTone =>
 					? "info"
 					: "disabled";
 
-/** Lower edge of the crest corridor — exit confirms only while Current ≥ this. */
-export const nearPeakFloor = (stop: Stoploss) => stop.PeakPnLPct * NEAR_PEAK_FRAC;
+/** Climb above arm — the scale giveback and crest are measured against. */
+export const climbAboveArm = (stop: Stoploss) =>
+	Math.max(0, stop.PeakPnLPct - stop.ArmPnlPct);
 
-/** pp still above the crest floor (negative ⇒ slipped out of the harvest zone). */
+/** Half the climb given back trips exit on the desk. */
+export const givebackFloor = (stop: Stoploss) =>
+	stop.PeakPnLPct - climbAboveArm(stop) / 2;
+
+/** pp still above the giveback trip (negative ⇒ already past half-climb). */
 export const stopRoom = (stop: Stoploss) =>
-	stop.CurrentPnLPct - nearPeakFloor(stop);
+	stop.CurrentPnLPct - givebackFloor(stop);
 
-/** 0 at peak → 1 at/below crest floor. */
+/** 0 at peak → 1 at/below half-climb giveback. */
 export const stopProximity = (stop: Stoploss) => {
-	const span = Math.max(1e-9, stop.PeakPnLPct - nearPeakFloor(stop));
-	return Math.max(
-		0,
-		Math.min(1, (stop.PeakPnLPct - stop.CurrentPnLPct) / span),
-	);
+	const climb = climbAboveArm(stop);
+	if (climb <= 0) return 0;
+	const giveback = Math.max(0, stop.PeakPnLPct - stop.CurrentPnLPct);
+	return Math.max(0, Math.min(1, giveback / (climb / 2)));
 };
 
 export const stopArmed = (stop: Stoploss) =>
@@ -64,6 +62,11 @@ export const stateTone = (state: number | null | undefined): Tone => {
 			return "neutral";
 	}
 };
+
+/** Upper bound on confirm marks (desk needs 2 without market agreement). */
+export const CONFIRM_MARKS_MAX = 2;
+
+export const confirmsNeeded = (_stop?: Stoploss) => CONFIRM_MARKS_MAX;
 
 export const heldVerdict = (
 	stop: Stoploss | null | undefined,
@@ -86,10 +89,11 @@ export const heldVerdict = (
 		const room = stopRoom(stop);
 		const proximity = stopProximity(stop);
 		const confirms = stop.Confirms ?? 0;
+		const needed = confirmsNeeded(stop);
 		const exh = stop.ExhaustScore ?? 0;
 		return {
-			text: `Armed — crest ${pctMark(stop.PeakPnLPct, 1)}, ${room.toFixed(1)}pp above floor · c${confirms}/${CONFIRM_MARKS} exh${exh.toFixed(2)}`,
-			tone: proximity >= 0.7 || confirms >= 2 ? "warn" : "info",
+			text: `Armed — peak ${pctMark(stop.PeakPnLPct, 1)}, ${room.toFixed(1)}pp above giveback · c${confirms}/${needed} exh${exh.toFixed(2)}`,
+			tone: proximity >= 0.7 || confirms >= needed ? "warn" : "info",
 		};
 	}
 
@@ -125,11 +129,9 @@ export const buildStopChecks = (
 	const room = stopRoom(stop);
 	const armed = stopArmed(stop);
 	const confirms = stop.Confirms ?? 0;
+	const needed = confirmsNeeded(stop);
 	const exh = stop.ExhaustScore ?? 0;
-	const confirmPct = Math.max(
-		0,
-		Math.min(100, (confirms / CONFIRM_MARKS) * 100),
-	);
+	const confirmPct = Math.max(0, Math.min(100, (confirms / needed) * 100));
 
 	return [
 		{
@@ -137,9 +139,9 @@ export const buildStopChecks = (
 			name: "Crest",
 			role: "defence",
 			word: {
-				label: armed ? `${room.toFixed(1)}pp in crest` : "not armed",
+				label: armed ? `${room.toFixed(1)}pp to giveback` : "not armed",
 				short: armed ? `${proxPct.toFixed(0)}%` : "—",
-				title: `Near-peak floor ${nearPeakFloor(stop).toFixed(2)}%`,
+				title: `Giveback floor ${givebackFloor(stop).toFixed(2)}% (half climb)`,
 			},
 			percent: armed ? proxPct : null,
 			tone:
@@ -168,15 +170,17 @@ export const buildStopChecks = (
 			name: "Confirm",
 			role: "harvest",
 			word: {
-				label: armed ? `c${confirms}/${CONFIRM_MARKS} exh${exh.toFixed(2)}` : "—",
+				label: armed
+					? `c${confirms}/${needed} exh${exh.toFixed(2)}`
+					: "—",
 				short: armed ? `${confirmPct.toFixed(0)}%` : "—",
-				title: "Exit confirmation marks × kinematic exhaust",
+				title: "Exit confirms × climb exhaust",
 			},
 			percent: armed ? confirmPct : null,
 			tone:
-				confirms >= CONFIRM_MARKS
+				confirms >= needed
 					? "bad"
-					: confirms >= 2 || exh >= 0.7
+					: confirms >= 1 || exh >= 0.7
 						? "warn"
 						: "info",
 		},

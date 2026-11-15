@@ -211,6 +211,7 @@ func (virtual *Virtual) Watch(
 	url string,
 	body any,
 	dest json.Unmarshaler,
+	after func(),
 ) {
 	if dest == nil {
 		return
@@ -243,6 +244,11 @@ func (virtual *Virtual) Watch(
 
 			if err := dest.UnmarshalJSON(raw); err != nil {
 				errnie.Error(err)
+				continue
+			}
+
+			if after != nil {
+				after()
 			}
 		}
 	}()

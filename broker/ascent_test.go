@@ -28,10 +28,37 @@ func TestAscentNote(t *testing.T) {
 			t1 := t0.Add(100 * time.Millisecond)
 			ascent.Note(1.5, t1)
 
-			Convey("EMA velocity is 2.5 per second", func() {
+			Convey("First delta seeds SmoothDelta/MeanDt without PeakVelocity", func() {
 				So(ascent.Samples, ShouldEqual, 2)
-				So(ascent.SmoothVelocity, ShouldEqual, 2.5)
-				So(ascent.PeakVelocity, ShouldEqual, 2.5)
+				So(ascent.SmoothDelta, ShouldEqual, 0.5)
+				So(ascent.MeanDt, ShouldEqual, 0.1)
+				So(ascent.SmoothVelocity, ShouldEqual, 5.0)
+				So(ascent.PeakVelocity, ShouldEqual, 0)
+				So(ascent.MeanUp, ShouldEqual, 0.5)
+			})
+		})
+
+		Convey("When a third reading continues the climb", func() {
+			ascent.Note(1.0, t0)
+			ascent.Note(1.5, t0.Add(100*time.Millisecond))
+			ascent.Note(2.0, t0.Add(200*time.Millisecond))
+
+			Convey("PeakVelocity locks after Samples >= 3", func() {
+				So(ascent.Samples, ShouldEqual, 3)
+				So(ascent.PeakVelocity, ShouldBeGreaterThan, 0)
+				So(ascent.SmoothVelocity, ShouldEqual, ascent.PeakVelocity)
+			})
+		})
+
+		Convey("When Seed precedes a gap through the arm", func() {
+			ascent.Seed(-0.5, t0)
+			ascent.Note(4.0, t0.Add(time.Second))
+
+			Convey("Seeded anchor yields Samples 2 with a real upward delta", func() {
+				So(ascent.Samples, ShouldEqual, 2)
+				So(ascent.SmoothDelta, ShouldEqual, 4.5)
+				So(ascent.MeanUp, ShouldEqual, 4.5)
+				So(ascent.PeakVelocity, ShouldEqual, 0)
 			})
 		})
 
@@ -50,9 +77,9 @@ func TestAscentNote(t *testing.T) {
 func TestAscentExhaust(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When peak velocity was never established", func() {
-			ascent := &Ascent{}
+			ascent := &Ascent{Samples: 4, SmoothVelocity: -0.1}
 
-			Convey("Exhaust is zero", func() {
+			Convey("Exhaust stays zero (grind)", func() {
 				So(ascent.Exhaust(), ShouldEqual, 0)
 			})
 		})

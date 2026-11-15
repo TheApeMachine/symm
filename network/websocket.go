@@ -207,7 +207,9 @@ Watch polls url on an interval. body may be a value or func() map[string]any
 Throttle and rate-limit responses pause further polls. Backoff is local so
 ticker REST does not change the websocket reconnect cap.
 */
-func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler) {
+func (client *WebsocketClient) Watch(
+	url string, body any, dest json.Unmarshaler, after func(),
+) {
 	go func() {
 		interval := 5 * time.Second
 		maxBackoff := client.maxBackoff
@@ -231,7 +233,7 @@ func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler
 
 		var backoff time.Duration
 
-		if !client.pollWatch(url, body, dest, &backoff, maxBackoff) {
+		if !client.pollWatch(url, body, dest, after, &backoff, maxBackoff) {
 			return
 		}
 
@@ -240,7 +242,7 @@ func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler
 			case <-client.Context().Done():
 				return
 			case <-ticker.C:
-				if !client.pollWatch(url, body, dest, &backoff, maxBackoff) {
+				if !client.pollWatch(url, body, dest, after, &backoff, maxBackoff) {
 					return
 				}
 			}
@@ -252,6 +254,7 @@ func (client *WebsocketClient) pollWatch(
 	url string,
 	body any,
 	dest json.Unmarshaler,
+	after func(),
 	backoff *time.Duration,
 	maxBackoff time.Duration,
 ) bool {
@@ -313,6 +316,10 @@ func (client *WebsocketClient) pollWatch(
 		).With("url", url))
 
 		return client.Context().Err() == nil
+	}
+
+	if after != nil {
+		after()
 	}
 
 	*backoff = 0

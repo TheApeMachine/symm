@@ -53,7 +53,7 @@ func (c *feeClient) Write([]byte) error             { return nil }
 func (c *feeClient) Post(string, any) ([]byte, error) {
 	return c.body, nil
 }
-func (c *feeClient) Watch(string, any, json.Unmarshaler) { c.watches++ }
+func (c *feeClient) Watch(string, any, json.Unmarshaler, func()) { c.watches++ }
 
 func withPrice(f func(*Price)) func() {
 	return func() {
@@ -118,6 +118,28 @@ func withPrice(f func(*Price)) func() {
 
 		f(price)
 	}
+}
+
+/*
+setBook replaces the top of book so Walk-backed marks match the test price.
+*/
+func setBook(price *Price, bid, ask, qty string) {
+	bidPx, askPx := decimal.RequireFromString(bid), decimal.RequireFromString(ask)
+	q := decimal.RequireFromString(qty)
+	price.Books.Update(&market.Level3{
+		Type: "snapshot",
+		Data: []*market.Level3Data{{
+			Symbol: testSymbol,
+			Bids: []*market.Level3Order{{
+				OrderID: "b1", LimitPrice: &bidPx, OrderQty: &q,
+				Timestamp: time.Unix(1, 0),
+			}},
+			Asks: []*market.Level3Order{{
+				OrderID: "a1", LimitPrice: &askPx, OrderQty: &q,
+				Timestamp: time.Unix(1, 0),
+			}},
+		}},
+	})
 }
 
 func TestNewPrice(t *testing.T) {

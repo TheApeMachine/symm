@@ -39,7 +39,6 @@ type Level3 struct {
 	Channel  string       `json:"channel"`
 	Type     string       `json:"type"`
 	Data     []Level3Data `json:"data"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -85,15 +84,9 @@ func (level3 *Level3) Request() map[string]any {
 	}
 }
 
-/*
-OnChange wires broker.Book after each L3 decode and checksum fold.
-*/
-func (level3 *Level3) OnChange(fn func(market.MarketType)) {
-	level3.onChange = fn
-}
 
 /*
-MarshalJSON aliases Level3 so onChange stays off the wire.
+MarshalJSON aliases Level3 for the wire.
 */
 func (level3 *Level3) MarshalJSON() ([]byte, error) {
 	type alias Level3
@@ -101,7 +94,7 @@ func (level3 *Level3) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON preserves onChange and notifies Book after Data is allocated.
+UnmarshalJSON allocates Data.
 */
 func (level3 *Level3) UnmarshalJSON(data []byte) error {
 	type alias Level3
@@ -111,17 +104,12 @@ func (level3 *Level3) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := level3.onChange
 	*level3 = Level3(decoded)
-	level3.onChange = onChange
 
 	if level3.Data == nil {
 		level3.Data = make([]Level3Data, 0)
 	}
 
-	if level3.onChange != nil {
-		level3.onChange(level3)
-	}
 
 	return nil
 }

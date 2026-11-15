@@ -19,7 +19,6 @@ type Trade struct {
 	Channel  string      `json:"channel"`
 	Type     string      `json:"type"`
 	Data     []TradeData `json:"data"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -58,15 +57,9 @@ func (trade *Trade) Request() map[string]any {
 	}
 }
 
-/*
-OnChange wires runtime envelope trade after each public decode.
-*/
-func (trade *Trade) OnChange(fn func(market.MarketType)) {
-	trade.onChange = fn
-}
 
 /*
-MarshalJSON aliases Trade so onChange stays off the wire.
+MarshalJSON aliases Trade for the wire.
 */
 func (trade *Trade) MarshalJSON() ([]byte, error) {
 	type alias Trade
@@ -74,7 +67,7 @@ func (trade *Trade) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON preserves onChange and notifies disruptor pipeline after Data fills.
+UnmarshalJSON fills Data.
 */
 func (trade *Trade) UnmarshalJSON(data []byte) error {
 	type alias Trade
@@ -84,17 +77,12 @@ func (trade *Trade) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := trade.onChange
 	*trade = Trade(decoded)
-	trade.onChange = onChange
 
 	if trade.Data == nil {
 		trade.Data = make([]TradeData, 0)
 	}
 
-	if trade.onChange != nil {
-		trade.onChange(trade)
-	}
 
 	return nil
 }

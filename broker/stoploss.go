@@ -1,9 +1,8 @@
 package broker
 
 import (
+	"math"
 	"time"
-
-	"github.com/theapemachine/symm/system"
 )
 
 type StoplossState int
@@ -17,8 +16,7 @@ const (
 
 /*
 StoplossRegime names how an armed position is managed.
-Climb uses crest-stall exit; Grind uses giveback-from-peak because tiny
-up/down moves never build climb velocity the crest path needs.
+Climb uses crest + exhaust-scaled trail; Grind exits only with market friction.
 */
 type StoplossRegime string
 
@@ -39,12 +37,10 @@ type Stoploss struct {
 	Confirms      int            `json:"Confirms"`
 }
 
-func NewStoploss(pnlPct float64) *Stoploss {
-	armPct := system.Cfg.Selection.StoplossArmPnlPct
-	if armPct <= 0 {
-		armPct = 1.0 // Default 1% net profit to cover round-trip taker friction
-	}
-
+/*
+NewStoploss arms against armPct — live book friction / fee floor in PnL points.
+*/
+func NewStoploss(pnlPct, armPct float64) *Stoploss {
 	return &Stoploss{
 		State:         StoplossHealthy,
 		Regime:        StoplossRegimeClimb,
@@ -56,9 +52,9 @@ func NewStoploss(pnlPct float64) *Stoploss {
 }
 
 /*
-Update evaluates market progress.
-- pnlPct: fee-net PnL percentage.
-- marketFrictionEvidence: optional external signal (e.g. CVD absorption, Hawkes decay, or pumpdump).
+Update evaluates progress from this position's own climb and ascent.
+Exit when ExhaustScore + marketFrictionEvidence >= 1 (friction covers remaining
+climb velocity), never on unchanged PnL or before Samples >= 2.
 */
 func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64) {
 	if stoploss.State == StoplossTriggered {
@@ -67,18 +63,19 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 
 	now := time.Now()
 
-	// RULE 1: Never exit at a loss or before arming. Hold until profit.
-	// Peak resets on disarm so a later reclaim does not inherit stale giveback.
-	if pnlPct < stoploss.ArmPnlPct {
+	if stoploss.ArmPnlPct <= 0 || pnlPct < stoploss.ArmPnlPct {
 		stoploss.State = StoplossHealthy
 		stoploss.Regime = StoplossRegimeClimb
-		stoploss.Ascent.Reset()
+		stoploss.Ascent.Seed(pnlPct, now)
 		stoploss.ExhaustScore = 0
 		stoploss.Confirms = 0
 		stoploss.CurrentPnLPct = pnlPct
 		stoploss.PeakPnLPct = pnlPct
 		return
 	}
+
+	deltaPnL := pnlPct - stoploss.Ascent.LastPnLPct
+	unchanged := !stoploss.Ascent.LastTime.IsZero() && pnlPct == stoploss.Ascent.LastPnLPct
 
 	stoploss.CurrentPnLPct = pnlPct
 
@@ -91,79 +88,42 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 	stoploss.ExhaustScore = stoploss.Ascent.Exhaust()
 	stoploss.Regime = stoploss.classify()
 
-	sel := system.Cfg.Selection
-	nearPeakFrac := sel.StoplossNearPeakFrac
-
-	if nearPeakFrac <= 0 {
-		nearPeakFrac = 0.96
+	if unchanged || stoploss.Ascent.Samples < 2 {
+		return
 	}
 
-	rateDecayMin := sel.StoplossRateDecayMin
-
-	if rateDecayMin <= 0 {
-		rateDecayMin = 0.70
-	}
-
-	givebackPct := sel.StoplossGivebackPct
-
-	if givebackPct <= 0 {
-		givebackPct = 0.5
-	}
-
-	nearPeak := stoploss.CurrentPnLPct >= stoploss.PeakPnLPct*nearPeakFrac
-	kinematicStall := stoploss.ExhaustScore >= rateDecayMin
-	confirmedByMarket := marketFrictionEvidence >= sel.StoplossPumpConfirmMin
+	climb := stoploss.PeakPnLPct - stoploss.ArmPnlPct
 	giveback := stoploss.PeakPnLPct - stoploss.CurrentPnLPct
-	offCrest := giveback >= givebackPct
+	meanUp := stoploss.Ascent.MeanUp
 
-	// Crest: sell while still on the high with stalled climb velocity.
-	// Sample depth is not required — a fast spike never accumulates four ticks.
-	crestExit := nearPeak && kinematicStall &&
-		(confirmedByMarket || stoploss.ExhaustScore >= 0.90)
+	if stoploss.Regime == StoplossRegimeClimb && stoploss.Ascent.PeakVelocity > 0 {
+		nearPeak := (giveback <= meanUp || giveback == 0) && deltaPnL <= 0
+		crestExit := nearPeak && stoploss.ExhaustScore+marketFrictionEvidence >= 1
+		health := math.Max(stoploss.ExhaustScore, marketFrictionEvidence)
+		trailExit := climb > meanUp && giveback > meanUp &&
+			giveback >= climb*(1-health)
 
-	// Giveback: peak was real, price has rolled off by givebackPct but is
-	// still above arm — the +3% → slow bleed case crest-only never saw.
-	givebackExit := offCrest
-
-	if !(crestExit || givebackExit) {
-		if stoploss.Confirms > 0 {
-			stoploss.Confirms--
+		if crestExit || trailExit {
+			stoploss.Confirms = 1
+			stoploss.State = StoplossTriggered
 		}
 
 		return
 	}
 
-	stoploss.Confirms++
-	requiredConfirms := sel.StoplossConfirmMarks
-
-	if requiredConfirms <= 0 {
-		requiredConfirms = 3
-	}
-
-	if stoploss.Confirms >= requiredConfirms {
+	// Grind / gap: no positive climb velocity — exit only with market friction.
+	if climb > 0 && marketFrictionEvidence > 0 &&
+		giveback >= climb*(1-marketFrictionEvidence) {
+		stoploss.Confirms = 1
 		stoploss.State = StoplossTriggered
 	}
 }
 
 /*
-classify marks slow, low-velocity arms as grind so exit uses giveback instead
-of crest kinematics that never fire on 0.01-style chop.
+classify marks arms that never built climb velocity as grind.
 */
 func (stoploss *Stoploss) classify() StoplossRegime {
-	sel := system.Cfg.Selection
-	minSamples := sel.StoplossGrindMinSamples
-	velMax := sel.StoplossGrindVelocityMax
-
-	if minSamples <= 0 {
-		minSamples = 8
-	}
-
-	if velMax <= 0 {
-		velMax = 0.05
-	}
-
-	if stoploss.Ascent.Samples >= minSamples &&
-		stoploss.Ascent.PeakVelocity < velMax {
+	if stoploss.Ascent.Samples >= 2 && stoploss.Ascent.PeakVelocity <= 0 {
 		return StoplossRegimeGrind
 	}
 
@@ -172,4 +132,14 @@ func (stoploss *Stoploss) classify() StoplossRegime {
 
 func (stoploss *Stoploss) Triggered() bool {
 	return stoploss.State == StoplossTriggered
+}
+
+/*
+Reset clears a cancelled exit so the position can re-arm from Healthy.
+*/
+func (stoploss *Stoploss) Reset() {
+	pnl := stoploss.CurrentPnLPct
+	arm := stoploss.ArmPnlPct
+	*stoploss = *NewStoploss(pnl, arm)
+	stoploss.Ascent.Seed(pnl, time.Now())
 }

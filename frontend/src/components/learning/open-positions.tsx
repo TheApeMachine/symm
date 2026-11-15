@@ -46,8 +46,7 @@ export const OpenPositions = () => {
 		hasHeld(state as Record<string, Position>, book),
 	);
 
-	// Chart stays mounted so bindOpenChoice is live before the first Hello —
-	// gating on watching dropped the enter snapshot that would have painted it.
+	// Chart stays mounted and paints from signals.positions snapshots.
 	return (
 		<div className="relative flex min-h-0 flex-1 flex-col">
 			<OpenChoiceChart />

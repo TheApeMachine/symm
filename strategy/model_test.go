@@ -23,7 +23,7 @@ func (*modelTransportStub) Write([]byte) error             { return nil }
 func (*modelTransportStub) Post(string, any) ([]byte, error) {
 	return []byte(`{"error":[],"result":{"trades":{}}}`), nil
 }
-func (*modelTransportStub) Watch(string, any, json.Unmarshaler) {}
+func (*modelTransportStub) Watch(string, any, json.Unmarshaler, func()) {}
 
 func TestNewModel(t *testing.T) {
 	Convey("Setup", t, func() {
@@ -292,10 +292,12 @@ func TestStep(t *testing.T) {
 			system.Cfg.Market.Model = "real"
 			defer func() { system.Cfg.Market.Model = prev }()
 
-			desk := broker.NewDesk(context.Background(), map[string]network.Client{
+			ctx := context.Background()
+			price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
+			desk := broker.NewDesk(ctx, map[string]network.Client{
 				"public":  &modelTransportStub{},
 				"private": &modelTransportStub{},
-			}, nil, nil)
+			}, price, nil)
 
 			tree := emptyTree()
 			model := &Model{
@@ -517,10 +519,12 @@ func BenchmarkStep(b *testing.B) {
 	system.Cfg.Market.Model = "real"
 	defer func() { system.Cfg.Market.Model = prev }()
 
-	desk := broker.NewDesk(context.Background(), map[string]network.Client{
+	ctx := context.Background()
+	price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
+	desk := broker.NewDesk(ctx, map[string]network.Client{
 		"public":  &modelTransportStub{},
 		"private": &modelTransportStub{},
-	}, nil, nil)
+	}, price, nil)
 	tree := emptyTree()
 	model := &Model{
 		desk:      desk,

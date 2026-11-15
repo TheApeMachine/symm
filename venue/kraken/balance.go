@@ -21,7 +21,6 @@ type Balance struct {
 	Error    []any                       `json:"error"`
 	Result   map[string]*decimal.Decimal `json:"result"`
 	names    *spot.Normalizer
-	onChange func(market.MarketType)
 }
 
 /*
@@ -110,15 +109,9 @@ func balanceNonceRejected(errs ...any) bool {
 	return false
 }
 
-/*
-OnChange registers broker desk wiring after each decode completes fold/Normalize.
-*/
-func (balance *Balance) OnChange(fn func(market.MarketType)) {
-	balance.onChange = fn
-}
 
 /*
-MarshalJSON aliases Balance so onChange is omitted from REST cache payloads.
+MarshalJSON aliases Balance for REST cache payloads.
 */
 func (balance *Balance) MarshalJSON() ([]byte, error) {
 	type alias Balance
@@ -159,7 +152,7 @@ type balanceFrame struct {
 
 /*
 UnmarshalJSON folds ws snapshots into Result, bumps nonce on rejection, then
-fires OnChange so tier sizing sees normalized desk asset names.
+normalizes desk asset names.
 */
 func (balance *Balance) UnmarshalJSON(data []byte) error {
 	var decoded balanceFrame
@@ -178,7 +171,6 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 		).With("error", decoded.Error))
 	}
 
-	onChange := balance.onChange
 	names := balance.names
 
 	if decoded.Channel == "balances" && len(decoded.Data) > 0 {
@@ -191,7 +183,6 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	balance.onChange = onChange
 	balance.names = names
 
 	if balance.Result == nil {
@@ -200,9 +191,6 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 
 	balance.Normalize()
 
-	if balance.onChange != nil {
-		balance.onChange(balance)
-	}
 
 	return nil
 }

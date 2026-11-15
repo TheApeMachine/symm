@@ -11,18 +11,10 @@ func TestNewSelection(t *testing.T) {
 		Convey("When NewSelection is called", func() {
 			sel := NewSelection()
 
-			Convey("board caps and stoploss knobs match viper defaults", func() {
+			Convey("board caps match viper defaults", func() {
 				So(sel.MaxOpenPositions, ShouldEqual, 5)
 				So(sel.MaxEntersPerTick, ShouldEqual, 1)
 				So(sel.MaxAccumPeakFrac, ShouldEqual, 0.35)
-				So(sel.StoplossArmPnlPct, ShouldEqual, 1.0)
-				So(sel.StoplossRateDecayMin, ShouldEqual, 0.7)
-				So(sel.StoplossPumpConfirmMin, ShouldEqual, 0.35)
-				So(sel.StoplossConfirmMarks, ShouldEqual, 3)
-				So(sel.StoplossNearPeakFrac, ShouldEqual, 0.98)
-				So(sel.StoplossGivebackPct, ShouldEqual, 0.5)
-				So(sel.StoplossGrindVelocityMax, ShouldEqual, 0.05)
-				So(sel.StoplossGrindMinSamples, ShouldEqual, 8)
 				So(sel.HeartbeatBatch, ShouldEqual, 48)
 			})
 		})

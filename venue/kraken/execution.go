@@ -19,7 +19,6 @@ type Execution struct {
 	Type     string          `json:"type"`
 	Data     []ExecutionData `json:"data"`
 	Sequence int             `json:"sequence"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -223,15 +222,9 @@ func NewExecutionResult(data []byte) *Execution {
 	return &result
 }
 
-/*
-OnChange wires broker desk ingestion after each executions decode.
-*/
-func (execution *Execution) OnChange(fn func(market.MarketType)) {
-	execution.onChange = fn
-}
 
 /*
-MarshalJSON aliases Execution so onChange stays off the wire.
+MarshalJSON aliases Execution for the wire.
 */
 func (execution *Execution) MarshalJSON() ([]byte, error) {
 	type alias Execution
@@ -239,7 +232,7 @@ func (execution *Execution) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON preserves onChange and notifies desk after Data is normalized.
+UnmarshalJSON normalizes Data.
 */
 func (execution *Execution) UnmarshalJSON(data []byte) error {
 	type alias Execution
@@ -249,17 +242,12 @@ func (execution *Execution) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := execution.onChange
 	*execution = Execution(decoded)
-	execution.onChange = onChange
 
 	if execution.Data == nil {
 		execution.Data = make([]ExecutionData, 0)
 	}
 
-	if execution.onChange != nil {
-		execution.onChange(execution)
-	}
 
 	return nil
 }

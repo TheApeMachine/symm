@@ -27,7 +27,7 @@ func (client *depthSnapClient) Write([]byte) error { return nil }
 
 func (client *depthSnapClient) Post(string, any) ([]byte, error) { return nil, nil }
 
-func (client *depthSnapClient) Watch(string, any, json.Unmarshaler) {}
+func (client *depthSnapClient) Watch(string, any, json.Unmarshaler, func()) {}
 
 func TestNewSignal(t *testing.T) {
 	Convey("Setup", t, func() {

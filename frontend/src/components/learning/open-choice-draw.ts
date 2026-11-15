@@ -8,8 +8,8 @@ import {
 import { isClosed, onTier, pnlPct } from "#/components/book-readout";
 import { asFinite, moneyText } from "#/lib/format";
 import {
-	CONFIRM_MARKS,
-	nearPeakFloor,
+	confirmsNeeded,
+	givebackFloor,
 	stopArmed,
 	stopProximity,
 	stopRoom,
@@ -123,17 +123,18 @@ const tierOf = (pos: { tier_key?: string }) =>
 		? pos.tier_key
 		: "paper";
 
-/** Crest corridor top/bottom while armed — peak ↔ near-peak floor. */
+/** Crest corridor top/bottom while armed — peak ↔ half-climb giveback. */
 const stopCrest = (stop: Stoploss): { high: number; low: number } => {
 	const high = stop.PeakPnLPct;
-	const low = nearPeakFloor(stop);
+	const low = givebackFloor(stop);
 	return high >= low ? { high, low } : { high: low, low: high };
 };
 
 /** Fill heat 0..1 from exhaust + confirm progress toward exit. */
 const stopHeat = (stop: Stoploss) => {
 	if (stop.State === STOPLOSS_TRIGGERED) return 1;
-	const confirms = Math.max(0, stop.Confirms ?? 0) / CONFIRM_MARKS;
+	const confirms =
+		Math.max(0, stop.Confirms ?? 0) / Math.max(1, confirmsNeeded(stop));
 	const exhaust = Math.max(0, Math.min(1, stop.ExhaustScore ?? 0));
 	return Math.max(0, Math.min(1, confirms * 0.55 + exhaust * 0.45));
 };
@@ -173,10 +174,8 @@ export type OpenChoiceChartApi = {
 	sciChartSurface: SciChartSurface;
 	setIsGridLayoutMode: (value: boolean) => void;
 	setBook: (book: Book) => void;
-	push: (
-		marks: Record<string, Position>,
-		opts?: { snapshot?: boolean; tier?: string },
-	) => OpenChoiceLegendItem[];
+	/** Full signals.positions snapshot — drop closed/other-book, append held marks. */
+	push: (positions: Record<string, Position>) => OpenChoiceLegendItem[];
 };
 
 /** Full positions snapshot → one shared X step, append per open series. */
@@ -395,35 +394,27 @@ export const drawOpenChoiceChart = async (
 	};
 
 	const push = (
-		marks: Record<string, Position>,
-		opts?: { snapshot?: boolean; tier?: string },
+		positions: Record<string, Position>,
 	): OpenChoiceLegendItem[] => {
-		if (opts?.snapshot) {
-			const tiers = new Set<string>();
-			if (opts.tier) tiers.add(opts.tier);
-			for (const pos of Object.values(marks)) {
-				if (pos) tiers.add(tierOf(pos));
-			}
-			for (const [id, s] of [...series.entries()]) {
-				if (id in marks) continue;
-				if (tiers.has(s.tier)) drop(id);
-			}
+		const held = new Set<string>();
+
+		for (const pos of Object.values(positions)) {
+			if (pos && chartHeld(pos, book)) held.add(pos.id);
+		}
+
+		for (const id of [...series.keys()]) {
+			if (!held.has(id)) drop(id);
 		}
 
 		const x = step++;
 
-		for (const pos of Object.values(marks)) {
-			if (!pos) continue;
-			const id = pos.id;
-
-			if (!chartHeld(pos, book)) {
-				drop(id);
-				continue;
-			}
+		for (const pos of Object.values(positions)) {
+			if (!pos || !held.has(pos.id)) continue;
 
 			const y = markY(pos);
 			if (y === undefined) continue;
 
+			const id = pos.id;
 			const stroke = strokeFor(id);
 			const s = ensure(id, stroke, tierOf(pos), y);
 			const stop = pos.stoploss;

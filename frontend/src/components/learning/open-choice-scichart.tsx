@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { SciChartReact } from "scichart-react";
-import { bindOpenChoice, signals } from "#/collections/app";
+import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
 import {
@@ -38,7 +38,7 @@ const roundLegend = (items: OpenChoiceLegendItem[]): OpenChoiceLegendItem[] =>
 				: Math.round(item.stopProximity * 100) / 100,
 	}));
 
-/** Client-only SciChart surface; hub frames push into series directly. */
+/** Client-only SciChart surface; paints from signals.positions snapshots. */
 export const OpenChoiceSciChart = ({
 	onLegend,
 	onReady,
@@ -58,33 +58,26 @@ export const OpenChoiceSciChart = ({
 				api.setBook(bookAtom.get());
 				onReadyRef.current?.(api);
 
-				const push = (
-					marks: Record<string, Position>,
-					opts?: { snapshot?: boolean; tier?: string },
-				) => {
-					onLegendRef.current(roundLegend(api.push(marks, opts)));
+				const paint = (state: Record<string, Position> | null) => {
+					onLegendRef.current(
+						roundLegend(api.push(state ?? {})),
+					);
 				};
 
-				bindOpenChoice({ push });
+				paint(signals.positions.state as Record<string, Position>);
 
-				// Seed from the store — Hellos that arrived before bind are otherwise lost.
-				const held = signals.positions.state as Record<string, Position>;
-				if (held && Object.keys(held).length > 0) {
-					push(held, { snapshot: true });
-				}
+				const posSub = signals.positions.subscribe((state) => {
+					paint(state as Record<string, Position>);
+				});
 
 				const bookSub = bookAtom.subscribe((book) => {
 					api.setBook(book);
-					onLegendRef.current([]);
-					const again = signals.positions.state as Record<string, Position>;
-					if (again && Object.keys(again).length > 0) {
-						push(again, { snapshot: true });
-					}
+					paint(signals.positions.state as Record<string, Position>);
 				});
 
 				return () => {
+					posSub.unsubscribe();
 					bookSub.unsubscribe();
-					bindOpenChoice(null);
 				};
 			}}
 			style={{ width: "100%", height: "100%" }}

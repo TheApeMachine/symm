@@ -24,6 +24,7 @@ type Endpoints struct {
 	Balance       string
 	TradeBalance  string
 	TradesHistory string
+	QueryOrders   string
 }
 
 func NewWebSocket() *WebSocket {
@@ -33,6 +34,7 @@ func NewWebSocket() *WebSocket {
 	viper.SetDefault("system.websocket.endpoints.balance", "https://api.kraken.com/0/private/Balance")
 	viper.SetDefault("system.websocket.endpoints.trade_balance", "https://api.kraken.com/0/private/TradeBalance")
 	viper.SetDefault("system.websocket.endpoints.trades_history", "https://api.kraken.com/0/private/TradesHistory")
+	viper.SetDefault("system.websocket.endpoints.query_orders", "https://api.kraken.com/0/private/QueryOrders")
 	viper.SetDefault("system.websocket.endpoints.tradevolume", "https://api.kraken.com/0/private/TradeVolume")
 	viper.SetDefault("system.websocket.endpoints.ticker", "https://api.kraken.com/0/public/Ticker")
 	viper.SetDefault("system.websocket.ping_interval", 20*time.Second)
@@ -57,6 +59,7 @@ func NewWebSocket() *WebSocket {
 			Balance:      viper.GetString("system.websocket.endpoints.balance"),
 			TradeBalance:  viper.GetString("system.websocket.endpoints.trade_balance"),
 			TradesHistory: viper.GetString("system.websocket.endpoints.trades_history"),
+			QueryOrders:   viper.GetString("system.websocket.endpoints.query_orders"),
 		},
 		PingInterval:     viper.GetDuration("system.websocket.ping_interval"),
 		PrivateRefresh:   viper.GetDuration("system.websocket.private_refresh"),

@@ -66,50 +66,29 @@ func NewCache(
 		trade kraken.HistoryTrade
 	}
 
-	endpoint := system.Cfg.WebSocket.Endpoints.TradesHistory
 	rows := make([]row, 0)
 	cursor := ""
 
-	for page := 0; page < 50; page++ {
+	for {
 		req := kraken.NewTradesHistoryRequest([]string{})
 		req.Cursor = cursor
 
-		raw, err := transport.Post(endpoint, req)
+		raw, err := transport.Post(system.Cfg.WebSocket.Endpoints.TradesHistory, req)
 
 		if err != nil {
-			errnie.Debug("[cache] trades history post failed",
-				"tier", tierKey, "page", page, "endpoint", endpoint, "err", err,
-			)
 			errnie.Error(err)
 			break
 		}
 
-		preview := string(raw)
-		if len(preview) > 512 {
-			preview = preview[:512]
-		}
-
-		errnie.Debug("[cache] trades history post ok",
-			"tier", tierKey, "page", page, "bytes", len(raw), "body", preview,
-		)
-
 		history := kraken.NewTradesHistoryResult(raw)
 
 		if history == nil {
-			errnie.Debug("[cache] trades history parse returned nil",
-				"tier", tierKey, "page", page, "bytes", len(raw),
-			)
 			break
 		}
 
 		for id, trade := range history.Trades {
 			rows = append(rows, row{id: id, trade: trade})
 		}
-
-		errnie.Debug("[cache] trades history page",
-			"tier", tierKey, "page", page, "page_n", len(history.Trades), "total_n", len(rows),
-			"next", history.Cursor.Next,
-		)
 
 		if history.Cursor.Next == "" {
 			break
@@ -122,8 +101,6 @@ func NewCache(
 		return a.trade.Time.Compare(b.trade.Time)
 	})
 
-	errnie.Debug("[cache] trades history rows", "tier", tierKey, "n", len(rows))
-
 	active := make(map[string]*Position)
 
 	for _, row := range rows {
@@ -134,19 +111,7 @@ func NewCache(
 			symbol = price.normalizer.Name(symbol)
 		}
 
-		errnie.Debug("[cache] history trade",
-			"tier", tierKey,
-			"id", row.id,
-			"pair", trade.Pair,
-			"symbol", symbol,
-			"side", trade.Type,
-			"vol", trade.Volume,
-			"price", trade.Price,
-			"time", trade.Time,
-		)
-
 		if symbol == "" {
-			errnie.Debug("[cache] skip trade: empty symbol", "tier", tierKey, "id", row.id, "pair", trade.Pair)
 			continue
 		}
 
@@ -154,9 +119,6 @@ func NewCache(
 
 		if position == nil {
 			if trade.Type != "buy" {
-				errnie.Debug("[cache] skip sell with no active position",
-					"tier", tierKey, "symbol", symbol, "id", row.id,
-				)
 				continue
 			}
 
@@ -171,9 +133,6 @@ func NewCache(
 			)
 			position.OpenedAt = trade.Time
 			active[symbol] = position
-			errnie.Debug("[cache] new position from buy",
-				"tier", tierKey, "symbol", symbol, "id", position.ID, "trade", row.id,
-			)
 		}
 
 		position.Apply(market.ExecutionData{
@@ -191,42 +150,17 @@ func NewCache(
 			OrderStatus: "filled",
 		})
 
-		errnie.Debug("[cache] after apply",
-			"tier", tierKey,
-			"symbol", symbol,
-			"position", position.ID,
-			"qty", position.Qty,
-			"closed_at", position.ClosedAt,
-		)
-
 		if position.ClosedAt == nil {
 			continue
 		}
 
 		cache.closed.Store(position.ID, position)
 		delete(active, symbol)
-		errnie.Debug("[cache] position closed",
-			"tier", tierKey, "symbol", symbol, "id", position.ID, "trade", row.id,
-		)
 	}
 
 	for symbol, position := range active {
-		if position.PnLPct != nil {
-			pnlPct, _ := position.PnLPct.Float64()
-			position.Stoploss = NewStoploss(pnlPct)
-		}
-
 		cache.open.Store(symbol, position)
-		errnie.Debug("[cache] position open",
-			"tier", tierKey, "symbol", symbol, "id", position.ID, "qty", position.Qty,
-		)
 	}
-
-	errnie.Debug("[cache] restore done",
-		"tier", tierKey,
-		"open", len(cache.Open()),
-		"closed", len(cache.Closed()),
-	)
 
 	return cache
 }
@@ -235,17 +169,17 @@ func NewCache(
 Bound drops open positions the wallet no longer holds and aligns qty to
 spendable capital. History proposes; Balance confirms — never invents opens.
 */
-func (cache *Cache) Bound(book *market.Balance) {
-	if book == nil {
+func (cache *Cache) Bound(balance *market.Balance) {
+	if balance == nil {
 		return
 	}
 
-	// Empty frame must not wipe live seats — that invented "exits" with no trade.
-	if len(book.Assets) == 0 {
+	// Empty frame must not wipe live positions — that invented "exits" with no trade.
+	if len(balance.Assets) == 0 {
 		return
 	}
 
-	quote := book.Quote
+	quote := balance.Quote
 
 	if quote == "" {
 		quote = system.Cfg.Market.QuoteCurrency
@@ -253,7 +187,7 @@ func (cache *Cache) Bound(book *market.Balance) {
 
 	held := make(map[string]decimal.Decimal)
 
-	for _, asset := range book.Assets {
+	for _, asset := range balance.Assets {
 		if asset == nil || asset.Symbol == "" || asset.Symbol == quote {
 			continue
 		}
@@ -271,6 +205,16 @@ func (cache *Cache) Bound(book *market.Balance) {
 	}
 
 	for _, position := range cache.Open() {
+		if position == nil {
+			continue
+		}
+
+		// WAITING (order out) and BUSY (exit armed) are not wallet-backed yet
+		// or still exiting — Bound must not drop them on a partial snapshot.
+		if position.Status() != runtime.READY {
+			continue
+		}
+
 		base := position.Symbol
 
 		if b, _, ok := strings.Cut(position.Symbol, "/"); ok {
@@ -282,9 +226,6 @@ func (cache *Cache) Bound(book *market.Balance) {
 		capital, ok := held[base]
 
 		if !ok {
-			errnie.Debug("[cache] bound drop: not in wallet",
-				"tier", cache.tierKey, "symbol", position.Symbol, "base", base, "id", position.ID,
-			)
 			cache.open.Delete(position.Symbol)
 			continue
 		}
@@ -292,19 +233,8 @@ func (cache *Cache) Bound(book *market.Balance) {
 		if position.Qty == nil || !position.Qty.Equal(capital) {
 			qty := capital
 			position.Qty = &qty
-			errnie.Debug("[cache] bound qty from wallet",
-				"tier", cache.tierKey, "symbol", position.Symbol, "qty", qty,
-			)
 		}
-
-		errnie.Debug("[cache] bound keep",
-			"tier", cache.tierKey, "symbol", position.Symbol, "base", base, "qty", position.Qty,
-		)
 	}
-
-	errnie.Debug("[cache] bound done",
-		"tier", cache.tierKey, "open", len(cache.Open()), "wallet_bases", len(held),
-	)
 }
 
 /*
@@ -384,6 +314,19 @@ func (cache *Cache) Has(symbol string) bool {
 	// the symbol. Remove is the only path into closed.
 	_, ok := cache.open.Load(symbol)
 	return ok
+}
+
+/*
+Get returns the position by symbol.
+*/
+func (cache *Cache) Get(symbol string) *Position {
+	raw, ok := cache.open.Load(symbol)
+
+	if !ok || raw == nil {
+		return nil
+	}
+
+	return raw.(*Position)
 }
 
 /*

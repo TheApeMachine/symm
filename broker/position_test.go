@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 )
 
 func TestNewPosition(t *testing.T) {
@@ -23,6 +24,8 @@ func TestNewPosition(t *testing.T) {
 			So(pos.Qty, ShouldBeNil)
 			So(pos.Entry, ShouldBeNil)
 			So(pos.ClosedAt, ShouldBeNil)
+			So(pos.Status(), ShouldEqual, runtime.INIT)
+			So(pos.Status() == runtime.READY, ShouldBeFalse)
 		})
 	}))
 }
@@ -77,6 +80,8 @@ func TestQty(t *testing.T) {
 				So(pos.Qty.String(), ShouldEqual, "0")
 				So(pos.ClosedAt, ShouldNotBeNil)
 				So(pos.ClosedAt.Equal(time.Unix(2, 0).UTC()), ShouldBeTrue)
+				So(pos.Status(), ShouldEqual, runtime.DONE)
+				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
 	}))
@@ -127,9 +132,11 @@ func TestUpdate(t *testing.T) {
 		})
 
 		Convey("When Update is called with a mark", func() {
+			So(pos.Status(), ShouldEqual, runtime.READY)
+			setBook(price, "120", "121", "30")
 			err := pos.Update(dec("120"))
 
-			Convey("Mark and fee-net PnL match entry 100 → mark 120 at 0.40% taker", func() {
+			Convey("Mark is full-qty Walk VWAP and fee-net PnL matches", func() {
 				// feeIn=0.40, feeOut=0.48 → pnl=120-0.48-(100+0.40)=19.12
 				// pct=19.12/100.4*100
 				So(err, ShouldBeNil)
@@ -137,7 +144,37 @@ func TestUpdate(t *testing.T) {
 				So(pos.PnL.String(), ShouldEqual, "19.12")
 				So(pos.PnLPct.String(), ShouldEqual, "19.04382470119522")
 				So(pos.Stoploss, ShouldNotBeNil)
-				So(pos.Closing, ShouldBeFalse)
+				So(pos.Status() == runtime.BUSY, ShouldBeFalse)
+				So(pos.Status(), ShouldEqual, runtime.READY)
+			})
+		})
+
+		Convey("When the visible book cannot absorb Qty", func() {
+			setBook(price, "120", "121", "0.1")
+			err := pos.Update(dec("120"))
+
+			Convey("Stoploss stays nil and stage stays READY", func() {
+				So(err, ShouldBeNil)
+				So(pos.Stoploss, ShouldBeNil)
+				So(pos.Status(), ShouldEqual, runtime.READY)
+			})
+		})
+
+		Convey("When buys fill across multiple prints", func() {
+			split := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
+			split.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("99"), LastPrice: dec("1.00"),
+				Timestamp: time.Unix(1, 0).UTC(),
+			})
+			split.Apply(market.ExecutionData{
+				ExecID: "b2", Side: "buy",
+				LastQty: dec("1"), LastPrice: dec("0.85"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+
+			Convey("Entry is quantity-weighted VWAP", func() {
+				So(split.Entry.String(), ShouldEqual, "0.9985")
 			})
 		})
 
@@ -150,28 +187,44 @@ func TestUpdate(t *testing.T) {
 			})
 		})
 
+		Convey("When Update runs before any fill", func() {
+			open := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
+			So(open.Enter("R00/M1", dec("1"), price.balance), ShouldBeNil)
+			So(open.Status(), ShouldEqual, runtime.WAITING)
+			err := open.Update(dec("120"))
+
+			Convey("WAITING is a silent no-op — marks wait for Apply → READY", func() {
+				So(err, ShouldBeNil)
+				So(open.Status() == runtime.READY, ShouldBeFalse)
+				So(open.Stoploss, ShouldBeNil)
+				So(open.Mark, ShouldBeNil)
+			})
+		})
+
 		Convey("When the position is already closed", func() {
-			closed := time.Unix(2, 0).UTC()
-			pos.ClosedAt = &closed
-			So(pos.Live(), ShouldBeFalse)
+			pos.Apply(market.ExecutionData{
+				ExecID: "s1", Side: "sell",
+				LastQty: dec("1"), LastPrice: dec("110"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			So(pos.Status(), ShouldEqual, runtime.DONE)
+			So(pos.Status() == runtime.READY, ShouldBeFalse)
 			err := pos.Update(dec("120"))
 
-			Convey("It returns a quiet conflict so mark ticks skip Save", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "[position.Update] closed position")
+			Convey("DONE is a silent no-op so mark ticks skip Save", func() {
+				So(err, ShouldBeNil)
 				So(pos.Mark, ShouldBeNil)
 			})
 		})
 
 		Convey("When the position is Closing awaiting exit fill", func() {
-			pos.Closing = true
-			So(pos.Live(), ShouldBeFalse)
-			mark := dec("120")
-			err := pos.Update(mark)
+			So(pos.exit(), ShouldBeNil)
+			So(pos.Status(), ShouldEqual, runtime.BUSY)
+			So(pos.Status() == runtime.READY, ShouldBeFalse)
+			err := pos.Update(dec("120"))
 
-			Convey("It returns a quiet conflict without mutating mark", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "[position.Update] closed position")
+			Convey("BUSY is a silent no-op without mutating mark", func() {
+				So(err, ShouldBeNil)
 				So(pos.Mark, ShouldBeNil)
 			})
 		})
@@ -197,6 +250,8 @@ func TestEnter(t *testing.T) {
 				So(pos.OpenedAt.IsZero(), ShouldBeFalse)
 				So(pos.Qty, ShouldBeNil)
 				So(pos.Entry, ShouldBeNil)
+				So(pos.Status(), ShouldEqual, runtime.WAITING)
+				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
 
@@ -215,15 +270,23 @@ func TestExit(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
 		pos.ExitPath = "R00/M1"
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
 
-		Convey("When exit is called on an open position", func() {
+		Convey("When exit is called on a READY position", func() {
+			So(pos.Status(), ShouldEqual, runtime.READY)
 			err := pos.exit()
 
-			Convey("Closing is armed with the exit trigger", func() {
+			Convey("Closing is armed and stage moves READY → BUSY", func() {
 				So(err, ShouldBeNil)
-				So(pos.Closing, ShouldBeTrue)
+				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 				So(pos.ExitTrigger, ShouldEqual, "policy exit match R00/M1")
 				So(pos.ClosedAt, ShouldBeNil)
+				So(pos.Status(), ShouldEqual, runtime.BUSY)
+				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
 
@@ -233,8 +296,9 @@ func TestExit(t *testing.T) {
 			So(pos.exit(), ShouldBeNil)
 
 			Convey("State is unchanged", func() {
-				So(pos.Closing, ShouldBeTrue)
+				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 				So(pos.ExitTrigger, ShouldEqual, trigger)
+				So(pos.Status(), ShouldEqual, runtime.BUSY)
 			})
 		})
 	}))
@@ -258,6 +322,8 @@ func TestApply(t *testing.T) {
 				So(pos.PnL, ShouldNotBeNil)
 				So(pos.PnLPct, ShouldNotBeNil)
 				So(pos.ClosedAt, ShouldBeNil)
+				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(pos.Status() == runtime.READY, ShouldBeTrue)
 			})
 		})
 
@@ -299,6 +365,8 @@ func TestApply(t *testing.T) {
 				So(pos.ClosedAt, ShouldNotBeNil)
 				So(pos.PnL.String(), ShouldEqual, beforePnL)
 				So(pos.PnLPct.String(), ShouldEqual, beforePct)
+				So(pos.Status(), ShouldEqual, runtime.DONE)
+				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
 	}))

@@ -14,7 +14,7 @@ func (stubClient) Write([]byte) error             { return nil }
 func (stubClient) Post(string, any) ([]byte, error) {
 	return nil, nil
 }
-func (stubClient) Watch(string, any, json.Unmarshaler) {}
+func (stubClient) Watch(string, any, json.Unmarshaler, func()) {}
 
 func TestClient(t *testing.T) {
 	Convey("Setup", t, func() {
@@ -29,7 +29,7 @@ func TestClient(t *testing.T) {
 				post, err := client.Post("/x", nil)
 				So(err, ShouldBeNil)
 				So(post, ShouldBeNil)
-				So(func() { client.Watch("/x", nil, nil) }, ShouldNotPanic)
+				So(func() { client.Watch("/x", nil, nil, nil) }, ShouldNotPanic)
 			})
 		})
 	})
@@ -44,6 +44,6 @@ func BenchmarkClient(b *testing.B) {
 		_, _ = client.Read("k")
 		_ = client.Write(nil)
 		_, _ = client.Post("/x", nil)
-		client.Watch("/x", nil, nil)
+		client.Watch("/x", nil, nil, nil)
 	}
 }

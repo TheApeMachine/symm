@@ -10,8 +10,8 @@ import (
 
 /*
 Kraken is the venue façade the booter wires — one persistent decoder per
-channel so websocket ingress reuses buffers and OnChange reaches broker desk
-types through market.MarketType accessors.
+channel so websocket ingress reuses buffers; Read returns the frame for
+explicit desk/tier ingest.
 */
 type Kraken struct {
 	balance       *kraken.Balance
@@ -46,10 +46,6 @@ Use hands the desk AssetPairs normalizer to Balance so REST ledger codes share
 pair-base names with positions — no hand-maintained SpotAsset table.
 */
 func (venue *Kraken) Use(names *spot.Normalizer) *Kraken {
-	if venue == nil {
-		return venue
-	}
-
 	venue.balance.Use(names)
 	return venue
 }
@@ -128,8 +124,7 @@ func (venue *Kraken) Ticker() market.MarketType {
 
 /*
 Read demuxes one websocket frame by channel/method into the shared kraken
-decoder that implements market.MarketType; OnChange on that instance fires
-after UnmarshalJSON so broker desk wiring stays uniform across channels.
+decoder and returns it. Callers ingest the frame; UnmarshalJSON only decodes.
 */
 func (venue *Kraken) Read(message []byte) market.MarketType {
 	var head struct {

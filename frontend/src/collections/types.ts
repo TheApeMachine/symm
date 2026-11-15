@@ -18,6 +18,8 @@ export const STOPLOSS_TRIGGERED = 3;
 export type Ascent = {
 	PeakVelocity: number;
 	SmoothVelocity: number;
+	MeanUp?: number;
+	MeanDt?: number;
 	LastPnLPct: number;
 	LastTime?: string;
 	Samples: number;
@@ -25,6 +27,7 @@ export type Ascent = {
 
 export type Stoploss = {
 	State: StoplossState | number;
+	Regime?: string;
 	InitialPnLPct: number;
 	CurrentPnLPct: number;
 	PeakPnLPct: number;

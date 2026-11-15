@@ -68,12 +68,6 @@ func TestUnmarshalJSONBalance(t *testing.T) {
 			"quote":  "USD",
 			"assets": []*market.Asset{},
 		})
-		changed := 0
-		host.Balance().OnChange(func(frame market.MarketType) {
-			frame.ToMarket(book)
-			changed++
-		})
-
 		Convey("When REST Balance JSON arrives", func() {
 			raw := []byte(`{
 				"error":[],
@@ -85,9 +79,9 @@ func TestUnmarshalJSONBalance(t *testing.T) {
 				}
 			}`)
 			So(sonic.Unmarshal(raw, host.Balance()), ShouldBeNil)
+			host.Balance().ToMarket(book)
 
-			Convey("OnChange fans out normalized cash", func() {
-				So(changed, ShouldEqual, 1)
+			Convey("ToMarket fans out normalized cash", func() {
 				So(book.Quote, ShouldEqual, "USD")
 				So(len(book.Assets), ShouldEqual, 4)
 				So(book.Cash("USD").String(), ShouldEqual, "200")
@@ -98,10 +92,6 @@ func TestUnmarshalJSONBalance(t *testing.T) {
 		})
 
 		Convey("When a balances websocket snapshot arrives", func() {
-			host.Balance().OnChange(func(frame market.MarketType) {
-				frame.ToMarket(book)
-			})
-
 			raw := []byte(`{
 				"channel":"balances",
 				"type":"snapshot",
@@ -122,6 +112,7 @@ func TestUnmarshalJSONBalance(t *testing.T) {
 				]
 			}`)
 			So(sonic.Unmarshal(raw, host.Balance()), ShouldBeNil)
+			host.Balance().ToMarket(book)
 
 			Convey("spot main is spendable and earn is ignored", func() {
 				So(book.Cash("USD").String(), ShouldEqual, "200")
@@ -141,6 +132,7 @@ func TestUnmarshalJSONBalance(t *testing.T) {
 					}]
 				}`)
 				So(sonic.Unmarshal(update, host.Balance()), ShouldBeNil)
+				host.Balance().ToMarket(book)
 				So(book.Cash("USD").String(), ShouldEqual, "150")
 				So(book.Cash("XBT").String(), ShouldEqual, "1.2")
 			})

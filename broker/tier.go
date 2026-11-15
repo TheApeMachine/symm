@@ -7,14 +7,15 @@ import (
 	"sync"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -58,20 +59,21 @@ Tier is one parallel book of positions sharing Price but not cache or socket —
 paper proof unlocks disarmed real without mixing fills across lanes.
 */
 type Tier struct {
-	ctx       context.Context
-	Type      TierType
-	public    network.Client
-	private   network.Client
-	price     *Price
-	venue     market.Venue
-	positions *Cache
-	pending   *sync.Map
-	balance   *market.Balance
+	ctx        context.Context
+	Type       TierType
+	public     network.Client
+	private    network.Client
+	price      *Price
+	venue      market.Venue
+	positions  *Cache
+	pending    *sync.Map
+	balance    *market.Balance
+	normalizer *spot.Normalizer
 }
 
 /*
-NewTier binds venue OnChange to Apply/Hello/history so fills never bypass the
-tier cache and balance frames stay aligned with price.balance for Allocate.
+NewTier wires cache, REST balance polls, and private socket open. Frame handling
+lives in Run → ingest — UnmarshalJSON only decodes.
 */
 func NewTier(
 	ctx context.Context,
@@ -94,69 +96,50 @@ func NewTier(
 			"quote":  system.Cfg.Market.QuoteCurrency,
 			"assets": []*market.Asset{},
 		}),
+		normalizer: price.normalizer,
 	}
 
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle, client,
 	)
 
-	if host != nil {
-		host.Balance().OnChange(func(frame market.MarketType) {
-			frame.ToMarket(tier.balance)
+	if orders := NewOrders(private); orders != nil {
+		orders.Restore(append(tier.positions.Open(), tier.positions.Closed()...))
+	}
 
-			if tier.price != nil && tier.price.balance != nil {
-				frame.ToMarket(tier.price.balance)
-			}
-
-			tier.positions.Bound(tier.balance)
-			tier.Hello()
-		})
-
-		host.TradeBalance().OnChange(func(frame market.MarketType) {
-			frame.ToMarket(tier.balance)
-			tier.Hello()
-		})
-
-		host.Execution().OnChange(func(frame market.MarketType) {
-			executions := &market.Execution{}
-			frame.ToMarket(executions)
-
-			if tier.fold(executions) {
-				tier.Hello()
-			}
-		})
-
-		if book, ok := host.(*venue.Kraken); ok && book.Order() != nil {
-			book.Order().OnChange(func(frame market.MarketType) {
-				order, ok := frame.(*kraken.Order)
-
-				if !ok || order == nil {
-					return
-				}
-
-				if order.Success {
-					tier.ackOrder(order)
-					return
-				}
-			})
-		}
+	for _, position := range tier.positions.Open() {
+		errnie.Error(position.Validate())
 	}
 
 	if tier.private != nil && host != nil {
+		balance := host.Balance()
+		tradeBalance := host.TradeBalance()
+
 		tier.private.Watch(
 			system.Cfg.WebSocket.Endpoints.Balance,
-			host.Balance().Request(),
-			host.Balance(),
+			balance.Request(),
+			balance,
+			func() { tier.ingest(balance) },
 		)
 		tier.private.Watch(
 			system.Cfg.WebSocket.Endpoints.TradeBalance,
-			host.TradeBalance().Request(),
-			host.TradeBalance(),
+			tradeBalance.Request(),
+			tradeBalance,
+			func() { tier.ingest(tradeBalance) },
 		)
 	}
 
 	if client, ok := tier.private.(*network.WebsocketClient); ok {
-		_ = client.Open()
+		errnie.Error(client.Open())
+	}
+
+	if err := errnie.Require(map[string]any{
+		"price":      tier.price,
+		"normalizer": tier.price.normalizer,
+		"private":    tier.private,
+	}); err != nil {
+		errnie.Error(err)
+		return nil
 	}
 
 	return tier
@@ -200,15 +183,21 @@ func (tier *Tier) Hello() {
 Update marks the symbol's open positions, then Hello so the hub always gets a
 full positions_snapshot with current PnL / PnLPct — never a sparse delta.
 */
-func (tier *Tier) Update(data *market.Update) {
+func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
 	touched := false
 
-	for _, position := range tier.positions.Open(data.Symbol) {
-		if !position.Live() {
+	for _, position := range tier.positions.Open() {
+		if position == nil || position.Status() != runtime.READY {
 			continue
 		}
 
-		if err := position.Update(data.Price); err == nil {
+		posSymbol := tier.price.normalizer.Name(position.Symbol)
+
+		if posSymbol != symbol {
+			continue
+		}
+
+		if err := position.Update(mark); err == nil {
 			tier.positions.Save(position)
 			touched = true
 		}
@@ -244,12 +233,16 @@ func (tier *Tier) ClearPending(symbol string) {
 }
 
 /*
-Enter binds spot wallet to Allocate so mins and cash match what Send will spend;
-transport-less tiers immediately fillsEnter so tests do not need fake ws acks.
+Enter binds spot wallet to Allocate so mins and cash match what Send will spend.
+Cache keys use the normalized symbol so desk mark Hellos hit the same position.
 */
 func (tier *Tier) Enter(
 	symbol string, path string, pathFound bool,
 ) error {
+	if tier.price != nil && tier.price.normalizer != nil {
+		symbol = tier.price.normalizer.Name(symbol)
+	}
+
 	if tier.positions.Has(symbol) {
 		return errnie.Err(
 			errnie.TooManyRequests,
@@ -292,16 +285,26 @@ func (tier *Tier) Enter(
 		return errnie.Error(err)
 	}
 
+	// Seed the hub immediately; the fill Hello that follows replaces this once
+	// Apply stamps Qty/Entry/PnL for the chart series.
+	tier.Hello()
+
 	return nil
 }
 
 /*
 Exit arms Closing then Send (or fillsExit without transport) so policy exits share
 the same sell path as stoploss settle rather than mutating cache timestamps alone.
+Pre-send: re-walk the live book — refuse a loss or incomplete liquidation.
 */
 func (tier *Tier) Exit(
 	position *Position,
 ) error {
+	if !tier.exitStillProfitable(position) {
+		tier.abortExit(position)
+		return nil
+	}
+
 	if err := position.exit(); err != nil {
 		return errnie.Error(err)
 	}
@@ -316,19 +319,81 @@ func (tier *Tier) Exit(
 		return errnie.Error(err)
 	}
 
+	tier.Hello()
 	return nil
 }
 
 /*
-apply folds venue fills into matching seats. Desk.Apply fans out here.
+exitStillProfitable re-walks Qty against live bids. Refuses when the book cannot
+absorb the full position or fee-net PnL% sits at/below the arm floor (or <= 0).
 */
-func (tier *Tier) apply(execution *market.Execution) {
-	tier.fold(execution)
+func (tier *Tier) exitStillProfitable(position *Position) bool {
+	if position == nil || tier.price == nil ||
+		position.Qty == nil || position.Qty.Sign() <= 0 {
+		return false
+	}
+
+	vwap, fully := tier.price.Liquidation(position.Symbol, position.Qty)
+
+	if !fully || vwap == nil {
+		return false
+	}
+
+	position.Mark = vwap
+	position.PnL = tier.price.PnL(position)
+	position.PnLPct = tier.price.PnLPct(position)
+
+	if position.PnLPct == nil {
+		return false
+	}
+
+	pnl, _ := position.PnLPct.Float64()
+
+	if pnl <= 0 {
+		return false
+	}
+
+	arm := tier.price.StoplossArmPctFor(position.Symbol, position.Qty)
+
+	if position.Stoploss != nil && position.Stoploss.ArmPnlPct > arm {
+		arm = position.Stoploss.ArmPnlPct
+	}
+
+	return pnl >= arm
 }
 
 /*
-fold applies only fills this seat owns. Foreign/symbol-only prints must not
-flat real money. Flat sells retire open → pending after the exchange fill.
+abortExit clears pending, resets Stoploss, and returns BUSY → READY so the
+position holds instead of selling into a loss.
+*/
+func (tier *Tier) abortExit(position *Position) {
+	if position == nil {
+		return
+	}
+
+	tier.pending.Delete(position.Symbol)
+	position.AbortExit()
+
+	if err := tier.positions.Save(position); err != nil {
+		errnie.Error(err)
+	}
+
+	tier.Hello()
+}
+
+/*
+apply folds venue fills into matching positions. Desk.Apply fans out here and
+must Hello — private ingest Hellos on its own path.
+*/
+func (tier *Tier) apply(execution *market.Execution) {
+	if tier.fold(execution) {
+		tier.Hello()
+	}
+}
+
+/*
+fold applies only fills this position owns. Foreign/symbol-only prints must not
+flat real money. Flat sells move open → pending after the exchange fill.
 */
 func (tier *Tier) fold(execution *market.Execution) bool {
 	if execution == nil {
@@ -345,7 +410,11 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 		applied := false
 
 		for _, data := range execution.Data {
-			if data == nil || !tier.sameSymbol(data.Symbol, position.Symbol) || !position.owns(data) {
+			if data == nil || tier.normalizer.Name(
+				data.Symbol,
+			) != tier.normalizer.Name(
+				position.Symbol,
+			) || !position.owns(data) {
 				continue
 			}
 
@@ -365,6 +434,19 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 			continue
 		}
 
+		// Apply → READY; stamp mark/pnl before Hello so the chart has a y.
+		if position.Status() == runtime.READY {
+			mark := tier.price.Mark(position.Symbol)
+
+			if mark == nil {
+				mark = position.Entry
+			}
+
+			if mark != nil {
+				errnie.Error(position.Update(mark))
+			}
+		}
+
 		if err := tier.positions.Save(position); err != nil {
 			errnie.Error(err)
 		}
@@ -373,20 +455,8 @@ func (tier *Tier) fold(execution *market.Execution) bool {
 	return touched
 }
 
-func (tier *Tier) sameSymbol(a, b string) bool {
-	if a == b {
-		return true
-	}
-
-	if tier.price == nil || tier.price.normalizer == nil {
-		return false
-	}
-
-	return tier.price.normalizer.Name(a) == tier.price.normalizer.Name(b)
-}
-
 /*
-settle parks a stoploss-triggered seat for model.Exit (sell + attribution).
+settle parks a stoploss-triggered position for model.Exit (sell + attribution).
 Open stays until the exit fill flats Qty — Remove belongs to fold after fill.
 */
 func (tier *Tier) settle(position *Position) {
@@ -409,10 +479,6 @@ but clear exit cl_ord_id so kickExit can remint after auth heals.
 */
 func (tier *Tier) Send(position *Position, action string) error {
 	position.mu.Lock()
-
-	if action == "exit" {
-		position.ensureExitOrder()
-	}
 
 	order := position.EntryOrder
 
@@ -464,18 +530,14 @@ func (tier *Tier) Send(position *Position, action string) error {
 	})
 
 	if err != nil {
-		return errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.Internal,
 			"[broker.Tier.Send] failed to marshal message",
 			err,
-		)
+		))
 	}
 
-	if err := tier.private.Write(buf); err != nil {
-		return errnie.Error(err)
-	}
-
-	return nil
+	return errnie.Error(tier.private.Write(buf))
 }
 
 /*
@@ -513,8 +575,7 @@ func (tier *Tier) ackOrder(order *kraken.Order) {
 }
 
 /*
-Run replays settle for positions restored mid-close after restart so a process bounce
-does not strand Closing positions without a private reader attached.
+Run reads the private socket, demuxes via venue.Read, then ingest acts on the frame.
 */
 func (tier *Tier) Run() {
 	for {
@@ -527,7 +588,7 @@ func (tier *Tier) Run() {
 		buf, err := tier.private.Read()
 
 		if err != nil {
-			if tier.ctx.Err() != nil {
+			if errnie.Error(tier.ctx.Err()) != nil {
 				return
 			}
 
@@ -540,6 +601,44 @@ func (tier *Tier) Run() {
 			continue
 		}
 
-		tier.venue.Read(buf)
+		tier.ingest(tier.venue.Read(buf))
+	}
+}
+
+/*
+ingest applies one decoded private frame. venue.Read only demuxes; this owns side effects.
+*/
+func (tier *Tier) ingest(frame market.MarketType) {
+	if frame == nil {
+		return
+	}
+
+	switch typed := frame.(type) {
+	case *kraken.Balance:
+		typed.ToMarket(tier.balance)
+
+		if tier.price != nil && tier.price.balance != nil {
+			typed.ToMarket(tier.price.balance)
+		}
+
+		tier.positions.Bound(tier.balance)
+		tier.Hello()
+
+	case *kraken.TradeBalance:
+		typed.ToMarket(tier.balance)
+		tier.Hello()
+
+	case *kraken.Execution:
+		executions := &market.Execution{}
+		typed.ToMarket(executions)
+
+		if tier.fold(executions) {
+			tier.Hello()
+		}
+
+	case *kraken.Order:
+		if typed.Success {
+			tier.ackOrder(typed)
+		}
 	}
 }

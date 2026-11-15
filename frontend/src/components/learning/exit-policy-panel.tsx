@@ -11,9 +11,9 @@ import { Grid } from "#/components/ui/grid";
 import { Meter } from "#/components/ui/meter";
 import {
 	buildStopChecks,
+	givebackFloor,
 	heldVerdict,
 	meterTone,
-	nearPeakFloor,
 	stateTone,
 	stopArmed,
 	stopRoom,
@@ -91,14 +91,14 @@ export const ExitPolicyPanel = ({
 					title="Highest fee-net return this position has marked."
 				/>
 				<BoundaryFact
-					label="Crest"
+					label="Giveback"
 					short={
-						armed && stop ? `${nearPeakFloor(stop).toFixed(2)}%` : "not armed"
+						armed && stop ? `${givebackFloor(stop).toFixed(2)}%` : "not armed"
 					}
 					title={
 						armed && stop
-							? `Near-peak floor — ${stopRoom(stop).toFixed(2)}pp still in crest.`
-							: "Crest corridor arms with the stoploss."
+							? `Half-climb floor — ${stopRoom(stop).toFixed(2)}pp above trip.`
+							: "Giveback floor arms with the stoploss."
 					}
 				/>
 				<BoundaryFact

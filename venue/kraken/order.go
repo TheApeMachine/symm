@@ -28,7 +28,6 @@ type Order struct {
 	ReqID    int64       `json:"req_id"`
 	TimeIn   time.Time   `json:"time_in"`
 	TimeOut  time.Time   `json:"time_out"`
-	onChange func(market.MarketType)
 }
 
 /*
@@ -71,15 +70,9 @@ func (order *Order) Request() map[string]any {
 	}
 }
 
-/*
-OnChange wires desk pending-order maps after each ack decode.
-*/
-func (order *Order) OnChange(fn func(market.MarketType)) {
-	order.onChange = fn
-}
 
 /*
-MarshalJSON aliases Order so onChange stays off the wire.
+MarshalJSON aliases Order for the wire.
 */
 func (order *Order) MarshalJSON() ([]byte, error) {
 	type alias Order
@@ -87,7 +80,7 @@ func (order *Order) MarshalJSON() ([]byte, error) {
 }
 
 /*
-UnmarshalJSON preserves onChange and notifies desk on each add_order response.
+UnmarshalJSON decodes each add_order response.
 */
 func (order *Order) UnmarshalJSON(data []byte) error {
 	type alias Order
@@ -97,13 +90,8 @@ func (order *Order) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	onChange := order.onChange
 	*order = Order(decoded)
-	order.onChange = onChange
 
-	if order.onChange != nil {
-		order.onChange(order)
-	}
 
 	return nil
 }

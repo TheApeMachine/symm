@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 )
@@ -39,8 +40,14 @@ func withDesk(ctx context.Context, live bool, f func(*Desk)) func() {
 			}
 			defer func() { system.Cfg.Market.Model = prev }()
 
+			stub := &historyClient{trades: []byte(`{"error":[],"result":{"trades":{}}}`)}
 			wallet := price.balance
-			desk := NewDesk(ctx, map[string]network.Client{}, price, nil)
+			desk := NewDesk(ctx, map[string]network.Client{
+				"public":  stub,
+				"private": stub,
+				"paper":   stub,
+				"virtual": stub,
+			}, price, nil)
 			fundDeskBalances(desk, wallet)
 			f(desk)
 		})()
@@ -173,14 +180,20 @@ func TestDeskExit(t *testing.T) {
 		paper := desk.tiers[TierTypePaper]
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", desk.price, nil, nil)
 		pos.ExitPath = "R00/M1"
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
 		paper.positions.Add(testSymbol, pos, true)
 
 		Convey("When Exit routes through paper", func() {
+			setBook(desk.price, "120", "121", "30")
 			err := desk.Exit(TierTypePaper, pos)
 
 			Convey("Closing is armed", func() {
 				So(err, ShouldBeNil)
-				So(pos.Closing, ShouldBeTrue)
+				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 			})
 		})
 
