@@ -23,13 +23,13 @@ import {
 	isPathBookKey,
 } from "#/components/learning/explore-path";
 import { asFinite } from "#/lib/format";
-import { trySendCommand } from "#/providers/websocket";
 import {
 	deskRowsForStats,
 	ingestDeskClosedPositions,
 	requestClosedPositionHistory,
 } from "#/lib/lifecycle";
 import { stopArmed, stopProximity } from "#/lib/stop-telemetry";
+import { trySendCommand } from "#/providers/websocket";
 
 /*
 Longtail samples the path-learning trajectory from live truth the hub already

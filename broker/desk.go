@@ -6,6 +6,7 @@ import (
 	"iter"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
@@ -43,7 +44,8 @@ type Desk struct {
 
 /*
 NewDesk picks tier wiring from market.model so callers do not duplicate the
-live-only vs virtual+paper+disarmed-real matrix at every boot site.
+live-only vs virtual+paper+disarmed-real matrix at every boot site. It also
+seeds price.balance so paper tiers size from the same ledger Enter spends.
 */
 func NewDesk(
 	ctx context.Context,
@@ -51,21 +53,8 @@ func NewDesk(
 	price *Price,
 	client *store.Client,
 ) *Desk {
-	return DeskFor(ctx, transports, price, client, system.Cfg.Market.Model == "real")
-}
-
-/*
-DeskFor is the explicit market.mode hook tests use; it also seeds price.balance
-so paper tiers size from the same ledger object Enter spends.
-*/
-func DeskFor(
-	ctx context.Context,
-	transports map[string]network.Client,
-	price *Price,
-	client *store.Client,
-	live bool,
-) *Desk {
 	quote := system.Cfg.Market.QuoteCurrency
+	live := system.Cfg.Market.Model == "real"
 
 	if price != nil {
 		price.balance = market.NewBalance(map[string]any{
@@ -74,7 +63,13 @@ func DeskFor(
 		})
 	}
 
-	host := venue.NewKraken(quote)
+	var names *spot.Normalizer
+
+	if price != nil {
+		names = price.normalizer
+	}
+
+	host := venue.NewKraken(quote).Use(names)
 	tiers := make(map[TierType]*Tier)
 
 	if live {
@@ -85,7 +80,7 @@ func DeskFor(
 			transports["public"],
 			transports["private"],
 			price,
-			venue.NewKraken(quote),
+			venue.NewKraken(quote).Use(names),
 			nil,
 		)
 		tiers[TierTypeReal] = real
@@ -96,7 +91,7 @@ func DeskFor(
 			transports["public"],
 			transports["virtual"],
 			price,
-			venue.NewKraken(quote),
+			venue.NewKraken(quote).Use(names),
 			client,
 		)
 		paper := NewTier(
@@ -105,7 +100,7 @@ func DeskFor(
 			transports["public"],
 			transports["paper"],
 			price,
-			venue.NewKraken(quote),
+			venue.NewKraken(quote).Use(names),
 			client,
 		)
 		real := NewTier(
@@ -114,7 +109,7 @@ func DeskFor(
 			transports["public"],
 			transports["private"],
 			price,
-			venue.NewKraken(quote),
+			venue.NewKraken(quote).Use(names),
 			client,
 		)
 		tiers[TierTypeVirtual] = virtual
@@ -420,6 +415,10 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 			touched := false
 
 			for _, position := range tier.positions.Open(symbol) {
+				if !position.Live() {
+					continue
+				}
+
 				if err := position.Update(mark); err != nil {
 					continue
 				}

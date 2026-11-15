@@ -208,6 +208,31 @@ func TestStepCut(t *testing.T) {
 			})
 		})
 
+		Convey("When opposition dominates the phase net", func() {
+			cut := training.stepCut("OPP/USD", []*runtime.Region{
+				{Key: 0, Brightness: 0.2},
+				{Key: 1, Brightness: 0.1},
+				{Key: 2, Brightness: 0.8},
+			})
+
+			Convey("stepCut does not emit R02", func() {
+				So(cut, ShouldNotBeNil)
+				So(cut.Len(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When support clears opposition", func() {
+			cut := training.stepCut("NET/USD", []*runtime.Region{
+				{Key: 0, Brightness: 0.2},
+				{Key: 1, Brightness: 0.7},
+				{Key: 2, Brightness: 0.3},
+			})
+
+			Convey("stepCut emits the support token", func() {
+				So(cut.String(), ShouldEqual, "R01")
+			})
+		})
+
 		Convey("When only veto regions are lit", func() {
 			cut := training.stepCut("ETH/USD", []*runtime.Region{
 				{Key: 17, Brightness: 1},

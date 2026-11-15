@@ -32,6 +32,8 @@ type Model struct {
 	rotation  *Rotation
 	resetPath func(string)
 	live      bool
+	exitSent  sync.Map
+	noted     sync.Map
 }
 
 /*
@@ -68,10 +70,17 @@ func NewModel(
 
 /*
 NoteSettled feeds rotation memory when a position closes or arms stoploss exit.
+A position id is recorded once so the arm and the later fill do not double-count.
 */
 func (model *Model) NoteSettled(position *broker.Position) {
-	if model == nil || model.rotation == nil {
+	if model == nil || model.rotation == nil || position == nil {
 		return
+	}
+
+	if position.ID != "" {
+		if _, loaded := model.noted.LoadOrStore(position.ID, struct{}{}); loaded {
+			return
+		}
 	}
 
 	model.rotation.NoteSettled(position)
@@ -142,15 +151,16 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			learn := system.Cfg.Learning
 			bypass := learn.ResonanceBypass
+			openBook := len(open) > 0
 
 			// Live orders keep the entry gates; lab bypass is paper/virtual only.
 			if model.live {
 				bypass = false
 			}
 
-			// Oracle gate after pending exits: block flat symbols that are not
-			// tradable. Open positions still run hold/exit.
-			if len(open) == 0 && !bypass && !model.oracleAllows(envelope.Regions[symbol]) {
+			// Oracle and resonance gates are entry filters. An open book still
+			// has to hold or exit when the reading is cold or surprising.
+			if !openBook && !bypass && !model.oracleAllows(envelope.Regions[symbol]) {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -163,30 +173,39 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			rez := envelope.Resonance[symbol]
 
-			if rez == nil {
-				if !bypass {
-					decide(&runtime.Decision{
-						Symbol: symbol,
-						Action: "skip",
-						Reason: "no resonance reading",
-						Gate:   "resonance",
-						Path:   path,
-					})
-					return
-				}
-
+			if rez == nil && bypass {
 				rez = model.bypassReading(learn)
 			}
 
-			surprise := rez["surprise"]
-			supported := int(rez["supported_horizon"])
-			precision, hasPrecision := rez["task_relative_precision"]
+			if rez == nil && !openBook {
+				decide(&runtime.Decision{
+					Symbol: symbol,
+					Action: "skip",
+					Reason: "no resonance reading",
+					Gate:   "resonance",
+					Path:   path,
+				})
+				return
+			}
 
-			if !bypass && (rez["calibrated"] < 1 ||
+			var (
+				surprise     float64
+				supported    int
+				precision    float64
+				hasPrecision bool
+			)
+
+			if rez != nil {
+				surprise = rez["surprise"]
+				supported = int(rez["supported_horizon"])
+				precision, hasPrecision = rez["task_relative_precision"]
+			}
+
+			if rez != nil && !openBook && !bypass && (rez["calibrated"] < 1 ||
 				supported < learn.MinSupportedHorizon ||
 				!hasPrecision ||
 				precision < learn.MinTaskRelativePrecision ||
-				surprise < learn.MinSurprise) {
+				surprise > learn.MinSurprise) {
 				decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -199,19 +218,23 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			curve := make([]float64, 0, len(resonance.Features))
 
-			for i := range len(resonance.Features) {
-				value, ok := rez["forward_curve_"+strconv.Itoa(i)]
-				if !ok {
-					break
-				}
+			if rez != nil {
+				for i := range len(resonance.Features) {
+					value, ok := rez["forward_curve_"+strconv.Itoa(i)]
+					if !ok {
+						break
+					}
 
-				curve = append(curve, value)
+					curve = append(curve, value)
+				}
 			}
 
 			enterNet, holdNet, exitNet, risk, ok := resonance.ForwardStoryNets(curve)
 
 			if !ok {
-				if !bypass {
+				if bypass {
+					enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
+				} else if !openBook {
 					decide(&runtime.Decision{
 						Symbol: symbol,
 						Action: "skip",
@@ -221,8 +244,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					})
 					return
 				}
-
-				enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
 			}
 
 			treeStarted := time.Now()
@@ -479,8 +500,6 @@ func (model *Model) applyAction(
 				Path:   path,
 			})
 		}
-
-		model.resetPath(symbol)
 	}
 }
 
@@ -506,12 +525,12 @@ func (model *Model) enterTiers(
 	floor := system.Cfg.Learning.PaperEligibleResistance
 
 	if bypass || !pathFound || resistance > floor {
-		model.tryEnter(decide, symbol, path, broker.TierTypeVirtual, false, "virtual sample")
+		model.tryEnter(decide, symbol, path, broker.TierTypeVirtual, pathFound, "virtual sample")
 		return
 	}
 
-	model.tryEnter(decide, symbol, path, broker.TierTypePaper, true, "paper enter")
-	model.tryEnter(decide, symbol, path, broker.TierTypeReal, true, "real enter")
+	model.tryEnter(decide, symbol, path, broker.TierTypePaper, pathFound, "paper enter")
+	model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
 }
 
 /*
@@ -535,6 +554,10 @@ func (model *Model) tryEnter(
 			Tier:   tt.String(),
 		})
 		return
+	}
+
+	if model.resetPath != nil {
+		model.resetPath(symbol)
 	}
 
 	decide(&runtime.Decision{
@@ -574,8 +597,8 @@ func (model *Model) gateReason(
 		return "task-relative precision below threshold"
 	}
 
-	if surprise < learn.MinSurprise {
-		return "surprise below threshold"
+	if surprise > learn.MinSurprise {
+		return "surprise above threshold"
 	}
 
 	return "resonance gate"
@@ -678,29 +701,24 @@ func (model *Model) Exit(position *broker.Position, path string) {
 
 	settled := position.ClosedAt != nil
 
-	if path == "" || (!settled && path == position.EntryPath) {
-		if settled {
-			model.dropPending(position)
+	if !settled {
+		if path == position.EntryPath {
+			path = ""
 		}
 
+		// Flat grammar still has to sell a stoploss that already armed Closing.
+		// Attribution can land on HoldPaths once the fill settles.
+		if path == "" && !position.Closing {
+			return
+		}
+
+		model.submitExit(position, path)
 		return
 	}
 
-	// Train only on realized fills. Policy exits arm the broker first; marking
-	// the tree before the order fills poisoned resistance on rejects and
-	// re-trained every tick while Closing.
-	if !settled {
-		if position.ExitPath != "" {
-			return
-		}
-
-		position.ExitPath = path
-
-		if model.desk == nil {
-			return
-		}
-
-		model.desk.Exit(model.tierOf(position), position)
+	if path == "" {
+		model.NoteSettled(position)
+		model.dropPending(position)
 		return
 	}
 
@@ -723,7 +741,48 @@ func (model *Model) Exit(position *broker.Position, path string) {
 	tree.Update(position.EntryPath, delta)
 	tree.Update(position.ExitPath, delta)
 	position.TreeApplied = true
+	model.NoteSettled(position)
 	model.dropPending(position)
+}
+
+/*
+submitExit sells through the desk and only then stamps ExitPath, so a Send
+failure can retry on the next tick instead of latching a path that never left.
+*/
+func (model *Model) submitExit(position *broker.Position, path string) {
+	if position == nil || position.ExitPath != "" {
+		return
+	}
+
+	if position.ID != "" {
+		if _, ok := model.exitSent.Load(position.ID); ok {
+			// Venue reject clears Closing so the sell can remint; otherwise the
+			// prior Send already left Closing armed and must not double-fire.
+			if position.Closing {
+				return
+			}
+
+			model.exitSent.Delete(position.ID)
+		}
+	}
+
+	if model.desk == nil {
+		return
+	}
+
+	if err := model.desk.Exit(model.tierOf(position), position); err != nil {
+		return
+	}
+
+	if position.ID != "" {
+		model.exitSent.Store(position.ID, struct{}{})
+	}
+
+	if path != "" {
+		position.ExitPath = path
+	}
+
+	model.NoteSettled(position)
 }
 
 /*

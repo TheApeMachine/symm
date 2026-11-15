@@ -26,17 +26,20 @@ are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	*runtime.System
-	public     network.Client
-	snapshot   *kraken.Instrument
-	Level3     *sync.Map
-	cache      *sync.Map
-	takerFees  *sync.Map
-	normalizer *spot.Normalizer
-	quote      string
-	symbols    []string
-	auth       *kraken.Auth
-	excluded   []string
-	level3URL  string
+	public       network.Client
+	Level3       *sync.Map
+	cache        *sync.Map
+	takerFees    *sync.Map
+	normalizer   *spot.Normalizer
+	quote        string
+	symbols      []string
+	auth         *kraken.Auth
+	excluded     []string
+	level3URL    string
+	booksMu      sync.Mutex
+	resubMu      sync.Mutex
+	resubRunning bool
+	resubPending []string
 }
 
 /*
@@ -166,13 +169,8 @@ func (instrument *Instrument) seedSnapshot(subscribe []byte) error {
 			)
 		}
 
-		instrument.snapshot = snapshot
 		errnie.Info("[instrument] received valid instrument snapshot")
-
-		for _, pair := range snapshot.Data.Pairs {
-			instrument.cachePair(pair)
-		}
-
+		instrument.Cache(snapshot.Data.Pairs)
 		return nil
 	}
 }
@@ -203,15 +201,7 @@ PaperBook can size orders without mocking the full ws snapshot loop.
 */
 func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
-		if pair.Quote != instrument.quote ||
-			pair.Status != "online" ||
-			slices.Contains(instrument.excluded, pair.Base) {
-			continue
-		}
-
-		symbol := instrument.normalizer.Name(pair.Symbol)
-		instrument.symbols = append(instrument.symbols, symbol)
-		instrument.cache.Store(symbol, pair)
+		instrument.cachePair(pair)
 	}
 }
 
@@ -300,12 +290,209 @@ budget. read starts before the first write so snapshots are not rejected.
 func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)) error {
 	errnie.Info("[instrument] subscribing to level3 books")
 
+	instrument.booksMu.Lock()
+	defer instrument.booksMu.Unlock()
+
+	if err := instrument.openBooks(read, instrument.symbols); err != nil {
+		return err
+	}
+
+	instrument.Transition(runtime.WAITING)
+	return nil
+}
+
+/*
+RecoverBooks marks the failed batches and resubscribes them off the caller.
+Checksum recovery runs from the level3 pump, so the dial stays on a worker
+and later failures fold into the same worker instead of stacking goroutines.
+*/
+func (instrument *Instrument) RecoverBooks(
+	read func(*network.WebsocketClient),
+	symbols []string,
+	stale func([]string),
+) {
+	instrument.resubMu.Lock()
+	instrument.resubPending = append(instrument.resubPending, symbols...)
+	start := !instrument.resubRunning
+	instrument.resubRunning = true
+	instrument.resubMu.Unlock()
+
+	if !start {
+		return
+	}
+
+	go instrument.resubLoop(read, stale)
+}
+
+func (instrument *Instrument) resubLoop(
+	read func(*network.WebsocketClient),
+	stale func([]string),
+) {
+	for {
+		instrument.resubMu.Lock()
+		pending := uniqueSymbols(instrument.resubPending)
+		instrument.resubPending = nil
+
+		if len(pending) == 0 {
+			instrument.resubRunning = false
+			instrument.resubMu.Unlock()
+			return
+		}
+
+		instrument.resubMu.Unlock()
+
+		if err := instrument.resubscribe(read, pending, stale); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[instrument] level3 resubscribe failed",
+				err,
+			))
+		}
+	}
+}
+
+func (instrument *Instrument) resubscribe(
+	read func(*network.WebsocketClient),
+	symbols []string,
+	stale func([]string),
+) error {
+	instrument.booksMu.Lock()
+	defer instrument.booksMu.Unlock()
+
+	victims := instrument.level3Victims(symbols)
+
+	if len(victims) == 0 {
+		return nil
+	}
+
+	replay := make([]string, 0, len(symbols))
+
+	for _, victim := range victims {
+		if stale != nil {
+			stale(victim.parts)
+		}
+
+		if victim.client != nil {
+			_ = victim.client.Close()
+		}
+
+		instrument.Level3.Delete(victim.key)
+		replay = append(replay, victim.parts...)
+	}
+
+	errnie.Warn("[instrument] level3 resubscribe " + strings.Join(replay, ","))
+
+	return instrument.openBooks(read, replay)
+}
+
+type level3Batch struct {
+	key    string
+	parts  []string
+	client *network.WebsocketClient
+}
+
+func (instrument *Instrument) level3Victims(symbols []string) []level3Batch {
+	want := instrument.symbolSet(symbols)
+	matched := make([]level3Batch, 0)
+	all := make([]level3Batch, 0)
+
+	instrument.Level3.Range(func(key, value any) bool {
+		batchKey, _ := key.(string)
+		batch := level3Batch{
+			key:   batchKey,
+			parts: strings.Split(batchKey, "|"),
+		}
+
+		if client, ok := value.(*network.WebsocketClient); ok {
+			batch.client = client
+		}
+
+		all = append(all, batch)
+
+		if len(want) == 0 || instrument.batchWanted(batch.parts, want) {
+			matched = append(matched, batch)
+		}
+
+		return true
+	})
+
+	if len(matched) == 0 {
+		return all
+	}
+
+	return matched
+}
+
+func (instrument *Instrument) symbolSet(symbols []string) map[string]struct{} {
+	want := make(map[string]struct{}, len(symbols)*2)
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		want[symbol] = struct{}{}
+
+		if instrument.normalizer != nil {
+			want[instrument.normalizer.Name(symbol)] = struct{}{}
+		}
+	}
+
+	return want
+}
+
+func (instrument *Instrument) batchWanted(parts []string, want map[string]struct{}) bool {
+	for _, part := range parts {
+		if _, ok := want[part]; ok {
+			return true
+		}
+
+		if instrument.normalizer == nil {
+			continue
+		}
+
+		if _, ok := want[instrument.normalizer.Name(part)]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func uniqueSymbols(symbols []string) []string {
+	seen := make(map[string]struct{}, len(symbols))
+	out := make([]string, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		if _, ok := seen[symbol]; ok {
+			continue
+		}
+
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+
+	return out
+}
+
+func (instrument *Instrument) openBooks(
+	read func(*network.WebsocketClient),
+	symbols []string,
+) error {
 	if read == nil {
 		return instrument.Error(errnie.Err(
 			errnie.Validation,
 			"[instrument] level3 reader is required before subscribe",
 			nil,
 		))
+	}
+
+	if len(symbols) == 0 {
+		return nil
 	}
 
 	token, err := instrument.auth.Token(instrument.Context())
@@ -330,7 +517,7 @@ func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)
 		frame = batch
 	}
 
-	for chunk := range slices.Chunk(instrument.symbols, batch) {
+	for chunk := range slices.Chunk(symbols, batch) {
 		connSymbols := slices.Clone(chunk)
 		batchKey := strings.Join(connSymbols, "|")
 
@@ -369,7 +556,6 @@ func (instrument *Instrument) SubscribeBooks(read func(*network.WebsocketClient)
 		errnie.Info("[instrument] subscribed to level3 for " + batchKey)
 	}
 
-	instrument.Transition(runtime.WAITING)
 	return nil
 }
 
@@ -405,24 +591,6 @@ func (instrument *Instrument) writeLevel3(
 	}
 
 	return nil
-}
-
-/*
-ResubscribeBooks closes every Level3 socket and runs SubscribeBooks again.
-*/
-func (instrument *Instrument) ResubscribeBooks(read func(*network.WebsocketClient)) error {
-	errnie.Warn("[instrument] level3 kill-all resubscribe")
-
-	instrument.Level3.Range(func(key, value any) bool {
-		if client, ok := value.(*network.WebsocketClient); ok && client != nil {
-			_ = client.Close()
-		}
-
-		instrument.Level3.Delete(key)
-		return true
-	})
-
-	return instrument.SubscribeBooks(read)
 }
 
 /*

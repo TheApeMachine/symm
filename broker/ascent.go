@@ -32,6 +32,11 @@ func (ascent *Ascent) Note(pnlPct float64, at time.Time) {
 		return
 	}
 
+	// Unchanged PnL (L3 noise on lower levels) must not invent climb decay.
+	if pnlPct == ascent.LastPnLPct {
+		return
+	}
+
 	dt := at.Sub(ascent.LastTime).Seconds()
 
 	if dt < 0.05 { // Clamp micro-burst jitter (<50ms)
@@ -68,29 +73,28 @@ If the current smoothed climb rate has collapsed to a fraction of peak climb rat
 exhaustion approaches 1.0.
 */
 func (ascent *Ascent) Exhaust() float64 {
-	// If no significant upward velocity was ever established, not exhausted yet
+	// Tiny peak velocity used to mean "not exhausted yet" forever — slow
+	// grind arms never tripped. After enough samples, a flat/negative tape
+	// on a weak climb is exhaustion.
 	if ascent.PeakVelocity <= 0.001 {
+		if ascent.Samples >= 8 && ascent.SmoothVelocity <= 0.001 {
+			return 1.0
+		}
+
 		return 0
 	}
 
-	// If currently still accelerating or matching peak
 	if ascent.SmoothVelocity >= ascent.PeakVelocity {
 		return 0
 	}
 
-	// If velocity is zero or negative (climb has flattened out)
 	if ascent.SmoothVelocity <= 0 {
 		return 1.0
 	}
 
-	// Smooth decay fraction
 	return 1.0 - (ascent.SmoothVelocity / ascent.PeakVelocity)
 }
 
 func (ascent *Ascent) Reset() {
-	ascent.PeakVelocity = 0
-	ascent.SmoothVelocity = 0
-	ascent.LastPnLPct = 0
-	ascent.LastTime = time.Time{}
-	ascent.Samples = 0
+	*ascent = Ascent{}
 }

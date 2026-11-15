@@ -4,8 +4,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 )
+
+/*
+stageBudget is the loud ceiling for one disruptor node Step. Crossing it means
+the ring is starving downstream stages — surface an error, do not stay "ok".
+*/
+const stageBudget = 250 * time.Millisecond
 
 /*
 Probe times one workspace node without changing its contract. Stats are
@@ -86,11 +93,26 @@ func (probe *Probe) record(d time.Duration) {
 		probe.emaNs.Store(prev - prev/8 + ns/8)
 	}
 
+	if d >= stageBudget {
+		errnie.Error(errnie.Err(
+			errnie.Timeout,
+			"[pipeline] stage exceeded budget — downstream rings are starving",
+			nil,
+		).With("stage", probe.Name()).With("group", probe.group).With("ms", d.Milliseconds()))
+	}
+
 	Fire(probe.Name(), map[string]any{
 		"n":       n,
 		"last_ns": ns,
 		"ema_ns":  probe.emaNs.Load(),
 	})
+}
+
+/*
+Samples is the completed Step count for stall watches.
+*/
+func (probe *Probe) Samples() uint64 {
+	return probe.n.Load()
 }
 
 /*

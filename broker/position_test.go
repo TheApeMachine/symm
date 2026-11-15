@@ -153,11 +153,26 @@ func TestUpdate(t *testing.T) {
 		Convey("When the position is already closed", func() {
 			closed := time.Unix(2, 0).UTC()
 			pos.ClosedAt = &closed
+			So(pos.Live(), ShouldBeFalse)
 			err := pos.Update(dec("120"))
 
-			Convey("It returns a conflict for a closed position", func() {
+			Convey("It returns a quiet conflict so mark ticks skip Save", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "[position.Update] closed position")
+				So(pos.Mark, ShouldBeNil)
+			})
+		})
+
+		Convey("When the position is Closing awaiting exit fill", func() {
+			pos.Closing = true
+			So(pos.Live(), ShouldBeFalse)
+			mark := dec("120")
+			err := pos.Update(mark)
+
+			Convey("It returns a quiet conflict without mutating mark", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "[position.Update] closed position")
+				So(pos.Mark, ShouldBeNil)
 			})
 		})
 	}))

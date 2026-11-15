@@ -121,14 +121,8 @@ func NewTier(
 			executions := &market.Execution{}
 			frame.ToMarket(executions)
 
-			for _, execution := range executions.Data {
-				for _, position := range tier.positions.Open(execution.Symbol) {
-					if position == nil {
-						continue
-					}
-
-					position.Apply(*execution)
-				}
+			if tier.fold(executions) {
+				tier.Hello()
 			}
 		})
 
@@ -210,6 +204,10 @@ func (tier *Tier) Update(data *market.Update) {
 	touched := false
 
 	for _, position := range tier.positions.Open(data.Symbol) {
+		if !position.Live() {
+			continue
+		}
+
 		if err := position.Update(data.Price); err == nil {
 			tier.positions.Save(position)
 			touched = true
@@ -322,35 +320,86 @@ func (tier *Tier) Exit(
 }
 
 /*
-apply the execution to the position
+apply folds venue fills into matching seats. Desk.Apply fans out here.
 */
 func (tier *Tier) apply(execution *market.Execution) {
+	tier.fold(execution)
+}
+
+/*
+fold applies only fills this seat owns. Foreign/symbol-only prints must not
+flat real money. Flat sells retire open → pending after the exchange fill.
+*/
+func (tier *Tier) fold(execution *market.Execution) bool {
+	if execution == nil {
+		return false
+	}
+
+	touched := false
+
 	for _, position := range tier.positions.All() {
 		if position == nil {
 			continue
 		}
 
+		applied := false
+
 		for _, data := range execution.Data {
-			if data.Symbol == position.Symbol {
-				position.Apply(*data)
+			if data == nil || !tier.sameSymbol(data.Symbol, position.Symbol) || !position.owns(data) {
+				continue
 			}
+
+			position.Apply(*data)
+			applied = true
+		}
+
+		if !applied {
+			continue
+		}
+
+		touched = true
+
+		if position.ClosedAt != nil {
+			tier.pending.Store(position.Symbol, position)
+			tier.positions.Remove(position.Symbol)
+			continue
 		}
 
 		if err := tier.positions.Save(position); err != nil {
 			errnie.Error(err)
 		}
 	}
+
+	return touched
+}
+
+func (tier *Tier) sameSymbol(a, b string) bool {
+	if a == b {
+		return true
+	}
+
+	if tier.price == nil || tier.price.normalizer == nil {
+		return false
+	}
+
+	return tier.price.normalizer.Name(a) == tier.price.normalizer.Name(b)
 }
 
 /*
-settle the position.
+settle parks a stoploss-triggered seat for model.Exit (sell + attribution).
+Open stays until the exit fill flats Qty — Remove belongs to fold after fill.
 */
 func (tier *Tier) settle(position *Position) {
 	if position == nil {
 		return
 	}
 
-	tier.positions.Remove(position.Symbol)
+	tier.pending.Store(position.Symbol, position)
+
+	if err := tier.positions.Save(position); err != nil {
+		errnie.Error(err)
+	}
+
 	tier.Hello()
 }
 
@@ -359,22 +408,44 @@ Send is the only wire exit for real orders; token failures drop pending enters
 but clear exit cl_ord_id so kickExit can remint after auth heals.
 */
 func (tier *Tier) Send(position *Position, action string) error {
+	position.mu.Lock()
+
+	if action == "exit" {
+		position.ensureExitOrder()
+	}
+
 	order := position.EntryOrder
 
 	if action == "exit" {
 		order = position.ExitOrder
 	}
 
-	if tier.private == nil || order == nil {
+	// Copy wire fields under lock — Unlock before Write so fill Apply can proceed.
+	var (
+		side, orderType, volume, clOrdID string
+		symbol                           string
+	)
+
+	if order != nil {
+		side = order.Type
+		orderType = order.OrderType
+		volume = order.Volume
+		clOrdID = order.ClOrdId
+	}
+
+	symbol = position.Symbol
+	position.mu.Unlock()
+
+	if tier.private == nil || order == nil || volume == "" || clOrdID == "" {
 		return nil
 	}
 
 	params := map[string]any{
-		"symbol":     position.Symbol,
-		"side":       order.Type,
-		"order_type": order.OrderType,
-		"order_qty":  json.Number(order.Volume),
-		"cl_ord_id":  order.ClOrdId,
+		"symbol":     symbol,
+		"side":       side,
+		"order_type": orderType,
+		"order_qty":  json.Number(volume),
+		"cl_ord_id":  clOrdID,
 	}
 
 	if tier.Type == TierTypeReal {
@@ -419,7 +490,7 @@ func (tier *Tier) ackOrder(order *kraken.Order) {
 	}
 
 	for _, position := range tier.positions.Open() {
-		if position == nil || !position.Closing {
+		if position == nil {
 			continue
 		}
 

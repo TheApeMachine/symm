@@ -40,7 +40,6 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 /*
 Step fans one trade frame in parallel — metrics aggregate later, but each symbol
 needs fresh readings here or featureScorer never marks that Feature as seen.
-
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -48,61 +47,63 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			var (
-				bid, ask, bidQty, askQty float64
-				ok                       bool
-			)
+			for _, data := range batch {
+				var (
+					bid, ask, bidQty, askQty float64
+					ok                       bool
+				)
 
-			signal.books.Book(data.Symbol, func(book *market.Book) {
-				bestBid := book.BestBid()
-				bestAsk := book.BestAsk()
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					bestBid := book.BestBid()
+					bestAsk := book.BestAsk()
 
-				if bestBid == nil || bestAsk == nil ||
-					bestBid.Price == nil || bestAsk.Price == nil ||
-					bestBid.Quantity == nil || bestAsk.Quantity == nil {
-					return
+					if bestBid == nil || bestAsk == nil ||
+						bestBid.Price == nil || bestAsk.Price == nil ||
+						bestBid.Quantity == nil || bestAsk.Quantity == nil {
+						return
+					}
+
+					bid = bestBid.Price.InexactFloat64()
+					ask = bestAsk.Price.InexactFloat64()
+					bidQty = bestBid.Quantity.InexactFloat64()
+					askQty = bestAsk.Quantity.InexactFloat64()
+					ok = true
+				})
+
+				if !ok {
+					continue
 				}
 
-				bid = bestBid.Price.InexactFloat64()
-				ask = bestAsk.Price.InexactFloat64()
-				bidQty = bestBid.Quantity.InexactFloat64()
-				askQty = bestAsk.Quantity.InexactFloat64()
-				ok = true
-			})
+				input, ready, err := signal.sample.Measure(algorithm.DepthSampleInput{
+					Symbol: data.Symbol,
+					Bid:    bid,
+					Ask:    ask,
+					BidQty: bidQty,
+					AskQty: askQty,
+					At:     data.Timestamp,
+				})
 
-			if !ok {
-				return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.Liquidity[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			input, ready, err := signal.sample.Measure(algorithm.DepthSampleInput{
-				Symbol: data.Symbol,
-				Bid:    bid,
-				Ask:    ask,
-				BidQty: bidQty,
-				AskQty: askQty,
-				At:     data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.Liquidity[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

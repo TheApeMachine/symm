@@ -38,6 +38,10 @@ uptake against the equal prior window, not a single rolling sum.
 func newSymbolTape() *symbolTape {
 	n := 2 * int(system.Cfg.Risk.TapeWindow/time.Minute)
 
+	if n < 2 {
+		n = 2
+	}
+
 	return &symbolTape{
 		buckets:      make([]float64, n),
 		bucketMinute: make([]int64, n),

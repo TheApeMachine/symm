@@ -36,7 +36,6 @@ func NewSignal(ctx context.Context) *Signal {
 /*
 Step fans one trade frame in parallel — metrics aggregate later, but each symbol
 needs fresh readings here or featureScorer never marks that Feature as seen.
-
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -44,41 +43,43 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			if data.Price.IsZero() {
-				return
+			for _, data := range batch {
+				if data.Price.IsZero() {
+					continue
+				}
+
+				price, _ := data.Price.Float64()
+				if price <= 0 {
+					continue
+				}
+
+				input, ok, err := signal.sample.Measure(algorithm.ConvictionSampleInput{
+					Symbol: data.Symbol,
+					Price:  price,
+					At:     data.Timestamp,
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ok {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.Sentiment[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			price, _ := data.Price.Float64()
-			if price <= 0 {
-				return
-			}
-
-			input, ok, err := signal.sample.Measure(algorithm.ConvictionSampleInput{
-				Symbol: data.Symbol,
-				Price:  price,
-				At:     data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ok {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.Sentiment[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

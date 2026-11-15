@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
@@ -19,6 +20,7 @@ type Balance struct {
 	Channel  string                      `json:"channel,omitempty"`
 	Error    []any                       `json:"error"`
 	Result   map[string]*decimal.Decimal `json:"result"`
+	names    *spot.Normalizer
 	onChange func(market.MarketType)
 }
 
@@ -29,6 +31,19 @@ func NewBalance() *Balance {
 	return &Balance{
 		Result: make(map[string]*decimal.Decimal),
 	}
+}
+
+/*
+Use attaches the desk AssetPairs normalizer so REST ledger codes (XXRP, ZUSD)
+collapse onto the same names Bound and positions already use.
+*/
+func (balance *Balance) Use(names *spot.Normalizer) *Balance {
+	if balance == nil {
+		return balance
+	}
+
+	balance.names = names
+	return balance
 }
 
 /*
@@ -164,6 +179,7 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 	}
 
 	onChange := balance.onChange
+	names := balance.names
 
 	if decoded.Channel == "balances" && len(decoded.Data) > 0 {
 		balance.fold(decoded)
@@ -176,6 +192,7 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 	}
 
 	balance.onChange = onChange
+	balance.names = names
 
 	if balance.Result == nil {
 		balance.Result = make(map[string]*decimal.Decimal)
@@ -257,8 +274,9 @@ func (row balanceRow) spendable() (decimal.Decimal, bool) {
 }
 
 /*
-Normalize rewrites REST ledger codes (ZUSD, XXBT) onto desk names in Result.
-Call after every REST Balance decode so QuoteCash and ToMarket agree.
+Normalize rewrites REST ledger codes onto desk names in Result via the seeded
+spot.Normalizer. Call after every REST Balance decode so QuoteCash, Bound, and
+pair bases agree without a hand-maintained asset table.
 */
 func (balance *Balance) Normalize() {
 	if balance == nil || balance.Result == nil {
@@ -272,7 +290,7 @@ func (balance *Balance) Normalize() {
 			continue
 		}
 
-		key := SpotAsset(asset)
+		key := balance.assetName(asset)
 
 		if prev := next[key]; prev != nil {
 			sum := prev.Add(*amount)
@@ -285,6 +303,21 @@ func (balance *Balance) Normalize() {
 	}
 
 	balance.Result = next
+}
+
+/*
+assetName is the Bound/position base for a ledger or ws asset code.
+*/
+func (balance *Balance) assetName(asset string) string {
+	if asset == "" {
+		return asset
+	}
+
+	if balance != nil && balance.names != nil {
+		return balance.names.Name(asset)
+	}
+
+	return asset
 }
 
 /*
@@ -323,7 +356,7 @@ func (balance *Balance) AssetAmount(asset string) (*decimal.Decimal, bool) {
 		return &value, true
 	}
 
-	if key := SpotAsset(asset); key != asset {
+	if key := balance.assetName(asset); key != asset {
 		if amount := balance.Result[key]; amount != nil {
 			value := *amount
 			return &value, true
@@ -370,29 +403,6 @@ func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 	book.Unrealized = unrealized
 
 	return book
-}
-
-/*
-SpotAsset maps Kraken REST ledger codes onto desk quote/base names so sizing
-and hub JSON agree across REST and ws balance paths.
-*/
-func SpotAsset(asset string) string {
-	switch asset {
-	case "ZUSD", "USD":
-		return "USD"
-	case "ZEUR", "EUR":
-		return "EUR"
-	case "ZGBP", "GBP":
-		return "GBP"
-	case "ZJPY", "JPY":
-		return "JPY"
-	case "XXBT", "XBT", "BTC":
-		return "XBT"
-	case "XETH", "ETH":
-		return "ETH"
-	default:
-		return asset
-	}
 }
 
 /*

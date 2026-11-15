@@ -90,6 +90,9 @@ export type Position = {
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: string | number;
+	gross_pnl?: string | number;
+	fee_in?: string | number;
+	fee_out?: string | number;
 	pnl?: string | number;
 	pnl_pct?: string | number;
 	closing?: boolean;

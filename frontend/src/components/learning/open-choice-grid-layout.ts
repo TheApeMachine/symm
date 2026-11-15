@@ -12,6 +12,7 @@ import {
 	type I2DSubSurfaceOptions,
 	type IRenderableSeries,
 	type ISciChart2DDefinition,
+	type ISciChartSubSurface,
 	NativeTextAnnotation,
 	Rect,
 	SciChartSubSurface,
@@ -59,7 +60,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 		if (!surface) return;
 
 		for (const subChart of [...surface.subCharts]) {
-			const positionId = String(subChart.title ?? "");
+			const positionId = this.positionIdOf(subChart);
 
 			for (const rs of subChart.renderableSeries.asArray()) {
 				(rs as { dataSeries?: unknown }).dataSeries = undefined;
@@ -84,6 +85,15 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 
 	private positionIdFromSeriesName(name: string) {
 		return name.replace(/::(range|stop)-band$/, "");
+	}
+
+	/** Subchart title is display-only; series names already carry the position id. */
+	private positionIdOf(subChart: ISciChartSubSurface) {
+		for (const rs of subChart.renderableSeries.asArray()) {
+			if (this.isCompanion(rs)) continue;
+			return this.positionIdFromSeriesName(this.seriesName(rs));
+		}
+		return "";
 	}
 
 	private isCompanion(rs: { dataSeries?: { dataSeriesName?: string } | null }) {
@@ -325,7 +335,7 @@ export class GridLayoutModifier extends ChartModifierBase2D {
 			const xAxis = subChart.xAxes.get(0);
 			const yAxis = subChart.yAxes.get(0);
 			const labelColor = xAxis.labelStyle.color ?? TITLE;
-			const positionId = String(subChart.title ?? "");
+			const positionId = this.positionIdOf(subChart);
 
 			const animation = new GenericAnimation<TXywhCoordinates>({
 				from: subChart.subPosition as TXywhCoordinates,

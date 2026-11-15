@@ -46,27 +46,26 @@ export const OpenPositions = () => {
 		hasHeld(state as Record<string, Position>, book),
 	);
 
-	if (!watching) {
-		return (
-			<Flex.Column
-				align="center"
-				justify="center"
-				gap={2}
-				className="h-full min-h-48 px-4 text-center"
-			>
-				<span className="font-mono text-[11px] text-(--f4) tracking-[0.14em] uppercase">
-					no open positions
-				</span>
-				<span className="max-w-sm text-(--f3) text-[12px] leading-relaxed">
-					Held positions on this book paint here as they mark.
-				</span>
-			</Flex.Column>
-		);
-	}
-
+	// Chart stays mounted so bindOpenChoice is live before the first Hello —
+	// gating on watching dropped the enter snapshot that would have painted it.
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
+		<div className="relative flex min-h-0 flex-1 flex-col">
 			<OpenChoiceChart />
+			{!watching ? (
+				<Flex.Column
+					align="center"
+					justify="center"
+					gap={2}
+					className="absolute inset-0 z-10 min-h-48 bg-(--surface) px-4 text-center"
+				>
+					<span className="font-mono text-[11px] text-(--f4) tracking-[0.14em] uppercase">
+						no open positions
+					</span>
+					<span className="max-w-sm text-(--f3) text-[12px] leading-relaxed">
+						Held positions on this book paint here as they mark.
+					</span>
+				</Flex.Column>
+			) : null}
 		</div>
 	);
 };

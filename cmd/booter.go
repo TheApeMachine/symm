@@ -128,7 +128,12 @@ func NewBooter(ctx context.Context, name string) *Booter {
 	// 	errnie.Info("[booter] pyroscope profiling " + appName)
 	// }
 
-	client := store.NewClient(ctx, system.Cfg.Storage.S3.Bucket)
+	client := store.NewClient(
+		ctx,
+		system.Cfg.Storage.S3.Bucket,
+		system.Cfg.Storage.S3.Endpoint,
+		system.Cfg.Storage.S3.Region,
+	)
 
 	if ui.UI != nil {
 		ui.UI.UseStore(client)
@@ -352,7 +357,7 @@ func (booter *Booter) initMarket() error {
 		booter.book,
 		booter.instrument,
 		booter.normalizer,
-		venue.NewKraken(system.Cfg.Market.QuoteCurrency),
+		venue.NewKraken(system.Cfg.Market.QuoteCurrency).Use(booter.normalizer),
 		booter.public,
 	)
 
@@ -424,8 +429,13 @@ func (booter *Booter) initPipeline() error {
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
 			})},
+			// Resonance then training are sequential rings: both mutate/read
+			// envelope maps, and a shared handler group races Metrics().
 			{Group: "resonance", Nodes: booter.graph.Wrap("resonance", []nmruntime.Node{
-				resonance.NewSolver(ctx), training,
+				resonance.NewSolver(ctx),
+			})},
+			{Group: "training", Nodes: booter.graph.Wrap("training", []nmruntime.Node{
+				training,
 			})},
 			{Group: "model", Nodes: booter.graph.Wrap("model", []nmruntime.Node{
 				model,
@@ -438,6 +448,7 @@ func (booter *Booter) initPipeline() error {
 
 	booter.workspace.Transition(nmruntime.READY)
 	booter.graph.PublishTopology()
+	go booter.watchPipeline()
 
 	booter.desk.OnTrade(func(trade *market.Trade) {
 		if booter.workspace == nil || trade == nil {
@@ -465,6 +476,54 @@ func (booter *Booter) initPipeline() error {
 }
 
 /*
+watchPipeline fails the engine badge when ingress keeps moving while model is
+frozen. Tick count alone is not health — it publishes before the disruptor runs.
+*/
+func (booter *Booter) watchPipeline() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var lastIngress, lastModel uint64
+	stalled := false
+
+	for {
+		select {
+		case <-booter.Context().Done():
+			return
+		case <-ticker.C:
+			if booter.graph == nil {
+				continue
+			}
+
+			ingress := booter.graph.Count("ingress")
+			model := booter.graph.Count("model")
+			correlation := booter.graph.Count("correlation")
+
+			if ingress >= lastIngress+50 && model == lastModel {
+				errnie.Error(errnie.Err(
+					errnie.Timeout,
+					"[booter] pipeline stall: ingress advancing while model is frozen",
+					nil,
+				).With("ingress", ingress).
+					With("model", model).
+					With("correlation", correlation))
+
+				if !stalled {
+					booter.setEngine("error")
+					stalled = true
+				}
+			} else if stalled && model > lastModel {
+				booter.setEngine("ready")
+				stalled = false
+			}
+
+			lastIngress = ingress
+			lastModel = model
+		}
+	}
+}
+
+/*
 seedBooks opens level3, waits until every symbol has a book, then continues.
 */
 func (booter *Booter) seedBooks() error {
@@ -475,14 +534,8 @@ func (booter *Booter) seedBooks() error {
 		go booter.readLevel3(client)
 	}
 
-	booter.book.OnInvalid(func([]string) {
-		if err := booter.instrument.ResubscribeBooks(read); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"[booter] level3 checksum recovery failed",
-				err,
-			))
-		}
+	booter.book.OnInvalid(func(symbols []string) {
+		booter.instrument.RecoverBooks(read, symbols, booter.book.Stale)
 	})
 
 	if err := booter.instrument.SubscribeBooks(read); err != nil {
@@ -519,9 +572,15 @@ func (booter *Booter) seedBooks() error {
 }
 
 func (booter *Booter) readLevel3(client *network.WebsocketClient) {
+	if client == nil {
+		return
+	}
+
 	for {
 		select {
 		case <-booter.Context().Done():
+			return
+		case <-client.Context().Done():
 			return
 		default:
 		}
@@ -529,7 +588,9 @@ func (booter *Booter) readLevel3(client *network.WebsocketClient) {
 		buf, err := client.Read()
 
 		if err != nil {
-			if nmruntime.ShuttingDown(booter.Context(), err) || booter.Context().Err() != nil {
+			if nmruntime.ShuttingDown(booter.Context(), err) ||
+				booter.Context().Err() != nil ||
+				client.Context().Err() != nil {
 				return
 			}
 

@@ -2,12 +2,12 @@ package correlation
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
@@ -40,61 +40,37 @@ func NewSignal(ctx context.Context, price *broker.Price) *Signal {
 }
 
 /*
-Step fans cohort sampling per print — herd/peak need continuous cohort updates, and
-ineligible rows still publish so resonance does not stall on missing Map() labels.
+Step observes every print and heartbeat mark (cheap), then emits cohort frames
+only for symbols that actually traded on this tick. Heartbeat used to force a
+full peer matrix per mark and stalled the signal ring for hundreds of ms.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
-
-	publish := func(symbol string, at time.Time, px float64) {
-		if symbol == "" || px <= 0 {
-			return
-		}
-
-		frameInput, ok, err := signal.sample.Measure(algorithm.CohortSampleInput{
-			Symbol: symbol,
-			Price:  px,
-			At:     at,
-		})
-
-		if err != nil {
-			signal.Error(err)
-			return
-		}
-
-		if !ok {
-			return
-		}
-
-		outcome, err := signal.process.Measure(frameInput)
-
-		if err != nil {
-			signal.Error(err)
-			return
-		}
-
-		mu.Lock()
-		envelope.Correlation[symbol] = &outcome
-		mu.Unlock()
-	}
+	inputs := make([]algorithm.CohortSampleInput, 0, 64)
+	traded := make([]string, 0, 8)
 
 	for _, data := range envelope.Trade.Data {
-		wg.Go(func() {
-			if data.Price.IsZero() {
-				return
-			}
+		if data.Price.IsZero() {
+			continue
+		}
 
-			price, _ := data.Price.Float64()
+		price, _ := data.Price.Float64()
 
-			if price <= 0 {
-				return
-			}
+		if price <= 0 || data.Symbol == "" {
+			continue
+		}
 
-			publish(data.Symbol, data.Timestamp, price)
+		at := data.Timestamp
+
+		if at.IsZero() {
+			at = time.Now()
+		}
+
+		inputs = append(inputs, algorithm.CohortSampleInput{
+			Symbol: data.Symbol,
+			Price:  price,
+			At:     at,
 		})
+		traded = append(traded, data.Symbol)
 	}
 
 	if signal.price != nil {
@@ -106,26 +82,45 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		start := int(signal.pulse.Load())
 		symbols, next := signal.price.PulseSymbols(batch, start)
-		now := time.Now()
 
 		for _, symbol := range symbols {
 			mark := signal.price.Mark(symbol)
+			at := signal.quoteTime(symbol)
 
-			if mark == nil || mark.Sign() <= 0 {
+			if mark == nil || mark.Sign() <= 0 || at.IsZero() {
 				continue
 			}
 
-			symbol, px := symbol, mark.InexactFloat64()
-
-			wg.Go(func() {
-				publish(symbol, now, px)
+			inputs = append(inputs, algorithm.CohortSampleInput{
+				Symbol: symbol,
+				Price:  mark.InexactFloat64(),
+				At:     at,
 			})
 		}
 
 		signal.pulse.Store(uint64(next))
 	}
 
-	wg.Wait()
+	if err := signal.sample.ObserveMany(inputs); err != nil {
+		signal.Error(err)
+	}
+
+	frames, err := signal.sample.EmitMany(traded)
+
+	if err != nil {
+		signal.Error(err)
+	}
+
+	for symbol, frame := range frames {
+		outcome, err := signal.process.Measure(frame)
+
+		if err != nil {
+			signal.Error(err)
+			continue
+		}
+
+		envelope.Correlation[symbol] = &outcome
+	}
 
 	focus := types.Focus()
 	if reading, ok := envelope.Correlation[focus]; ok {
@@ -133,4 +128,32 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	}
 
 	return envelope
+}
+
+/*
+quoteTime is the latest exchange touch time. Heartbeats without it are skipped
+so a local clock cannot walk the cohort sample backwards.
+*/
+func (signal *Signal) quoteTime(symbol string) time.Time {
+	var at time.Time
+
+	if signal.price == nil || signal.price.Books == nil {
+		return at
+	}
+
+	signal.price.Books.Book(symbol, func(book *market.Book) {
+		if book == nil {
+			return
+		}
+
+		if bid := book.BestBid(); bid != nil && !bid.Timestamp.IsZero() && bid.Timestamp.After(at) {
+			at = bid.Timestamp
+		}
+
+		if ask := book.BestAsk(); ask != nil && !ask.Timestamp.IsZero() && ask.Timestamp.After(at) {
+			at = ask.Timestamp
+		}
+	})
+
+	return at
 }

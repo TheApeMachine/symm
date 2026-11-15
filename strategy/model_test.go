@@ -147,9 +147,9 @@ func TestExit(t *testing.T) {
 				[]*broker.Position{position},
 			)
 
-			Convey("ExitPath is armed", func() {
+			Convey("ExitPath waits until desk.Exit succeeds", func() {
 				So(got.Action, ShouldEqual, "exit")
-				So(position.ExitPath, ShouldEqual, "R00/M1")
+				So(position.ExitPath, ShouldEqual, "")
 			})
 		})
 
@@ -288,10 +288,14 @@ func TestOracleAllows(t *testing.T) {
 func TestStep(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When the live model sees an oracle veto on a flat symbol", func() {
-			desk := broker.DeskFor(context.Background(), map[string]network.Client{
+			prev := system.Cfg.Market.Model
+			system.Cfg.Market.Model = "real"
+			defer func() { system.Cfg.Market.Model = prev }()
+
+			desk := broker.NewDesk(context.Background(), map[string]network.Client{
 				"public":  &modelTransportStub{},
 				"private": &modelTransportStub{},
-			}, nil, nil, true)
+			}, nil, nil)
 
 			tree := emptyTree()
 			model := &Model{
@@ -509,10 +513,14 @@ func BenchmarkOracleAllows(b *testing.B) {
 }
 
 func BenchmarkStep(b *testing.B) {
-	desk := broker.DeskFor(context.Background(), map[string]network.Client{
+	prev := system.Cfg.Market.Model
+	system.Cfg.Market.Model = "real"
+	defer func() { system.Cfg.Market.Model = prev }()
+
+	desk := broker.NewDesk(context.Background(), map[string]network.Client{
 		"public":  &modelTransportStub{},
 		"private": &modelTransportStub{},
-	}, nil, nil, true)
+	}, nil, nil)
 	tree := emptyTree()
 	model := &Model{
 		desk:      desk,

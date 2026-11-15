@@ -110,7 +110,7 @@ func (manager *BookManager) Wait(timeout time.Duration) error {
 	defer deadline.Stop()
 
 	for {
-		if len(manager.Pending()) == 0 {
+		if manager.pendingN.Load() == 0 {
 			return nil
 		}
 
@@ -240,17 +240,14 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 			manager.applyOrder(book, market.SideAsk, order)
 		}
 
-		if manager.diverged(book, data.Checksum) {
+		lane.stale = manager.diverged(book, data.Checksum)
+
+		if lane.stale {
 			invalid = append(invalid, data.Symbol)
-			lane.stale = true
-			manager.clearPending(lane)
 			lane.book = nil
-			lane.mu.Unlock()
-			continue
 		}
 
 		manager.clearPending(lane)
-		lane.stale = false
 		lane.mu.Unlock()
 	}
 
@@ -288,14 +285,7 @@ diverged forces invalidation instead of serving a book that fails Kraken's
 checksum or shows an impossible touch — continuing would poison Allocate and marks.
 */
 func (manager *BookManager) diverged(book *market.Book, checksum int) bool {
-	if book == nil {
-		return true
-	}
-
-	bid, ask := book.BestBid(), book.BestAsk()
-
-	if bid != nil && ask != nil && bid.Price != nil && ask.Price != nil &&
-		bid.Price.Cmp(*ask.Price) >= 0 {
+	if book == nil || book.Crossed() {
 		return true
 	}
 

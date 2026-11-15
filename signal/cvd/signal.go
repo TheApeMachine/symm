@@ -47,60 +47,62 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
-			}
-
-			price := data.Price.InexactFloat64()
-			qty := data.Qty.InexactFloat64()
-
-			if price <= 0 || qty <= 0 {
-				return
-			}
-
-			var mid float64
-
-			signal.books.Book(data.Symbol, func(book *market.Book) {
-				midDec := book.Midpoint()
-				if midDec == nil {
-					return
+			for _, data := range batch {
+				if data.Price.IsZero() || data.Qty.IsZero() {
+					continue
 				}
 
-				mid = midDec.InexactFloat64()
-			})
+				price := data.Price.InexactFloat64()
+				qty := data.Qty.InexactFloat64()
 
-			if mid <= 0 {
-				return
+				if price <= 0 || qty <= 0 {
+					continue
+				}
+
+				var mid float64
+
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					midDec := book.Midpoint()
+					if midDec == nil {
+						return
+					}
+
+					mid = midDec.InexactFloat64()
+				})
+
+				if mid <= 0 {
+					continue
+				}
+
+				input, ok, err := signal.sample.Measure(algorithm.TradeFlowInput{
+					Symbol:        data.Symbol,
+					Price:         price,
+					ResponsePrice: mid,
+					Quantity:      qty,
+					Side:          data.Side.String(),
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ok {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.CVD[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			input, ok, err := signal.sample.Measure(algorithm.TradeFlowInput{
-				Symbol:        data.Symbol,
-				Price:         price,
-				ResponsePrice: mid,
-				Quantity:      qty,
-				Side:          data.Side.String(),
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ok {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.CVD[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

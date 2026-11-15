@@ -27,7 +27,7 @@ export const OpenChoiceChart = () => {
 		const key = items
 			.map(
 				(item) =>
-					`${item.id}:${item.pnlMoney ?? ""}:${item.pnlPct ?? ""}`,
+					`${item.id}:${item.pnlMoney ?? ""}:${item.grossMoney ?? ""}:${item.pnlPct ?? ""}`,
 			)
 			.join("|");
 		if (key === legendKey.current) return;
@@ -98,24 +98,52 @@ export const OpenChoiceChart = () => {
 				</Suspense>
 			</div>
 			{legend.length > 0 ? (
-				<div className="flex max-h-24 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
-					{legend.map((item) => (
-						<span key={item.id} className="inline-flex items-center gap-1">
+				<div className="flex max-h-28 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
+					{legend.map((item) => {
+						const title = [
+							item.entry !== undefined && item.mark !== undefined
+								? `entry ${item.entry} → bid ${item.mark}`
+								: null,
+							item.grossMoney !== undefined
+								? `gross ${moneyText(item.grossMoney)}`
+								: null,
+							item.feeMoney !== undefined
+								? `fees ${moneyText(-item.feeMoney)}`
+								: null,
+							item.pnlMoney !== undefined
+								? `net ${moneyText(item.pnlMoney)}`
+								: null,
+						]
+							.filter(Boolean)
+							.join(" · ");
+
+						return (
 							<span
-								className="inline-block h-1.5 w-3 rounded-sm"
-								style={{ background: item.stroke }}
-							/>
-							{item.name}
-							<span className="tabular-nums text-(--f2)">
-								{item.pnlMoney !== undefined
-									? moneyText(item.pnlMoney)
-									: "…"}
+								key={item.id}
+								title={title}
+								className="inline-flex items-center gap-1"
+							>
+								<span
+									className="inline-block h-1.5 w-3 rounded-sm"
+									style={{ background: item.stroke }}
+								/>
+								{item.name}
+								<span className="tabular-nums text-(--f4)">
+									{item.grossMoney !== undefined
+										? `g${moneyText(item.grossMoney)}`
+										: ""}
+								</span>
+								<span className="tabular-nums text-(--f2)">
+									{item.pnlMoney !== undefined
+										? moneyText(item.pnlMoney)
+										: "…"}
+								</span>
+								<span className="tabular-nums text-(--f4)">
+									{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
+								</span>
 							</span>
-							<span className="tabular-nums text-(--f4)">
-								{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
-							</span>
-						</span>
-					))}
+						);
+					})}
 				</div>
 			) : null}
 		</section>

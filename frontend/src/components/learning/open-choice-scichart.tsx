@@ -1,7 +1,8 @@
 import { useRef } from "react";
 import { SciChartReact } from "scichart-react";
-import { bindOpenChoice } from "#/collections/app";
+import { bindOpenChoice, signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
+import type { Position } from "#/collections/types";
 import {
 	drawOpenChoiceChart,
 	type OpenChoiceChartApi,
@@ -15,6 +16,14 @@ const roundLegend = (items: OpenChoiceLegendItem[]): OpenChoiceLegendItem[] =>
 			item.pnlMoney === undefined
 				? undefined
 				: Math.round(item.pnlMoney * 100) / 100,
+		grossMoney:
+			item.grossMoney === undefined
+				? undefined
+				: Math.round(item.grossMoney * 100) / 100,
+		feeMoney:
+			item.feeMoney === undefined
+				? undefined
+				: Math.round(item.feeMoney * 100) / 100,
 		pnlPct:
 			item.pnlPct === undefined
 				? undefined
@@ -49,15 +58,28 @@ export const OpenChoiceSciChart = ({
 				api.setBook(bookAtom.get());
 				onReadyRef.current?.(api);
 
-				bindOpenChoice({
-					push: (marks, opts) => {
-						onLegendRef.current(roundLegend(api.push(marks, opts)));
-					},
-				});
+				const push = (
+					marks: Record<string, Position>,
+					opts?: { snapshot?: boolean; tier?: string },
+				) => {
+					onLegendRef.current(roundLegend(api.push(marks, opts)));
+				};
+
+				bindOpenChoice({ push });
+
+				// Seed from the store — Hellos that arrived before bind are otherwise lost.
+				const held = signals.positions.state as Record<string, Position>;
+				if (held && Object.keys(held).length > 0) {
+					push(held, { snapshot: true });
+				}
 
 				const bookSub = bookAtom.subscribe((book) => {
 					api.setBook(book);
 					onLegendRef.current([]);
+					const again = signals.positions.state as Record<string, Position>;
+					if (again && Object.keys(again).length > 0) {
+						push(again, { snapshot: true });
+					}
 				});
 
 				return () => {

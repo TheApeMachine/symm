@@ -42,37 +42,39 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			input, ok, err := signal.sample.MeasureArrival(excitation.TradeInput{
-				Symbol:    data.Symbol,
-				Side:      data.Side.String(),
-				Timestamp: data.Timestamp,
-			})
+			for _, data := range batch {
+				input, ok, err := signal.sample.MeasureArrival(excitation.TradeInput{
+					Symbol:    data.Symbol,
+					Side:      data.Side.String(),
+					Timestamp: data.Timestamp,
+				})
 
-			if err != nil {
-				signal.Error(err)
-				return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ok {
+					continue
+				}
+
+				outcome, ready, err := signal.process.Measure(input)
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				mu.Lock()
+				envelope.Hawkes[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			if !ok {
-				return
-			}
-
-			outcome, ready, err := signal.process.Measure(input)
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			mu.Lock()
-			envelope.Hawkes[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

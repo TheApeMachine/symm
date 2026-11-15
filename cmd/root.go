@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -155,6 +156,11 @@ func initConfig() {
 	// Package initialization ran before Viper loaded the selected file. Build
 	// the typed startup generation now, before constructing any live owners.
 	system.Cfg = system.NewConfig()
+
+	if err := ui.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
 
 	// Live watching is disabled until an atomic config generation swap exists.
 }

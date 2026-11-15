@@ -45,16 +45,31 @@ const ZERO_LINE_ID = "pnl-zero";
 const tipId = (positionId: string) => `tip:${positionId}`;
 
 const STROKES = [
-	"#FE81D4",
-	"#F6F7D7",
-	"#FF9A00",
-	"#FF165D",
-	"#9FA0FF",
-	"#FFF6A9",
-	"#D9F9DF",
-	"#FFBE91",
-	"#C5B3D3",
-	"#9EC6F3",
+	"#79D2C6",
+	"#FF7DFD",
+	"#5B88FF",
+	"#D1765F",
+	"#F5F77F",
+	"#F8CFF7",
+	"#6CA261",
+	"#F1B470",
+	"#B3A0D4",
+	"#80F078",
+	"#B4F7EC",
+	"#FF8AA8",
+	"#B86ED8",
+	"#6498C2",
+	"#73CA6D",
+	"#B3A98B",
+	"#73BFFC",
+	"#F7D9B1",
+	"#E6AAFB",
+	"#D1BCC6",
+	"#DC6DA0",
+	"#CEDB76",
+	"#A18B96",
+	"#C88BFF",
+	"#A9DAF8",
 ];
 
 const shuffle = <T>(items: readonly T[]): T[] => {
@@ -123,19 +138,8 @@ const stopHeat = (stop: Stoploss) => {
 	return Math.max(0, Math.min(1, confirms * 0.55 + exhaust * 0.45));
 };
 
-const tipText = (pnl: number | null, stop: Stoploss | undefined) => {
-	const money = pnl !== null ? moneyText(pnl) : "";
-	if (!stop) return money;
-	if (stop.State === STOPLOSS_TRIGGERED) {
-		return money ? `${money} · EXIT` : "EXIT";
-	}
-	if (stop.State !== STOPLOSS_ARMED) return money;
-	const c = stop.Confirms ?? 0;
-	const exh = stop.ExhaustScore ?? 0;
-	const crest = `peak ${stop.PeakPnLPct.toFixed(1)}%`;
-	const arm = `ARM c${c}/${CONFIRM_MARKS} exh${exh.toFixed(2)}`;
-	return money ? `${money} · ${arm} · ${crest}` : `${arm} · ${crest}`;
-};
+const tipText = (net: number | null) =>
+	net !== null ? moneyText(net) : "";
 
 type Series = {
 	line: FastLineRenderableSeries;
@@ -157,6 +161,10 @@ export type OpenChoiceLegendItem = {
 	stroke: string;
 	pnlMoney?: number;
 	pnlPct?: number;
+	grossMoney?: number;
+	feeMoney?: number;
+	entry?: number;
+	mark?: number;
 	stopRoomPct?: number;
 	stopProximity?: number;
 };
@@ -355,10 +363,10 @@ export const drawOpenChoiceChart = async (
 		id: string,
 		x: number,
 		y: number,
-		pnl: number | null,
+		net: number | null,
 		stop: Stoploss | undefined,
 	) => {
-		const text = tipText(pnl, stop);
+		const text = tipText(net);
 		if (s.tip) {
 			s.tip.x1 = x;
 			s.tip.y1 = y;
@@ -443,6 +451,8 @@ export const drawOpenChoiceChart = async (
 				}
 			}
 
+			const feeIn = asFinite(pos.fee_in);
+			const feeOut = asFinite(pos.fee_out);
 			tipAt(s, id, x, y, asFinite(pos.pnl), stop);
 
 			legend.set(id, {
@@ -451,6 +461,11 @@ export const drawOpenChoiceChart = async (
 				stroke,
 				pnlMoney: asFinite(pos.pnl) ?? undefined,
 				pnlPct: asFinite(pos.pnl_pct) ?? undefined,
+				grossMoney: asFinite(pos.gross_pnl) ?? undefined,
+				feeMoney:
+					feeIn !== null && feeOut !== null ? feeIn + feeOut : undefined,
+				entry: asFinite(pos.entry) ?? undefined,
+				mark: asFinite(pos.mark) ?? undefined,
 				stopRoomPct: stop ? stopRoom(stop) : undefined,
 				stopProximity: stop ? stopProximity(stop) : undefined,
 			});

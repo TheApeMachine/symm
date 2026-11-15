@@ -142,9 +142,9 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 }
 
 /*
-Predict walks the path prefix: leaves must agree on action, tail brightness must
-beat mean resistance, and disagreements or >0.8 leaves prune — otherwise explore
-returns ActionNone without poisoning the tree on ambiguous grammar.
+Predict reads the exact path leaf. WalkPrefix would also visit exit extensions
+of an enter key (and byte-prefixes such as R01 vs R010) and treat them as the
+same decision. Tail brightness must beat that leaf; resistance above 0.8 prunes it.
 */
 func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	min := system.Cfg.Learning.MinPathLength
@@ -153,78 +153,28 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 		return ActionNone, 0, false
 	}
 
-	var (
-		current    = ActionNone
-		disagreed  bool
-		resistance float64
-		count      int
-		prunes     []string
-	)
+	path := tokens.String()
+	decision, ok := tree.root.Load().Get([]byte(path))
 
-	tree.root.Load().Root().WalkPrefix([]byte(tokens.String()), func(
-		key []byte, decision *runtime.Decision,
-	) bool {
-		if decision == nil {
-			return false
-		}
-
-		if strings.Count(string(key), "/")+1 < min {
-			return false
-		}
-
-		action := NewAction(decision.Action)
-
-		if current != ActionNone && current != action {
-			disagreed = true
-			return false
-		}
-
-		current = action
-
-		if decision.Resistance > 0.8 {
-			prunes = append(prunes, string(key))
-			return false
-		}
-
-		resistance += decision.Resistance
-		count++
-		return false
-	})
-
-	for _, prune := range prunes {
-		tree.mu.Lock()
-		root := tree.root.Load()
-		root, _, _ = root.Delete([]byte(prune))
-		tree.root.Store(root)
-		tree.mu.Unlock()
-
-		if tree.store != nil {
-			if err := tree.store.DeletePrefix("model/paths/" + prune + "/"); err != nil {
-				errnie.Error(err)
-			}
-		}
-	}
-
-	if disagreed {
-		return ActionNone, 0, true
-	}
-
-	if count == 0 {
+	if !ok || decision == nil {
 		return ActionNone, 0, false
 	}
 
-	resistance /= float64(count)
-
-	if tokens.Last().Brightness <= resistance {
+	if decision.Resistance > 0.8 {
+		tree.Delete(path)
 		return ActionNone, 0, false
 	}
 
-	return current, resistance, false
+	if tokens.Last().Brightness <= decision.Resistance {
+		return ActionNone, 0, false
+	}
+
+	return NewAction(decision.Action), decision.Resistance, false
 }
 
 /*
-Update nudges resistance along the whole path prefix after a settled position proves
-or disproves the grammar — Ensure seeds once; repeat exits must not reset leaves.
+Update nudges resistance on the exact path leaf after a settled position proves
+or disproves that grammar. Extensions of the path are other decisions.
 */
 func (tree *Tree) Update(path string, delta float64) {
 	if path == "" || strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
@@ -234,35 +184,31 @@ func (tree *Tree) Update(path string, delta float64) {
 	floor := system.Cfg.Learning.ThresholdFloor
 	ceil := system.Cfg.Learning.ThresholdCeil
 
-	tree.root.Load().Root().WalkPrefix([]byte(path), func(
-		key []byte, decision *runtime.Decision,
-	) bool {
-		if decision == nil {
-			return false
-		}
+	tree.mu.Lock()
+	root := tree.root.Load()
+	decision, ok := root.Get([]byte(path))
 
-		next := *decision
-		next.Resistance += delta
-
-		if next.Resistance < floor {
-			next.Resistance = floor
-		}
-
-		if next.Resistance > ceil {
-			next.Resistance = ceil
-		}
-
-		published := next
-
-		tree.mu.Lock()
-		root := tree.root.Load()
-		root, _, _ = root.Insert(key, &published)
-		tree.root.Store(root)
+	if !ok || decision == nil {
 		tree.mu.Unlock()
-		tree.persist(string(key), &published)
+		return
+	}
 
-		return false
-	})
+	next := *decision
+	next.Resistance += delta
+
+	if next.Resistance < floor {
+		next.Resistance = floor
+	}
+
+	if next.Resistance > ceil {
+		next.Resistance = ceil
+	}
+
+	published := next
+	root, _, _ = root.Insert([]byte(path), &published)
+	tree.root.Store(root)
+	tree.mu.Unlock()
+	tree.persist(path, &published)
 }
 
 /*
@@ -337,8 +283,8 @@ func clampResistance(value float64) float64 {
 }
 
 /*
-Delete drops a path from memory and object storage when Predict prunes overheated
-leaves (resistance > 0.8) that would otherwise veto exploration permanently.
+Delete drops one path leaf from memory and its action object. DeletePrefix would
+also remove descendant paths that share the key as a byte prefix.
 */
 func (tree *Tree) Delete(path string) {
 	if path == "" {
@@ -347,14 +293,25 @@ func (tree *Tree) Delete(path string) {
 
 	tree.mu.Lock()
 	root := tree.root.Load()
+	decision, _ := root.Get([]byte(path))
 	root, _, _ = root.Delete([]byte(path))
 	tree.root.Store(root)
 	tree.mu.Unlock()
 
-	if tree.store != nil {
-		if err := tree.store.DeletePrefix("model/paths/" + path + "/"); err != nil {
-			errnie.Error(err)
-		}
+	if tree.store == nil || decision == nil {
+		return
+	}
+
+	action := NewAction(decision.Action)
+
+	if action == ActionNone {
+		return
+	}
+
+	if err := tree.store.Delete(
+		"model/paths/" + path + "/" + action.String() + ".bin",
+	); err != nil {
+		errnie.Error(err)
 	}
 }
 

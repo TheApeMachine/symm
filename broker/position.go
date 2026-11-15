@@ -119,7 +119,17 @@ func (position *Position) entry() *decimal.Decimal {
 }
 
 /*
+Live is true while the seat still marks — Closing / ClosedAt seats stay in
+Cache.Open until the exit fill, but mark ticks must no-op.
+*/
+func (position *Position) Live() bool {
+	return position != nil && position.ClosedAt == nil && !position.Closing
+}
+
+/*
 Update sets PnL / PnLPct from the mark, feeds the stoploss, and may arm exit.
+Closing / ClosedAt returns a quiet conflict — those seats remain in Open until
+the exit fill, so tape marks must no-op without logging.
 */
 func (position *Position) Update(price *decimal.Decimal) error {
 	if price == nil {
@@ -132,13 +142,13 @@ func (position *Position) Update(price *decimal.Decimal) error {
 
 	position.mu.Lock()
 
-	if position.ClosedAt != nil || position.Closing {
+	if !position.Live() {
 		position.mu.Unlock()
-		return errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Conflict,
 			"[position.Update] closed position",
 			nil,
-		), "symbol", position.Symbol)
+		).With("symbol", position.Symbol)
 	}
 
 	position.mu.Unlock()
@@ -248,7 +258,7 @@ func (position *Position) exit() error {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	if position.ClosedAt != nil || position.Closing {
+	if !position.Live() {
 		return nil
 	}
 
@@ -256,6 +266,68 @@ func (position *Position) exit() error {
 	position.Closing = true
 
 	return nil
+}
+
+/*
+ensureExitOrder keeps the sell ticket volume equal to remaining Qty so history
+restores and partial fills still wire a real exit — nil ExitOrder was a silent
+no-op Send on live money.
+*/
+func (position *Position) ensureExitOrder() {
+	if position.Qty == nil || position.Qty.Sign() <= 0 {
+		return
+	}
+
+	vol := position.Qty.String()
+
+	if position.ExitOrder == nil {
+		position.ExitOrder = &spot.OrderRequest{
+			ClOrdId:   uuid.NewString(),
+			OrderType: "market",
+			Type:      "sell",
+			Volume:    vol,
+		}
+		return
+	}
+
+	position.ExitOrder.Volume = vol
+}
+
+/*
+owns is true when this fill belongs to the seat. No order id means refuse —
+symbol-only matching flats real holdings on unrelated account prints.
+*/
+func (position *Position) owns(data *market.ExecutionData) bool {
+	if data == nil {
+		return false
+	}
+
+	if data.ClientOrderID != "" {
+		if position.EntryOrder != nil && position.EntryOrder.ClOrdId == data.ClientOrderID {
+			return true
+		}
+
+		if position.ExitOrder != nil && position.ExitOrder.ClOrdId == data.ClientOrderID {
+			return true
+		}
+
+		return false
+	}
+
+	if data.OrderID != "" {
+		if data.OrderID == position.EntryVenueOrderID ||
+			data.OrderID == position.ExitVenueOrderID {
+			return true
+		}
+
+		for _, fill := range position.Fills {
+			if fill != nil && fill.OrderID == data.OrderID {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 /*

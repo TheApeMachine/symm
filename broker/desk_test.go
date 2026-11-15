@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/system"
 )
 
 func fundDeskBalances(desk *Desk, wallet *market.Balance) {
@@ -29,15 +31,23 @@ func fundDeskBalances(desk *Desk, wallet *market.Balance) {
 func withDesk(ctx context.Context, live bool, f func(*Desk)) func() {
 	return func() {
 		withPrice(func(price *Price) {
+			prev := system.Cfg.Market.Model
+			if live {
+				system.Cfg.Market.Model = "real"
+			} else {
+				system.Cfg.Market.Model = "paper"
+			}
+			defer func() { system.Cfg.Market.Model = prev }()
+
 			wallet := price.balance
-			desk := DeskFor(ctx, map[string]network.Client{}, price, nil, live)
+			desk := NewDesk(ctx, map[string]network.Client{}, price, nil)
 			fundDeskBalances(desk, wallet)
 			f(desk)
 		})()
 	}
 }
 
-func TestDeskFor(t *testing.T) {
+func TestNewDesk(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		Convey("When paper mode builds three tiers", func() {
 			So(desk, ShouldNotBeNil)
@@ -49,7 +59,7 @@ func TestDeskFor(t *testing.T) {
 	}))
 }
 
-func TestDeskForLive(t *testing.T) {
+func TestNewDeskLive(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), true, func(desk *Desk) {
 		Convey("When live mode arms only real", func() {
 			So(desk.tiers[TierTypeReal], ShouldNotBeNil)
@@ -273,11 +283,13 @@ func TestDeskApply(t *testing.T) {
 		paper.positions.Add(testSymbol, pos, true)
 
 		Convey("When execution frames land on every tier", func() {
+			pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1"}
 			desk.Apply(&market.Execution{
 				Data: []*market.ExecutionData{{
 					ExecID: "b1", Side: "buy", Symbol: testSymbol,
-					LastQty: dec("1"), LastPrice: dec("100"),
-					Timestamp: time.Unix(1, 0).UTC(),
+					ClientOrderID: "enter-1",
+					LastQty:       dec("1"), LastPrice: dec("100"),
+					Timestamp:     time.Unix(1, 0).UTC(),
 				}},
 			})
 
@@ -301,27 +313,33 @@ func TestDeskBookStale(t *testing.T) {
 	}))
 }
 
-func BenchmarkDeskFor(b *testing.B) {
+func BenchmarkNewDesk(b *testing.B) {
 	ctx := context.Background()
 	var price *Price
 	withPrice(func(p *Price) { price = p })()
+	prev := system.Cfg.Market.Model
+	system.Cfg.Market.Model = "paper"
+	defer func() { system.Cfg.Market.Model = prev }()
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = DeskFor(ctx, map[string]network.Client{}, price, nil, false)
+		_ = NewDesk(ctx, map[string]network.Client{}, price, nil)
 	}
 }
 
-func BenchmarkDeskForLive(b *testing.B) {
+func BenchmarkNewDeskLive(b *testing.B) {
 	ctx := context.Background()
 	var price *Price
 	withPrice(func(p *Price) { price = p })()
+	prev := system.Cfg.Market.Model
+	system.Cfg.Market.Model = "real"
+	defer func() { system.Cfg.Market.Model = prev }()
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = DeskFor(ctx, map[string]network.Client{}, price, nil, true)
+		_ = NewDesk(ctx, map[string]network.Client{}, price, nil)
 	}
 }
 

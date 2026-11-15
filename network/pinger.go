@@ -16,6 +16,7 @@ type Pinger struct {
 	*runtime.System
 	conn    *gorilla.Conn
 	writeMu *sync.Mutex
+	once    sync.Once
 }
 
 func NewPinger(ctx context.Context) *Pinger {
@@ -27,31 +28,37 @@ func NewPinger(ctx context.Context) *Pinger {
 func (pinger *Pinger) Start(
 	conn *gorilla.Conn, writeMu *sync.Mutex, status *runtime.Stage,
 ) {
-	pinger.conn = conn
 	pinger.writeMu = writeMu
+
+	writeMu.Lock()
+	pinger.conn = conn
+	writeMu.Unlock()
+
 	pinger.Transition(runtime.READY)
 
-	go func() {
-		ticker := time.NewTicker(system.Cfg.WebSocket.PingInterval)
-		defer ticker.Stop()
+	pinger.once.Do(func() {
+		go func() {
+			ticker := time.NewTicker(system.Cfg.WebSocket.PingInterval)
+			defer ticker.Stop()
 
-		for {
-			select {
-			case <-pinger.Context().Done():
-				return
-			case <-ticker.C:
-				pinger.writeMu.Lock()
+			for {
+				select {
+				case <-pinger.Context().Done():
+					return
+				case <-ticker.C:
+					pinger.writeMu.Lock()
 
-				if pinger.conn != nil && pinger.Status() == runtime.READY {
-					errnie.Error(pinger.conn.WriteControl(
-						gorilla.PingMessage,
-						nil,
-						time.Now().Add(5*time.Second),
-					))
+					if pinger.conn != nil && pinger.Status() == runtime.READY {
+						errnie.Error(pinger.conn.WriteControl(
+							gorilla.PingMessage,
+							nil,
+							time.Now().Add(5*time.Second),
+						))
+					}
+
+					pinger.writeMu.Unlock()
 				}
-
-				pinger.writeMu.Unlock()
 			}
-		}
-	}()
+		}()
+	})
 }

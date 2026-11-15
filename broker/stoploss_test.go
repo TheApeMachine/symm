@@ -44,14 +44,16 @@ func TestStoplossUpdate(t *testing.T) {
 		Convey("When pnl sits below the arm threshold", func() {
 			sl := NewStoploss(2.0)
 			sl.State = StoplossArmed
+			sl.PeakPnLPct = 3.0
 			sl.Confirms = 2
 			sl.Ascent.Samples = 5
 
 			sl.Update(0.5, 0)
 
-			Convey("State resets to healthy and confirms clear", func() {
+			Convey("State resets to healthy, peak and confirms clear", func() {
 				So(sl.State, ShouldEqual, StoplossHealthy)
 				So(sl.CurrentPnLPct, ShouldEqual, 0.5)
+				So(sl.PeakPnLPct, ShouldEqual, 0.5)
 				So(sl.Confirms, ShouldEqual, 0)
 				So(sl.ExhaustScore, ShouldEqual, 0)
 				So(sl.Ascent.Samples, ShouldEqual, 0)
@@ -75,7 +77,8 @@ func TestStoplossUpdate(t *testing.T) {
 
 			sl.Update(3.0, system.Cfg.Selection.StoplossPumpConfirmMin)
 			So(sl.Confirms, ShouldEqual, 1)
-			So(sl.ExhaustScore, ShouldEqual, 0.85)
+			// Flat PnL must not invent climb decay — exhaust stays at stall seed.
+			So(sl.ExhaustScore, ShouldEqual, 0.8)
 
 			stallNearPeak(sl)
 			sl.Confirms = 1
@@ -121,6 +124,48 @@ func TestStoplossUpdate(t *testing.T) {
 				So(sl.PeakPnLPct, ShouldEqual, 2.2)
 				So(sl.CurrentPnLPct, ShouldEqual, 2.2)
 				So(sl.Ascent.Samples, ShouldEqual, 5)
+			})
+		})
+
+		Convey("When a grind arm gives back from peak while still above arm", func() {
+			sl := NewStoploss(1.0)
+			sl.State = StoplossArmed
+			sl.Regime = StoplossRegimeGrind
+			sl.PeakPnLPct = 3.0
+			sl.CurrentPnLPct = 3.0
+			sl.Ascent.Samples = 8
+			sl.Ascent.PeakVelocity = 0.01
+			sl.Ascent.SmoothVelocity = 0
+			sl.Ascent.LastPnLPct = 3.0
+			sl.Ascent.LastTime = time.Now().Add(-time.Second)
+
+			for range 3 {
+				sl.Update(2.4, 0)
+			}
+
+			Convey("Giveback trail trips the stoploss", func() {
+				So(sl.Regime, ShouldEqual, StoplossRegimeGrind)
+				So(sl.State, ShouldEqual, StoplossTriggered)
+				So(sl.Confirms, ShouldBeGreaterThanOrEqualTo, 3)
+			})
+		})
+
+		Convey("When a climb arms then rolls off peak by givebackPct", func() {
+			sl := NewStoploss(1.0)
+			sl.State = StoplossArmed
+			sl.PeakPnLPct = 3.0
+			sl.Ascent.Samples = 4
+			sl.Ascent.PeakVelocity = 1.0
+			sl.Ascent.SmoothVelocity = 0.5
+			sl.Ascent.LastPnLPct = 3.0
+			sl.Ascent.LastTime = time.Now().Add(-time.Second)
+
+			for range 3 {
+				sl.Update(2.4, 0)
+			}
+
+			Convey("Giveback trail trips even though not near peak", func() {
+				So(sl.State, ShouldEqual, StoplossTriggered)
 			})
 		})
 	})

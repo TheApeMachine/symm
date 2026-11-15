@@ -246,8 +246,12 @@ selection:
   heartbeat_batch: 48
   # Trailing stop floor: <0 disables hard giveback floor (rotator-friendly).
   stoploss_floor_min_pnl_pct: -1
-  partial_take_profit_pct: 0.5
-  partial_take_fraction: 0.5
+  # Fee-net PnL percentage points given back from peak before trail exit
+  # confirms (covers slow grind +3% → drift that crest-stall never sees).
+  stoploss_giveback_pct: 0.5
+  # Peak climb velocity (%/sec) below this → grind regime (giveback trail).
+  stoploss_grind_velocity_max: 0.05
+  stoploss_grind_min_samples: 8
   rotation_close_boost: 0.15
 
 learning:

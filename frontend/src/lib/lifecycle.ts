@@ -7,8 +7,8 @@ import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
-import { trySendCommand } from "#/providers/websocket";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
+import { trySendCommand } from "#/providers/websocket";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as

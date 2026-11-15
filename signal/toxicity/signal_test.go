@@ -58,7 +58,7 @@ func TestStep(t *testing.T) {
 		envelope := runtime.NewEnvelope(nil)
 		at := time.Unix(1_700_000_000, 0).UTC()
 
-		Convey("When touch refills deepen bid support", func() {
+		Convey("When touch size increases without a print at the level", func() {
 			var out *runtime.Envelope
 			for i := range 48 {
 				pushBook(books, symbol, 20+int64(i)*5)
@@ -73,14 +73,13 @@ func TestStep(t *testing.T) {
 				out = signal.Step(envelope)
 			}
 
-			Convey("Category is hard support without vacuum or bluff", func() {
+			Convey("It should stay neutral instead of treating the add as a fill", func() {
 				reading := out.Toxicity[symbol]
 				So(reading, ShouldNotBeNil)
-				So(int(reading.Category), ShouldEqual, 3)
+				So(int(reading.Category), ShouldEqual, 0)
 				So(reading.BluffScore, ShouldEqual, 0)
 				So(reading.VacuumScore, ShouldEqual, 0)
-				So(reading.SupportScore, ShouldEqual, 0.35902039183346857)
-				So(reading.Value, ShouldEqual, 0.3137254901960784)
+				So(reading.SupportScore, ShouldEqual, 0)
 			})
 		})
 	})

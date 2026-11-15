@@ -41,7 +41,6 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 /*
 Step fans one trade frame in parallel — metrics aggregate later, but each symbol
 needs fresh readings here or featureScorer never marks that Feature as seen.
-
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -49,62 +48,64 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			var (
-				bids     []flow.BookLevel
-				asks     []flow.BookLevel
-				haveBook bool
-			)
+			for _, data := range batch {
+				var (
+					bids     []flow.BookLevel
+					asks     []flow.BookLevel
+					haveBook bool
+				)
 
-			signal.books.Book(data.Symbol, func(book *market.Book) {
-				bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
-				for _, level := range book.Bids.Levels {
-					bids = append(bids, flow.BookLevel{
-						Price:    level.Price.InexactFloat64(),
-						Quantity: level.Quantity.InexactFloat64(),
-					})
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
+					for _, level := range book.Bids.Levels {
+						bids = append(bids, flow.BookLevel{
+							Price:    level.Price.InexactFloat64(),
+							Quantity: level.Quantity.InexactFloat64(),
+						})
+					}
+
+					asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
+					for _, level := range book.Asks.Levels {
+						asks = append(asks, flow.BookLevel{
+							Price:    level.Price.InexactFloat64(),
+							Quantity: level.Quantity.InexactFloat64(),
+						})
+					}
+
+					haveBook = true
+				})
+
+				if !haveBook {
+					continue
 				}
 
-				asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
-				for _, level := range book.Asks.Levels {
-					asks = append(asks, flow.BookLevel{
-						Price:    level.Price.InexactFloat64(),
-						Quantity: level.Quantity.InexactFloat64(),
-					})
+				input, ready, err := signal.sample.MeasureBook(flow.BookInput{
+					Symbol: data.Symbol,
+					Bids:   bids,
+					Asks:   asks,
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
 				}
 
-				haveBook = true
-			})
+				if !ready {
+					continue
+				}
 
-			if !haveBook {
-				return
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.Morphology[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			input, ready, err := signal.sample.MeasureBook(flow.BookInput{
-				Symbol: data.Symbol,
-				Bids:   bids,
-				Asks:   asks,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.Morphology[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

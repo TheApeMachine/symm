@@ -141,11 +141,7 @@ func (price *Price) Mark(symbol string) (bid *decimal.Decimal) {
 	symbol = price.normalizer.Name(symbol)
 
 	price.Books.Book(symbol, func(book *market.Book) {
-		if book == nil || book.BestBid() == nil || book.BestBid().Price == nil {
-			return
-		}
-
-		bid = book.BestBid().Price
+		bid = book.BidPrice()
 	})
 
 	return bid
@@ -178,7 +174,7 @@ func (price *Price) Walk(
 		}
 
 		for level != nil && qty.Sign() > 0 {
-			px, size := level.Price, level.Quantity
+			cur := level
 
 			if buy {
 				level = level.Higher
@@ -186,13 +182,13 @@ func (price *Price) Walk(
 				level = level.Lower
 			}
 
-			if px == nil || size == nil || px.Sign() <= 0 || size.Sign() <= 0 {
+			if !cur.Live() {
 				continue
 			}
 
-			take := decimal.Min(*size, qty)
+			take := decimal.Min(*cur.Quantity, qty)
 			got = got.Add(take)
-			cost = cost.Add(px.Mul(take))
+			cost = cost.Add(cur.Price.Mul(take))
 			qty = qty.Sub(take)
 		}
 
@@ -239,14 +235,10 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.
 	var depth decimal.Decimal
 
 	price.Books.Book(symbol, func(book *market.Book) {
-		if book == nil || book.BestBid() == nil {
-			return
-		}
-
 		count := 0
 
 		for level := book.BestBid(); level != nil && count < exitRoomLevels; level = level.Lower {
-			if level.Quantity == nil || level.Quantity.Sign() <= 0 {
+			if !level.Live() {
 				continue
 			}
 
@@ -334,15 +326,14 @@ func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 	var spread *decimal.Decimal
 
 	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil ||
-			book.BestBid().Price == nil || book.BestAsk().Price == nil ||
-			book.BestBid().Price.Cmp(*book.BestAsk().Price) >= 0 {
+		if !book.Tradable() {
 			return
 		}
 
-		if s := book.Spread(); s != nil && s.Sign() > 0 {
-			spread = s
-		}
+		bid, ask := *book.BidPrice(), *book.AskPrice()
+		// Ask-relative percent — mid-based book.Spread() is not the desk gate.
+		pct := ask.Sub(bid).Div(ask).Mul(decimal.NewFromInt(100))
+		spread = &pct
 	})
 
 	if spread == nil {
@@ -412,17 +403,8 @@ func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
 	var cash decimal.Decimal
 
 	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
-		if book == nil {
-			return
-		}
-
 		for n, level := 0, book.BestBid(); n < 3 && level != nil; n, level = n+1, level.Lower {
-			if level.Price == nil || level.Quantity == nil ||
-				level.Price.Sign() <= 0 || level.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			cash = cash.Add(level.Price.Mul(*level.Quantity))
+			cash = cash.Add(level.Notional())
 		}
 	})
 
@@ -440,9 +422,7 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 	band := system.Cfg.Risk.BackingBandFrac
 
 	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil ||
-			book.BestBid().Price == nil || book.BestAsk().Price == nil ||
-			book.BestBid().Price.Cmp(*book.BestAsk().Price) >= 0 {
+		if !book.Tradable() {
 			return
 		}
 
@@ -457,8 +437,7 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 		bidCash, askCash := 0.0, 0.0
 
 		for level := book.BestBid(); level != nil; level = level.Lower {
-			if level.Price == nil || level.Quantity == nil ||
-				level.Price.Sign() <= 0 || level.Quantity.Sign() <= 0 {
+			if !level.Live() {
 				continue
 			}
 
@@ -466,12 +445,11 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 				break
 			}
 
-			bidCash += level.Price.Mul(*level.Quantity).InexactFloat64()
+			bidCash += level.Notional().InexactFloat64()
 		}
 
 		for level := book.BestAsk(); level != nil; level = level.Higher {
-			if level.Price == nil || level.Quantity == nil ||
-				level.Price.Sign() <= 0 || level.Quantity.Sign() <= 0 {
+			if !level.Live() {
 				continue
 			}
 
@@ -479,7 +457,7 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 				break
 			}
 
-			askCash += level.Price.Mul(*level.Quantity).InexactFloat64()
+			askCash += level.Notional().InexactFloat64()
 		}
 
 		if askCash > 0 {
@@ -557,13 +535,12 @@ func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) 
 	symbol = price.normalizer.Name(symbol)
 
 	price.Books.Book(symbol, func(book *market.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil ||
-			book.BestBid().Price == nil || book.BestAsk().Price == nil {
+		if !book.Tradable() {
 			return
 		}
 
-		bid = book.BestBid().Price.InexactFloat64()
-		ask = book.BestAsk().Price.InexactFloat64()
+		bid = book.BidPrice().InexactFloat64()
+		ask = book.AskPrice().InexactFloat64()
 		ok = bid > 0 && ask > bid
 	})
 
@@ -720,13 +697,11 @@ func (price *Price) Allocate(
 	var touch *decimal.Decimal
 
 	price.Books.Book(symbol, func(book *market.Book) {
-		if book == nil || book.BestBid() == nil || book.BestAsk() == nil ||
-			book.BestBid().Price == nil || book.BestAsk().Price == nil ||
-			book.BestBid().Price.Cmp(*book.BestAsk().Price) >= 0 {
+		if !book.Tradable() {
 			return
 		}
 
-		touch = book.BestBid().Quantity
+		touch = book.BidSize()
 	})
 
 	if touch == nil || touch.Sign() <= 0 {

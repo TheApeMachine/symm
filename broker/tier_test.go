@@ -215,11 +215,16 @@ func TestTierSettle(t *testing.T) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
 		tier.positions.Add(testSymbol, pos, true)
 
-		Convey("When settle runs after close", func() {
+		Convey("When settle arms a stoploss seat", func() {
 			tier.settle(pos)
 
-			Convey("Open clears", func() {
-				So(tier.positions.Has(testSymbol), ShouldBeFalse)
+			Convey("Open stays until the exit fill; pending is armed", func() {
+				So(tier.positions.Has(testSymbol), ShouldBeTrue)
+				pending := 0
+				for range tier.Pending() {
+					pending++
+				}
+				So(pending, ShouldEqual, 1)
 			})
 		})
 	}))

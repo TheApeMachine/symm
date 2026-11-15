@@ -71,6 +71,33 @@ func (graph *Graph) Wrap(group string, nodes []nmruntime.Node) []nmruntime.Node 
 }
 
 /*
+Count returns completed samples for a probed node or the synthetic ingress
+meter. Missing ids return 0 so stall watches can compare without nil checks.
+*/
+func (graph *Graph) Count(id string) uint64 {
+	if id == "" {
+		return 0
+	}
+
+	if id == "ingress" {
+		return graph.ingress.n.Load()
+	}
+
+	graph.mu.Lock()
+	defer graph.mu.Unlock()
+
+	for _, probes := range graph.byGroup {
+		for _, probe := range probes {
+			if probe.Name() == id {
+				return probe.Samples()
+			}
+		}
+	}
+
+	return 0
+}
+
+/*
 Ingress records time from trade callback entry through Workspace.Step return
 and immediately pulses the dashboard.
 */
@@ -132,7 +159,7 @@ func (graph *Graph) Topology() map[string]any {
 
 	for _, group := range graph.order {
 		compound := ""
-		if group == "signal" || group == "resonance" {
+		if group == "signal" || group == "resonance" || group == "training" {
 			compound = "ring-" + group
 			nodes = append(nodes, skeleton(compound, "", "group"))
 		}
@@ -145,11 +172,9 @@ func (graph *Graph) Topology() map[string]any {
 			case "signal":
 				signalIDs = append(signalIDs, id)
 			case "resonance":
-				if id == "training" {
-					trainingID = id
-				} else {
-					resonanceID = id
-				}
+				resonanceID = id
+			case "training":
+				trainingID = id
 			case "model":
 				modelID = id
 			case "persist":
@@ -193,17 +218,16 @@ func (graph *Graph) Topology() map[string]any {
 		if resonanceID != "" {
 			edges = append(edges, map[string]string{"from": id, "to": resonanceID})
 		}
-		if trainingID != "" {
-			edges = append(edges, map[string]string{"from": id, "to": trainingID})
-		}
 	}
 
-	if resonanceID != "" && modelID != "" {
-		edges = append(edges, map[string]string{"from": resonanceID, "to": modelID})
+	if resonanceID != "" && trainingID != "" {
+		edges = append(edges, map[string]string{"from": resonanceID, "to": trainingID})
 	}
 
 	if trainingID != "" && modelID != "" {
 		edges = append(edges, map[string]string{"from": trainingID, "to": modelID})
+	} else if resonanceID != "" && modelID != "" {
+		edges = append(edges, map[string]string{"from": resonanceID, "to": modelID})
 	}
 
 	if modelID != "" && persistID != "" {

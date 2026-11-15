@@ -166,8 +166,6 @@ direct.positions = (value, payload) => {
 	const snapshot = payload.positions_snapshot === true;
 	const tier = typeof payload.tier === "string" ? payload.tier : "";
 
-	openChoice?.push(marks, { snapshot, tier });
-
 	signals.positions.setState((prev: Record<string, Position> | null) => {
 		if (!snapshot) return { ...(prev ?? {}), ...marks };
 
@@ -183,6 +181,9 @@ direct.positions = (value, payload) => {
 		}
 		return { ...next, ...marks };
 	});
+
+	// Push after the store write so a late chart bind can re-seed from state.
+	openChoice?.push(marks, { snapshot, tier });
 };
 
 direct.pipeline = (value) => {

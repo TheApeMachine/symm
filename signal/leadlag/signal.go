@@ -42,45 +42,47 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			if data.Price.IsZero() {
-				return
+			for _, data := range batch {
+				if data.Price.IsZero() {
+					continue
+				}
+
+				price, _ := data.Price.Float64()
+
+				if price <= 0 {
+					continue
+				}
+
+				input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
+					Symbol: data.Symbol,
+					Price:  price,
+					At:     data.Timestamp,
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ok {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				// Publish ineligible/zero readings too — resonance holds until every
+				// Map() label has been seen (decoupled_score / sync_score).
+				mu.Lock()
+				envelope.LeadLag[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			price, _ := data.Price.Float64()
-
-			if price <= 0 {
-				return
-			}
-
-			input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
-				Symbol: data.Symbol,
-				Price:  price,
-				At:     data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ok {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			// Publish ineligible/zero readings too — resonance holds until every
-			// Map() label has been seen (decoupled_score / sync_score).
-			mu.Lock()
-			envelope.LeadLag[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 

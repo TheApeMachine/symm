@@ -92,8 +92,9 @@ func TestAscentExhaust(t *testing.T) {
 			t3 := t2.Add(100 * time.Millisecond)
 			ascent.Note(1.5, t3)
 
-			Convey("Exhaust reaches 0.75", func() {
-				So(ascent.Exhaust(), ShouldEqual, 0.75)
+			Convey("Unchanged PnL does not invent climb decay", func() {
+				So(ascent.Samples, ShouldEqual, 2)
+				So(ascent.Exhaust(), ShouldEqual, 0)
 			})
 		})
 	})

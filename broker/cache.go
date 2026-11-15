@@ -240,6 +240,11 @@ func (cache *Cache) Bound(book *market.Balance) {
 		return
 	}
 
+	// Empty frame must not wipe live seats — that invented "exits" with no trade.
+	if len(book.Assets) == 0 {
+		return
+	}
+
 	quote := book.Quote
 
 	if quote == "" {
@@ -258,6 +263,11 @@ func (cache *Cache) Bound(book *market.Balance) {
 		}
 
 		held[asset.Symbol] = asset.Capital
+	}
+
+	// Still no spendable bases — incomplete snapshot, do not drop.
+	if len(held) == 0 {
+		return
 	}
 
 	for _, position := range cache.Open() {

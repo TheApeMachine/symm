@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -58,7 +60,10 @@ func (client *WebsocketClient) Callback(hook func() error) {
 }
 
 func (client *WebsocketClient) Open() (err error) {
+	client.writeMu.Lock()
 	client.conn, _, err = client.dialer.Dial(client.url, nil)
+	conn := client.conn
+	client.writeMu.Unlock()
 
 	if err != nil {
 		return errnie.Error(err)
@@ -67,7 +72,11 @@ func (client *WebsocketClient) Open() (err error) {
 	status := client.Status()
 
 	if client.pinger.Status() == runtime.WAITING {
-		client.pinger.Start(client.conn, &client.writeMu, &status)
+		client.pinger.Start(conn, &client.writeMu, &status)
+	} else {
+		client.writeMu.Lock()
+		client.pinger.conn = conn
+		client.writeMu.Unlock()
 	}
 
 	client.Transition(runtime.READY)
@@ -83,11 +92,16 @@ func (client *WebsocketClient) Open() (err error) {
 }
 
 func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
-	if client.conn == nil || client.Status() != runtime.READY {
+	client.writeMu.Lock()
+	conn := client.conn
+	ready := conn != nil && client.Status() == runtime.READY
+	client.writeMu.Unlock()
+
+	if !ready {
 		return nil, nil
 	}
 
-	_, message, err := client.conn.ReadMessage()
+	_, message, err := conn.ReadMessage()
 
 	if err != nil {
 		client.Reconnect(err)
@@ -97,18 +111,24 @@ func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
 }
 
 func (client *WebsocketClient) Write(message []byte) error {
-	if client.conn == nil || client.Status() != runtime.READY {
+	client.writeMu.Lock()
+	conn := client.conn
+	ready := conn != nil && client.Status() == runtime.READY
+
+	if !ready {
+		client.writeMu.Unlock()
+
 		return errnie.Error(errnie.Err(
 			errnie.IO, "[network.websocket] not ready for write", nil,
 		))
 	}
 
-	client.writeMu.Lock()
-	err := client.conn.WriteMessage(gorilla.TextMessage, message)
+	err := conn.WriteMessage(gorilla.TextMessage, message)
 	client.writeMu.Unlock()
 
 	if err != nil {
 		client.Reconnect(err)
+		return errnie.Error(err)
 	}
 
 	return nil
@@ -119,22 +139,29 @@ func (client *WebsocketClient) Reconnect(err error) {
 		return
 	}
 
-	backoff := time.Duration(1 * time.Second)
+	backoff := time.Second
 
 	client.Transition(runtime.ERROR)
 	client.pinger.Transition(runtime.ERROR)
 
-	client.conn.Close()
+	client.writeMu.Lock()
+
+	if client.conn != nil {
+		_ = client.conn.Close()
+		client.conn = nil
+	}
+
+	client.pinger.conn = nil
+	client.writeMu.Unlock()
 
 	for {
 		time.Sleep(min(backoff, client.maxBackoff))
-		err = client.Open()
 
-		if err == nil {
-			break
+		if openErr := client.Open(); openErr == nil {
+			return
 		}
 
-		backoff = backoff + 1*time.Second
+		backoff += time.Second
 	}
 }
 
@@ -142,13 +169,33 @@ func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
 	response, err := client.rest.Post(url, body)
 
 	if err != nil {
-		return nil, errnie.Error(err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] rest post failed", err,
+		).With("url", url))
 	}
 
 	if response == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.IO, "[network.websocket] empty post response", nil,
-		))
+		).With("url", url))
+	}
+
+	return response.Body(), nil
+}
+
+func (client *WebsocketClient) Get(url string, params map[string]string) ([]byte, error) {
+	response, err := client.rest.Get(url, params)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] rest get failed", err,
+		).With("url", url))
+	}
+
+	if response == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] empty get response", nil,
+		).With("url", url))
 	}
 
 	return response.Body(), nil
@@ -156,14 +203,16 @@ func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
 
 /*
 Watch polls url on an interval. body may be a value or func() map[string]any
-(ticker rotates pairs). Throttle/rate-limit responses pause further polls.
+/ func() map[string]string (ticker rotates pairs). Public Ticker is GET.
+Throttle and rate-limit responses pause further polls. Backoff is local so
+ticker REST does not change the websocket reconnect cap.
 */
 func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler) {
 	go func() {
 		interval := 5 * time.Second
-		private := strings.Contains(url, "/private/")
+		maxBackoff := client.maxBackoff
 
-		if private {
+		if strings.Contains(url, "/private/") {
 			interval = system.Cfg.WebSocket.PrivateRefresh
 		}
 
@@ -173,58 +222,177 @@ func (client *WebsocketClient) Watch(url string, body any, dest json.Unmarshaler
 			}
 
 			if max := system.Cfg.WebSocket.TickerBackoffMax; max > 0 {
-				client.maxBackoff = max
+				maxBackoff = max
 			}
 		}
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		backoff := time.Duration(0)
+		var backoff time.Duration
 
-		var (
-			err error
-			raw []byte
-		)
+		if !client.pollWatch(url, body, dest, &backoff, maxBackoff) {
+			return
+		}
 
 		for {
 			select {
 			case <-client.Context().Done():
 				return
 			case <-ticker.C:
-				if err != nil {
-					backoff = backoff + 1*time.Second
-					time.Sleep(min(backoff+1*time.Second, client.maxBackoff))
-					err = nil
-				}
-
-				payload := body
-
-				if next, ok := body.(func() map[string]any); ok {
-					payload = next()
-				}
-
-				raw, err = client.Post(url, payload)
-
-				if err != nil {
-					errnie.Error(err)
-					continue
-				}
-
-				if err := dest.UnmarshalJSON(raw); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO, "[network.websocket] unmarshal failed", err,
-					))
-
-					continue
+				if !client.pollWatch(url, body, dest, &backoff, maxBackoff) {
+					return
 				}
 			}
 		}
 	}()
 }
 
+func (client *WebsocketClient) pollWatch(
+	url string,
+	body any,
+	dest json.Unmarshaler,
+	backoff *time.Duration,
+	maxBackoff time.Duration,
+) bool {
+	if client.Context().Err() != nil {
+		return false
+	}
+
+	if *backoff > 0 {
+		wait := *backoff
+
+		if maxBackoff > 0 && wait > maxBackoff {
+			wait = maxBackoff
+		}
+
+		if !client.sleep(wait) {
+			return false
+		}
+	}
+
+	raw, err := client.fetch(url, body)
+
+	if err != nil {
+		*backoff += time.Second
+
+		return client.Context().Err() == nil
+	}
+
+	if len(raw) == 0 {
+		return true
+	}
+
+	if errs := kraken.VenueErrors(raw); len(errs) > 0 {
+		if until, ok := kraken.ThrottleUntil(errs...); ok {
+			if wait := time.Until(until); wait > 0 {
+				if maxBackoff > 0 && wait > maxBackoff {
+					wait = maxBackoff
+				}
+
+				if !client.sleep(wait) {
+					return false
+				}
+			}
+
+			*backoff = 0
+
+			return client.Context().Err() == nil
+		}
+
+		if kraken.RateLimited(errs...) {
+			*backoff += time.Second
+
+			return client.Context().Err() == nil
+		}
+	}
+
+	if err := dest.UnmarshalJSON(raw); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "[network.websocket] unmarshal failed", err,
+		).With("url", url))
+
+		return client.Context().Err() == nil
+	}
+
+	*backoff = 0
+
+	return true
+}
+
+func (client *WebsocketClient) fetch(url string, body any) ([]byte, error) {
+	payload := watchPayload(body)
+
+	if strings.Contains(url, "/0/public/Ticker") {
+		params := stringParams(payload)
+
+		if params["pair"] == "" {
+			return nil, nil
+		}
+
+		return client.Get(url, params)
+	}
+
+	return client.Post(url, payload)
+}
+
+func (client *WebsocketClient) sleep(d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-client.Context().Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func watchPayload(body any) any {
+	switch next := body.(type) {
+	case func() map[string]any:
+		return next()
+	case func() map[string]string:
+		return next()
+	default:
+		return body
+	}
+}
+
+func stringParams(payload any) map[string]string {
+	switch values := payload.(type) {
+	case map[string]string:
+		return values
+	case map[string]any:
+		out := make(map[string]string, len(values))
+
+		for key, value := range values {
+			if value == nil {
+				continue
+			}
+
+			out[key] = fmt.Sprint(value)
+		}
+
+		return out
+	default:
+		return nil
+	}
+}
+
 func (client *WebsocketClient) Close() error {
+	client.Transition(runtime.ERROR)
+	client.pinger.Transition(runtime.ERROR)
 	client.pinger.Close()
-	client.conn.Close()
+
+	client.writeMu.Lock()
+
+	if client.conn != nil {
+		_ = client.conn.Close()
+		client.conn = nil
+	}
+
+	client.writeMu.Unlock()
+
 	return client.System.Close()
 }

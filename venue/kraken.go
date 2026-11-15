@@ -2,6 +2,7 @@ package venue
 
 import (
 	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/symm/venue/kraken"
@@ -32,12 +33,25 @@ func NewKraken(_ string) *Kraken {
 		balance:       kraken.NewBalance(),
 		tradeBalance:  kraken.NewTradeBalance(),
 		tradesHistory: kraken.NewTradesHistory(),
-		level3:       kraken.NewLevel3(),
-		trade:        kraken.NewTrade(),
-		execution:    kraken.NewExecution(),
-		order:        kraken.NewOrder(),
-		ticker:       kraken.NewTicker(),
+		level3:        kraken.NewLevel3(),
+		trade:         kraken.NewTrade(),
+		execution:     kraken.NewExecution(),
+		order:         kraken.NewOrder(),
+		ticker:        kraken.NewTicker(),
 	}
+}
+
+/*
+Use hands the desk AssetPairs normalizer to Balance so REST ledger codes share
+pair-base names with positions — no hand-maintained SpotAsset table.
+*/
+func (venue *Kraken) Use(names *spot.Normalizer) *Kraken {
+	if venue == nil {
+		return venue
+	}
+
+	venue.balance.Use(names)
+	return venue
 }
 
 /*

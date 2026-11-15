@@ -33,8 +33,8 @@ type Pulse struct {
 var pulses sync.Map
 
 var (
-	pendingMu     sync.Mutex
-	pending       = map[string]map[string]any{}
+	pendingMu      sync.Mutex
+	pending        = map[string]map[string]any{}
 	flushScheduled atomic.Bool
 )
 
@@ -158,6 +158,10 @@ func Fire(id string, extra map[string]any) {
 queueLive merges this stage into the next flushed diag_pulses frame.
 */
 func (pulse *Pulse) queueLive(extra map[string]any) {
+	if ui.UI == nil || !ui.UI.Active() {
+		return
+	}
+
 	now := time.Now().UnixNano()
 	frame := map[string]any{
 		"id": pulse.id,

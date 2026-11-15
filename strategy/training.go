@@ -182,23 +182,47 @@ func (training *Training) ResetSequencer(symbol string) {
 }
 
 /*
-stepCut picks the winning action region (keys ≤8) and feeds its brightness into
-Sequencer.Step — only action regions advance the path, not veto/metric tiles.
+stepCut feeds Sequencer.Step from the phase net (detector + support − opposition).
+Opposition keys R02/R05/R08 are not path tokens; when they dominate, the cut is empty.
 */
 func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
-	var action *runtime.Region
+	var detector, support, opposition *runtime.Region
 
 	for _, region := range regions {
-		if region == nil || region.Brightness <= 0 || region.Key > 8 {
+		if region == nil || region.Key > 8 {
 			continue
 		}
 
-		if action == nil || region.Brightness > action.Brightness {
-			action = region
+		switch store.Catalog.ByKey(region.Key).Side {
+		case "detector":
+			detector = region
+		case "support":
+			support = region
+		case "opposition":
+			opposition = region
 		}
 	}
 
-	if action == nil {
+	bright := func(region *runtime.Region) float64 {
+		if region == nil {
+			return 0
+		}
+
+		return region.Brightness
+	}
+
+	if bright(detector)+bright(support)-bright(opposition) <= 0 {
+		cut := runtime.Tokens{}
+		return &cut
+	}
+
+	action := detector
+
+	if bright(support) > bright(action) {
+		action = support
+	}
+
+	if action == nil || action.Brightness <= 0 {
 		cut := runtime.Tokens{}
 		return &cut
 	}

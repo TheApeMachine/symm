@@ -33,10 +33,38 @@ var UI *Hub
 
 func init() {
 	UI = NewHub(context.Background())
+}
+
+/*
+Start rebuilds the hub from the loaded config and binds the listener.
+init runs before viper reads the config file, so Run stays out of init.
+*/
+func Start() error {
 	if runningGoTest() {
+		return nil
+	}
+
+	if UI != nil {
+		UI.release()
+	}
+
+	UI = NewHub(context.Background())
+
+	return UI.Run()
+}
+
+func (hub *Hub) release() {
+	if hub == nil {
 		return
 	}
-	UI.Run()
+
+	if hub.ownStore && hub.store != nil {
+		_ = hub.store.Close()
+	}
+
+	if hub.cancel != nil {
+		hub.cancel()
+	}
 }
 
 func runningGoTest() bool {
@@ -107,8 +135,13 @@ func newHub(ctx context.Context, queueFrames int) *Hub {
 		}),
 		frameCh:   make(chan []byte, queueFrames),
 		callbacks: make([]func(), 0),
-		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		ownStore:  true,
+		store: store.NewClient(
+			ctx,
+			system.Cfg.Storage.S3.Bucket,
+			system.Cfg.Storage.S3.Endpoint,
+			system.Cfg.Storage.S3.Region,
+		),
+		ownStore: true,
 	}
 
 	// The dashboard is a separate origin from the hub (vite dev server on

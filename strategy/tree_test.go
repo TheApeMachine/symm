@@ -149,15 +149,17 @@ func TestPredict(t *testing.T) {
 			}
 		})
 
-		Convey("When hold and exit disagree on a prefix", func() {
+		Convey("When an exit extension sits under a hold path", func() {
 			predicted, strength, disagreed := tree.Predict(
 				tokensAt("R09.R01/R10.R02", 1.0),
 			)
 
-			Convey("Predict disagrees", func() {
-				So(disagreed, ShouldBeTrue)
-				So(predicted, ShouldEqual, ActionNone)
-				So(strength, ShouldEqual, 0.0)
+			Convey("Predict reads the hold leaf only", func() {
+				So(disagreed, ShouldBeFalse)
+				So(predicted, ShouldEqual, ActionHold)
+				So(strength, ShouldEqual, 0.75)
+				_, ok := get(tree, "R09.R01/R10.R02/R11.R03")
+				So(ok, ShouldBeTrue)
 			})
 		})
 
@@ -207,6 +209,24 @@ func TestUpdate(t *testing.T) {
 			Convey("Resistance rises to 0.55", func() {
 				So(ok, ShouldBeTrue)
 				So(decision.Resistance, ShouldEqual, 0.55)
+			})
+		})
+
+		Convey("When an extension shares the path prefix", func() {
+			tree := emptyTree()
+			child := path + "/R08.R02"
+			put(tree, path, leaf(ActionEnter, start))
+			put(tree, child, leaf(ActionExit, start))
+			tree.Update(path, 0.05)
+
+			parent, okParent := get(tree, path)
+			extension, okChild := get(tree, child)
+
+			Convey("Only the exact leaf moves", func() {
+				So(okParent, ShouldBeTrue)
+				So(parent.Resistance, ShouldEqual, start+0.05)
+				So(okChild, ShouldBeTrue)
+				So(extension.Resistance, ShouldEqual, start)
 			})
 		})
 

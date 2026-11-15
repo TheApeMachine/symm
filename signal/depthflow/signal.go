@@ -73,113 +73,115 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
+	for _, batch := range envelope.Trade.Batches() {
 		wg.Go(func() {
-			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
-			}
-
-			price := data.Price.InexactFloat64()
-			qty := data.Qty.InexactFloat64()
-
-			if price <= 0 || qty <= 0 {
-				return
-			}
-
-			var (
-				bids     []flow.BookLevel
-				asks     []flow.BookLevel
-				tickSize float64
-				haveBook bool
-			)
-
-			signal.books.Book(data.Symbol, func(book *market.Book) {
-				pair := signal.instrument.Pair(data.Symbol)
-
-				if pair.TickSize == nil {
-					return
+			for _, data := range batch {
+				if data.Price.IsZero() || data.Qty.IsZero() {
+					continue
 				}
 
-				tickSize = pair.TickSize.InexactFloat64()
+				price := data.Price.InexactFloat64()
+				qty := data.Qty.InexactFloat64()
 
-				if tickSize <= 0 {
-					return
+				if price <= 0 || qty <= 0 {
+					continue
 				}
 
-				bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
+				var (
+					bids     []flow.BookLevel
+					asks     []flow.BookLevel
+					tickSize float64
+					haveBook bool
+				)
 
-				for _, level := range book.Bids.Levels {
-					levelPrice := level.Price.InexactFloat64()
-					bids = append(bids, flow.BookLevel{
-						Price:    levelPrice,
-						Quantity: level.Quantity.InexactFloat64(),
-						Ticks:    int64(math.Round(levelPrice / tickSize)),
-					})
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					pair := signal.instrument.Pair(data.Symbol)
+
+					if pair.TickSize == nil {
+						return
+					}
+
+					tickSize = pair.TickSize.InexactFloat64()
+
+					if tickSize <= 0 {
+						return
+					}
+
+					bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
+
+					for _, level := range book.Bids.Levels {
+						levelPrice := level.Price.InexactFloat64()
+						bids = append(bids, flow.BookLevel{
+							Price:    levelPrice,
+							Quantity: level.Quantity.InexactFloat64(),
+							Ticks:    int64(math.Round(levelPrice / tickSize)),
+						})
+					}
+
+					asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
+
+					for _, level := range book.Asks.Levels {
+						levelPrice := level.Price.InexactFloat64()
+						asks = append(asks, flow.BookLevel{
+							Price:    levelPrice,
+							Quantity: level.Quantity.InexactFloat64(),
+							Ticks:    int64(math.Round(levelPrice / tickSize)),
+						})
+					}
+
+					haveBook = true
+				})
+
+				if !haveBook {
+					continue
 				}
 
-				asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
+				input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
+					Symbol:   data.Symbol,
+					TickSize: tickSize,
+					Bids:     bids,
+					Asks:     asks,
+				})
 
-				for _, level := range book.Asks.Levels {
-					levelPrice := level.Price.InexactFloat64()
-					asks = append(asks, flow.BookLevel{
-						Price:    levelPrice,
-						Quantity: level.Quantity.InexactFloat64(),
-						Ticks:    int64(math.Round(levelPrice / tickSize)),
-					})
+				if err != nil {
+					signal.Error(err)
+					continue
 				}
 
-				haveBook = true
-			})
+				if !ready {
+					continue
+				}
 
-			if !haveBook {
-				return
+				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+					Symbol:   data.Symbol,
+					Price:    price,
+					Quantity: qty,
+					Side:     flow.TradeSide(data.Side.String()),
+					At:       data.Timestamp,
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				// Publish not-ready/zero readings too — resonance holds until every
+				// Map() label has been seen (thin_score / loaded_score).
+				mu.Lock()
+				envelope.DepthFlow[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
-				Symbol:   data.Symbol,
-				TickSize: tickSize,
-				Bids:     bids,
-				Asks:     asks,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
-				Symbol:   data.Symbol,
-				Price:    price,
-				Quantity: qty,
-				Side:     flow.TradeSide(data.Side.String()),
-				At:       data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			// Publish not-ready/zero readings too — resonance holds until every
-			// Map() label has been seen (thin_score / loaded_score).
-			mu.Lock()
-			envelope.DepthFlow[data.Symbol] = &outcome
-			mu.Unlock()
 		})
 	}
 
