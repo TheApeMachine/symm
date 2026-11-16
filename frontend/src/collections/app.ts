@@ -1,6 +1,7 @@
 import { createAtom } from "@tanstack/react-store";
 import { type Atom, createStore, type Store } from "@tanstack/store";
 import type { ConfidenceFrame } from "./confidence";
+
 import type {
 	BookflowOutput,
 	BookQualityOutput,
@@ -19,7 +20,7 @@ import type {
 	Tokens,
 } from "./envelope";
 import type { PipelineFrame } from "./pipeline";
-import { EMPTY_PIPELINE, mergeTopology } from "./pipeline";
+import { EMPTY_PIPELINE } from "./pipeline";
 import type { Balance, Position } from "./types";
 
 export const DEFAULT_KERNELS = [
@@ -135,62 +136,4 @@ export const signals: Record<string, Store<any>> = {
 	}>({}),
 	positions: createStore<Record<string, Position>>({}),
 	decisions: createStore<Record<string, Decision>>({}),
-};
-
-/*
-direct maps hub envelope keys that cannot land on an atom/store as-is —
-SciChart series, coalesced diag pulses, pipeline topology merges.
-*/
-export type DirectSink = (
-	value: unknown,
-	payload: Record<string, unknown>,
-) => void;
-
-export const direct: Record<string, DirectSink> = {};
-
-/*
-applyPositionsSnapshot replaces one tier's open book. Omitted ids are gone —
-exit Hello (BUSY omitted server-side) clears the row; the chart push drops
-series + legend from the same store update.
-*/
-export const applyPositionsSnapshot = (
-	prev: Record<string, Position> | null | undefined,
-	marks: Record<string, Position>,
-	tier: string,
-): Record<string, Position> => {
-	const next: Record<string, Position> = {};
-	for (const [id, pos] of Object.entries(prev ?? {})) {
-		if (!pos) continue;
-		const posTier =
-			typeof pos.tier_key === "string" && pos.tier_key !== ""
-				? pos.tier_key
-				: "paper";
-		if (!tier || posTier === tier) continue;
-		next[id] = pos;
-	}
-	return { ...next, ...marks };
-};
-
-/*
-positions_snapshot replaces one tier's open book in the store. The chart
-subscribes to signals.positions — no side-channel push.
-*/
-direct.positions = (value, payload) => {
-	const marks = value as Record<string, Position>;
-	const snapshot = payload.positions_snapshot === true;
-	const tier = typeof payload.tier === "string" ? payload.tier : "";
-
-	signals.positions.setState((prev: Record<string, Position> | null) => {
-		if (!snapshot) return { ...(prev ?? {}), ...marks };
-		return applyPositionsSnapshot(prev, marks, tier);
-	});
-};
-
-direct.pipeline = (value) => {
-	atoms.pipeline.set(
-		mergeTopology(
-			(atoms.pipeline.get() as PipelineFrame) ?? EMPTY_PIPELINE,
-			(value as PipelineFrame) ?? EMPTY_PIPELINE,
-		),
-	);
 };

@@ -230,8 +230,20 @@ func (cache *Cache) Bound(balance *market.Balance) {
 			continue
 		}
 
-		if position.Qty == nil || !position.Qty.Equal(capital) {
-			qty := capital
+		// Never raise Qty above fill-derived size — incomplete history + wallet
+		// capital invented a cheap entry on a full bag (fake +pnl_pct).
+		filled := position.qty()
+		if filled == nil || filled.Sign() <= 0 {
+			cache.open.Delete(position.Symbol)
+			continue
+		}
+
+		qty := capital
+		if qty.GreaterThan(*filled) {
+			qty = *filled
+		}
+
+		if position.Qty == nil || !position.Qty.Equal(qty) {
 			position.Qty = &qty
 		}
 	}

@@ -556,7 +556,9 @@ func (price *Price) MoverVolumeOK(symbol string) bool {
 
 /*
 SessionMoveOK is the day-move gate: live open→mark clears the floor and the
-tape is still accelerating, so a morning nudge that has flat-lined fails.
+tape still prints enough absolute quote flow. Acceleration belongs on
+BookIntact alone — requiring recent > prior here double-vetoed every steady
+liquid mover and kept the day lamp red for entire sessions.
 */
 func (price *Price) SessionMoveOK(symbol string) bool {
 	risk := system.Cfg.Risk
@@ -565,9 +567,9 @@ func (price *Price) SessionMoveOK(symbol string) bool {
 		return false
 	}
 
-	recent, prior := price.TapeUptake(symbol, time.Now())
+	recent, _ := price.TapeUptake(symbol, time.Now())
 
-	return recent >= risk.MinTapeNotionalUSD && recent > prior
+	return recent >= risk.MinTapeNotionalUSD
 }
 
 /*
@@ -726,73 +728,91 @@ func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) 
 }
 
 /*
-PnL is exact fee-net profit: realized Exit when set, otherwise the full-qty
-bid walk. Mark is never used. Incomplete books return nil.
+paid is remaining quote spent on open size from buy fills (Cost, else
+px×qty), scaled to Qty. Entry is not used.
+*/
+func paid(position *Position) *decimal.Decimal {
+	if position == nil || position.Qty == nil || position.Qty.Sign() <= 0 {
+		return nil
+	}
+
+	var cost, bought decimal.Decimal
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.Side != "buy" || fill.LastQty == nil ||
+			fill.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		switch {
+		case fill.Cost != nil && fill.Cost.Sign() > 0:
+			cost = cost.Add(*fill.Cost)
+		case fill.LastPrice != nil:
+			cost = cost.Add(fill.LastPrice.Mul(*fill.LastQty))
+		default:
+			continue
+		}
+
+		bought = bought.Add(*fill.LastQty)
+	}
+
+	if bought.Sign() <= 0 || cost.Sign() <= 0 {
+		return nil
+	}
+
+	kept := cost.Mul(*position.Qty).Div(bought)
+	return &kept
+}
+
+/*
+PnL is fee-net bid-walk proceeds minus fee-net fill-paid cost. Incomplete
+walks return nil. Entry is unused.
 */
 func (price *Price) PnL(position *Position) *decimal.Decimal {
 	if position == nil || price == nil || price.normalizer == nil ||
-		position.Qty == nil || position.Entry == nil ||
-		position.Qty.Sign() <= 0 || position.Entry.Sign() <= 0 {
+		position.Qty == nil || position.Qty.Sign() <= 0 {
+		return nil
+	}
+
+	cost := paid(position)
+
+	if cost == nil {
 		return nil
 	}
 
 	symbol := price.normalizer.Name(position.Symbol)
-	exitPx := position.Exit
+	filled, gross := price.Walk(symbol, *position.Qty, false)
 
-	if exitPx == nil {
-		filled, gross := price.Walk(symbol, *position.Qty, false)
-
-		if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 {
-			return nil
-		}
-
-		v := gross.Div(*filled)
-		exitPx = &v
-	}
-
-	if exitPx.Sign() <= 0 {
+	if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 ||
+		gross.Sign() <= 0 {
 		return nil
 	}
 
-	entryGross := position.Entry.Mul(*position.Qty)
-	exitGross := exitPx.Mul(*position.Qty)
-	feeIn := price.Fee(symbol, &entryGross)
-	feeOut := price.Fee(symbol, &exitGross)
+	proceeds := *gross
+	feeIn := price.Fee(symbol, cost)
+	feeOut := price.Fee(symbol, &proceeds)
 
 	if feeIn == nil || feeOut == nil {
 		return nil
 	}
 
-	p := exitGross.Sub(*feeOut).Sub(entryGross.Add(*feeIn))
+	p := proceeds.Sub(*feeOut).Sub(cost.Add(*feeIn))
 	return &p
 }
 
 /*
-PnLPct is exact fee-net PnL as percent of fee-inclusive entry cost. Zero is
-break-even after fees.
+PnLPct is PnL as percent of fill-paid cost. PnL is already fee-net, so zero
+is break-even after fees without re-applying Fee here.
 */
 func (price *Price) PnLPct(position *Position) *decimal.Decimal {
 	pnl := price.PnL(position)
+	cost := paid(position)
 
-	if pnl == nil {
+	if pnl == nil || cost == nil || cost.Sign() <= 0 {
 		return nil
 	}
 
-	symbol := price.normalizer.Name(position.Symbol)
-	entryGross := position.Entry.Mul(*position.Qty)
-	feeIn := price.Fee(symbol, &entryGross)
-
-	if feeIn == nil {
-		return nil
-	}
-
-	cost := entryGross.Add(*feeIn)
-
-	if cost.Sign() <= 0 {
-		return nil
-	}
-
-	pct := pnl.Div(cost).Mul(decimalHundred)
+	pct := pnl.Div(*cost).Mul(decimalHundred)
 	return &pct
 }
 

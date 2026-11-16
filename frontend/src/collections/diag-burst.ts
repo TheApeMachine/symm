@@ -1,6 +1,14 @@
 import { createStore } from "@tanstack/store";
-import { atoms, direct } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import type { PipelineFrame, PipelineNode } from "#/collections/pipeline";
+
+export type DirectSink = (
+	value: unknown,
+	payload: Record<string, unknown>,
+) => void;
+
+export const direct: Record<string, DirectSink> = {};
+
 
 /*
 BURST_MS is how long a live pulse keeps an outbound edge visually lit.

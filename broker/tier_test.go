@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -121,7 +120,7 @@ func TestTierUpdate(t *testing.T) {
 			Convey("Position PnL matches fee-net 100 → 120 via Hello snapshot", func() {
 				So(pos.Mark.String(), ShouldEqual, "120")
 				So(pos.PnL.String(), ShouldEqual, "19.12")
-				So(pos.PnLPct.String(), ShouldEqual, "19.04382470119522")
+				So(pos.PnLPct.String(), ShouldEqual, "19.12")
 			})
 		})
 	}))
@@ -195,7 +194,7 @@ func TestTierExit(t *testing.T) {
 			err := tier.Exit(pos, false)
 
 			Convey("It aborts and holds READY", func() {
-				So(errors.Is(err, errnie.Forbidden), ShouldBeTrue)
+				So(errnie.IsForbidden(err), ShouldBeTrue)
 				So(pos.Status(), ShouldEqual, runtime.READY)
 				So(pos.ExitOrder, ShouldBeNil)
 			})
@@ -206,7 +205,7 @@ func TestTierExit(t *testing.T) {
 			err := tier.Exit(pos, false)
 
 			Convey("It returns ErrExitAborted", func() {
-				So(errors.Is(err, errnie.Forbidden), ShouldBeTrue)
+				So(errnie.IsForbidden(err), ShouldBeTrue)
 				So(pos.Status(), ShouldEqual, runtime.READY)
 			})
 		})
@@ -244,7 +243,7 @@ func TestTierForceExit(t *testing.T) {
 
 			tier.Hello()
 
-			Convey("Desk cache keeps BUSY; Hello status gate ships no READY row", func() {
+			Convey("Desk cache keeps BUSY; Hello still ships it while venue-open", func() {
 				So(len(tier.positions.Open()), ShouldEqual, 1)
 				So(tier.positions.Open()[0].Status(), ShouldEqual, runtime.BUSY)
 			})
@@ -320,8 +319,9 @@ func TestTierSend(t *testing.T) {
 			pos.EntryOrder = nil
 			err := tier.Send(pos, "enter")
 
-			Convey("Send is a no-op", func() {
-				So(err, ShouldBeNil)
+			Convey("Send rejects incomplete enter", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "exit/enter order is incomplete")
 				So(len(cap.writes), ShouldEqual, 0)
 			})
 		})

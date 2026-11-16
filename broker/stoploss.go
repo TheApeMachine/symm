@@ -1,9 +1,6 @@
 package broker
 
-import (
-	"math"
-	"time"
-)
+import "time"
 
 type StoplossState int
 
@@ -15,14 +12,17 @@ const (
 )
 
 /*
-StoplossRegime names how an armed position is managed.
-Climb uses crest + exhaust-scaled trail; Grind exits only with market friction.
+StoplossRegime is the climb shape inferred from path memory readiness / n1↔n2.
 */
 type StoplossRegime string
 
 const (
-	StoplossRegimeClimb StoplossRegime = "climb"
-	StoplossRegimeGrind StoplossRegime = "grind"
+	StoplossRegimeCrawl    StoplossRegime = "crawl"
+	StoplossRegimeIgnition StoplossRegime = "ignition"
+	StoplossRegimeSmooth   StoplossRegime = "smooth"
+	StoplossRegimeChaos    StoplossRegime = "chaos"
+	StoplossRegimeClimb    StoplossRegime = "climb" // legacy alias
+	StoplossRegimeGrind    StoplossRegime = "grind" // legacy alias
 )
 
 type Stoploss struct {
@@ -35,49 +35,55 @@ type Stoploss struct {
 	Ascent        Ascent         `json:"Ascent"`
 	ExhaustScore  float64        `json:"ExhaustScore"`
 	Confirms      int            `json:"Confirms"`
+	path          *path          `json:"-"`
 }
 
 /*
-NewStoploss arms against armPct. Zero is fee-net break-even (PnLPct already
-nets fees); only strictly green prints may arm.
+NewStoploss arms against armPct. Only prints strictly above arm may arm;
+never exit at or below arm (profit or hold).
 */
 func NewStoploss(pnlPct, armPct float64) *Stoploss {
 	return &Stoploss{
 		State:         StoplossHealthy,
-		Regime:        StoplossRegimeClimb,
+		Regime:        StoplossRegimeSmooth,
 		InitialPnLPct: pnlPct,
 		CurrentPnLPct: pnlPct,
 		PeakPnLPct:    pnlPct,
 		ArmPnlPct:     armPct,
+		path:          newPath(),
+	}
+}
+
+func (stoploss *Stoploss) ensurePath() {
+	if stoploss.path == nil {
+		stoploss.path = newPath()
 	}
 }
 
 /*
-Update evaluates progress from this position's own climb and ascent.
-Exit when ExhaustScore + marketFrictionEvidence >= 1 (friction covers remaining
-climb velocity), never on unchanged PnL, before Samples >= 2, or at/below the
-arm floor (0 = fee-net break-even).
-*/
-func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64) {
-	if stoploss.State == StoplossTriggered {
-		return
-	}
+Update feeds PnL into nomagique path memory and trips only when that memory
+says the live print left the learned envelope (Hysteresis-armed). The
+exhaustion argument is ignored — cutoffs are derived from path behavior.
 
-	now := time.Now()
+Triggered is not sticky underwater: if PnL falls back through the arm before
+Exit sends, clear to Healthy so the hub stops painting a frozen crest peak.
+*/
+func (stoploss *Stoploss) Update(pnlPct float64, _ float64) {
+	stoploss.ensurePath()
 
 	if pnlPct <= stoploss.ArmPnlPct {
-		stoploss.State = StoplossHealthy
-		stoploss.Regime = StoplossRegimeClimb
-		stoploss.Ascent.Reset()
-		stoploss.ExhaustScore = 0
-		stoploss.Confirms = 0
-		stoploss.CurrentPnLPct = pnlPct
-		stoploss.PeakPnLPct = pnlPct
+		stoploss.clearToHealthy(pnlPct)
 		return
 	}
 
-	deltaPnL := pnlPct - stoploss.Ascent.LastPnLPct
-	unchanged := !stoploss.Ascent.LastTime.IsZero() && pnlPct == stoploss.Ascent.LastPnLPct
+	if stoploss.State == StoplossTriggered {
+		stoploss.CurrentPnLPct = pnlPct
+		return
+	}
+
+	prev := stoploss.Ascent.LastPnLPct
+	had := stoploss.Ascent.Samples > 0
+	unchanged := had && pnlPct == prev
 
 	stoploss.CurrentPnLPct = pnlPct
 
@@ -86,55 +92,71 @@ func (stoploss *Stoploss) Update(pnlPct float64, marketFrictionEvidence float64)
 	}
 
 	stoploss.State = StoplossArmed
-	stoploss.Ascent.Note(pnlPct, now)
+	reading := stoploss.path.note(pnlPct, time.Now())
+	stoploss.Ascent.absorb(reading)
 	stoploss.ExhaustScore = stoploss.Ascent.Exhaust()
-	stoploss.Regime = stoploss.classify()
+	stoploss.Regime = stoploss.classify(reading)
+	stoploss.PeakPnLPct = reading.peak
 
-	if unchanged || stoploss.Ascent.Samples < 2 {
+	if unchanged || reading.samples < 2 {
 		return
 	}
 
-	climb := stoploss.PeakPnLPct - stoploss.ArmPnlPct
-	giveback := stoploss.PeakPnLPct - stoploss.CurrentPnLPct
-	meanUp := stoploss.Ascent.MeanUp
-
-	if stoploss.Regime == StoplossRegimeClimb && stoploss.Ascent.PeakVelocity > 0 {
-		nearPeak := (giveback <= meanUp || giveback == 0) && deltaPnL <= 0
-		crestExit := climb > meanUp && nearPeak &&
-			stoploss.ExhaustScore+marketFrictionEvidence >= 1
-		health := math.Max(stoploss.ExhaustScore, marketFrictionEvidence)
-		trailExit := climb > meanUp && giveback > meanUp &&
-			giveback >= climb*(1-health)
-
-		if crestExit || trailExit {
-			stoploss.Confirms = 1
-			stoploss.State = StoplossTriggered
-		}
-
+	if !reading.armedExit {
+		stoploss.Confirms = 0
 		return
 	}
 
-	// Grind / gap: no positive climb velocity — exit only with market friction.
-	if climb > 0 && marketFrictionEvidence > 0 &&
-		giveback >= climb*(1-marketFrictionEvidence) {
-		stoploss.Confirms = 1
-		stoploss.State = StoplossTriggered
+	stoploss.Confirms++
+
+	if !reading.gateArmed {
+		return
 	}
+
+	if stoploss.CurrentPnLPct <= stoploss.ArmPnlPct {
+		stoploss.Confirms = 0
+		return
+	}
+
+	stoploss.State = StoplossTriggered
 }
 
 /*
-classify marks arms that never built climb velocity as grind.
+classify is inferred from whether down-memory exists and how n2 sits vs n1 —
+no fixed exhaust bands.
 */
-func (stoploss *Stoploss) classify() StoplossRegime {
-	if stoploss.Ascent.Samples >= 2 && stoploss.Ascent.PeakVelocity <= 0 {
-		return StoplossRegimeGrind
+func (stoploss *Stoploss) classify(reading pathReading) StoplossRegime {
+	if reading.ignition {
+		return StoplossRegimeIgnition
 	}
 
-	return StoplossRegimeClimb
+	n1 := reading.meanUp
+	n2 := reading.meanDown
+
+	if n1 > 0 && n2 >= n1 {
+		// Chaos when down-drift CUSUM dominates up-drift on a wide n2 path.
+		if reading.cusumNeg > reading.cusumPos && n2 > n1 {
+			return StoplossRegimeChaos
+		}
+		return StoplossRegimeCrawl
+	}
+
+	return StoplossRegimeSmooth
 }
 
 func (stoploss *Stoploss) Triggered() bool {
 	return stoploss.State == StoplossTriggered
+}
+
+func (stoploss *Stoploss) clearToHealthy(pnlPct float64) {
+	stoploss.State = StoplossHealthy
+	stoploss.Regime = StoplossRegimeSmooth
+	stoploss.path.reset()
+	stoploss.Ascent.Reset()
+	stoploss.ExhaustScore = 0
+	stoploss.Confirms = 0
+	stoploss.CurrentPnLPct = pnlPct
+	stoploss.PeakPnLPct = pnlPct
 }
 
 /*

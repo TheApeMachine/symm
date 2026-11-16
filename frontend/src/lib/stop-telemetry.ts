@@ -1,7 +1,7 @@
 /*
 Human words and tones for a held position's Stoploss (broker.Stoploss on the wire).
-Arm floor is fee-derived; crest uses MeanUp / ExhaustScore from this climb —
-not fixed selection knobs.
+Arm floor is fee-derived; trail/exhaust come from path memory (MoveBaseline
+n1/n2, CUSUM share) — not fixed exhaust cutoffs.
 */
 
 import {
@@ -31,9 +31,16 @@ export const meterTone = (tone: Tone): MeterTone =>
 export const climbAboveArm = (stop: Stoploss) =>
 	Math.max(0, stop.PeakPnLPct - stop.ArmPnlPct);
 
-/** Half the climb given back trips exit on the desk. */
-export const givebackFloor = (stop: Stoploss) =>
-	stop.PeakPnLPct - climbAboveArm(stop) / 2;
+/** Desk trip floor from learned down memory; falls back to half-climb. */
+export const givebackFloor = (stop: Stoploss) => {
+	const n2 = Math.max(
+		stop.Ascent?.RecoveredPullback ?? 0,
+		stop.Ascent?.MeanDown ?? 0,
+	);
+	const climb = climbAboveArm(stop);
+	const room = n2 > 0 ? n2 : climb / 2;
+	return stop.PeakPnLPct - room;
+};
 
 /** pp still above the giveback trip (negative ⇒ already past half-climb). */
 export const stopRoom = (stop: Stoploss) =>
@@ -63,10 +70,11 @@ export const stateTone = (state: number | null | undefined): Tone => {
 	}
 };
 
-/** Upper bound on confirm marks (desk needs 2 without market agreement). */
+/** Crawl/smooth/chaos need 2 marks; ignition trips on 1 crest exhaust. */
 export const CONFIRM_MARKS_MAX = 2;
 
-export const confirmsNeeded = (_stop?: Stoploss) => CONFIRM_MARKS_MAX;
+export const confirmsNeeded = (stop?: Stoploss) =>
+	stop?.Regime === "ignition" ? 1 : CONFIRM_MARKS_MAX; // desk Hysteresis window
 
 export const heldVerdict = (
 	stop: Stoploss | null | undefined,

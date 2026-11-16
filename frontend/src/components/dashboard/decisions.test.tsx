@@ -172,4 +172,28 @@ describe("Decisions", () => {
 			/data-oracle-gate="day"[^>]*data-oracle-side="approve"|data-oracle-side="approve"[^>]*data-oracle-gate="day"/,
 		);
 	});
+
+	it("treats brightness 0 as off even when the key is present", () => {
+		signals.decisions.setState(() => ({
+			"virtual:DOT/USD": {
+				symbol: "DOT/USD",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				gate: "oracle",
+				tier: "virtual",
+			},
+		}));
+
+		signals.regions.setState(() => ({
+			"DOT/USD": [
+				{ symbol: "DOT/USD", key: 18, brightness: 0, deformation: 0, counts: 0 },
+			],
+		}));
+
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toMatch(
+			/data-oracle-gate="brd"[^>]*data-oracle-side="dark"|data-oracle-side="dark"[^>]*data-oracle-gate="brd"/,
+		);
+	});
 });

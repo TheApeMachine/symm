@@ -148,9 +148,10 @@ func NewTier(
 
 /*
 Hello publishes a full positions_snapshot of open positions as an id-keyed map
-(hub/UI contract). Marks and PnL are owned by Update — Hello only sums and ships.
-Only READY rows ship: WAITING/BUSY stay in the desk cache, but Status gates the
-snapshot so the hub chart/legend drop on the same Hello that arms an exit.
+(hub/UI contract). Desk.Update is the only live caller — Level3 consolidates the
+open book. READY, WAITING, and BUSY all ship — BUSY is still open on the venue
+until fold removes it after the exit fill. Omitting BUSY made the chart drop
+rows that the exchange still held.
 */
 func (tier *Tier) Hello() {
 	open := tier.positions.Open()
@@ -172,12 +173,6 @@ func (tier *Tier) Hello() {
 			unrealized = unrealized.Add(*pnl)
 		}
 
-		// Status is the gate — BUSY/WAITING stay cached, but the hub snapshot
-		// only carries READY so chart/legend follow Hello without a Closing flag.
-		if position.Status() != runtime.READY {
-			continue
-		}
-
 		positions[id] = position
 	}
 
@@ -195,12 +190,10 @@ func (tier *Tier) Hello() {
 }
 
 /*
-Update marks the symbol's open positions, then Hello so the hub always gets a
-full positions_snapshot with current PnL / PnLPct — never a sparse delta.
+Update marks READY positions for the symbol. Desk.Update owns Hello — one full
+open-universe snapshot per Level3/trade batch, not a per-symbol touch gate.
 */
 func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
-	touched := false
-
 	for _, position := range tier.positions.Open() {
 		if position == nil || position.Status() != runtime.READY {
 			continue
@@ -214,12 +207,7 @@ func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
 
 		if err := position.Update(mark); err == nil {
 			tier.positions.Save(position)
-			touched = true
 		}
-	}
-
-	if touched {
-		tier.Hello()
 	}
 }
 
@@ -308,10 +296,7 @@ func (tier *Tier) Enter(
 		return errnie.Error(err)
 	}
 
-	// Seed the hub immediately; the fill Hello that follows replaces this once
-	// Apply stamps Qty/Entry/PnL for the chart series.
-	tier.Hello()
-
+	// Chart consolidates on the next Level3 desk.Update Hello — no seed here.
 	return nil
 }
 
@@ -358,7 +343,6 @@ func (tier *Tier) Exit(
 		return errnie.Error(err)
 	}
 
-	tier.Hello()
 	return nil
 }
 
@@ -377,18 +361,14 @@ func (tier *Tier) abortExit(position *Position) {
 	if err := tier.positions.Save(position); err != nil {
 		errnie.Error(err)
 	}
-
-	tier.Hello()
 }
 
 /*
-apply folds venue fills into matching positions. Desk.Apply fans out here and
-must Hello — private ingest Hellos on its own path.
+apply folds venue fills into matching positions. Desk.Apply fans out here;
+the next Level3 desk.Update Hello consolidates the open book.
 */
 func (tier *Tier) apply(execution *market.Execution) {
-	if tier.fold(execution) {
-		tier.Hello()
-	}
+	tier.fold(execution)
 }
 
 /*
@@ -509,8 +489,6 @@ func (tier *Tier) settle(position *Position) {
 	if err := tier.positions.Save(position); err != nil {
 		errnie.Error(err)
 	}
-
-	tier.Hello()
 }
 
 /*
@@ -542,8 +520,12 @@ func (tier *Tier) Send(position *Position, action string) error {
 	symbol = position.Symbol
 	position.mu.Unlock()
 
-	if tier.private == nil || order == nil || volume == "" || clOrdID == "" {
-		return nil
+	if order == nil || volume == "" || clOrdID == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[broker.Tier.Send] exit/enter order is incomplete",
+			nil,
+		))
 	}
 
 	params := map[string]any{
@@ -654,7 +636,6 @@ func (tier *Tier) rejectOrder(order *kraken.Order) {
 
 		if isEntry && !hasQty {
 			tier.positions.Drop(symbol)
-			tier.Hello()
 			return
 		}
 	}
@@ -708,19 +689,14 @@ func (tier *Tier) ingest(frame market.MarketType) {
 		}
 
 		tier.positions.Bound(tier.balance)
-		tier.Hello()
 
 	case *kraken.TradeBalance:
 		typed.ToMarket(tier.balance)
-		tier.Hello()
 
 	case *kraken.Execution:
 		executions := &market.Execution{}
 		typed.ToMarket(executions)
-
-		if tier.fold(executions) {
-			tier.Hello()
-		}
+		tier.fold(executions)
 
 	case *kraken.Order:
 		if typed.Success {

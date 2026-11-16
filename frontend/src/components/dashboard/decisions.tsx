@@ -84,19 +84,24 @@ const decisionsFromLive = (
 	});
 };
 
-const brightnessAt = (rows: Region[] | undefined, key: number): number => {
-	if (!rows) return 0;
+const regionAt = (
+	rows: Region[] | undefined,
+	key: number,
+): Region | undefined => {
+	if (!rows) return undefined;
 
 	for (const row of rows) {
-		if (row?.key === key) {
-			return typeof row.brightness === "number" &&
-				Number.isFinite(row.brightness)
-				? row.brightness
-				: 0;
-		}
+		if (row?.key === key) return row;
 	}
 
-	return 0;
+	return undefined;
+};
+
+const brightnessOf = (row: Region | undefined): number => {
+	if (!row) return 0;
+	return typeof row.brightness === "number" && Number.isFinite(row.brightness)
+		? row.brightness
+		: 0;
 };
 
 /** Region keys from a path — accepts R06 or R06.R00-style segments. */
@@ -123,9 +128,10 @@ const gateSide = (
 		return override;
 	}
 
-	const veto = brightnessAt(rows, gate.veto);
-	const approve = brightnessAt(rows, gate.approve);
+	const veto = brightnessOf(regionAt(rows, gate.veto));
+	const approve = brightnessOf(regionAt(rows, gate.approve));
 
+	// Brightness 0 is off — sticky idle must re-emit last brightness > 0.
 	if (veto > 0 || approve > 0) {
 		return veto >= approve ? "veto" : "approve";
 	}

@@ -1,18 +1,17 @@
-import { useSelector } from "@tanstack/react-store";
-import { lazy, Suspense, useCallback, useRef, useState } from "react";
-import { bookAtom, type Book, isBook } from "#/collections/book";
-import { moneyText, pctText } from "#/lib/format";
+import { signals } from "#/collections/app";
+import { type Book, bookAtom, isBook } from "#/collections/book";
+import type { Position } from "#/collections/types";
+import { asFinite, moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { trySendCommand } from "#/providers/websocket";
-import type {
-	OpenChoiceChartApi,
-	OpenChoiceLegendItem,
-} from "./open-choice-draw";
+import { useSelector } from "@tanstack/react-store";
+import { lazy, Suspense, useState } from "react";
+import type { OpenChoiceChartApi } from "./open-choice-draw";
+import { AUTO_COLOR } from "scichart";
 
 /*
 SciChart's ESM is broken under Node SSR. Lazy-load so the route module can
-evaluate without pulling scichart-react in. Hub marks push into series;
-React only hosts chrome (layout toggle + legend).
+evaluate without pulling scichart-react in.
 */
 const OpenChoiceSciChart = lazy(() =>
 	import("./open-choice-scichart").then((module) => ({
@@ -20,56 +19,38 @@ const OpenChoiceSciChart = lazy(() =>
 	})),
 );
 
-const exitBook = (item: OpenChoiceLegendItem, selected: Book): Book =>
-	isBook(item.tier) ? item.tier : selected;
+const exitBook = (position: Position, book: Book): Book =>
+	isBook(position.tier_key) ? position.tier_key : book;
 
-export const OpenChoiceChart = () => {
+export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
 	const book = useSelector(bookAtom, (state) => state);
+	const positions = useSelector(
+		signals.positions,
+		(state) => state as Record<string, Position>,
+	);
 	const [isGrid, setIsGrid] = useState(false);
-	const [legend, setLegend] = useState<OpenChoiceLegendItem[]>([]);
 	const [exiting, setExiting] = useState<Record<string, boolean>>({});
-	const legendKey = useRef("");
-	const apiRef = useRef<OpenChoiceChartApi | null>(null);
-
-	const onLegend = useCallback((items: OpenChoiceLegendItem[]) => {
-		const key = items
-			.map(
-				(item) =>
-					`${item.id}:${item.pnlMoney ?? ""}:${item.grossMoney ?? ""}:${item.pnlPct ?? ""}`,
-			)
-			.join("|");
-		if (key === legendKey.current) return;
-		legendKey.current = key;
-		setLegend(items);
-		setExiting((prev) => {
-			const next: Record<string, boolean> = {};
-			for (const item of items) {
-				if (prev[item.id]) next[item.id] = true;
-			}
-			return next;
-		});
-	}, []);
 
 	const setLayout = (grid: boolean) => {
-		apiRef.current?.setIsGridLayoutMode(grid);
+		api.setIsGridLayoutMode(grid);
 		setIsGrid(grid);
 	};
 
-	const exitPosition = (item: OpenChoiceLegendItem) => {
-		if (exiting[item.id]) return;
+	const exitPosition = (position: Position) => {
+		if (exiting[position.id]) return;
 
-		setExiting((prev) => ({ ...prev, [item.id]: true }));
+		setExiting((prev) => ({ ...prev, [position.id]: true }));
 		const ok = trySendCommand({
 			type: "exit",
-			id: item.id,
-			symbol: item.name,
-			book: exitBook(item, book),
+			id: position.id,
+			symbol: position.symbol,
+			book: exitBook(position, book),
 		});
 
 		if (!ok) {
 			setExiting((prev) => {
 				const next = { ...prev };
-				delete next[item.id];
+				delete next[position.id];
 				return next;
 			});
 		}
@@ -83,7 +64,8 @@ export const OpenChoiceChart = () => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Full open-position snapshots → one SciChart series each. Toggle grid per position.
+						Full open-position snapshots → one SciChart series each. Toggle grid
+						per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
@@ -125,71 +107,61 @@ export const OpenChoiceChart = () => {
 					}
 				>
 					<OpenChoiceSciChart
-						onLegend={onLegend}
 						onReady={(api) => {
-							apiRef.current = api;
+							api.setIsGridLayoutMode(isGrid);
 						}}
 					/>
 				</Suspense>
 			</div>
-			{legend.length > 0 ? (
+			{Object.values(positions).length > 0 ? (
 				<div className="flex max-h-28 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
-					{legend.map((item) => {
+					{Object.values(positions).map((pos) => {
+						const position = pos as Position;
+						const pnl = asFinite(position.pnl);
+						const pct = asFinite(position.pnl_pct);
 						const title = [
-							item.entry !== undefined && item.mark !== undefined
-								? `entry ${item.entry} → bid ${item.mark}`
+							position.entry !== undefined && position.mark !== undefined
+								? `entry ${position.entry} → bid ${position.mark}`
 								: null,
-							item.grossMoney !== undefined
-								? `gross ${moneyText(item.grossMoney)}`
-								: null,
-							item.feeMoney !== undefined
-								? `fees ${moneyText(-item.feeMoney)}`
-								: null,
-							item.pnlMoney !== undefined
-								? `net ${moneyText(item.pnlMoney)}`
-								: null,
+							pnl !== null ? `net ${moneyText(pnl)}` : null,
 						]
 							.filter(Boolean)
 							.join(" · ");
 
 						return (
 							<span
-								key={item.id}
+								key={position.id}
 								title={title}
 								className="inline-flex items-center gap-1"
 							>
 								<span
 									className="inline-block h-1.5 w-3 rounded-sm"
-									style={{ background: item.stroke }}
+									style={{ background: AUTO_COLOR }}
 								/>
-								{item.name}
+								{position.symbol}
 								<span className="tabular-nums text-(--f4)">
-									{item.grossMoney !== undefined
-										? `g${moneyText(item.grossMoney)}`
-										: ""}
+									{pnl !== null ? `g${moneyText(pnl)}` : ""}
 								</span>
 								<span className="tabular-nums text-(--f2)">
-									{item.pnlMoney !== undefined
-										? moneyText(item.pnlMoney)
-										: "…"}
+									{pnl !== null ? moneyText(pnl) : "…"}
 								</span>
 								<span className="tabular-nums text-(--f4)">
-									{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
+									{pct === null ? "" : pctText(pct)}
 								</span>
 								<button
 									type="button"
-									aria-label={`Exit ${item.name}`}
-									title={`Manually exit ${item.name}`}
-									disabled={Boolean(exiting[item.id])}
-									onClick={() => exitPosition(item)}
+									aria-label={`Exit ${position.symbol}`}
+									title={`Manually exit ${position.symbol}`}
+									disabled={Boolean(exiting[position.id])}
+									onClick={() => exitPosition(position as Position)}
 									className={cn(
 										"ml-0.5 rounded border border-(--line) px-1 py-px text-[9px] uppercase tracking-wide transition-colors",
-										exiting[item.id]
+										exiting[position.id]
 											? "cursor-wait text-(--f4)"
 											: "cursor-pointer text-(--f3) hover:border-(--down) hover:text-(--down)",
 									)}
 								>
-									{exiting[item.id] ? "…" : "exit"}
+									{exiting[position.id] ? "…" : "exit"}
 								</button>
 							</span>
 						);

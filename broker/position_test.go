@@ -139,11 +139,11 @@ func TestUpdate(t *testing.T) {
 
 			Convey("Mark is the bid hint; PnL is exact full-qty book walk", func() {
 				// feeIn=0.40, feeOut=0.48 -> pnl=120-0.48-(100+0.40)=19.12
-				// pct=19.12/100.4*100
+				// pct=19.12/100*100
 				So(err, ShouldBeNil)
 				So(pos.Mark.String(), ShouldEqual, "120")
 				So(pos.PnL.String(), ShouldEqual, "19.12")
-				So(pos.PnLPct.String(), ShouldEqual, "19.04382470119522")
+				So(pos.PnLPct.String(), ShouldEqual, "19.12")
 				So(pos.Stoploss, ShouldNotBeNil)
 				So(pos.Status() == runtime.BUSY, ShouldBeFalse)
 				So(pos.Status(), ShouldEqual, runtime.READY)

@@ -14,15 +14,19 @@ export const STOPLOSS_HEALTHY = 0;
 export const STOPLOSS_ARMED = 1;
 export const STOPLOSS_TRIGGERED = 3;
 
-/** Matches broker.Ascent — climb kinematics used for exhaustion. */
+/** Matches broker.Ascent — wire snapshot of nomagique path memory. */
 export type Ascent = {
 	PeakVelocity: number;
 	SmoothVelocity: number;
 	MeanUp?: number;
-	MeanDt?: number;
+	MeanDown?: number;
+	PeakPnLPct?: number;
+	OpenPullback?: number;
+	RecoveredPullback?: number;
 	LastPnLPct: number;
-	LastTime?: string;
 	Samples: number;
+	CusumPos?: number;
+	CusumNeg?: number;
 };
 
 export type Stoploss = {

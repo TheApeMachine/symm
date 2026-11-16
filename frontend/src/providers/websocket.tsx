@@ -1,5 +1,6 @@
 import { useEffect } from "react";
-import { atoms, direct, signals } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
+import { direct } from "#/collections/diag-burst";
 import "#/collections/diag-burst";
 import "#/hub/apply-s3-compact";
 import {
@@ -219,6 +220,7 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 		const value = payload[key];
 
 		const sink = direct[key];
+
 		if (sink) {
 			sink(value, payload);
 			continue;

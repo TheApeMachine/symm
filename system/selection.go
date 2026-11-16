@@ -31,11 +31,11 @@ type Selection struct {
 }
 
 func NewSelection() *Selection {
-	viper.SetDefault("selection.max_open_positions", 5)
+	viper.SetDefault("selection.max_open_positions", 10)
 	viper.SetDefault("selection.max_enters_per_tick", 1)
-	viper.SetDefault("selection.min_board_score", 1.5)
+	viper.SetDefault("selection.min_board_score", 0.35)
 	viper.SetDefault("selection.board_peer_window", 2*time.Second)
-	viper.SetDefault("selection.max_accum_peak_frac", 0.35)
+	viper.SetDefault("selection.max_accum_peak_frac", 0.85)
 	viper.SetDefault("selection.max_ignition_peak_frac", 0.85)
 	viper.SetDefault("selection.ignition_precursor_min", 0.55)
 	viper.SetDefault("selection.ignition_compression_min", 0.55)

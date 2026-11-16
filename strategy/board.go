@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"sync"
@@ -206,9 +207,12 @@ func (board *Board) Place(
 		cand.Decide(&runtime.Decision{
 			Symbol: cand.Symbol,
 			Action: "skip",
-			Reason: reason,
-			Gate:   "board",
-			Path:   cand.Path,
+			Reason: fmt.Sprintf(
+				"%s (score=%.3f floor=%.3f cut=%.3f)",
+				reason, cand.Score, floor, cut,
+			),
+			Gate: "board",
+			Path: cand.Path,
 		})
 	}
 }

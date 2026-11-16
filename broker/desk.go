@@ -394,8 +394,9 @@ func (desk *Desk) Flush() error {
 
 /*
 Update records tape flow and marks open positions from the executable bid.
-Level3 and public trades both land here — any touch publishes via Hello so the
-hub always receives a full positions_snapshot, never a per-symbol delta.
+Level3 and public trades both land here — after the batch is marked, Hello
+ships one full open-universe positions_snapshot so the chart consolidates
+every tick, not only when the touched symbol already held a READY row.
 */
 func (desk *Desk) Update(trades []*market.TradeData) {
 	for _, trade := range trades {
@@ -420,6 +421,8 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 			tier.Update(symbol, mark)
 		}
 	}
+
+	desk.Hello()
 }
 
 /*

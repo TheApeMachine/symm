@@ -114,6 +114,18 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	)
 
 	queueEnter := func(cand EnterCandidate) {
+		NoteDecision(&runtime.Decision{
+			Symbol: cand.Symbol,
+			Action: "queue",
+			Reason: "enter candidate",
+			Gate:   "queue",
+			Path:   cand.Path,
+		}, envelope.Regions[cand.Symbol], map[string]any{
+			"resistance": cand.Resistance,
+			"path_found": cand.PathFound,
+			"bypass":     cand.Bypass,
+		})
+
 		candMu.Lock()
 		enterCands = append(enterCands, cand)
 		candMu.Unlock()
@@ -129,6 +141,10 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu.Lock()
 		envelope.Decide(decision)
 		mu.Unlock()
+
+		if decision != nil {
+			NoteDecision(decision, envelope.Regions[decision.Symbol], nil)
+		}
 	}
 
 	for symbol, cut := range envelope.Paths {
@@ -787,6 +803,8 @@ func (model *Model) submitExit(position *broker.Position, path string) {
 		return
 	}
 
+	// Never force past the fee-net walk gate. A triggered stop that is already
+	// underwater must abortExit, not market-sell the loss.
 	if err := model.desk.Exit(model.tierOf(position), position, false); err != nil {
 		return
 	}

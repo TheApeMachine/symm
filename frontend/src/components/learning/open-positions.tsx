@@ -2,51 +2,41 @@ import { useSelector } from "@tanstack/react-store";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
-import { isClosed, onTier, pnlFrac } from "#/components/book-readout";
 import { OpenChoiceChart } from "#/components/learning/open-choice-chart";
-import { chartHeld } from "#/components/learning/open-choice-draw";
 import { Flex } from "#/components/ui";
 import { comparePositionRows } from "#/lib/frame-position";
 
-/*
-Open positions are the desk's per-position records on signals.positions.
-*/
 export const positionRows = (state: Record<string, Position>): Position[] => {
 	const rows = Object.values(state);
 	rows.sort(comparePositionRows);
 	return rows;
 };
 
-/** Cheap fingerprint of position-store ids. */
 export const positionsRevision = (state: Record<string, Position>): string => {
 	const parts = Object.keys(state);
 	parts.sort();
 	return parts.join("|");
 };
 
-/** Open positions on the selected book. */
-export const chartHeldRow = (pos: Position, book: Book) =>
-	onTier(pos, book) && !isClosed(pos);
-
 export const openPositions = (rows: Position[], book: Book) =>
 	rows
-		.filter((row) => !isClosed(row) && onTier(row, book))
+		.filter((row) => {
+			const tier = row.tier_key && row.tier_key !== "" ? row.tier_key : "paper";
+			return !row.closed_at && tier === book;
+		})
 		.map((row) => row.symbol)
 		.sort();
 
-/** Close-now return after fees. */
-export const positionInProfit = (pos: Position) => {
-	const pct = pnlFrac(pos);
-	return pct !== null && pct > 0;
-};
-
 export const OpenPositions = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const watching = useSelector(signals.positions, (state) =>
-		hasHeld(state as Record<string, Position>, book),
-	);
+	const watching = useSelector(signals.positions, (state) => {
+		for (const pos of Object.values(state as Record<string, Position>)) {
+			const tier = pos.tier_key && pos.tier_key !== "" ? pos.tier_key : "paper";
+			if (!pos.closed_at && tier === book) return true;
+		}
+		return false;
+	});
 
-	// Chart stays mounted and paints from signals.positions snapshots.
 	return (
 		<div className="relative flex min-h-0 flex-1 flex-col">
 			<OpenChoiceChart />
@@ -67,11 +57,4 @@ export const OpenPositions = () => {
 			) : null}
 		</div>
 	);
-};
-
-const hasHeld = (state: Record<string, Position>, book: Book) => {
-	for (const pos of Object.values(state)) {
-		if (chartHeld(pos, book)) return true;
-	}
-	return false;
 };

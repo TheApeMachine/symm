@@ -111,7 +111,7 @@ func TestPlace(t *testing.T) {
 
 			Convey("Place skips instead of free 1-of-1 enter", func() {
 				So(entered, ShouldBeEmpty)
-				So(skipped, ShouldEqual, "board score below floor")
+				So(skipped, ShouldStartWith, "board score below floor")
 			})
 		})
 

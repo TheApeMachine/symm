@@ -1,83 +1,91 @@
 import { useRef } from "react";
+import { FastLineRenderableSeries, XyDataSeries } from "scichart";
 import { SciChartReact } from "scichart-react";
 import { signals } from "#/collections/app";
-import { bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
 import {
 	drawOpenChoiceChart,
 	type OpenChoiceChartApi,
-	type OpenChoiceLegendItem,
 } from "./open-choice-draw";
 
-const roundLegend = (items: OpenChoiceLegendItem[]): OpenChoiceLegendItem[] =>
-	items.map((item) => ({
-		...item,
-		pnlMoney:
-			item.pnlMoney === undefined
-				? undefined
-				: Math.round(item.pnlMoney * 100) / 100,
-		grossMoney:
-			item.grossMoney === undefined
-				? undefined
-				: Math.round(item.grossMoney * 100) / 100,
-		feeMoney:
-			item.feeMoney === undefined
-				? undefined
-				: Math.round(item.feeMoney * 100) / 100,
-		pnlPct:
-			item.pnlPct === undefined
-				? undefined
-				: Math.round(item.pnlPct * 10) / 10,
-		stopRoomPct:
-			item.stopRoomPct === undefined
-				? undefined
-				: Math.round(item.stopRoomPct * 10) / 10,
-		stopProximity:
-			item.stopProximity === undefined
-				? undefined
-				: Math.round(item.stopProximity * 100) / 100,
-	}));
+const STROKES = [
+	"#79D2C6",
+	"#FF7DFD",
+	"#5B88FF",
+	"#D1765F",
+	"#F5F77F",
+	"#F8CFF7",
+	"#6CA261",
+	"#F1B470",
+	"#B3A0D4",
+	"#80F078",
+];
 
-/** Client-only SciChart surface; paints from signals.positions snapshots. */
+const strokeFor = (id: string) => {
+	let h = 0;
+	for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+	return STROKES[Math.abs(h) % STROKES.length];
+};
+
+/** Client-only SciChart surface — subscribe and append pnl_pct. */
 export const OpenChoiceSciChart = ({
-	onLegend,
 	onReady,
 }: {
-	onLegend: (items: OpenChoiceLegendItem[]) => void;
 	onReady?: (api: OpenChoiceChartApi) => void;
 }) => {
-	const onLegendRef = useRef(onLegend);
 	const onReadyRef = useRef(onReady);
-	onLegendRef.current = onLegend;
 	onReadyRef.current = onReady;
+	const tick = useRef(0);
 
 	return (
 		<SciChartReact
 			initChart={drawOpenChoiceChart}
 			onInit={(api: OpenChoiceChartApi) => {
-				api.setBook(bookAtom.get());
 				onReadyRef.current?.(api);
 
-				const paint = (state: Record<string, Position> | null) => {
-					onLegendRef.current(
-						roundLegend(api.push(state ?? {})),
-					);
-				};
+				const sub = signals.positions.subscribe((positions) => {
+					tick.current++;
+					const x = tick.current;
+					const seen: string[] = [];
 
-				paint(signals.positions.state as Record<string, Position>);
+					for (const pos of Object.values(positions)) {
+						const position = pos as Position;
+						const id = position.id;
+						if (!id) continue;
 
-				const posSub = signals.positions.subscribe((state) => {
-					paint(state as Record<string, Position>);
-				});
+						let series = api.sciChartSurface.renderableSeries.getById(id);
 
-				const bookSub = bookAtom.subscribe((book) => {
-					api.setBook(book);
-					paint(signals.positions.state as Record<string, Position>);
+						if (!series) {
+							series = new FastLineRenderableSeries(api.wasmContext, {
+								id,
+								dataSeries: new XyDataSeries(api.wasmContext, {
+									fifoCapacity: 90,
+								}),
+								stroke: strokeFor(id),
+								strokeThickness: 2,
+							});
+							api.sciChartSurface.renderableSeries.add(series);
+						}
+
+						const y = parseFloat(String(position.pnl_pct ?? ""));
+						if (!Number.isFinite(y)) continue;
+
+						(series.dataSeries as XyDataSeries).append(x, y);
+						seen.push(id);
+					}
+
+					for (const series of api.sciChartSurface.renderableSeries.asArray()) {
+						const id = series.id as string;
+						if (id && !seen.includes(id)) {
+							api.sciChartSurface.renderableSeries.remove(series);
+						}
+					}
+
+					api.sciChartSurface.invalidateElement();
 				});
 
 				return () => {
-					posSub.unsubscribe();
-					bookSub.unsubscribe();
+					sub.unsubscribe();
 				};
 			}}
 			style={{ width: "100%", height: "100%" }}

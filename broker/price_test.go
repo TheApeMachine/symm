@@ -395,6 +395,28 @@ func TestEntryPeakOK(t *testing.T) {
 		})
 
 		Convey("When peak sits above the selection cap", func() {
+			price.SetTicker(&market.TickerData{
+				Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 108,
+			})
+			// Mark bid from withPrice fixture is 100 → PeakFrac 0.5 still under 0.85;
+			// lift the touch so live mark sits in the top 15% of the range.
+			bidPx := decimal.RequireFromString("108")
+			askPx := decimal.RequireFromString("109")
+			qty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b3", LimitPrice: &bidPx, OrderQty: &qty,
+						Timestamp: time.Unix(3, 0),
+					}},
+					Asks: []*market.Level3Order{{
+						OrderID: "a3", LimitPrice: &askPx, OrderQty: &qty,
+						Timestamp: time.Unix(3, 0),
+					}},
+				}},
+			})
 			So(price.EntryPeakOK(testSymbol, false), ShouldBeFalse)
 		})
 	}))
@@ -431,7 +453,7 @@ func TestSessionMoveOK(t *testing.T) {
 			So(price.SessionMoveOK(testSymbol), ShouldBeFalse)
 		})
 
-		Convey("When live mark move and accelerating tape agree", func() {
+		Convey("When live mark move and absolute tape clear without acceleration", func() {
 			price.SetTicker(&market.TickerData{
 				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
 				High24h: 110, Low24h: 90, Last: 99, Open: 99,
@@ -441,12 +463,20 @@ func TestSessionMoveOK(t *testing.T) {
 			if qty.Sign() <= 0 {
 				qty = decimal.RequireFromString("5")
 			}
+			// Prior window already as busy as recent — day must not demand accel;
+			// book still does.
+			price.NoteTrade(&market.TradeData{
+				Symbol: testSymbol, Side: market.SideBuy,
+				Price: decimal.RequireFromString("100"), Qty: qty,
+				Timestamp: at.Add(-system.Cfg.Risk.TapeWindow),
+			})
 			price.NoteTrade(&market.TradeData{
 				Symbol: testSymbol, Side: market.SideBuy,
 				Price: decimal.RequireFromString("100"), Qty: qty, Timestamp: at,
 			})
 			// Mark bid is 100 vs open 99 → ~1.01% live change.
 			So(price.SessionMoveOK(testSymbol), ShouldBeTrue)
+			So(price.BookIntact(testSymbol), ShouldBeFalse)
 		})
 	}))
 }
@@ -578,37 +608,52 @@ func TestPulseQuote(t *testing.T) {
 
 func TestPnL(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When exit is above entry after fees", func() {
-			// qty=10 entry=100 exit=110 taker=0.40%
-			// entryGross=1000 feeIn=4 exitGross=1100 feeOut=4.4
+		Convey("When walk proceeds beat fill-paid cost after fees", func() {
+			// qty=10 paid=1000 bid walk @110 taker=0.40%
+			// proceeds=1100 feeIn=4 feeOut=4.4
 			// pnl=1100-4.4-(1000+4)=91.6
+			setBook(price, "110", "111", "30")
 			pos := &Position{
 				Symbol: testSymbol,
 				Qty:    dec("10"),
-				Entry:  dec("100"),
-				Exit:   dec("110"),
+				Fills: []*market.ExecutionData{{
+					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+				}},
 			}
 			pnl := price.PnL(pos)
 
 			So(pnl.String(), ShouldEqual, "91.6")
+		})
+
+		Convey("When the book cannot absorb full qty PnL is nil", func() {
+			pos := &Position{
+				Symbol: testSymbol,
+				Qty:    dec("1000"),
+				Fills: []*market.ExecutionData{{
+					Side: "buy", LastQty: dec("1000"), LastPrice: dec("100"),
+				}},
+			}
+			So(price.PnL(pos), ShouldBeNil)
 		})
 	}))
 }
 
 func TestPnLPct(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When exit matches entry after fees", func() {
-			// qty=10 entry=100 exit=100 -> pnl=1000-4-(1000+4)=-8
-			// pct=-8/1004*100=-0.7968127490039841
+		Convey("When walk proceeds match fill-paid cost after fees", func() {
+			// qty=10 paid=1000 bid@100 -> pnl=1000-4-(1000+4)=-8
+			// pct=-8/1000*100=-0.8
+			setBook(price, "100", "101", "30")
 			pos := &Position{
 				Symbol: testSymbol,
 				Qty:    dec("10"),
-				Entry:  dec("100"),
-				Exit:   dec("100"),
+				Fills: []*market.ExecutionData{{
+					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+				}},
 			}
 			pct := price.PnLPct(pos)
 
-			So(pct.String(), ShouldEqual, "-0.79681274900398")
+			So(pct.String(), ShouldEqual, "-0.8")
 		})
 	}))
 }
@@ -1014,8 +1059,12 @@ func BenchmarkPulseQuote(b *testing.B) {
 
 func BenchmarkPnL(b *testing.B) {
 	price := benchPrice(b)
+	setBook(price, "110", "111", "30")
 	pos := &Position{
-		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"), Exit: dec("110"),
+		Symbol: testSymbol, Qty: dec("10"),
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+		}},
 	}
 
 	b.ResetTimer()
@@ -1028,8 +1077,12 @@ func BenchmarkPnL(b *testing.B) {
 
 func BenchmarkPnLPct(b *testing.B) {
 	price := benchPrice(b)
+	setBook(price, "100", "101", "30")
 	pos := &Position{
-		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"), Exit: dec("100"),
+		Symbol: testSymbol, Qty: dec("10"),
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+		}},
 	}
 
 	b.ResetTimer()

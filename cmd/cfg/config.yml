@@ -212,17 +212,17 @@ risk:
   min_mover_change_pct: 0.5
   # Max last position in the 24h high–low range (0–1). At/above → peak veto.
   # 0.85 = top 15% of the day's range is off-limits. <=0 or >=1 disables.
-  max_entry_peak_frac: 0.5
+  max_entry_peak_frac: 0.85
   # Touch spread cap for mover pre-filter and desk entry (% of mid).
   max_entry_spread_pct: 2.0
   # Worst fee-net close-now PnL allowed at entry (%); floored by 2× taker.
   max_entry_open_drag_pct: 2.5
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
-  # Each half of the tape comparison. Last window must beat the one before it.
+  # Each half of the tape comparison (board ranking uses recent/prior ratio).
   tape_window: 5m
-  # Quote dollars the last window must clear, on top of beating the prior window.
-  min_tape_notional_usd: 500
+  # Quote dollars the latest buy-tape window must clear for vol/day/bok lamps.
+  min_tape_notional_usd: 250
   # Mid-relative band for bid/ask support cash at entry.
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
@@ -230,14 +230,17 @@ risk:
 
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.
-  max_open_positions: 5
+  max_open_positions: 10
   max_enters_per_tick: 1
   # Lone 1-of-1 trade frames must still clear this board floor.
-  min_board_score: 1.5
+  # 1.5 was unreachable for typical peak/precursor readings; peer cut still ranks.
+  min_board_score: 0.35
   # Recent peer scores compete across single-symbol trade frames.
   board_peer_window: 2s
   # Accumulation vs ignition range caps (dual peak oracles in training).
-  max_accum_peak_frac: 0.35
+  # Same band: day-move ≥ 0.5% and PeakFrac < 0.5 cancelled each other; pk only
+  # vetoes the top 15% of the 24h range now.
+  max_accum_peak_frac: 0.85
   max_ignition_peak_frac: 0.85
   ignition_precursor_min: 0.55
   ignition_compression_min: 0.55
@@ -268,6 +271,8 @@ learning:
   # seconds (14400 = 4h) — positions usually live minutes to hours, not ticks.
   resistance_hold_half_life_sec: 14400
   resistance_pnl_ref_pct: 1.0
-  min_supported_horizon: 2
+  min_supported_horizon: 1
+  min_surprise: 0.5
+  min_task_relative_precision: 0.5
   # Minimum enterNet z before the coder marks bullish.
   min_enter_z: 0.35
