@@ -57,6 +57,7 @@ type Position struct {
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	ExitWireStale     bool                    `json:"exit_wire_stale,omitempty"`
 	ExitAttempts      int                     `json:"exit_attempts,omitempty"`
+	EntryDesk         map[string]float64      `json:"entry_desk,omitempty"`
 	TreeApplied       bool                    `json:"-"`
 }
 
@@ -129,8 +130,8 @@ func (position *Position) entry() *decimal.Decimal {
 
 /*
 Update stamps Mark from the bid hint for the chart, then exact book PnL/PnLPct.
-Stoploss arms above fee-net break-even (PnLPct > 0). Incomplete books leave
-PnL nil and skip the stop. Other stages are a silent no-op.
+Stoploss arms above risk.stoploss_arm_pnl_pct. Incomplete books leave PnL nil
+and skip the stop. Other stages are a silent no-op.
 */
 func (position *Position) Update(hint *decimal.Decimal) error {
 	if hint == nil {
@@ -172,9 +173,8 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 	}
 
 	pnlpct, _ := position.PnLPct.Float64()
-
 	if position.Stoploss == nil {
-		position.Stoploss = NewStoploss(pnlpct, 0)
+		position.Stoploss = NewStoploss(pnlpct)
 	}
 
 	position.Stoploss.Update(pnlpct, friction)
@@ -208,7 +208,9 @@ func (position *Position) AbortExit() {
 	defer position.mu.Unlock()
 
 	if position.Stoploss != nil {
-		position.Stoploss.Reset()
+		position.Stoploss.State = StoplossHealthy
+		position.Stoploss.TriggerReason = ""
+		position.Stoploss.Confirms = 0
 	}
 
 	position.ExitPath = ""

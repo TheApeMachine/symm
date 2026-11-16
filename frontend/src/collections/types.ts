@@ -6,39 +6,35 @@ export type Balance = {
 
 /*
 Stoploss mirrors broker.Stoploss JSON (PascalCase tags on the Go struct).
-State is StoplossState iota: Healthy=0, Armed=1, legacy=2, Triggered=3.
+State is StoplossState iota: Healthy=0, Armed=1, Triggered=2.
+Regime is MarketRegime: CRAWL | SMOOTH | EXPLOSIVE | CHAOS.
 */
-export type StoplossState = 0 | 1 | 2 | 3;
+export type StoplossState = 0 | 1 | 2;
 
 export const STOPLOSS_HEALTHY = 0;
 export const STOPLOSS_ARMED = 1;
-export const STOPLOSS_TRIGGERED = 3;
+export const STOPLOSS_TRIGGERED = 2;
 
-/** Matches broker.Ascent — wire snapshot of nomagique path memory. */
-export type Ascent = {
-	PeakVelocity: number;
-	SmoothVelocity: number;
-	MeanUp?: number;
-	MeanDown?: number;
-	PeakPnLPct?: number;
-	OpenPullback?: number;
-	RecoveredPullback?: number;
-	LastPnLPct: number;
-	Samples: number;
-	CusumPos?: number;
-	CusumNeg?: number;
-};
+export type MarketRegime = "CRAWL" | "SMOOTH" | "EXPLOSIVE" | "CHAOS" | string;
 
 export type Stoploss = {
 	State: StoplossState | number;
-	Regime?: string;
+	Regime?: MarketRegime;
 	InitialPnLPct: number;
 	CurrentPnLPct: number;
 	PeakPnLPct: number;
 	ArmPnlPct: number;
-	Ascent?: Ascent;
+	TrailingFloor?: number;
 	ExhaustScore: number;
 	Confirms: number;
+	TypicalPush?: number;
+	TypicalPullback?: number;
+	CurrentDrop?: number;
+	EmaDelta?: number;
+	TriggerReason?: string;
+	Deltas?: number[];
+	Pushes?: number[];
+	Pullbacks?: number[];
 };
 
 /** Kraken spot OrderRequest as embedded on a desk position. */

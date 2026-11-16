@@ -12,8 +12,8 @@ func TestNewSelection(t *testing.T) {
 			sel := NewSelection()
 
 			Convey("board caps match viper defaults", func() {
-				So(sel.MaxOpenPositions, ShouldEqual, 5)
-				So(sel.MaxEntersPerTick, ShouldEqual, 1)
+				So(sel.MaxOpenPositions, ShouldEqual, 18)
+				So(sel.MaxEntersPerTick, ShouldEqual, 2)
 				So(sel.MinBoardScore, ShouldEqual, 0.35)
 				So(sel.BoardPeerWindow.Seconds(), ShouldEqual, 2)
 				So(sel.MaxAccumPeakFrac, ShouldEqual, 0.85)

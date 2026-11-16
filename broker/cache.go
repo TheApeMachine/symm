@@ -26,6 +26,7 @@ type Cache struct {
 	*runtime.System
 	tierKey   string
 	store     *store.Client
+	stops     *StopHistory
 	transport network.Client
 	price     *Price
 	onSettled func(*Position)
@@ -49,6 +50,7 @@ func NewCache(
 		System:    runtime.NewSystem(ctx, "cache"),
 		tierKey:   tierKey,
 		store:     client,
+		stops:     NewStopHistory(tierKey, client),
 		transport: transport,
 		price:     price,
 		onSettled: onSettled,
@@ -381,6 +383,13 @@ func (cache *Cache) Save(position *Position) error {
 	symbol := position.Symbol
 	id := position.ID
 	closedAt := position.ClosedAt
+
+	var stopBody []byte
+	var stopBeat string
+	if err == nil && position.Stoploss != nil {
+		stopBody, err = sonic.Marshal(position.Stoploss)
+		stopBeat = position.Stoploss.beat()
+	}
 	position.mu.Unlock()
 
 	if err != nil {
@@ -402,6 +411,8 @@ func (cache *Cache) Save(position *Position) error {
 	), body); err != nil {
 		return errnie.Error(err)
 	}
+
+	cache.stops.Note(symbol, id, stopBeat, stopBody)
 
 	return nil
 }

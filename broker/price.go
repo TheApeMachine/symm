@@ -11,6 +11,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
@@ -534,10 +535,10 @@ func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
 }
 
 /*
-MoverVolumeOK requires live tape activity. Stale 24h VolumeUSD alone must not
-pass a name that printed its volume hours ago and has been quiet since.
+TapeAccelOK is rising buy-tape vs the prior window. When MinTapeAccelRatio is
+zero the floor alone applies (lab override).
 */
-func (price *Price) MoverVolumeOK(symbol string) bool {
+func (price *Price) TapeAccelOK(symbol string) bool {
 	risk := system.Cfg.Risk
 	recent, prior := price.TapeUptake(symbol, time.Now())
 
@@ -545,31 +546,40 @@ func (price *Price) MoverVolumeOK(symbol string) bool {
 		return false
 	}
 
-	if recent > prior {
+	if risk.MinTapeAccelRatio <= 0 {
 		return true
 	}
 
-	// Established 24h turnover still needs recent prints so the REST volume
-	// figure cannot clear quiet flat-liners by itself.
-	return price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD
+	if prior <= 0 {
+		return recent >= risk.MinTapeNotionalUSD*risk.MinTapeAccelRatio
+	}
+
+	return recent/prior >= risk.MinTapeAccelRatio
 }
 
 /*
-SessionMoveOK is the day-move gate: live open→mark clears the floor and the
-tape still prints enough absolute quote flow. Acceleration belongs on
-BookIntact alone — requiring recent > prior here double-vetoed every steady
-liquid mover and kept the day lamp red for entire sessions.
+MoverVolumeOK requires accelerating buy tape — REST 24h volume must not admit
+names that only traded hours ago.
 */
-func (price *Price) SessionMoveOK(symbol string) bool {
+func (price *Price) MoverVolumeOK(symbol string) bool {
+	return price.TapeAccelOK(symbol)
+}
+
+/*
+SessionMoveOK is session open→mark plus live tape and volume-clock pumpdump impulse.
+*/
+func (price *Price) SessionMoveOK(symbol string, pump *equation.IgnitionOutput) bool {
 	risk := system.Cfg.Risk
 
 	if price.ChangePct(symbol) < risk.MinMoverChangePct {
 		return false
 	}
 
-	recent, _ := price.TapeUptake(symbol, time.Now())
+	if !price.TapeAccelOK(symbol) {
+		return false
+	}
 
-	return recent >= risk.MinTapeNotionalUSD
+	return PumpMoveOK(pump)
 }
 
 /*
@@ -667,9 +677,7 @@ func (price *Price) BookIntact(symbol string) bool {
 		return false
 	}
 
-	recent, prior := price.TapeUptake(symbol, time.Now())
-
-	return recent >= risk.MinTapeNotionalUSD && recent > prior
+	return price.TapeAccelOK(symbol)
 }
 
 /*

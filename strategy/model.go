@@ -4,17 +4,17 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -29,11 +29,7 @@ type Model struct {
 	store     *store.Client
 	tree      *atomic.Pointer[Tree]
 	board     *Board
-	rotation  *Rotation
 	resetPath func(string)
-	live      bool
-	exitSent  sync.Map
-	noted     sync.Map
 }
 
 /*
@@ -47,8 +43,7 @@ func NewModel(
 	resetPath func(string),
 	client *store.Client,
 ) *Model {
-	rotation := NewRotation(ctx)
-	board := NewBoard(ctx, rotation)
+	board := NewBoard(ctx)
 
 	model := &Model{
 		System:    runtime.NewSystem(ctx, "model"),
@@ -57,33 +52,19 @@ func NewModel(
 		store:     client,
 		tree:      &atomic.Pointer[Tree]{},
 		board:     board,
-		rotation:  rotation,
 		resetPath: resetPath,
-		live:      system.Cfg.Market.Model == "real",
 	}
 
 	tree := NewTree(ctx, "model/paths/", client)
 	model.tree.Store(tree)
 
+	if err := errnie.Require(map[string]any{
+		"tree": tree,
+	}); err != nil {
+		errnie.Error(err)
+	}
+
 	return model
-}
-
-/*
-NoteSettled feeds rotation memory when a position closes or arms stoploss exit.
-A position id is recorded once so the arm and the later fill do not double-count.
-*/
-func (model *Model) NoteSettled(position *broker.Position) {
-	if model == nil || model.rotation == nil || position == nil {
-		return
-	}
-
-	if position.ID != "" {
-		if _, loaded := model.noted.LoadOrStore(position.ID, struct{}{}); loaded {
-			return
-		}
-	}
-
-	model.rotation.NoteSettled(position)
 }
 
 /*
@@ -93,6 +74,12 @@ the envelope for cmd and the hub without calling the broker on blocked paths.
 */
 func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
+		errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[strategy.model.Step] envelope is nil",
+			nil,
+		))
+
 		return nil
 	}
 
@@ -102,99 +89,40 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 	} {
 		for position := range model.desk.Pending(tier) {
-			model.Exit(position, model.exitCut(envelope, position.Symbol, position))
+			position.ExitPath = envelope.Paths[position.Symbol].String()
+			errnie.Error(model.desk.Exit(position, false))
 		}
 	}
 
-	var mu sync.Mutex
 	var wg sync.WaitGroup
-	var (
-		candMu     sync.Mutex
-		enterCands []EnterCandidate
-	)
-
-	queueEnter := func(cand EnterCandidate) {
-		NoteDecision(&runtime.Decision{
-			Symbol: cand.Symbol,
-			Action: "queue",
-			Reason: "enter candidate",
-			Gate:   "queue",
-			Path:   cand.Path,
-		}, envelope.Regions[cand.Symbol], map[string]any{
-			"resistance": cand.Resistance,
-			"path_found": cand.PathFound,
-			"bypass":     cand.Bypass,
-		})
-
-		candMu.Lock()
-		enterCands = append(enterCands, cand)
-		candMu.Unlock()
-	}
-
-	decide := func(decision *runtime.Decision) {
-		// Live desk: stamp every outcome real. Untiered skips otherwise
-		// land on the virtual tab and the REAL rail stays empty.
-		if decision != nil && decision.Tier == "" && model.live {
-			decision.Tier = broker.TierTypeReal.String()
-		}
-
-		mu.Lock()
-		envelope.Decide(decision)
-		mu.Unlock()
-
-		if decision != nil {
-			NoteDecision(decision, envelope.Regions[decision.Symbol], nil)
-		}
-	}
 
 	for symbol, cut := range envelope.Paths {
-		if cut == nil {
+		if cut == nil || cut.Len() < system.Cfg.Learning.MinPathLength {
 			continue
 		}
 
 		wg.Go(func() {
 			path := cut.String()
-			var open []*broker.Position
-
-			// Check if we currently have any open positions for this symbol.
-			for _, tt := range []broker.TierType{
-				broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
-			} {
-				for position := range model.desk.Positions(tt, symbol) {
-					open = append(open, position)
-				}
-			}
-
-			learn := system.Cfg.Learning
-			bypass := learn.ResonanceBypass
-			openBook := len(open) > 0
-
-			// Live orders keep the entry gates; lab bypass is paper/virtual only.
-			if model.live {
-				bypass = false
-			}
+			open := model.desk.Has(symbol)
 
 			// Oracle and resonance gates are entry filters. An open book still
 			// has to hold or exit when the reading is cold or surprising.
-			if !openBook && !bypass && !model.oracleAllows(envelope.Regions[symbol]) {
-				decide(&runtime.Decision{
+			if !open && !model.oracleAllows(envelope.Regions[symbol]) {
+				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "oracle veto lit — not tradable",
 					Gate:   "oracle",
 					Path:   path,
 				})
+
 				return
 			}
 
 			rez := envelope.Resonance[symbol]
 
-			if rez == nil && bypass {
-				rez = model.bypassReading(learn)
-			}
-
-			if rez == nil && !openBook {
-				decide(&runtime.Decision{
+			if rez == nil && !open {
+				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "no resonance reading",
@@ -217,12 +145,14 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				precision, hasPrecision = rez["task_relative_precision"]
 			}
 
-			if rez != nil && !openBook && !bypass && (rez["calibrated"] < 1 ||
+			learn := system.Cfg.Learning
+
+			if rez != nil && !open && (rez["calibrated"] < 1 ||
 				supported < learn.MinSupportedHorizon ||
 				!hasPrecision ||
 				precision < learn.MinTaskRelativePrecision ||
 				surprise < learn.MinSurprise) {
-				decide(&runtime.Decision{
+				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: model.gateReason(rez, supported, hasPrecision, precision, surprise),
@@ -247,149 +177,88 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			enterNet, holdNet, exitNet, risk, ok := resonance.ForwardStoryNets(curve)
 
-			if !ok {
-				if bypass {
-					enterNet, holdNet, exitNet, risk = 1, 1, 0, 0
-				} else if !openBook {
-					decide(&runtime.Decision{
-						Symbol: symbol,
-						Action: "skip",
-						Reason: "forward curve incomplete",
-						Gate:   "resonance",
-						Path:   path,
-					})
-					return
-				}
-			}
-
-			treeStarted := time.Now()
-			action, resistance, matched := model.tree.Load().Predict(*cut)
-			pipeline.Time("tree", time.Since(treeStarted))
-			minEnter := learn.MinEnterZ
-
-			bullish := bypass || (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
-
-			minPath := learn.MinPathLength
-
-			// Matched + ActionNone: leaf existed but brightness lost to resistance
-			// (or the leaf was pruned). That is a veto, not an unexplored cold path.
-			if matched && action == ActionNone {
-				if len(open) > 0 && path != "" && cut.Len() >= minPath {
-					for _, position := range open {
-						model.Hold(position, path)
-					}
-
-					decide(&runtime.Decision{
-						Symbol: symbol,
-						Action: "hold",
-						Reason: "path resistance veto — holding open",
-						Gate:   "tree",
-						Path:   path,
-					})
-					return
-				}
-
-				decide(&runtime.Decision{
+			if !ok && !open {
+				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
-					Reason: "path resistance veto",
-					Gate:   "tree",
+					Reason: "resonance curve incomplete",
+					Gate:   "resonance",
 					Path:   path,
 				})
+
 				return
 			}
 
-			// Cold explore (no leaf) needs a full-length cut — a 1-token
-			// flicker is not a choice. Bypass does not shorten that bar.
-			wantEnter := action == ActionEnter ||
-				(action == ActionNone && !matched && bullish && cut.Len() >= minPath)
+			minEnter := system.Cfg.Learning.MinEnterZ
+			bullish := (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
 
-			if action != ActionNone {
-				model.applyAction(decide, queueEnter, symbol, path, action, resistance, bullish, bypass, open)
-				return
-			}
-
-			if len(open) > 0 && path != "" && cut.Len() >= minPath {
-				for _, position := range open {
-					model.Hold(position, path)
-				}
-
-				decide(&runtime.Decision{
-					Symbol: symbol,
-					Action: "hold",
-					Reason: "open position tracking live path",
-					Path:   path,
-				})
-				return
-			}
-
-			if cut.Len() > 0 && len(open) == 0 && !bullish {
-				decide(&runtime.Decision{
+			if !bullish {
+				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "forward story not bullish",
 					Gate:   "story",
 					Path:   path,
 				})
+			}
+
+			tree := model.tree.Load()
+			action, resistance, matched := tree.Predict(*cut)
+
+			tier := broker.TierTypeVirtual
+
+			// Matched + ActionNone: leaf existed but brightness lost to resistance
+			// (or the leaf was pruned). That is a veto, not an unexplored cold path.
+			if matched {
+				if resistance >= system.Cfg.Learning.PaperEligibleResistance {
+					tier = broker.TierTypePaper
+				}
+
+				position := model.desk.Position(tier, symbol)
+
+				if position != nil {
+					position.HoldPaths = append(position.HoldPaths, path)
+				}
+
+				switch action {
+				case ActionNone:
+					if open && path != "" {
+						envelope.Decide(&runtime.Decision{
+							Symbol: symbol,
+							Action: "hold",
+							Reason: "path resistance veto",
+							Gate:   "tree",
+							Path:   path,
+						})
+					}
+				case ActionEnter:
+					model.desk.Enter(symbol, path, tier, true)
+
+					envelope.Decide(&runtime.Decision{
+						Symbol: symbol,
+						Action: "enter",
+						Reason: "path matched",
+						Gate:   "tree",
+						Path:   path,
+					})
+				case ActionExit:
+					envelope.Decide(&runtime.Decision{
+						Symbol: symbol,
+						Action: "exit",
+						Reason: "path matched",
+						Gate:   "tree",
+						Path:   path,
+					})
+				}
+
 				return
 			}
 
-			if cut.Len() < minPath {
-				decide(&runtime.Decision{
-					Symbol: symbol,
-					Action: "skip",
-					Reason: "path shorter than min length",
-					Gate:   "path",
-					Path:   path,
-				})
-				return
-			}
-
-			if wantEnter {
-				queueEnter(EnterCandidate{
-					Decide:     decide,
-					Symbol:     symbol,
-					Path:       path,
-					Resistance: resistance,
-					Bypass:     bypass,
-				})
-			}
+			model.desk.Enter(symbol, path, broker.TierTypeVirtual, false)
 		})
 	}
 
 	wg.Wait()
-
-	if len(enterCands) > 0 {
-		enter := func(cand EnterCandidate) {
-			model.enterTiers(
-				cand.Decide, cand.Symbol, cand.Path,
-				cand.Resistance, cand.PathFound, cand.Bypass,
-			)
-		}
-
-		if model.board != nil {
-			boardStarted := time.Now()
-			model.board.Place(
-				enterCands,
-				envelope,
-				model.price,
-				model.desk,
-				model.live,
-				enter,
-			)
-			pipeline.Time("board", time.Since(boardStarted))
-		} else {
-			for _, cand := range enterCands {
-				enter(cand)
-			}
-		}
-	}
-
-	if ui.UI != nil && ui.UI.Active() && len(envelope.Decisions) > 0 {
-		if payload := envelope.Publish("decisions"); len(payload) > 0 {
-			ui.UI.Write(payload)
-		}
-	}
 
 	return envelope
 }
@@ -422,184 +291,6 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 	}
 
 	return approved
-}
-
-/*
-applyAction handles explicit tree leaves (enter/hold/exit) — story bullishness
-and min profit still gate so an exit leaf cannot flatten underwater positions or
-enter against a bearish forward curve.
-*/
-func (model *Model) applyAction(
-	decide func(*runtime.Decision),
-	queueEnter func(EnterCandidate),
-	symbol, path string,
-	action Action,
-	resistance float64,
-	bullish, bypass bool,
-	open []*broker.Position,
-) {
-	switch action {
-	case ActionEnter:
-		if !bullish {
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "skip",
-				Reason: "enter leaf but forward story not bullish",
-				Gate:   "story",
-				Path:   path,
-			})
-			return
-		}
-
-		queueEnter(EnterCandidate{
-			Decide:     decide,
-			Symbol:     symbol,
-			Path:       path,
-			Resistance: resistance,
-			Bypass:     bypass,
-			PathFound:  true,
-		})
-
-	case ActionExit:
-		if bullish || len(open) == 0 {
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "skip",
-				Reason: "exit leaf without open position or still bullish",
-				Gate:   "story",
-				Path:   path,
-			})
-			model.resetPath(symbol)
-			return
-		}
-
-		// Policy match takes profit only once fee-net PnL% clears the
-		// floor. Thin greens and underwater positions stay for the hard stop;
-		// seeding exit leaves from losses poisoned early trees.
-		minProfit := system.Cfg.Learning.PolicyExitMinProfitPct
-		exited := 0
-
-		for _, position := range open {
-			if position == nil || position.PnLPct == nil ||
-				position.PnLPct.InexactFloat64() < minProfit {
-				continue
-			}
-
-			model.Exit(position, path)
-			exited++
-		}
-
-		if exited == 0 {
-			for _, position := range open {
-				model.Hold(position, path)
-			}
-
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "hold",
-				Reason: "exit leaf ignored — position below min profit",
-				Gate:   "pnl",
-				Path:   path,
-			})
-			return
-		}
-
-		decide(&runtime.Decision{
-			Symbol: symbol,
-			Action: "exit",
-			Reason: "tree exit · story no longer bullish",
-			Path:   path,
-		})
-		model.resetPath(symbol)
-
-	case ActionHold:
-		if len(open) > 0 {
-			for _, position := range open {
-				model.Hold(position, path)
-			}
-
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "hold",
-				Reason: "tree hold",
-				Path:   path,
-			})
-		} else {
-			decide(&runtime.Decision{
-				Symbol: symbol,
-				Action: "skip",
-				Reason: "hold leaf with no open position",
-				Gate:   "position",
-				Path:   path,
-			})
-		}
-	}
-}
-
-/*
-enterTiers routes onto virtual / paper / real.
-
-  - real model: one live book; same gate path virtual used for samples
-  - virtual: no enter path yet, or resistance above the paper floor, or bypass
-  - paper:   enter path found and resistance ≤ paper_eligible_resistance
-  - real:    paper rules plus Tier.Unlocked (paper win-rate / edge on real)
-*/
-func (model *Model) enterTiers(
-	decide func(*runtime.Decision),
-	symbol, path string,
-	resistance float64,
-	pathFound, bypass bool,
-) {
-	if model.live {
-		model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
-		return
-	}
-
-	floor := system.Cfg.Learning.PaperEligibleResistance
-
-	if bypass || !pathFound || resistance > floor {
-		model.tryEnter(decide, symbol, path, broker.TierTypeVirtual, pathFound, "virtual sample")
-		return
-	}
-
-	model.tryEnter(decide, symbol, path, broker.TierTypePaper, pathFound, "paper enter")
-	model.tryEnter(decide, symbol, path, broker.TierTypeReal, pathFound, "real enter")
-}
-
-/*
-tryEnter is the single desk.Enter choke point so blocked tiers emit structured
-Decision rows (gate tier) instead of silent no-ops in the disruptor log.
-*/
-func (model *Model) tryEnter(
-	decide func(*runtime.Decision),
-	symbol, path string,
-	tt broker.TierType,
-	pathFound bool,
-	reason string,
-) {
-	if err := model.desk.Enter(symbol, path, tt, pathFound); err != nil {
-		decide(&runtime.Decision{
-			Symbol: symbol,
-			Action: "blocked",
-			Reason: err.Error(),
-			Gate:   "tier",
-			Path:   path,
-			Tier:   tt.String(),
-		})
-		return
-	}
-
-	if model.resetPath != nil {
-		model.resetPath(symbol)
-	}
-
-	decide(&runtime.Decision{
-		Symbol: symbol,
-		Action: "enter",
-		Reason: reason,
-		Path:   path,
-		Tier:   tt.String(),
-	})
 }
 
 /*
@@ -638,92 +329,6 @@ func (model *Model) gateReason(
 }
 
 /*
-bypassReading fabricates a bullish calibrated resonance map for lab tiers only —
-live model forces bypass off so paper shortcuts never reach REAL rails.
-*/
-func (model *Model) bypassReading(learn *system.Learning) map[string]float64 {
-	dims := len(resonance.Features)
-	supported := max(learn.MinSupportedHorizon, 1)
-
-	rez := map[string]float64{
-		"calibrated":              1,
-		"surprise":                1,
-		"task_relative_precision": 1,
-		"supported_horizon":       float64(supported),
-	}
-
-	for i := range dims {
-		val := 0.0
-
-		switch {
-		case i == 0 || i == 1 || i == 6 || i == 7:
-			val = 1
-		case i >= 9 && i%2 == 0:
-			val = 1
-		}
-
-		rez["forward_curve_"+strconv.Itoa(i)] = val
-	}
-
-	return rez
-}
-
-/*
-exitCut picks the path attributed to a stoploss settle: live cut if still lit,
-else ExitPath/HoldPaths, and refuses EntryPath so pending exit does not train
-on the opening grammar sentence.
-*/
-func (model *Model) exitCut(
-	envelope *runtime.Envelope,
-	symbol string,
-	pending *broker.Position,
-) string {
-	path := ""
-
-	if envelope != nil {
-		if cut := envelope.Paths[symbol]; cut != nil {
-			path = cut.String()
-		}
-	}
-
-	if path == "" && pending != nil {
-		path = pending.ExitPath
-	}
-
-	if path == "" && pending != nil {
-		if n := len(pending.HoldPaths); n > 0 {
-			path = pending.HoldPaths[n-1]
-		}
-	}
-
-	if pending != nil && path == "" {
-		return ""
-	}
-
-	if pending != nil && pending.ClosedAt == nil && path == pending.EntryPath {
-		return ""
-	}
-
-	return path
-}
-
-/*
-Hold records the latest non-entry path for outcome attribution — one hold path
-per position so tree training sees the path in force when stoploss later fires.
-*/
-func (model *Model) Hold(position *broker.Position, path string) {
-	if position == nil || path == "" || path == position.EntryPath {
-		return
-	}
-
-	if len(position.HoldPaths) == 1 && position.HoldPaths[0] == path {
-		return
-	}
-
-	position.HoldPaths = []string{path}
-}
-
-/*
 Exit arms broker sells before tree Update on pending positions — resistance moves
 only after ClosedAt so rejects and repeated marks cannot train on ghost exits.
 */
@@ -732,107 +337,27 @@ func (model *Model) Exit(position *broker.Position, path string) {
 		return
 	}
 
-	settled := position.ClosedAt != nil
-
-	if !settled {
-		if path == position.EntryPath {
-			path = ""
-		}
-
-		// Flat grammar still has to sell a stoploss that already armed Closing.
-		// Attribution can land on HoldPaths once the fill settles.
-		if path == "" && position.Status() != runtime.BUSY {
-			return
-		}
-
-		model.submitExit(position, path)
+	if position.Status() == runtime.BUSY || position.ClosedAt != nil {
 		return
 	}
 
-	if path == "" {
-		model.NoteSettled(position)
-		model.dropPending(position)
-		return
-	}
+	position.ExitPath = path
 
-	if position.TreeApplied {
-		model.dropPending(position)
+	if position.ExitPath == "" && len(position.HoldPaths) > 1 {
+		position.ExitPath = strings.Join(
+			position.HoldPaths[len(position.HoldPaths)-2:], "/",
+		)
+
 		return
 	}
 
 	if position.ExitPath == "" {
-		position.ExitPath = path
-	}
-
-	tree := model.tree.Load()
-
-	tree.Ensure(position.EntryPath, ActionEnter)
-	tree.Ensure(position.ExitPath, ActionExit)
-
-	delta := model.resistanceDelta(position)
-
-	tree.Update(position.EntryPath, delta)
-	tree.Update(position.ExitPath, delta)
-	position.TreeApplied = true
-	model.NoteSettled(position)
-	model.dropPending(position)
-}
-
-/*
-submitExit sells through the desk and only then stamps ExitPath, so a Send
-failure can retry on the next tick instead of latching a path that never left.
-*/
-func (model *Model) submitExit(position *broker.Position, path string) {
-	if position == nil || position.ExitPath != "" {
 		return
 	}
 
-	if position.ID != "" {
-		if _, ok := model.exitSent.Load(position.ID); ok {
-			// Venue reject clears Closing so the sell can remint; otherwise the
-			// prior Send already left Closing armed and must not double-fire.
-			if position.Status() == runtime.BUSY {
-				return
-			}
-
-			model.exitSent.Delete(position.ID)
-		}
-	}
-
-	if model.desk == nil {
-		return
-	}
-
-	// Never force past the fee-net walk gate. A triggered stop that is already
-	// underwater must abortExit, not market-sell the loss.
-	if err := model.desk.Exit(model.tierOf(position), position, false); err != nil {
-		return
-	}
-
-	if position.ID != "" {
-		model.exitSent.Store(position.ID, struct{}{})
-	}
-
-	if path != "" {
-		position.ExitPath = path
-	}
-
-	model.NoteSettled(position)
-}
-
-/*
-tierOf maps cache tier_key back to desk routes for Exit/ClearPending — wrong
-tier would send paper sells down the real socket or drop pending too early.
-*/
-func (model *Model) tierOf(position *broker.Position) broker.TierType {
-	switch position.TierKey {
-	case broker.TierTypePaper.String():
-		return broker.TierTypePaper
-	case broker.TierTypeReal.String():
-		return broker.TierTypeReal
-	default:
-		return broker.TierTypeVirtual
-	}
+	model.tree.Load().Update(
+		position.ExitPath, model.resistanceDelta(position),
+	)
 }
 
 /*
@@ -893,16 +418,4 @@ func (model *Model) holdDuration(position *broker.Position, halfLifeSec float64)
 	}
 
 	return hold
-}
-
-/*
-dropPending releases the desk pending slot after tree training consumed the position —
-until then strategy must still see the position for exit_path attribution.
-*/
-func (model *Model) dropPending(position *broker.Position) {
-	if model.desk == nil || position == nil {
-		return
-	}
-
-	model.desk.ClearPending(model.tierOf(position), position.Symbol)
 }

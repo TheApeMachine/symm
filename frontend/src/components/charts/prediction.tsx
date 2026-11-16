@@ -37,6 +37,9 @@ export type ResonanceData = {
 	supportedHorizon?: number;
 	resolvedSteps?: number;
 	surprise?: number;
+	surpriseBaseline?: number;
+	surpriseRegimeZ?: number;
+	surpriseRank?: number;
 	energy?: number;
 	confidence?: number;
 	calibrated?: boolean;
@@ -168,6 +171,9 @@ export const mergeResonanceData = (
 			mode === "workspace"
 				? keepScalar(patch.surprise, prior.surprise)
 				: keepOptional(patch.surprise, prior.surprise),
+		surpriseBaseline: keepOptional(patch.surpriseBaseline, prior.surpriseBaseline),
+		surpriseRegimeZ: keepOptional(patch.surpriseRegimeZ, prior.surpriseRegimeZ),
+		surpriseRank: keepOptional(patch.surpriseRank, prior.surpriseRank),
 		energy:
 			mode === "workspace"
 				? keepScalar(patch.energy, prior.energy)
@@ -218,6 +224,9 @@ const parseResonanceFromRow = (
 		(key) =>
 			key.includes("_") ||
 			key === "surprise" ||
+			key === "surprise_baseline" ||
+			key === "surprise_regime_z" ||
+			key === "surprise_rank" ||
 			key === "energy" ||
 			key === "alpha" ||
 			key === "calibrated",
@@ -317,6 +326,9 @@ const applyResonanceSuffix = (
 			data.taskSkillReady = true;
 		}
 		if (suffix === "surprise") data.surprise = first;
+		if (suffix === "surprise_baseline") data.surpriseBaseline = first;
+		if (suffix === "surprise_regime_z") data.surpriseRegimeZ = first;
+		if (suffix === "surprise_rank") data.surpriseRank = first;
 		if (suffix === "energy") data.energy = first;
 		if (suffix === "supported_horizon")
 			data.supportedHorizon = Math.trunc(first);
@@ -475,6 +487,7 @@ const ScalarDiagnostics = () => {
 	const reach = res?.forwardCurve.length;
 	const samples = res ? String(res.resolvedSteps) : "—";
 	const surprise = res?.surprise;
+	const regimeZ = res?.surpriseRegimeZ;
 	const energy = res?.energy;
 	const confidence = res?.confidence;
 
@@ -507,7 +520,9 @@ const ScalarDiagnostics = () => {
 					data-p="surprise"
 					className="mt-0.5 truncate font-mono text-[11px] text-(--warning)"
 				>
-					{fmt(surprise, 2)}
+					{regimeZ !== undefined
+						? `${fmt(surprise, 2)} z${fmt(regimeZ, 2)}`
+						: fmt(surprise, 2)}
 				</div>
 			</div>
 			<div className="bg-(--sunken) px-2 py-1.5">

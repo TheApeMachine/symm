@@ -11,6 +11,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -19,6 +20,48 @@ import (
 )
 
 const testSymbol = "BTC/USD"
+
+func seedBuyTapeAccel(price *Price, symbol string, at time.Time) {
+	min := system.Cfg.Risk.MinTapeNotionalUSD
+	ratio := system.Cfg.Risk.MinTapeAccelRatio
+	if ratio <= 0 {
+		ratio = 1.15
+	}
+	win := system.Cfg.Risk.TapeWindow
+
+	priorNotional := min / (2 * ratio)
+	recentNotional := min * ratio
+
+	priorQty := decimal.NewFromFloat(priorNotional / 100.0)
+	recentQty := decimal.NewFromFloat(recentNotional / 100.0)
+	if priorQty.Sign() <= 0 {
+		priorQty = decimal.RequireFromString("1")
+	}
+	if recentQty.Sign() <= 0 {
+		recentQty = decimal.RequireFromString("5")
+	}
+
+	price.NoteTrade(&market.TradeData{
+		Symbol: symbol, Side: market.SideBuy,
+		Price: decimal.RequireFromString("100"), Qty: priorQty,
+		Timestamp: at.Add(-win),
+	})
+	price.NoteTrade(&market.TradeData{
+		Symbol: symbol, Side: market.SideBuy,
+		Price: decimal.RequireFromString("100"), Qty: recentQty,
+		Timestamp: at,
+	})
+}
+
+func seedPumpImpulse() *equation.IgnitionOutput {
+	sel := system.Cfg.Selection
+	return &equation.IgnitionOutput{
+		Precursor: sel.IgnitionPrecursorMin,
+		RVOL:      1,
+		Ignition:  sel.IgnitionIgnitionMin,
+		Trend:     sel.IgnitionIgnitionMin,
+	}
+}
 
 func dec(raw string) *decimal.Decimal {
 	v := decimal.RequireFromString(raw)
@@ -430,14 +473,7 @@ func TestMoverVolumeOK(t *testing.T) {
 
 		Convey("When the buy tape accelerates past the floor", func() {
 			at := time.Now().UTC()
-			qty := decimal.NewFromFloat(system.Cfg.Risk.MinTapeNotionalUSD / 100.0)
-			if qty.Sign() <= 0 {
-				qty = decimal.RequireFromString("5")
-			}
-			price.NoteTrade(&market.TradeData{
-				Symbol: testSymbol, Side: market.SideBuy,
-				Price: decimal.RequireFromString("100"), Qty: qty, Timestamp: at,
-			})
+			seedBuyTapeAccel(price, testSymbol, at)
 			So(price.MoverVolumeOK(testSymbol), ShouldBeTrue)
 		})
 	}))
@@ -450,21 +486,26 @@ func TestSessionMoveOK(t *testing.T) {
 				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
 				High24h: 110, Low24h: 90, Last: 100, Open: 99,
 			})
-			So(price.SessionMoveOK(testSymbol), ShouldBeFalse)
+			So(price.SessionMoveOK(testSymbol, nil), ShouldBeFalse)
 		})
 
-		Convey("When live mark move and absolute tape clear without acceleration", func() {
+		Convey("When session move, tape accel, and pumpdump impulse align", func() {
 			price.SetTicker(&market.TickerData{
 				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
 				High24h: 110, Low24h: 90, Last: 99, Open: 99,
 			})
 			at := time.Now().UTC()
+			seedBuyTapeAccel(price, testSymbol, at)
+			So(price.SessionMoveOK(testSymbol, seedPumpImpulse()), ShouldBeTrue)
+		})
+
+		Convey("When tape is flat despite session move", func() {
+			price.SetTicker(&market.TickerData{
+				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
+				High24h: 110, Low24h: 90, Last: 100, Open: 99,
+			})
+			at := time.Now().UTC()
 			qty := decimal.NewFromFloat(system.Cfg.Risk.MinTapeNotionalUSD / 100.0)
-			if qty.Sign() <= 0 {
-				qty = decimal.RequireFromString("5")
-			}
-			// Prior window already as busy as recent — day must not demand accel;
-			// book still does.
 			price.NoteTrade(&market.TradeData{
 				Symbol: testSymbol, Side: market.SideBuy,
 				Price: decimal.RequireFromString("100"), Qty: qty,
@@ -474,9 +515,7 @@ func TestSessionMoveOK(t *testing.T) {
 				Symbol: testSymbol, Side: market.SideBuy,
 				Price: decimal.RequireFromString("100"), Qty: qty, Timestamp: at,
 			})
-			// Mark bid is 100 vs open 99 → ~1.01% live change.
-			So(price.SessionMoveOK(testSymbol), ShouldBeTrue)
-			So(price.BookIntact(testSymbol), ShouldBeFalse)
+			So(price.SessionMoveOK(testSymbol, seedPumpImpulse()), ShouldBeFalse)
 		})
 	}))
 }
@@ -535,19 +574,7 @@ func TestBookIntact(t *testing.T) {
 
 		Convey("When tape accelerates past the floor", func() {
 			at := time.Now().UTC()
-			// Clear whatever MinTapeNotionalUSD the process config loaded.
-			qty := decimal.NewFromFloat(system.Cfg.Risk.MinTapeNotionalUSD / 100.0)
-			if qty.Sign() <= 0 {
-				qty = decimal.RequireFromString("5")
-			}
-			price.NoteTrade(&market.TradeData{
-				Symbol:    testSymbol,
-				Side:      market.SideBuy,
-				Price:     decimal.RequireFromString("100"),
-				Qty:       qty,
-				Timestamp: at,
-			})
-
+			seedBuyTapeAccel(price, testSymbol, at)
 			So(price.BookIntact(testSymbol), ShouldBeTrue)
 		})
 	}))

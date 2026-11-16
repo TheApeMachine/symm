@@ -90,14 +90,15 @@ describe("Decisions", () => {
 		expect(markup).not.toContain("virtual sample");
 	});
 
-	it("shows pre-tier gate skips on the selected real book", () => {
+	it("shows gate skips for the decision tier book", () => {
 		bookAtom.set("real");
 		signals.decisions.setState(() => ({
-			"BTC/USD": {
+			"real:BTC/USD": {
 				symbol: "BTC/USD",
 				action: "skip",
 				reason: "oracle veto lit — not tradable",
 				gate: "oracle",
+				tier: "real",
 			},
 		}));
 

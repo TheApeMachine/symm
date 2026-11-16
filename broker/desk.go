@@ -73,7 +73,8 @@ func NewDesk(
 	tiers := make(map[TierType]*Tier)
 
 	if live {
-		// Live book: positions and balances come from the exchange only.
+		// Live book: balances come from the exchange; store still receives
+		// position + temporal stoploss history for later stop surgery.
 		real := NewTier(
 			ctx,
 			TierTypeReal,
@@ -81,7 +82,7 @@ func NewDesk(
 			transports["private"],
 			price,
 			venue.NewKraken(quote).Use(names),
-			nil,
+			client,
 		)
 		tiers[TierTypeReal] = real
 	} else {
@@ -480,10 +481,8 @@ func (desk *Desk) Enter(
 Exit routes policy exits through the tier that holds the cache row so Send uses
 the correct private socket and fill matching stays on that lane's positions.
 */
-func (desk *Desk) Exit(
-	tt TierType, position *Position, force bool,
-) error {
-	tier := desk.tiers[tt]
+func (desk *Desk) Exit(position *Position, force bool) error {
+	tier := desk.tiers[TierString(position.TierKey)]
 
 	if tier == nil {
 		return errnie.Error(errnie.Err(
@@ -531,7 +530,7 @@ func (desk *Desk) Has(symbol string) bool {
 Positions exposes filled opens to strategy without Submitted noise from pending
 enters still awaiting venue buy prints.
 */
-func (desk *Desk) Positions(tt TierType, symbol string) iter.Seq[*Position] {
+func (desk *Desk) Positions(tt TierType, symbols ...string) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
 		tier := desk.tiers[tt]
 
@@ -539,12 +538,25 @@ func (desk *Desk) Positions(tt TierType, symbol string) iter.Seq[*Position] {
 			return
 		}
 
-		for _, position := range tier.positions.Open(symbol) {
+		for _, position := range tier.positions.Open(symbols...) {
 			if !yield(position) {
 				return
 			}
 		}
 	}
+}
+
+/*
+Position returns the position by tier and symbol.
+*/
+func (desk *Desk) Position(tt TierType, symbol string) *Position {
+	tier := desk.tiers[tt]
+
+	if tier == nil {
+		return nil
+	}
+
+	return tier.positions.Get(symbol)
 }
 
 /*

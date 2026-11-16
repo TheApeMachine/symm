@@ -23,8 +23,10 @@ type Learning struct {
 	ResistancePnLRefPct      float64
 	PaperEligibleResistance  float64
 	MinSupportedHorizon      int
+	// MinTaskRelativePrecision is absolute task precision or min empirical rank when warm.
 	MinTaskRelativePrecision float64
-	MinSurprise              float64
+	// MinSurprise is the minimum adaptive surprise regime z once resonance is warm.
+	MinSurprise float64
 	ResonanceBypass          bool
 	MinEnterZ                float64
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/pipeline"
+	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/strategy/tokenizer"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -25,6 +26,7 @@ type Training struct {
 	*runtime.System
 	price      *broker.Price
 	desk       *broker.Desk
+	deskGate   *deskgate.Gate
 	grid       *store.Grid
 	client     *store.Client
 	catalog    *tokenizer.GrammarCatalog
@@ -40,11 +42,13 @@ func NewTraining(
 	price *broker.Price,
 	desk *broker.Desk,
 	client *store.Client,
+	deskGate *deskgate.Gate,
 ) *Training {
 	training := &Training{
 		System:     runtime.NewSystem(ctx, "training", price),
 		price:      price,
 		desk:       desk,
+		deskGate:   deskGate,
 		grid:       store.NewGrid(ctx),
 		client:     client,
 		catalog:    tokenizer.NewGrammarCatalog(),
@@ -87,18 +91,41 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				}
 			}
 
-			hot := ignitionHot(envelope.Pumpdump[symbol])
+			sel := system.Cfg.Selection
+			pump := envelope.Pumpdump[symbol]
+			hot := pump != nil &&
+				pump.Ignition >= sel.IgnitionIgnitionMin &&
+				pump.Precursor >= sel.IgnitionPrecursorMin &&
+				pump.Compression >= sel.IgnitionCompressionMin
+
+			volumeOK := training.price.MoverVolumeOK(symbol)
+			dayOK := training.price.SessionMoveOK(symbol, pump)
+			bookOK := training.price.BookIntact(symbol)
+			peakOK := training.price.EntryPeakOK(symbol, hot)
+			spreadLearned := spreadOK
+
+			if training.deskGate != nil {
+				if desk := training.deskGate.Features(training.price, symbol, pump); desk != nil {
+					sources["desk"] = desk
+				}
+				v, d, s, b, p := training.deskGate.Oracle(training.price, symbol, pump)
+				volumeOK = v
+				dayOK = d
+				bookOK = b
+				peakOK = p
+				spreadLearned = s && spreadOK
+			}
 
 			gridStarted := time.Now()
 			regions, err := training.grid.Observe(
 				symbol,
 				sources,
 				training.desk.Has(symbol),
-				training.price.MoverVolumeOK(symbol),
-				training.price.SessionMoveOK(symbol),
-				spreadOK,
-				training.price.BookIntact(symbol),
-				training.price.EntryPeakOK(symbol, hot),
+				volumeOK,
+				dayOK,
+				spreadLearned,
+				bookOK,
+				peakOK,
 			)
 			pipeline.Time("grid", time.Since(gridStarted))
 

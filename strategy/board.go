@@ -14,14 +14,14 @@ import (
 )
 
 /*
-Board ranks enter candidates each tick and chooses the best few for real capital.
-Trade frames arrive one symbol at a time, so Place keeps a short peer-score
-memory and ranks the current candidates against recent movers — otherwise every
-1-of-1 slice would win MaxEntersPerTick unconditionally.
+Board is cross-sectional enter capacity on top of per-symbol gates (oracle,
+resonance, story, tree). It ranks candidates from the tick envelope — grid
+pipeline outputs — and the shared price book, then applies MaxEntersPerTick
+and real open caps. Peer memory lets single-symbol frames compete with recent
+movers instead of auto-winning a 1-of-1 slice.
 */
 type Board struct {
 	*runtime.System
-	rotation *Rotation
 	mu       sync.Mutex
 	peers    map[string]peerScore
 }
@@ -45,20 +45,19 @@ type EnterCandidate struct {
 }
 
 /*
-NewBoard composes rotation memory into enter ranking.
+NewBoard starts the cross-sectional ranker for model enter candidates.
 */
-func NewBoard(ctx context.Context, rotation *Rotation) *Board {
+func NewBoard(ctx context.Context) *Board {
 	return &Board{
-		System:   runtime.NewSystem(ctx, "board"),
-		rotation: rotation,
-		peers:    make(map[string]peerScore),
+		System: runtime.NewSystem(ctx, "board"),
+		peers:  make(map[string]peerScore),
 	}
 }
 
 /*
-Score ranks one symbol higher when board, ignition, tape, and rotation align.
-Tape credit uses recent/prior ratio only — log1p(recent) on a dormant prior
-favors sleepy wake-ups over real accelerations.
+Score ranks one symbol from envelope readings (correlation, pumpdump) and price
+tape/spread/peak. Tape credit uses recent/prior ratio only — log1p(recent) on a
+dormant prior favors sleepy wake-ups over real accelerations.
 */
 func (board *Board) Score(
 	symbol string,
@@ -85,9 +84,19 @@ func (board *Board) Score(
 
 	if price != nil {
 		recent, prior := price.TapeUptake(symbol, time.Now())
+		risk := system.Cfg.Risk
 
 		if prior > 0 {
-			score += sel.WeightTapeUptake * math.Log1p(recent/prior)
+			ratio := recent / prior
+			floor := risk.MinTapeAccelRatio
+			if floor <= 0 {
+				floor = 1
+			}
+			if ratio >= floor {
+				score += sel.WeightTapeUptake * math.Log1p(ratio)
+			} else {
+				score -= sel.WeightTapeUptake * (floor - ratio)
+			}
 		}
 
 		if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
@@ -99,8 +108,8 @@ func (board *Board) Score(
 		}
 	}
 
-	if board.rotation != nil {
-		score += sel.WeightRotation * board.rotation.Score(symbol)
+	if rez := envelope.Resonance[symbol]; rez != nil && rez["calibrated"] >= 1 {
+		score += sel.WeightRotation * rez["task_skill"]
 	}
 
 	return score

@@ -82,10 +82,7 @@ func Time(id string, d time.Duration) {
 		return
 	}
 
-	ns := d.Nanoseconds()
-	if ns < 0 {
-		ns = 0
-	}
+	ns := max(d.Nanoseconds(), 0)
 
 	n := pulse.n.Add(1)
 	pulse.lastNs.Store(ns)
@@ -222,9 +219,9 @@ func flushLive() {
 	clear(pending)
 	pendingMu.Unlock()
 
-	ui.UI.WriteJSON(map[string]any{
-		"diag_pulses": batch,
-	})
+	// ui.UI.WriteJSON(map[string]any{
+	// 	"diag_pulses": batch,
+	// })
 }
 
 func (pulse *Pulse) snapshot() map[string]any {

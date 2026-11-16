@@ -4,8 +4,8 @@ import { signals } from "#/collections/app";
 import {
 	type Book,
 	bookAtom,
-	decisionBook,
 	decisionStoreKey,
+	isBook,
 } from "#/collections/book";
 import type { Decision, Region } from "#/collections/envelope";
 import {
@@ -55,19 +55,17 @@ const decisionsFromLive = (
 
 	for (const decision of Object.values(live)) {
 		if (!decision?.symbol || !decision.action) continue;
-		if (decisionBook(decision) !== book) continue;
-
-		const tier = decisionBook(decision);
+		if (!isBook(decision.tier) || decision.tier !== book) continue;
 
 		rows.push({
 			id: decisionStoreKey(decision),
 			symbol: decision.symbol,
 			action: decision.action,
 			confidence: decision.confidence ?? 0,
-			reason: decisionReason({ ...decision, tier }),
+			reason: decisionReason(decision),
 			gate: decision.gate,
 			path: decision.path,
-			tier,
+			tier: decision.tier,
 		});
 	}
 
@@ -193,6 +191,32 @@ const GateLamps = ({
 	);
 };
 
+const decisionIdleMessage = (
+	live: Record<string, Decision>,
+	book: Book,
+): string => {
+	const keys = Object.keys(live);
+	if (keys.length === 0) {
+		return "waiting for backend decision frames";
+	}
+
+	const onBook = keys.filter((key) => {
+		const row = live[key];
+		return row?.symbol && isBook(row.tier) && row.tier === book;
+	}).length;
+
+	if (onBook > 0) {
+		return "decisions on wire but filtered — reload";
+	}
+
+	const missingTier = keys.some((key) => !isBook(live[key]?.tier));
+	if (missingTier) {
+		return `${keys.length} hub row(s) missing tier on wire`;
+	}
+
+	return `${keys.length} hub row(s), none on ${book} tier — switch tab`;
+};
+
 export const Decisions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const live = useSelector(signals.decisions, (state) => state);
@@ -200,6 +224,10 @@ export const Decisions = () => {
 	const overrides = useSelector(gateLabStore, (state) => state.overrides);
 	const decisions = useMemo(
 		() => decisionsFromLive(live, book),
+		[live, book],
+	);
+	const idleMessage = useMemo(
+		() => decisionIdleMessage(live, book),
 		[live, book],
 	);
 
@@ -230,7 +258,7 @@ export const Decisions = () => {
 			<List className="min-h-0 flex-1 gap-1 overflow-auto p-2">
 				{decisions.length === 0 ? (
 					<List.Item className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 px-2.5 py-1.5 font-mono text-[11px] text-(--f4)">
-						waiting for backend decision frames
+						{idleMessage}
 					</List.Item>
 				) : (
 					decisions.map((dec) => (

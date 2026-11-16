@@ -208,7 +208,7 @@ risk:
   touch_divisor: 3
   # 24h quote-volume floor for the mover pre-filter (USD).
   min_mover_volume_usd: 10000
-  # Open-to-last day move floor (%) — liquid-but-flat names stay out.
+  # Feature scaling for desk SNM (oracles learn cuts in model/parameters/deskgate.bin).
   min_mover_change_pct: 0.5
   # Max last position in the 24h high–low range (0–1). At/above → peak veto.
   # 0.85 = top 15% of the day's range is off-limits. <=0 or >=1 disables.
@@ -227,11 +227,18 @@ risk:
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
   min_backing_ratio: 0.6
+  # Fee-net PnL% floor before stoploss path memory may arm (not break-even).
+  stoploss_arm_pnl_pct: 1.0
+  # Desk feature windows (cuts adapt from settle outcomes — not daily tuning).
+  min_impulse_change_pct: 0.20
+  impulse_window: 15m
+  min_tape_accel_ratio: 1.15
 
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.
-  max_open_positions: 10
-  max_enters_per_tick: 1
+  # Wider book so flat holds do not crowd out new movers — exits stay profit-only.
+  max_open_positions: 18
+  max_enters_per_tick: 2
   # Lone 1-of-1 trade frames must still clear this board floor.
   # 1.5 was unreachable for typical peak/precursor readings; peer cut still ranks.
   min_board_score: 0.35
@@ -272,7 +279,9 @@ learning:
   resistance_hold_half_life_sec: 14400
   resistance_pnl_ref_pct: 1.0
   min_supported_horizon: 1
-  min_surprise: 0.5
+  # PC regime gate: min adaptive surprise z above per-symbol baseline (not absolute surprise).
+  min_surprise: 0.35
+  # Task precision: manifold-relative value or empirical rank once warm.
   min_task_relative_precision: 0.5
   # Minimum enterNet z before the coder marks bullish.
   min_enter_z: 0.35

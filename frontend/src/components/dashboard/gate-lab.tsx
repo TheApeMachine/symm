@@ -84,13 +84,13 @@ const RESONANCE_FIELDS: Array<{
 		key: "min_task_relative_precision",
 		label: "prec",
 		step: "0.05",
-		hint: "Minimum task-relative precision. Below this the model skips with the resonance gate.",
+		hint: "Min task precision (absolute or empirical rank when warm).",
 	},
 	{
 		key: "min_surprise",
 		label: "surp",
 		step: "0.05",
-		hint: "Minimum surprise. Low surprise = manifold thinks nothing moved → skip.",
+		hint: "Min adaptive surprise z above per-symbol PC baseline. Flat regime → skip.",
 	},
 	{
 		key: "min_supported_horizon",

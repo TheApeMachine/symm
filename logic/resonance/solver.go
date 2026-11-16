@@ -8,10 +8,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
+
+const regimeRankWindow = 64
 
 /*
 Solver runs one predictive-coding manifold per symbol over that symbol's
@@ -35,9 +38,18 @@ type Feature struct {
 symbolState is one symbol's coder, feature moments, and deferred target.
 */
 type symbolState struct {
-	manifold *learning.ResonanceManifold
-	scorer   *featureScorer
-	pending  []float64
+	manifold  *learning.ResonanceManifold
+	scorer    *featureScorer
+	pending   []float64
+	surpriseZ     *adaptive.ZScore
+	surpriseRank  *probability.Calibrator
+	precisionRank *probability.Calibrator
+}
+
+func newRegimeCalibrator() *probability.Calibrator {
+	return probability.NewCalibrator(probability.CalibratorConfig{
+		Window: regimeRankWindow,
+	})
 }
 
 /*
@@ -136,7 +148,7 @@ func (solver *Solver) stepSymbol(
 	}
 
 	state.pending = append([]float64(nil), input...)
-	return solver.publish(state.manifold, hadTarget)
+	return solver.publish(state, hadTarget)
 }
 
 /*
@@ -165,8 +177,11 @@ func (solver *Solver) state(symbol string) *symbolState {
 	}
 
 	state := &symbolState{
-		manifold: manifold,
-		scorer:   newFeatureScorer(),
+		manifold:      manifold,
+		scorer:        newFeatureScorer(),
+		surpriseZ:     adaptive.NewZScore(),
+		surpriseRank:  newRegimeCalibrator(),
+		precisionRank: newRegimeCalibrator(),
 	}
 
 	loaded, _ := solver.symbols.LoadOrStore(symbol, state)
@@ -285,16 +300,33 @@ publish flattens manifold wire state into envelope.Resonance keys Model reads â€
 forward_curve_* is the supervised head output; supported_horizon gates cold start.
 */
 func (solver *Solver) publish(
-	manifold *learning.ResonanceManifold,
+	state *symbolState,
 	hadTarget bool,
 ) map[string]float64 {
+	manifold := state.manifold
 	layers, surprise, energy := manifold.WireSnapshot()
 	latent := manifold.LatentState()
 
+	baseline := state.surpriseZ.Center()
+	regime, _ := state.surpriseZ.Measure(surprise)
+
 	reading := map[string]float64{
-		"surprise": surprise,
-		"energy":   energy,
-		"alpha":    solver.pace,
+		"surprise":          surprise,
+		"surprise_baseline": baseline,
+		"energy":            energy,
+		"alpha":             solver.pace,
+	}
+
+	if regime.Ready {
+		reading["surprise_regime_z"] = regime.Value
+		reading["surprise_regime_ready"] = 1
+	} else {
+		reading["surprise_regime_ready"] = 0
+	}
+
+	if rank, err := state.surpriseRank.MeasureElevated(surprise); err == nil && rank.Ready {
+		reading["surprise_rank"] = rank.Value
+		reading["surprise_rank_ready"] = 1
 	}
 
 	if skill, ok := manifold.TaskSkill(); ok {
@@ -306,6 +338,11 @@ func (solver *Solver) publish(
 
 	if precision, ok := manifold.TaskPrecision(); ok {
 		reading["task_relative_precision"] = precision
+
+		if rank, err := state.precisionRank.MeasureElevated(precision); err == nil && rank.Ready {
+			reading["task_precision_rank"] = rank.Value
+			reading["task_precision_rank_ready"] = 1
+		}
 	}
 
 	if temporal, ok := manifold.TemporalError(); ok {
@@ -359,6 +396,9 @@ func (solver *Solver) Reset(resetPrecision bool) {
 		state := held.(*symbolState)
 		state.manifold.ResetState(resetPrecision)
 		state.scorer = newFeatureScorer()
+		state.surpriseZ = adaptive.NewZScore()
+		state.surpriseRank = newRegimeCalibrator()
+		state.precisionRank = newRegimeCalibrator()
 		state.pending = nil
 		return true
 	})

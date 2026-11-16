@@ -1,30 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { bookAtom, decisionBook } from "./book";
+import { decisionStoreKey } from "./book";
 
-describe("decisionBook", () => {
-	it("keeps an explicit tier", () => {
-		expect(decisionBook({ symbol: "BTC/USD", action: "enter", tier: "real" })).toBe(
-			"real",
-		);
+describe("decisionStoreKey", () => {
+	it("prefixes symbol with tier when tier is set", () => {
+		expect(
+			decisionStoreKey({ symbol: "BTC/USD", action: "enter", tier: "real" }),
+		).toBe("real:BTC/USD");
 	});
 
-	it("maps pre-tier gate skips onto the selected book", () => {
-		bookAtom.set("real");
+	it("uses symbol alone when tier is missing", () => {
 		expect(
-			decisionBook({
-				symbol: "BTC/USD",
-				action: "skip",
-				gate: "oracle",
-			}),
-		).toBe("real");
-
-		bookAtom.set("virtual");
-		expect(
-			decisionBook({
-				symbol: "ETH/USD",
-				action: "skip",
-				gate: "resonance",
-			}),
-		).toBe("virtual");
+			decisionStoreKey({ symbol: "BTC/USD", action: "skip", gate: "oracle" }),
+		).toBe("BTC/USD");
 	});
 });

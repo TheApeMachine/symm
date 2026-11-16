@@ -20,6 +20,7 @@ func TestNewRisk(t *testing.T) {
 				So(risk.MaxEntryPeakFrac, ShouldEqual, 0.85)
 				So(risk.TapeWindow, ShouldEqual, 10*time.Minute)
 				So(risk.MinBackingRatio, ShouldEqual, 0.6)
+				So(risk.StoplossArmPnLPct, ShouldEqual, 1.0)
 			})
 		})
 	})
@@ -40,6 +41,7 @@ func TestApply(t *testing.T) {
 				"min_backing_ratio":       0.4,
 				"min_tape_notional_usd":   250.0,
 				"max_entry_open_drag_pct": 1.1,
+				"stoploss_arm_pnl_pct":    1.5,
 			})
 
 			Convey("known keys land as finite values", func() {
@@ -51,6 +53,7 @@ func TestApply(t *testing.T) {
 				So(risk.MinBackingRatio, ShouldEqual, 0.4)
 				So(risk.MinTapeNotionalUSD, ShouldEqual, 250.0)
 				So(risk.MaxEntryOpenDragPct, ShouldEqual, 1.1)
+				So(risk.StoplossArmPnLPct, ShouldEqual, 1.5)
 			})
 		})
 

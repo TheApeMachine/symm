@@ -2,11 +2,10 @@ import { createAtom } from "@tanstack/store";
 import type { Decision } from "#/collections/envelope";
 
 /*
-bookAtom chooses which trades the dashboard reads. Live mode defaults to real;
-virtual/paper remain available when market.model is paper.
+bookAtom selects which tier tab the dashboard shows (balances, positions, decisions).
+Defaults to real so live money is what you see on load.
 
-The trie (model/paths) and sequencer stay shared across books — only the
-desk ledgers (balances, positions, tiered decisions) switch with this atom.
+The trie (model/paths) and sequencer stay shared — only desk ledgers switch with the tab.
 */
 export type Book = "paper" | "virtual" | "real";
 
@@ -28,22 +27,7 @@ export const bookLabel = (book: Book): string => {
 export const isBook = (value: unknown): value is Book =>
 	value === "virtual" || value === "paper" || value === "real";
 
-/*
-decisionBook maps a live decision onto a ledger tab. Explicit tier wins.
-Pre-tier gate skips (oracle/resonance/story) are desk-agnostic — they follow
-the selected book so a live REAL rail is not emptied by a virtual default.
-*/
-export const decisionBook = (decision: Decision): Book => {
-	if (isBook(decision.tier)) {
-		return decision.tier;
-	}
-
-	if (decision.virtual) {
-		return "virtual";
-	}
-
-	return bookAtom.get();
-};
-
 export const decisionStoreKey = (decision: Decision): string =>
-	`${decisionBook(decision)}:${decision.symbol}`;
+	isBook(decision.tier)
+		? `${decision.tier}:${decision.symbol}`
+		: decision.symbol;

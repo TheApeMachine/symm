@@ -215,6 +215,32 @@ export const trySendCommand = (command: Record<string, unknown>): boolean => {
 	}
 };
 
+export const applyPositionsSnapshot = (
+	positions: Record<string, unknown>,
+	tier?: string,
+) => {
+	signals.positions.setState((prev: Record<string, unknown> | null) => {
+		const next: Record<string, unknown> = {};
+		if (prev && typeof prev === "object") {
+			for (const [id, pos] of Object.entries(prev)) {
+				const posObj = pos as { tier_key?: string };
+				const posTier = posObj?.tier_key || "paper";
+				// Preserve positions belonging to other tiers
+				if (tier && posTier !== tier) {
+					next[id] = pos;
+				}
+			}
+		}
+		// Populate fresh open positions for this tier snapshot
+		if (positions && typeof positions === "object") {
+			for (const [id, pos] of Object.entries(positions)) {
+				next[id] = pos;
+			}
+		}
+		return next;
+	});
+};
+
 const applyEnvelope = (payload: Record<string, unknown>) => {
 	for (const key of Object.keys(payload)) {
 		const value = payload[key];
@@ -229,6 +255,16 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 		const atom = atoms[key];
 		if (atom) {
 			atom.set(value);
+			continue;
+		}
+
+		if (key === "positions" && (payload.positions_snapshot || payload.tier)) {
+			applyPositionsSnapshot(
+				(value && typeof value === "object" && !Array.isArray(value)
+					? value
+					: {}) as Record<string, unknown>,
+				typeof payload.tier === "string" ? payload.tier : undefined,
+			);
 			continue;
 		}
 

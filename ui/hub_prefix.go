@@ -230,16 +230,16 @@ func listFrameBudget() int {
 }
 
 /*
-policyPathKey normalizes an S3 object key to the trie key the dashboard
-expects (…/enter.bin|hold.bin|exit.bin). Canonical Tree.persist keys already
-use that form; legacy flat model/paths/<tokens>.bin keys are rewritten when
-action is known.
+policyPathKey is the pathbook trie id. Leaves are model/paths/<radix-path>.bin;
+legacy …/<action>.bin keys pass through unchanged.
 */
 func policyPathKey(storageKey, action string) string {
 	switch {
 	case strings.HasSuffix(storageKey, "/enter.bin"),
 		strings.HasSuffix(storageKey, "/hold.bin"),
 		strings.HasSuffix(storageKey, "/exit.bin"):
+		return storageKey
+	case strings.HasPrefix(storageKey, "model/paths/") && strings.HasSuffix(storageKey, ".bin"):
 		return storageKey
 	}
 

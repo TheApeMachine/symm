@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -70,9 +71,18 @@ type Tree struct {
 	store  *store.Client
 }
 
+const pathLeafPrefix = "model/paths/"
+
+/*
+leafObjectKey is the S3 object for one radix path — same segments as the trie key.
+*/
+func leafObjectKey(path string) string {
+	return pathLeafPrefix + path + ".bin"
+}
+
 /*
 NewTree hydrates the radix from model/paths/ on boot — first writer wins per
-path so duplicate action blobs from crashed Ensure races do not clobber leaves.
+path so duplicate objects for the same trie key do not clobber leaves.
 */
 func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree {
 	ctx, cancel := context.WithCancel(ctx)
@@ -92,7 +102,8 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 				continue
 			}
 
-			path, action := leafObject(*object.Key, seedPrefix)
+			path := strings.TrimPrefix(*object.Key, seedPrefix)
+			path = strings.TrimSuffix(path, ".bin")
 
 			if path == "" {
 				continue
@@ -118,11 +129,12 @@ func NewTree(ctx context.Context, seedPrefix string, client *store.Client) *Tree
 				continue
 			}
 
-			decision.Resistance = clampResistance(decision.Resistance)
-
-			if action != "" && decision.Action == "" {
-				decision.Action = action
-			}
+			floor := system.Cfg.Learning.ThresholdFloor
+			ceil := system.Cfg.Learning.ThresholdCeil
+			decision.Resistance = math.Min(
+				ceil,
+				math.Max(floor, decision.Resistance),
+			)
 
 			tree.mu.Lock()
 			root := tree.root.Load()
@@ -267,24 +279,6 @@ func (tree *Tree) Ensure(path string, action Action) {
 	tree.persist(path, decision)
 }
 
-/*
-clampResistance pins restored S3 leaves inside ThresholdFloor/Ceil so a corrupt
-blob cannot brick Predict with resistance above tail brightness forever.
-*/
-func clampResistance(value float64) float64 {
-	floor := system.Cfg.Learning.ThresholdFloor
-	ceil := system.Cfg.Learning.ThresholdCeil
-
-	if value < floor {
-		return floor
-	}
-
-	if value > ceil {
-		return ceil
-	}
-
-	return value
-}
 
 /*
 Delete drops one path leaf from memory and its action object. DeletePrefix would
@@ -312,30 +306,23 @@ func (tree *Tree) Delete(path string) {
 		return
 	}
 
-	if err := tree.store.Delete(
-		"model/paths/" + path + "/" + action.String() + ".bin",
-	); err != nil {
+	if err := tree.store.Delete(leafObjectKey(path)); err != nil {
 		errnie.Error(err)
 	}
 }
 
 /*
-persist snapshots each leaf to model/paths/{path}/{action}.bin synchronously —
-async marshal would let Update replace a leaf while an older write still queues.
+persist snapshots each leaf to model/paths/{path}.bin — trie key and prefix match.
 */
 func (tree *Tree) persist(path string, decision *runtime.Decision) {
 	if tree.store == nil || decision == nil || path == "" {
 		return
 	}
 
-	action := NewAction(decision.Action)
-
-	if action == ActionNone {
+	if NewAction(decision.Action) == ActionNone {
 		return
 	}
 
-	// Marshal before any async handoff: Insert/Ensure share the live pointer,
-	// and Update may replace the leaf while a prior write is still in flight.
 	raw, err := sonic.Marshal(decision)
 
 	if err != nil || len(raw) == 0 {
@@ -346,41 +333,6 @@ func (tree *Tree) persist(path string, decision *runtime.Decision) {
 		return
 	}
 
-	// WriteAtPrefix only enqueues; keep it on this path so same-key writes
-	// preserve call order into the store queue.
-	tree.store.WriteAtPrefix(
-		"model/paths/"+path+"/"+action.String()+".bin", raw,
-	)
+	tree.store.WriteAtPrefix(leafObjectKey(path), raw)
 	pipeline.Wrote(int64(tree.store.QueueDepth()))
-}
-
-/*
-leafObject maps an S3 key under seedPrefix to the radix path and action.
-Canonical: model/paths/R01/M1/enter.bin → ("R01/M1", "enter").
-Legacy flat: model/paths/R01/M1.bin → ("R01/M1", "").
-*/
-func leafObject(objectKey, seedPrefix string) (path, action string) {
-	path = strings.TrimPrefix(objectKey, seedPrefix)
-	path = strings.TrimSuffix(path, ".json")
-	path = strings.TrimSuffix(path, ".bin")
-	path = strings.Trim(path, "/")
-
-	if path == "" {
-		return "", ""
-	}
-
-	slash := strings.LastIndex(path, "/")
-
-	if slash < 0 {
-		return path, ""
-	}
-
-	tail := path[slash+1:]
-
-	switch tail {
-	case "enter", "hold", "exit":
-		return path[:slash], tail
-	default:
-		return path, ""
-	}
 }

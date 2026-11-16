@@ -33,63 +33,56 @@ func TestNewModel(t *testing.T) {
 		Convey("When NewModel is called", func() {
 			model := NewModel(ctx, desk, nil, func(string) {}, nil)
 
-			Convey("Model wires desk board rotation and tree", func() {
+			Convey("Model wires desk board and tree", func() {
 				So(model, ShouldNotBeNil)
 				So(model.desk, ShouldEqual, desk)
 				So(model.board, ShouldNotBeNil)
-				So(model.rotation, ShouldNotBeNil)
 				So(model.tree.Load(), ShouldNotBeNil)
 			})
 		})
 	})
 }
 
-func TestNoteSettled(t *testing.T) {
-	Convey("Setup", t, func() {
-		ctx := context.Background()
-		model := NewModel(ctx, &broker.Desk{}, nil, func(string) {}, nil)
-		win := decimal.NewFromFloat(1.0)
-
-		Convey("When a profitable position settles", func() {
-			model.NoteSettled(&broker.Position{Symbol: "BTC/USD", PnLPct: &win})
-
-			want := system.Cfg.Selection.RotationCloseBoost
-
-			Convey("Rotation score matches one win close", func() {
-				So(model.rotation.Score("BTC/USD"), ShouldEqual, want)
-			})
-		})
-	})
-}
-
-func TestHold(t *testing.T) {
+func TestGateReason(t *testing.T) {
 	Convey("Setup", t, func() {
 		model := &Model{}
-		position := &broker.Position{EntryPath: "R00/R01"}
+		learn := system.Cfg.Learning
 
-		Convey("When Hold records a distinct path", func() {
-			model.Hold(position, "R00/R02")
-
-			Convey("HoldPaths carries the latest path", func() {
-				So(position.HoldPaths, ShouldResemble, []string{"R00/R02"})
-			})
+		Convey("When resonance is not calibrated", func() {
+			rez := map[string]float64{"calibrated": 0}
+			So(model.gateReason(rez, 2, true, 1, 1), ShouldEqual, "resonance not calibrated")
 		})
 
-		Convey("When Hold is called with the entry path", func() {
-			model.Hold(position, "R00/R01")
-
-			Convey("HoldPaths stays empty", func() {
-				So(len(position.HoldPaths), ShouldEqual, 0)
-			})
+		Convey("When supported horizon is cold", func() {
+			rez := map[string]float64{
+				"calibrated":        1,
+				"supported_horizon": 0,
+			}
+			So(model.gateReason(rez, 0, true, 1, 1),
+				ShouldEqual, "supported horizon below minimum")
 		})
 
-		Convey("When Hold repeats the same path", func() {
-			model.Hold(position, "R00/R02")
-			model.Hold(position, "R00/R02")
+		Convey("When task precision is missing", func() {
+			rez := map[string]float64{
+				"calibrated":        1,
+				"supported_horizon": float64(learn.MinSupportedHorizon),
+			}
+			So(model.gateReason(rez, learn.MinSupportedHorizon, false, 0, 1),
+				ShouldEqual, "task-relative precision not ready")
+		})
 
-			Convey("HoldPaths is not duplicated", func() {
-				So(position.HoldPaths, ShouldResemble, []string{"R00/R02"})
-			})
+		Convey("When precision is below floor", func() {
+			rez := map[string]float64{"calibrated": 1}
+			floor := learn.MinTaskRelativePrecision
+			So(model.gateReason(rez, learn.MinSupportedHorizon, true, floor-0.1, 1),
+				ShouldEqual, "task-relative precision below threshold")
+		})
+
+		Convey("When surprise is below floor", func() {
+			rez := map[string]float64{"calibrated": 1}
+			floor := learn.MinSurprise
+			So(model.gateReason(rez, learn.MinSupportedHorizon, true, 1, floor-0.1),
+				ShouldEqual, "surprise below threshold")
 		})
 	})
 }
@@ -97,110 +90,50 @@ func TestHold(t *testing.T) {
 func TestExit(t *testing.T) {
 	Convey("Setup", t, func() {
 		tree := emptyTree()
+		exitPath := "R06.R00/R07.R01"
+		put(tree, exitPath, leaf(ActionExit, seedResistance()))
+
 		model := &Model{tree: &atomic.Pointer[Tree]{}}
 		model.tree.Store(tree)
 
-		Convey("When policy applyAction sees a loss position", func() {
-			loss := decimal.NewFromFloat(-0.07)
-			position := &broker.Position{
-				Symbol:    "XLM/USD",
-				TierKey:   broker.TierTypeVirtual.String(),
-				EntryPath: "R00/R01",
-				PnLPct:    &loss,
-			}
-
-			var got *runtime.Decision
-			decide := func(d *runtime.Decision) { got = d }
-
-			model.applyAction(
-				decide, func(EnterCandidate) {}, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
-				[]*broker.Position{position},
-			)
-
-			Convey("Decision is hold at the pnl gate", func() {
-				So(got.Action, ShouldEqual, "hold")
-				So(got.Gate, ShouldEqual, "pnl")
-				So(position.ExitPath, ShouldEqual, "")
-			})
+		Convey("When Exit is nil-safe", func() {
+			So(func() { model.Exit(nil, exitPath) }, ShouldNotPanic)
 		})
 
-		Convey("When policy applyAction sees profit at the floor", func() {
-			model := &Model{
-				tree:      &atomic.Pointer[Tree]{},
-				resetPath: func(string) {},
-			}
-			model.tree.Store(emptyTree())
-
-			win := decimal.NewFromFloat(0.5)
-			position := &broker.Position{
-				Symbol:    "XLM/USD",
-				TierKey:   broker.TierTypeVirtual.String(),
-				EntryPath: "R00/R01",
-				PnLPct:    &win,
-			}
-
-			var got *runtime.Decision
-			decide := func(d *runtime.Decision) { got = d }
-
-			model.applyAction(
-				decide, func(EnterCandidate) {}, "XLM/USD", "R00/M1", ActionExit, 0.5, false, false,
-				[]*broker.Position{position},
-			)
-
-			Convey("ExitPath waits until desk.Exit succeeds", func() {
-				So(got.Action, ShouldEqual, "exit")
-				So(position.ExitPath, ShouldEqual, "")
-			})
-		})
-
-		Convey("When a settled position trains the tree", func() {
-			entry := "R06.R00/R07.R01/R08.R02"
-			exit := "R09.R03/R10.R04/R11.R05"
-			pnl := decimal.NewFromFloat(-0.04)
+		Convey("When position already settled", func() {
 			closed := time.Now().UTC()
-
 			position := &broker.Position{
-				Symbol:    "AKE/USD",
-				EntryPath: entry,
-				HoldPaths: []string{exit},
-				PnL:       &pnl,
-				ClosedAt:  &closed,
+				System:   runtime.NewSystem(context.Background(), "position"),
+				ClosedAt: &closed,
 			}
+			model.Exit(position, exitPath)
 
-			path := model.exitCut(nil, position.Symbol, position)
-			model.Exit(position, path)
-
-			enterLeaf, ok := get(tree, entry)
-			exitLeaf, okExit := get(tree, exit)
-
-			Convey("Ensure seeds enter and exit leaves", func() {
-				So(path, ShouldEqual, exit)
+			Convey("Exit does not mutate the tree", func() {
+				leaf, ok := get(tree, exitPath)
 				So(ok, ShouldBeTrue)
-				So(enterLeaf.Action, ShouldEqual, "enter")
-				So(enterLeaf.Resistance, ShouldEqual, seedResistance()+0.05)
-				So(okExit, ShouldBeTrue)
-				So(exitLeaf.Action, ShouldEqual, "exit")
-				So(position.TreeApplied, ShouldBeTrue)
+				So(leaf.Resistance, ShouldEqual, seedResistance())
 			})
 		})
 
-		Convey("When exitCut would reuse EntryPath on an open position", func() {
-			cut := tokensAt("R06.R00/R07.R01", 1.0)
-			envelope := &runtime.Envelope{
-				Paths: map[string]*runtime.Tokens{
-					"AKE/USD": &cut,
-				},
-			}
+		Convey("When an open position arms an exit path", func() {
 			position := &broker.Position{
-				Symbol:    "AKE/USD",
-				EntryPath: "R06.R00/R07.R01",
+				System: runtime.NewSystem(context.Background(), "position"),
+				Symbol: "AKE/USD",
 			}
+			model.Exit(position, exitPath)
 
-			Convey("exitCut returns empty", func() {
-				So(model.exitCut(envelope, "AKE/USD", position), ShouldEqual, "")
+			Convey("ExitPath is stamped and resistance nudges", func() {
+				So(position.ExitPath, ShouldEqual, exitPath)
+				leaf, ok := get(tree, exitPath)
+				So(ok, ShouldBeTrue)
+				So(leaf.Resistance, ShouldEqual, seedResistance()+learnStep())
 			})
 		})
 	})
+}
+
+func learnStep() float64 {
+	return system.Cfg.Learning.ThresholdStep
 }
 
 func TestResistanceDelta(t *testing.T) {
@@ -285,13 +218,36 @@ func TestOracleAllows(t *testing.T) {
 	})
 }
 
+func TestStepRecordsDecision(t *testing.T) {
+	Convey("Setup", t, func() {
+		tree := emptyTree()
+		model := &Model{
+			desk:      &broker.Desk{},
+			tree:      &atomic.Pointer[Tree]{},
+			resetPath: func(string) {},
+		}
+		model.tree.Store(tree)
+
+		cut := tokensAt("R06.R00/R07.R01", 1)
+		envelope := runtime.NewEnvelope(nil)
+		envelope.Paths["BTC/USD"] = &cut
+		envelope.Regions["BTC/USD"] = []*runtime.Region{
+			{Key: 17, Brightness: 0.9},
+		}
+
+		out := model.Step(envelope)
+
+		Convey("Step records a decision on the envelope", func() {
+			So(out, ShouldNotBeNil)
+			So(out.Decisions["BTC/USD"], ShouldNotBeNil)
+			So(out.Decisions["BTC/USD"].Symbol, ShouldEqual, "BTC/USD")
+		})
+	})
+}
+
 func TestStep(t *testing.T) {
 	Convey("Setup", t, func() {
-		Convey("When the live model sees an oracle veto on a flat symbol", func() {
-			prev := system.Cfg.Market.Model
-			system.Cfg.Market.Model = "real"
-			defer func() { system.Cfg.Market.Model = prev }()
-
+		Convey("When Step sees an oracle veto on a flat symbol", func() {
 			ctx := context.Background()
 			price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
 			desk := broker.NewDesk(ctx, map[string]network.Client{
@@ -304,13 +260,10 @@ func TestStep(t *testing.T) {
 				desk:      desk,
 				tree:      &atomic.Pointer[Tree]{},
 				resetPath: func(string) {},
-				live:      true,
 			}
 			model.tree.Store(tree)
 
-			cut := runtime.Tokens{
-				{Symbols: []string{"R17"}, Brightness: 1},
-			}
+			cut := tokensAt("R06.R00/R07.R01", 1)
 			envelope := runtime.NewEnvelope(nil)
 			envelope.Paths["BTC/USD"] = &cut
 			envelope.Regions["BTC/USD"] = []*runtime.Region{
@@ -318,11 +271,10 @@ func TestStep(t *testing.T) {
 			}
 
 			out := model.Step(envelope)
-			got := out.Decisions["BTC/USD/real"]
+			got := out.Decisions["BTC/USD"]
 
-			Convey("Decision is a real-tier oracle skip", func() {
+			Convey("Decision is an oracle skip", func() {
 				So(got, ShouldNotBeNil)
-				So(got.Tier, ShouldEqual, "real")
 				So(got.Action, ShouldEqual, "skip")
 				So(got.Gate, ShouldEqual, "oracle")
 			})
@@ -334,24 +286,6 @@ func TestStep(t *testing.T) {
 
 			Convey("Step returns nil", func() {
 				So(model.Step(nil), ShouldBeNil)
-			})
-		})
-	})
-}
-
-func TestBypassReading(t *testing.T) {
-	Convey("Setup", t, func() {
-		model := &Model{}
-
-		Convey("When bypassReading fabricates lab resonance", func() {
-			rez := model.bypassReading(system.Cfg.Learning)
-
-			Convey("Calibrated gates pass defaults", func() {
-				So(rez["calibrated"], ShouldEqual, 1)
-				So(rez["surprise"], ShouldEqual, 1)
-				So(rez["task_relative_precision"], ShouldEqual, 1)
-				horizon := float64(max(system.Cfg.Learning.MinSupportedHorizon, 1))
-				So(rez["supported_horizon"], ShouldEqual, horizon)
 			})
 		})
 	})
@@ -417,48 +351,14 @@ func BenchmarkNewModel(b *testing.B) {
 	}
 }
 
-func BenchmarkNoteSettled(b *testing.B) {
-	ctx := context.Background()
-	model := NewModel(ctx, &broker.Desk{}, nil, func(string) {}, nil)
-	win := decimal.NewFromFloat(1.0)
-	pos := &broker.Position{Symbol: "BTC/USD", PnLPct: &win}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		model.NoteSettled(pos)
-	}
-}
-
-func BenchmarkHold(b *testing.B) {
-	model := &Model{}
-	position := &broker.Position{EntryPath: "R00/R01"}
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		model.Hold(position, "R00/R02")
-		position.HoldPaths = nil
-	}
-}
-
 func BenchmarkExit(b *testing.B) {
 	tree := emptyTree()
-	entry := "R06.R00/R07.R01/R08.R02"
-	exit := "R09.R03/R10.R04/R11.R05"
-	put(tree, entry, leaf(ActionEnter, 0.75))
-	put(tree, exit, leaf(ActionExit, 0.75))
+	exitPath := "R06.R00/R07.R01/R08.R02"
+	put(tree, exitPath, leaf(ActionExit, 0.75))
 
-	pnl := decimal.NewFromFloat(-0.04)
-	closed := time.Now().UTC()
 	position := &broker.Position{
-		Symbol:    "AKE/USD",
-		EntryPath: entry,
-		HoldPaths: []string{exit},
-		PnL:       &pnl,
-		ClosedAt:  &closed,
+		System: runtime.NewSystem(context.Background(), "position"),
+		Symbol: "AKE/USD",
 	}
 	model := &Model{tree: &atomic.Pointer[Tree]{}}
 	model.tree.Store(tree)
@@ -467,9 +367,8 @@ func BenchmarkExit(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		path := model.exitCut(nil, position.Symbol, position)
-		model.Exit(position, path)
-		position.TreeApplied = false
+		position.ExitPath = ""
+		model.Exit(position, exitPath)
 	}
 }
 
@@ -515,10 +414,6 @@ func BenchmarkOracleAllows(b *testing.B) {
 }
 
 func BenchmarkStep(b *testing.B) {
-	prev := system.Cfg.Market.Model
-	system.Cfg.Market.Model = "real"
-	defer func() { system.Cfg.Market.Model = prev }()
-
 	ctx := context.Background()
 	price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
 	desk := broker.NewDesk(ctx, map[string]network.Client{
@@ -530,10 +425,9 @@ func BenchmarkStep(b *testing.B) {
 		desk:      desk,
 		tree:      &atomic.Pointer[Tree]{},
 		resetPath: func(string) {},
-		live:      true,
 	}
 	model.tree.Store(tree)
-	cut := runtime.Tokens{{Symbols: []string{"R17"}, Brightness: 1}}
+	cut := tokensAt("R06.R00/R07.R01", 1)
 	envelope := runtime.NewEnvelope(nil)
 	envelope.Paths["BTC/USD"] = &cut
 	envelope.Regions["BTC/USD"] = []*runtime.Region{{Key: 17, Brightness: 0.9}}
@@ -543,18 +437,6 @@ func BenchmarkStep(b *testing.B) {
 
 	for b.Loop() {
 		_ = model.Step(envelope)
-	}
-}
-
-func BenchmarkBypassReading(b *testing.B) {
-	model := &Model{}
-	cfg := system.Cfg.Learning
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = model.bypassReading(cfg)
 	}
 }
 

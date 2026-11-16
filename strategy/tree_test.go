@@ -326,28 +326,6 @@ func TestDelete(t *testing.T) {
 	})
 }
 
-func TestLeafObject(t *testing.T) {
-	Convey("Setup", t, func() {
-		Convey("When object keys use action suffixes", func() {
-			path, action := leafObject("model/paths/R01/M1/enter.bin", "model/paths/")
-
-			Convey("leafObject splits path and action", func() {
-				So(path, ShouldEqual, "R01/M1")
-				So(action, ShouldEqual, "enter")
-			})
-		})
-
-		Convey("When object keys use legacy flat layout", func() {
-			path, action := leafObject("model/paths/R01/M1.bin", "model/paths/")
-
-			Convey("leafObject keeps path without action", func() {
-				So(path, ShouldEqual, "R01/M1")
-				So(action, ShouldEqual, "")
-			})
-		})
-	})
-}
-
 func BenchmarkNewAction(b *testing.B) {
 	b.ReportAllocs()
 
@@ -440,10 +418,3 @@ func BenchmarkDelete(b *testing.B) {
 	}
 }
 
-func BenchmarkLeafObject(b *testing.B) {
-	b.ReportAllocs()
-
-	for b.Loop() {
-		leafObject("model/paths/R01/M1/enter.bin", "model/paths/")
-	}
-}

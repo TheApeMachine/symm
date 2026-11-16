@@ -23,6 +23,18 @@ type Risk struct {
 	MinTapeNotionalUSD float64
 	BackingBandFrac    float64
 	MinBackingRatio    float64
+	// StoplossArmPnLPct is the fee-net PnL% floor before path memory may arm.
+	StoplossArmPnLPct float64
+	// MinImpulseChangePct is legacy deskgate scale; impulse uses envelope.Pumpdump.
+	MinImpulseChangePct float64
+	// ImpulseWindow is deprecated (volume-clock ignition replaced wall-clock marks).
+	ImpulseWindow time.Duration
+	// ImpulseShortWindow is deprecated.
+	ImpulseShortWindow time.Duration
+	// MinImpulseAccelRatio optional Pumpdump ignition/trend floor; <=0 disables.
+	MinImpulseAccelRatio float64
+	// MinTapeAccelRatio is recent/prior buy-tape; <=0 disables acceleration.
+	MinTapeAccelRatio float64
 }
 
 func NewRisk() *Risk {
@@ -38,6 +50,12 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.min_tape_notional_usd", 100.0)
 	viper.SetDefault("risk.backing_band_frac", 0.01)
 	viper.SetDefault("risk.min_backing_ratio", 0.6)
+	viper.SetDefault("risk.stoploss_arm_pnl_pct", 1.0)
+	viper.SetDefault("risk.min_impulse_change_pct", 0.20)
+	viper.SetDefault("risk.impulse_window", 15*time.Minute)
+	viper.SetDefault("risk.impulse_short_window", 5*time.Minute)
+	viper.SetDefault("risk.min_impulse_accel_ratio", 0.0)
+	viper.SetDefault("risk.min_tape_accel_ratio", 1.15)
 
 	return &Risk{
 		MaxFraction:         viper.GetFloat64("risk.max_fraction"),
@@ -52,6 +70,12 @@ func NewRisk() *Risk {
 		MinTapeNotionalUSD:  viper.GetFloat64("risk.min_tape_notional_usd"),
 		BackingBandFrac:     viper.GetFloat64("risk.backing_band_frac"),
 		MinBackingRatio:     viper.GetFloat64("risk.min_backing_ratio"),
+		StoplossArmPnLPct:     viper.GetFloat64("risk.stoploss_arm_pnl_pct"),
+		MinImpulseChangePct:   viper.GetFloat64("risk.min_impulse_change_pct"),
+		ImpulseWindow:          viper.GetDuration("risk.impulse_window"),
+		ImpulseShortWindow:     viper.GetDuration("risk.impulse_short_window"),
+		MinImpulseAccelRatio:   viper.GetFloat64("risk.min_impulse_accel_ratio"),
+		MinTapeAccelRatio:      viper.GetFloat64("risk.min_tape_accel_ratio"),
 	}
 }
 
@@ -90,4 +114,8 @@ func (risk *Risk) Apply(patch map[string]any) {
 	setFloat(&risk.MinBackingRatio, "min_backing_ratio")
 	setFloat(&risk.MaxEntryOpenDragPct, "max_entry_open_drag_pct")
 	setFloat(&risk.MinTapeNotionalUSD, "min_tape_notional_usd")
+	setFloat(&risk.StoplossArmPnLPct, "stoploss_arm_pnl_pct")
+	setFloat(&risk.MinImpulseChangePct, "min_impulse_change_pct")
+	setFloat(&risk.MinImpulseAccelRatio, "min_impulse_accel_ratio")
+	setFloat(&risk.MinTapeAccelRatio, "min_tape_accel_ratio")
 }

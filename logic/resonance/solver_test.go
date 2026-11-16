@@ -140,6 +140,8 @@ func TestStepSymbol(t *testing.T) {
 				So(reading["surprise"], ShouldNotEqual, 0)
 				_, hasCurve := reading["forward_curve_0"]
 				So(hasCurve, ShouldBeTrue)
+				_, hasBaseline := reading["surprise_baseline"]
+				So(hasBaseline, ShouldBeTrue)
 			})
 		})
 	})

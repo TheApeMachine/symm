@@ -1,16 +1,15 @@
 /*
 Human words and tones for a held position's Stoploss (broker.Stoploss on the wire).
-Arm floor is fee-derived; trail/exhaust come from path memory (MoveBaseline
-n1/n2, CUSUM share) — not fixed exhaust cutoffs.
+Floor / n1 / n2 come from the live stop — not Ascent path memory.
 */
 
 import {
+	type MarketRegime,
 	STOPLOSS_ARMED,
 	STOPLOSS_HEALTHY,
 	STOPLOSS_TRIGGERED,
 	type Stoploss,
 } from "#/collections/types";
-import { pctMark } from "#/lib/format";
 
 export type Tone = "good" | "warn" | "bad" | "info" | "neutral";
 
@@ -27,31 +26,34 @@ export const meterTone = (tone: Tone): MeterTone =>
 					? "info"
 					: "disabled";
 
-/** Climb above arm — the scale giveback and crest are measured against. */
 export const climbAboveArm = (stop: Stoploss) =>
 	Math.max(0, stop.PeakPnLPct - stop.ArmPnlPct);
 
-/** Desk trip floor from learned down memory; falls back to half-climb. */
+/** Desk trip floor — prefers live TrailingFloor, else typical pullback room. */
 export const givebackFloor = (stop: Stoploss) => {
-	const n2 = Math.max(
-		stop.Ascent?.RecoveredPullback ?? 0,
-		stop.Ascent?.MeanDown ?? 0,
-	);
+	if (
+		typeof stop.TrailingFloor === "number" &&
+		Number.isFinite(stop.TrailingFloor)
+	) {
+		return stop.TrailingFloor;
+	}
+	const n2 = Math.max(0, stop.TypicalPullback ?? 0);
 	const climb = climbAboveArm(stop);
-	const room = n2 > 0 ? n2 : climb / 2;
+	const room = n2 > 0 ? n2 * 1.35 : climb / 2;
 	return stop.PeakPnLPct - room;
 };
 
-/** pp still above the giveback trip (negative ⇒ already past half-climb). */
 export const stopRoom = (stop: Stoploss) =>
 	stop.CurrentPnLPct - givebackFloor(stop);
 
-/** 0 at peak → 1 at/below half-climb giveback. */
+/** 0 at peak → 1 at/below trailing floor. */
 export const stopProximity = (stop: Stoploss) => {
-	const climb = climbAboveArm(stop);
-	if (climb <= 0) return 0;
-	const giveback = Math.max(0, stop.PeakPnLPct - stop.CurrentPnLPct);
-	return Math.max(0, Math.min(1, giveback / (climb / 2)));
+	const peak = stop.PeakPnLPct;
+	const floor = givebackFloor(stop);
+	const span = peak - floor;
+	if (span <= 1e-9) return 0;
+	const drop = Math.max(0, peak - stop.CurrentPnLPct);
+	return Math.max(0, Math.min(1, drop / span));
 };
 
 export const stopArmed = (stop: Stoploss) =>
@@ -70,11 +72,25 @@ export const stateTone = (state: number | null | undefined): Tone => {
 	}
 };
 
-/** Crawl/smooth/chaos need 2 marks; ignition trips on 1 crest exhaust. */
+export const regimeLabel = (regime?: MarketRegime) => {
+	switch (regime) {
+		case "CRAWL":
+			return "Crawl";
+		case "SMOOTH":
+			return "Smooth";
+		case "EXPLOSIVE":
+			return "Explosive";
+		case "CHAOS":
+			return "Chaos";
+		default:
+			return regime || "—";
+	}
+};
+
 export const CONFIRM_MARKS_MAX = 2;
 
 export const confirmsNeeded = (stop?: Stoploss) =>
-	stop?.Regime === "ignition" ? 1 : CONFIRM_MARKS_MAX; // desk Hysteresis window
+	stop?.Regime === "EXPLOSIVE" ? 1 : CONFIRM_MARKS_MAX;
 
 export const heldVerdict = (
 	stop: Stoploss | null | undefined,
@@ -88,32 +104,30 @@ export const heldVerdict = (
 
 	if (stop.State === STOPLOSS_TRIGGERED) {
 		return {
-			text: "Crest confirmed — desk should exit on this mark",
+			text: `${regimeLabel(stop.Regime)} trip — desk should exit on this mark`,
 			tone: "bad",
 		};
 	}
 
 	if (stop.State === STOPLOSS_ARMED) {
-		const room = stopRoom(stop);
 		const proximity = stopProximity(stop);
 		const confirms = stop.Confirms ?? 0;
 		const needed = confirmsNeeded(stop);
-		const exh = stop.ExhaustScore ?? 0;
 		return {
-			text: `Armed — peak ${pctMark(stop.PeakPnLPct, 1)}, ${room.toFixed(1)}pp above giveback · c${confirms}/${needed} exh${exh.toFixed(2)}`,
+			text: `${regimeLabel(stop.Regime)} armed — mark in the breathing room`,
 			tone: proximity >= 0.7 || confirms >= needed ? "warn" : "info",
 		};
 	}
 
-	if (stop.PeakPnLPct > Math.abs(stop.InitialPnLPct)) {
+	if (stop.PeakPnLPct >= stop.ArmPnlPct) {
 		return {
-			text: `In profit (peak ${stop.PeakPnLPct.toFixed(1)}%) — waiting to arm at ${stop.ArmPnlPct.toFixed(1)}%`,
+			text: "Peak cleared arm — waiting for next mark to arm",
 			tone: "good",
 		};
 	}
 
 	return {
-		text: `Holding near entry (${stop.CurrentPnLPct.toFixed(2)}%) — healthy`,
+		text: "Climbing toward the arm line",
 		tone: "good",
 	};
 };
@@ -140,6 +154,7 @@ export const buildStopChecks = (
 	const needed = confirmsNeeded(stop);
 	const exh = stop.ExhaustScore ?? 0;
 	const confirmPct = Math.max(0, Math.min(100, (confirms / needed) * 100));
+	const floor = givebackFloor(stop);
 
 	return [
 		{
@@ -147,9 +162,9 @@ export const buildStopChecks = (
 			name: "Crest",
 			role: "defence",
 			word: {
-				label: armed ? `${room.toFixed(1)}pp to giveback` : "not armed",
+				label: armed ? `${room.toFixed(1)}pp to floor` : "not armed",
 				short: armed ? `${proxPct.toFixed(0)}%` : "—",
-				title: `Giveback floor ${givebackFloor(stop).toFixed(2)}% (half climb)`,
+				title: `Trailing floor ${floor.toFixed(2)}%`,
 			},
 			percent: armed ? proxPct : null,
 			tone:
@@ -178,9 +193,7 @@ export const buildStopChecks = (
 			name: "Confirm",
 			role: "harvest",
 			word: {
-				label: armed
-					? `c${confirms}/${needed} exh${exh.toFixed(2)}`
-					: "—",
+				label: armed ? `c${confirms}/${needed} exh${exh.toFixed(2)}` : "—",
 				short: armed ? `${confirmPct.toFixed(0)}%` : "—",
 				title: "Exit confirms × climb exhaust",
 			},

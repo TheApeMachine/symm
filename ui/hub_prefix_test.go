@@ -113,19 +113,11 @@ func TestPolicyPathKey(t *testing.T) {
 			})
 		})
 
-		Convey("When a legacy .bin key needs enter", func() {
+		Convey("When the storage key is a radix leaf", func() {
 			key := policyPathKey("model/paths/R01/R02.bin", "enter")
 
-			Convey("The trie key is rewritten to enter.bin", func() {
-				So(key, ShouldEqual, "model/paths/R01/R02/enter.bin")
-			})
-		})
-
-		Convey("When M2 flat key needs exit", func() {
-			key := policyPathKey("model/paths/M2/R00.bin", "exit")
-
-			Convey("The trie key is rewritten to exit.bin", func() {
-				So(key, ShouldEqual, "model/paths/M2/R00/exit.bin")
+			Convey("The key is unchanged", func() {
+				So(key, ShouldEqual, "model/paths/R01/R02.bin")
 			})
 		})
 	})

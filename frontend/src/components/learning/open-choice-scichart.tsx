@@ -2,32 +2,15 @@ import { useRef } from "react";
 import { FastLineRenderableSeries, XyDataSeries } from "scichart";
 import { SciChartReact } from "scichart-react";
 import { signals } from "#/collections/app";
+import { bookAtom } from "#/collections/book";
 import type { Position } from "#/collections/types";
 import {
 	drawOpenChoiceChart,
 	type OpenChoiceChartApi,
 } from "./open-choice-draw";
+import { strokeFor } from "./open-choice-stroke";
 
-const STROKES = [
-	"#79D2C6",
-	"#FF7DFD",
-	"#5B88FF",
-	"#D1765F",
-	"#F5F77F",
-	"#F8CFF7",
-	"#6CA261",
-	"#F1B470",
-	"#B3A0D4",
-	"#80F078",
-];
-
-const strokeFor = (id: string) => {
-	let h = 0;
-	for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-	return STROKES[Math.abs(h) % STROKES.length];
-};
-
-/** Client-only SciChart surface — subscribe and append pnl_pct. */
+/** Client-only SciChart surface — subscribe and append pnl_pct lines. */
 export const OpenChoiceSciChart = ({
 	onReady,
 }: {
@@ -43,15 +26,19 @@ export const OpenChoiceSciChart = ({
 			onInit={(api: OpenChoiceChartApi) => {
 				onReadyRef.current?.(api);
 
-				const sub = signals.positions.subscribe((positions) => {
+				const updateChart = () => {
 					tick.current++;
 					const x = tick.current;
 					const seen: string[] = [];
+					const currentBook = bookAtom.get();
+					const positions = signals.positions.state;
 
 					for (const pos of Object.values(positions)) {
 						const position = pos as Position;
 						const id = position.id;
-						if (!id) continue;
+						if (!id || position.closed_at) continue;
+						const tier = position.tier_key || "paper";
+						if (tier !== currentBook) continue;
 
 						let series = api.sciChartSurface.renderableSeries.getById(id);
 
@@ -82,10 +69,14 @@ export const OpenChoiceSciChart = ({
 					}
 
 					api.sciChartSurface.invalidateElement();
-				});
+				};
+
+				const subPositions = signals.positions.subscribe(updateChart);
+				const subBook = bookAtom.subscribe(updateChart);
 
 				return () => {
-					sub.unsubscribe();
+					subPositions.unsubscribe();
+					subBook.unsubscribe();
 				};
 			}}
 			style={{ width: "100%", height: "100%" }}

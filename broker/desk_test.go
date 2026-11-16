@@ -191,20 +191,11 @@ func TestDeskExit(t *testing.T) {
 
 		Convey("When Exit routes through paper", func() {
 			setBook(desk.price, "120", "121", "30")
-			err := desk.Exit(TierTypePaper, pos, false)
+			err := desk.Exit(pos, false)
 
 			Convey("Closing is armed", func() {
 				So(err, ShouldBeNil)
 				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
-			})
-		})
-
-		Convey("When Exit targets an unknown tier", func() {
-			err := desk.Exit(TierType(99), pos, false)
-
-			Convey("Desk returns not-found", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldContainSubstring, "[desk.Exit] unknown tier")
 			})
 		})
 	}))
@@ -223,7 +214,7 @@ func TestDeskForceExit(t *testing.T) {
 
 		Convey("When Exit force dumps an underwater row", func() {
 			setBook(desk.price, "100", "101", "30")
-			err := desk.Exit(TierTypePaper, pos, true)
+			err := desk.Exit(pos, true)
 
 			Convey("Manual exit arms BUSY", func() {
 				So(err, ShouldBeNil)
@@ -655,7 +646,7 @@ func BenchmarkDeskExit(b *testing.B) {
 			pos := NewPosition(ctx, testSymbol, "paper", "path", desk.price, nil, nil)
 			pos.ExitPath = "R00/M1"
 			paper.positions.Add(testSymbol, pos, true)
-			_ = desk.Exit(TierTypePaper, pos, false)
+			_ = desk.Exit(pos, false)
 		})()
 	}
 }

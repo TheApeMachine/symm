@@ -32,6 +32,19 @@ const (
 	TierTypeReal
 )
 
+func TierString(key string) TierType {
+	switch key {
+	case "virtual":
+		return TierTypeVirtual
+	case "paper":
+		return TierTypePaper
+	case "real":
+		return TierTypeReal
+	}
+
+	return TierTypeVirtual
+}
+
 /*
 String is the cache tierKey and hub JSON label; invalid values log because
 corrupt tier keys would write positions under the wrong S3 prefix.

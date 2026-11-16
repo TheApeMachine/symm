@@ -35,7 +35,7 @@ func qualified(name string) string {
 }
 
 func (catalog *Catalog) seeds() []seed {
-	out := make([]seed, 0, 10)
+	out := make([]seed, 0, 13)
 
 	for _, ledger := range []string{"paper", "real", "virtual"} {
 		for _, state := range []string{"open", "closed"} {
@@ -48,6 +48,17 @@ func (catalog *Catalog) seeds() []seed {
 				empty:   catalog.emptyPositionView(name),
 			})
 		}
+	}
+
+	for _, ledger := range []string{"paper", "real", "virtual"} {
+		name := "stoploss_" + ledger
+		glob := fmt.Sprintf("s3://%s/%s/stops/**", catalog.bucket, ledger)
+
+		out = append(out, seed{
+			name:    name,
+			primary: catalog.stoplossView(name, glob),
+			empty:   catalog.emptyStoplossView(name),
+		})
 	}
 
 	framesGlob := fmt.Sprintf("s3://%s/market/level3/**/*.ndjson", catalog.bucket)
@@ -137,6 +148,113 @@ func emptyPositionColumns() []string {
 		"CAST(NULL AS VARCHAR) AS closed_at",
 		"CAST(NULL AS VARCHAR) AS fills",
 		"CAST(NULL AS VARCHAR) AS hold_paths",
+	}
+}
+
+/*
+stoplossView reads the temporal StopHistory tape: one Stoploss JSON per
+lifecycle beat under {ledger}/stops/{symbol}/{positionID}/{nanos}. Path parts
+come from filename so symbol slashes (BTC/USD) stay intact.
+*/
+func (catalog *Catalog) stoplossView(name, glob string) string {
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT %s FROM read_json(%s, filename=true, union_by_name=true, columns=%s)",
+		qualified(name),
+		strings.Join(stoplossProjections(), ", "),
+		literal(glob),
+		stoplossColumnMap(),
+	)
+}
+
+func (catalog *Catalog) emptyStoplossView(name string) string {
+	return fmt.Sprintf(
+		"CREATE OR REPLACE VIEW %s AS SELECT %s WHERE false",
+		qualified(name),
+		strings.Join(emptyStoplossColumns(), ", "),
+	)
+}
+
+func stoplossColumnMap() string {
+	return `{` +
+		`'State': 'INTEGER', ` +
+		`'Regime': 'VARCHAR', ` +
+		`'InitialPnLPct': 'DOUBLE', ` +
+		`'CurrentPnLPct': 'DOUBLE', ` +
+		`'PeakPnLPct': 'DOUBLE', ` +
+		`'ArmPnlPct': 'DOUBLE', ` +
+		`'TrailingFloor': 'DOUBLE', ` +
+		`'ExhaustScore': 'DOUBLE', ` +
+		`'Confirms': 'INTEGER', ` +
+		`'TypicalPush': 'DOUBLE', ` +
+		`'TypicalPullback': 'DOUBLE', ` +
+		`'CurrentDrop': 'DOUBLE', ` +
+		`'EmaDelta': 'DOUBLE', ` +
+		`'TriggerReason': 'VARCHAR', ` +
+		`'MaxWindow': 'INTEGER', ` +
+		`'MaxSwings': 'INTEGER', ` +
+		`'RallyStart': 'DOUBLE', ` +
+		`'PullbackLow': 'DOUBLE', ` +
+		`'PushRecorded': 'BOOLEAN', ` +
+		`'EmaInit': 'BOOLEAN', ` +
+		`'FlatTicks': 'INTEGER', ` +
+		`'ExplosiveActive': 'BOOLEAN', ` +
+		`'ExplosivePushes': 'INTEGER', ` +
+		`'ExplosiveTTL': 'INTEGER', ` +
+		`'PeakPushDelta': 'DOUBLE'` +
+		`}`
+}
+
+func stoplossProjections() []string {
+	path := `regexp_extract(filename, '/stops/(.+)/([^/]+)/([0-9]{19})$'`
+
+	return []string{
+		path + `, 1) AS symbol`,
+		path + `, 2) AS position_id`,
+		`TRY_CAST(` + path + `, 3) AS UBIGINT) AS noted_at_ns`,
+		`State AS state`,
+		`Regime AS regime`,
+		`InitialPnLPct AS initial_pnl_pct`,
+		`CurrentPnLPct AS current_pnl_pct`,
+		`PeakPnLPct AS peak_pnl_pct`,
+		`ArmPnlPct AS arm_pnl_pct`,
+		`TrailingFloor AS trailing_floor`,
+		`ExhaustScore AS exhaust_score`,
+		`Confirms AS confirms`,
+		`TypicalPush AS typical_push`,
+		`TypicalPullback AS typical_pullback`,
+		`CurrentDrop AS current_drop`,
+		`EmaDelta AS ema_delta`,
+		`TriggerReason AS trigger_reason`,
+		`(PeakPnLPct - CurrentPnLPct) AS giveback_pct`,
+		`ExplosiveActive AS explosive_active`,
+		`ExplosivePushes AS explosive_pushes`,
+		`PeakPushDelta AS peak_push_delta`,
+	}
+}
+
+func emptyStoplossColumns() []string {
+	return []string{
+		"CAST(NULL AS VARCHAR) AS symbol",
+		"CAST(NULL AS VARCHAR) AS position_id",
+		"CAST(NULL AS UBIGINT) AS noted_at_ns",
+		"CAST(NULL AS INTEGER) AS state",
+		"CAST(NULL AS VARCHAR) AS regime",
+		"CAST(NULL AS DOUBLE) AS initial_pnl_pct",
+		"CAST(NULL AS DOUBLE) AS current_pnl_pct",
+		"CAST(NULL AS DOUBLE) AS peak_pnl_pct",
+		"CAST(NULL AS DOUBLE) AS arm_pnl_pct",
+		"CAST(NULL AS DOUBLE) AS trailing_floor",
+		"CAST(NULL AS DOUBLE) AS exhaust_score",
+		"CAST(NULL AS INTEGER) AS confirms",
+		"CAST(NULL AS DOUBLE) AS typical_push",
+		"CAST(NULL AS DOUBLE) AS typical_pullback",
+		"CAST(NULL AS DOUBLE) AS current_drop",
+		"CAST(NULL AS DOUBLE) AS ema_delta",
+		"CAST(NULL AS VARCHAR) AS trigger_reason",
+		"CAST(NULL AS DOUBLE) AS giveback_pct",
+		"CAST(NULL AS BOOLEAN) AS explosive_active",
+		"CAST(NULL AS INTEGER) AS explosive_pushes",
+		"CAST(NULL AS DOUBLE) AS peak_push_delta",
 	}
 }
 

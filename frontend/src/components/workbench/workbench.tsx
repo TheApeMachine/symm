@@ -92,8 +92,9 @@ Workbench is the analytical surface.
 The viewer is not given a table of its own. It is given a Client backed by a
 Perspective Virtual Server over DuckDB (hub proxy → workbench service), which
 means the pivots, filters, sorts, and expressions configured in its UI are
-compiled into SQL and evaluated against S3 JSON views (open/closed positions and
-Level3 NDJSON), and only the window on screen is transferred.
+compiled into SQL and evaluated against S3 JSON views (open/closed positions,
+temporal stoploss tapes, and Level3 NDJSON), and only the window on screen is
+transferred.
 */
 export const Workbench = () => {
 	const [client, setClient] = useState<WarehouseClient | undefined>();

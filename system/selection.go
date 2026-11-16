@@ -7,8 +7,8 @@ import (
 )
 
 /*
-Selection configures cross-sectional board ranking, capacity limits, dual peak
-caps, ignition thresholds, and rotation.
+Selection configures cross-sectional board ranking, capacity limits, and dual
+peak / ignition thresholds.
 */
 type Selection struct {
 	MaxOpenPositions       int
@@ -25,14 +25,15 @@ type Selection struct {
 	WeightTapeUptake       float64
 	WeightSpread           float64
 	WeightPeakFrac         float64
-	WeightRotation         float64
-	HeartbeatBatch         int
-	RotationCloseBoost     float64
+	// WeightRotation scales calibrated resonance task_skill in board ranking.
+	WeightRotation     float64
+	HeartbeatBatch     int
+	RotationCloseBoost float64
 }
 
 func NewSelection() *Selection {
-	viper.SetDefault("selection.max_open_positions", 10)
-	viper.SetDefault("selection.max_enters_per_tick", 1)
+	viper.SetDefault("selection.max_open_positions", 18)
+	viper.SetDefault("selection.max_enters_per_tick", 2)
 	viper.SetDefault("selection.min_board_score", 0.35)
 	viper.SetDefault("selection.board_peer_window", 2*time.Second)
 	viper.SetDefault("selection.max_accum_peak_frac", 0.85)

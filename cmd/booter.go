@@ -30,6 +30,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/strategy"
+	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue"
@@ -402,7 +403,7 @@ func (booter *Booter) initMarket() error {
 			))
 		}
 
-		return booter.desk.Exit(tt, position, true)
+		return booter.desk.Exit(position, true)
 	})
 
 	ui.UI.RegisterCallback(func() {
@@ -425,20 +426,25 @@ func (booter *Booter) initMarket() error {
 func (booter *Booter) initPipeline() error {
 	ctx := booter.Context()
 
-	training := strategy.NewTraining(ctx, booter.price, booter.desk, booter.store)
+	deskGate := deskgate.NewGate(ctx, booter.store)
+
+	training := strategy.NewTraining(
+		ctx, booter.price, booter.desk, booter.store, deskGate,
+	)
+
 	model := strategy.NewModel(
 		ctx, booter.desk, booter.price, training.ResetSequencer, booter.store,
 	)
+
 	booter.training = training
 	booter.model = model
 	booter.persist = NewTickPersist(ctx, booter.store)
-	booter.graph = pipeline.NewGraph()
 
 	booter.workspace = nmruntime.NewWorkspace(
 		ctx,
 		"workspace",
 		[]nmruntime.Ring{
-			{Group: "signal", Nodes: booter.graph.Wrap("signal", []nmruntime.Node{
+			{Group: "signal", Nodes: []nmruntime.Node{
 				correlation.NewSignal(ctx, booter.price),
 				cvd.NewSignal(ctx, booter.book),
 				depthflow.NewSignal(ctx, booter.book, booter.instrument),
@@ -449,48 +455,39 @@ func (booter *Booter) initPipeline() error {
 				pumpdump.NewSignal(ctx, booter.book, booter.price),
 				sentiment.NewSignal(ctx),
 				toxicity.NewSignal(ctx, booter.book),
-			})},
+			}},
 			// Resonance then training are sequential rings: both mutate/read
 			// envelope maps, and a shared handler group races Metrics().
-			{Group: "resonance", Nodes: booter.graph.Wrap("resonance", []nmruntime.Node{
+			{Group: "resonance", Nodes: []nmruntime.Node{
 				resonance.NewSolver(ctx),
-			})},
-			{Group: "training", Nodes: booter.graph.Wrap("training", []nmruntime.Node{
+			}},
+			{Group: "training", Nodes: []nmruntime.Node{
 				training,
-			})},
-			{Group: "model", Nodes: booter.graph.Wrap("model", []nmruntime.Node{
+			}},
+			{Group: "model", Nodes: []nmruntime.Node{
 				model,
-			})},
-			{Group: "persist", Nodes: booter.graph.Wrap("persist", []nmruntime.Node{
+			}},
+			{Group: "persist", Nodes: []nmruntime.Node{
 				booter.persist,
-			})},
+			}},
 		},
 	)
 
 	booter.workspace.Transition(nmruntime.READY)
-	booter.graph.PublishTopology()
-	go booter.watchPipeline()
+	// booter.graph.PublishTopology()
+	// go booter.watchPipeline()
 
 	booter.desk.OnTrade(func(trade *market.Trade) {
 		if booter.workspace == nil || trade == nil {
 			return
 		}
 
-		started := time.Now()
+		// started := time.Now()
 		tick := nmruntime.NewEnvelope(trade)
 		tick.N = data.Tick.Add(1)
 
-		if ui.UI != nil && ui.UI.Active() {
-			ui.UI.WriteJSON(map[string]any{
-				"tick": map[string]any{
-					"epoch": data.Epoch.Load(),
-					"n":     tick.N,
-				},
-			})
-		}
-
 		booter.workspace.Step(tick)
-		booter.graph.Ingress(time.Since(started))
+		// booter.graph.Ingress(time.Since(started))
 	})
 
 	return nil

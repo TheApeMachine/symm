@@ -1,13 +1,14 @@
+import { useSelector } from "@tanstack/react-store";
+import { lazy, Suspense, useRef, useState } from "react";
 import { signals } from "#/collections/app";
 import { type Book, bookAtom, isBook } from "#/collections/book";
 import type { Position } from "#/collections/types";
+import { comparePositionRows } from "#/lib/frame-position";
 import { asFinite, moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { trySendCommand } from "#/providers/websocket";
-import { useSelector } from "@tanstack/react-store";
-import { lazy, Suspense, useState } from "react";
 import type { OpenChoiceChartApi } from "./open-choice-draw";
-import { AUTO_COLOR } from "scichart";
+import { strokeFor } from "./open-choice-stroke";
 
 /*
 SciChart's ESM is broken under Node SSR. Lazy-load so the route module can
@@ -22,17 +23,24 @@ const OpenChoiceSciChart = lazy(() =>
 const exitBook = (position: Position, book: Book): Book =>
 	isBook(position.tier_key) ? position.tier_key : book;
 
-export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
+export const OpenChoiceChart = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const positions = useSelector(
+	const allPositions = useSelector(
 		signals.positions,
 		(state) => state as Record<string, Position>,
 	);
+	const positions = Object.values(allPositions)
+		.filter((pos) => {
+			const tier = pos.tier_key && pos.tier_key !== "" ? pos.tier_key : "paper";
+			return !pos.closed_at && tier === book;
+		})
+		.sort(comparePositionRows);
+	const chartApi = useRef<OpenChoiceChartApi | null>(null);
 	const [isGrid, setIsGrid] = useState(false);
 	const [exiting, setExiting] = useState<Record<string, boolean>>({});
 
 	const setLayout = (grid: boolean) => {
-		api.setIsGridLayoutMode(grid);
+		chartApi.current?.setIsGridLayoutMode(grid);
 		setIsGrid(grid);
 	};
 
@@ -64,8 +72,7 @@ export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Full open-position snapshots → one SciChart series each. Toggle grid
-						per position.
+						Full open-position snapshots → one SciChart series each. Toggle grid per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
@@ -107,16 +114,16 @@ export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
 					}
 				>
 					<OpenChoiceSciChart
-						onReady={(api) => {
-							api.setIsGridLayoutMode(isGrid);
+						onReady={(ready) => {
+							chartApi.current = ready;
+							ready.setIsGridLayoutMode(isGrid);
 						}}
 					/>
 				</Suspense>
 			</div>
-			{Object.values(positions).length > 0 ? (
+			{positions.length > 0 ? (
 				<div className="flex max-h-28 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
-					{Object.values(positions).map((pos) => {
-						const position = pos as Position;
+					{positions.map((position) => {
 						const pnl = asFinite(position.pnl);
 						const pct = asFinite(position.pnl_pct);
 						const title = [
@@ -136,7 +143,7 @@ export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
 							>
 								<span
 									className="inline-block h-1.5 w-3 rounded-sm"
-									style={{ background: AUTO_COLOR }}
+									style={{ background: strokeFor(position.id) }}
 								/>
 								{position.symbol}
 								<span className="tabular-nums text-(--f4)">
@@ -153,7 +160,7 @@ export const OpenChoiceChart = (api: OpenChoiceChartApi) => {
 									aria-label={`Exit ${position.symbol}`}
 									title={`Manually exit ${position.symbol}`}
 									disabled={Boolean(exiting[position.id])}
-									onClick={() => exitPosition(position as Position)}
+									onClick={() => exitPosition(position)}
 									className={cn(
 										"ml-0.5 rounded border border-(--line) px-1 py-px text-[9px] uppercase tracking-wide transition-colors",
 										exiting[position.id]

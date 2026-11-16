@@ -13,14 +13,12 @@ import (
 
 func TestNewBoard(t *testing.T) {
 	Convey("Setup", t, func() {
-		rotation := NewRotation(context.Background())
-
 		Convey("When NewBoard is called", func() {
-			board := NewBoard(context.Background(), rotation)
+			board := NewBoard(context.Background())
 
-			Convey("Board wires rotation for ranking", func() {
+			Convey("Board is ready for ranking", func() {
 				So(board, ShouldNotBeNil)
-				So(board.rotation, ShouldEqual, rotation)
+				So(board.peers, ShouldNotBeNil)
 			})
 		})
 	})
@@ -28,7 +26,7 @@ func TestNewBoard(t *testing.T) {
 
 func TestBoardScore(t *testing.T) {
 	Convey("Setup", t, func() {
-		board := NewBoard(context.Background(), NewRotation(context.Background()))
+		board := NewBoard(context.Background())
 		sel := system.Cfg.Selection
 
 		Convey("When symbol or envelope is missing", func() {
@@ -64,7 +62,7 @@ func TestBoardScore(t *testing.T) {
 
 func TestPlace(t *testing.T) {
 	Convey("Setup", t, func() {
-		board := NewBoard(context.Background(), nil)
+		board := NewBoard(context.Background())
 
 		Convey("When two candidates compete for one enter slot", func() {
 			var entered []string
@@ -128,17 +126,16 @@ func TestPlace(t *testing.T) {
 
 func BenchmarkNewBoard(b *testing.B) {
 	ctx := context.Background()
-	rotation := NewRotation(ctx)
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = NewBoard(ctx, rotation)
+		_ = NewBoard(ctx)
 	}
 }
 
 func BenchmarkBoardScore(b *testing.B) {
-	board := NewBoard(context.Background(), NewRotation(context.Background()))
+	board := NewBoard(context.Background())
 	envelope := runtime.NewEnvelope(nil)
 	envelope.Correlation["A/USD"] = &equation.CohortOutput{PeakScore: 2.0, HerdScore: 1.0}
 	envelope.Pumpdump["A/USD"] = &equation.IgnitionOutput{Precursor: 1.0, Compression: 0.8}
@@ -152,7 +149,7 @@ func BenchmarkBoardScore(b *testing.B) {
 }
 
 func BenchmarkPlace(b *testing.B) {
-	board := NewBoard(context.Background(), nil)
+	board := NewBoard(context.Background())
 	envelope := runtime.NewEnvelope(nil)
 	envelope.Correlation["TOP/USD"] = &equation.CohortOutput{PeakScore: 3.0}
 	envelope.Correlation["LOW/USD"] = &equation.CohortOutput{PeakScore: 0.1}

@@ -10,6 +10,7 @@ import (
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/pipeline"
+	"github.com/theapemachine/symm/ui"
 )
 
 type tickEnvelopeStore interface {
@@ -51,20 +52,19 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		return nil
 	}
 
-	if !tickStoreReady(persist.store) {
-		return envelope
+	if tickStoreReady(persist.store) {
+		if _, err := persist.store.WriteAtPrefixWithEnvelope(fmt.Sprintf(
+			"workspace/tick/aggregate/%019d/%019d", data.Epoch.Load(), envelope.N,
+		), envelope); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO, "failed to write envelope", err,
+			))
+		} else {
+			pipeline.Wrote(int64(persist.store.QueueDepth()))
+		}
 	}
 
-	if _, err := persist.store.WriteAtPrefixWithEnvelope(fmt.Sprintf(
-		"workspace/tick/aggregate/%019d/%019d", data.Epoch.Load(), envelope.N,
-	), envelope); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO, "failed to write envelope", err,
-		))
-		return envelope
-	}
-
-	pipeline.Wrote(int64(persist.store.QueueDepth()))
+	ui.PublishTickDashboard(envelope)
 
 	return envelope
 }
