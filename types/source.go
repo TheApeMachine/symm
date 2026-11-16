@@ -42,50 +42,23 @@ var SignalSourceStrings = []string{
 }
 
 var LogicSourceStrings = []string{
-	"category",
-	"manifold",
 	"resonance",
-	"graph",
 }
 
-var TradeReceivers = []SourceType{
-	SourceCorrelation,
-	SourceCVD,
-	SourceHawkes,
-	SourceLeadLag,
-	SourcePumpDump,
-	SourceSentiment,
-}
-
-var TradeReceiverStrings = []string{
+var SourceStrings = []string{
 	"correlation",
 	"cvd",
+	"depthflow",
 	"hawkes",
 	"leadlag",
+	"liquidity",
+	"morphology",
 	"pumpdump",
 	"sentiment",
-}
-
-var BookReceivers = []SourceType{
-	SourceDepthFlow,
-	SourceLiquidity,
-}
-
-var Level3Receivers = []SourceType{
-	SourceDepthFlow,
-	SourceMorphology,
-	SourceToxicity,
-	SourcePumpDump,
-}
-
-var Level3ReceiverStrings = []string{
-	"depthflow",
-	"morphology",
 	"toxicity",
-	"pumpdump",
+	"resonance",
+	"regions",
+	"paths",
+	"decisions",
+	"trade",
 }
-
-var AcceptedBookReceivers = append(
-	append([]SourceType(nil), BookReceivers...),
-	Level3Receivers...,
-)

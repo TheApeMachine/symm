@@ -5,15 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -82,65 +80,43 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 		symbol, sources := symbol, sources
 		wg.Go(func() {
-			risk := system.Cfg.Risk
-			spreadOK := risk.MaxEntrySpreadPct <= 0
+			if training.deskGate == nil {
+				training.Error(errnie.Err(
+					errnie.Validation,
+					"[training] deskGate is required",
+					nil,
+				))
 
-			if !spreadOK {
-				if spread, ok := training.price.SpreadPct(symbol); ok && spread != nil {
-					spreadOK = spread.InexactFloat64() <= risk.MaxEntrySpreadPct
-				}
+				return
 			}
 
-			sel := system.Cfg.Selection
 			pump := envelope.Pumpdump[symbol]
-			hot := pump != nil &&
-				pump.Ignition >= sel.IgnitionIgnitionMin &&
-				pump.Precursor >= sel.IgnitionPrecursorMin &&
-				pump.Compression >= sel.IgnitionCompressionMin
 
-			volumeOK := training.price.MoverVolumeOK(symbol)
-			dayOK := training.price.SessionMoveOK(symbol, pump)
-			bookOK := training.price.BookIntact(symbol)
-			peakOK := training.price.EntryPeakOK(symbol, hot)
-			spreadLearned := spreadOK
-
-			if training.deskGate != nil {
-				if desk := training.deskGate.Features(training.price, symbol, pump); desk != nil {
-					sources["desk"] = desk
-				}
-				v, d, s, b, p := training.deskGate.Oracle(training.price, symbol, pump)
-				volumeOK = v
-				dayOK = d
-				bookOK = b
-				peakOK = p
-				spreadLearned = s && spreadOK
+			if desk := training.deskGate.Features(training.price, symbol, pump); desk != nil {
+				sources["desk"] = desk
 			}
 
-			gridStarted := time.Now()
+			volumeOK, dayOK, spreadOK, bookOK, peakOK :=
+				training.deskGate.Oracle(training.price, symbol, pump)
+
 			regions, err := training.grid.Observe(
 				symbol,
 				sources,
 				training.desk.Has(symbol),
 				volumeOK,
 				dayOK,
-				spreadLearned,
+				spreadOK,
 				bookOK,
 				peakOK,
 			)
-			pipeline.Time("grid", time.Since(gridStarted))
 
 			if err != nil {
 				training.Error(err)
 				return
 			}
 
-			cutStarted := time.Now()
-			cut := training.stepCut(symbol, regions)
-			pipeline.Time("sequencer", time.Since(cutStarted))
-
 			mu.Lock()
 			envelope.Regions[symbol] = regions
-			envelope.Paths[symbol] = cut
 			mu.Unlock()
 		})
 	}
@@ -148,11 +124,11 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	wg.Wait()
 
 	if ui.UI != nil && ui.UI.Active() && types.WantsGrid() {
-		if payload := envelope.Publish("regions"); len(payload) > 0 {
+		if payload := envelope.Publish("regions", ""); len(payload) > 0 {
 			ui.UI.Write(payload)
 		}
 
-		if payload := envelope.Publish("paths"); len(payload) > 0 {
+		if payload := envelope.Publish("paths", ""); len(payload) > 0 {
 			ui.UI.Write(payload)
 		}
 	}

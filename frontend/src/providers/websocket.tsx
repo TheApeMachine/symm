@@ -3,6 +3,8 @@ import { atoms, signals } from "#/collections/app";
 import { direct } from "#/collections/diag-burst";
 import "#/collections/diag-burst";
 import "#/hub/apply-s3-compact";
+import "#/hub/ingest-live-paths";
+import { normalizeKernelStoreValue } from "#/hub/signal-envelope";
 import {
 	ensureLongtailRecorder,
 	requestLongtailSources,
@@ -273,13 +275,19 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 			continue;
 		}
 
-		if (value && typeof value === "object" && !Array.isArray(value)) {
+		const merged = normalizeKernelStoreValue(
+			key,
+			value,
+			atoms.focus.get(),
+		);
+
+		if (merged && typeof merged === "object" && !Array.isArray(merged)) {
 			store.setState((prev: Record<string, unknown> | null) => ({
 				...(prev && typeof prev === "object" ? prev : {}),
-				...(value as Record<string, unknown>),
+				...(merged as Record<string, unknown>),
 			}));
 		} else {
-			store.setState(() => value);
+			store.setState(() => merged);
 		}
 	}
 };

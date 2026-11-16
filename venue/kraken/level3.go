@@ -264,16 +264,3 @@ func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subs
 	}
 }
 
-/*
-NewLevel3Unsubscription drops symbols without cancelling the shared decoder instance.
-*/
-func NewLevel3Unsubscription(symbols []string, token string) Level3Subscription {
-	return Level3Subscription{
-		Method: "unsubscribe",
-		Params: Level3SubscriptionParams{
-			Channel: "level3",
-			Symbol:  symbols,
-			Token:   token,
-		},
-	}
-}

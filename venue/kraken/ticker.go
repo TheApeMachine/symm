@@ -136,19 +136,6 @@ func (ticker *Ticker) FromMarket(other market.MarketType) market.MarketType {
 }
 
 /*
-ParseTicker is a helper for collectors that only need Result rows.
-*/
-func ParseTicker(buf []byte) (map[string]TickerRow, error) {
-	ticker := NewTicker()
-
-	if err := ticker.UnmarshalJSON(buf); err != nil {
-		return nil, err
-	}
-
-	return ticker.Result, nil
-}
-
-/*
 QuoteVolume24h estimates USD notional from 24h base volume and VWAP indices.
 */
 func (row TickerRow) QuoteVolume24h() float64 {

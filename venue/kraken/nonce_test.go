@@ -13,6 +13,16 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func releaseAuthNonce(nonce *AuthNonce) error {
+	if nonce == nil || nonce.lock == nil {
+		return nil
+	}
+
+	err := nonce.lock.Close()
+	nonce.lock = nil
+	return err
+}
+
 func TestNewAuthNonce(t *testing.T) {
 	Convey("Setup", t, func() {
 		dir := t.TempDir()
@@ -23,7 +33,7 @@ func TestNewAuthNonce(t *testing.T) {
 			Convey("construction succeeds", func() {
 				So(err, ShouldBeNil)
 				So(nonce, ShouldNotBeNil)
-				So(nonce.Close(), ShouldBeNil)
+				So(releaseAuthNonce(nonce), ShouldBeNil)
 			})
 		})
 
@@ -43,7 +53,7 @@ func TestNewAuthNonce(t *testing.T) {
 			Convey("a second generator is refused", func() {
 				_, err := NewAuthNonce(dir)
 				So(err, ShouldNotBeNil)
-				So(first.Close(), ShouldBeNil)
+				So(releaseAuthNonce(first), ShouldBeNil)
 			})
 		})
 	})
@@ -54,7 +64,7 @@ func TestNext(t *testing.T) {
 		dir := t.TempDir()
 		nonce, err := NewAuthNonce(dir)
 		So(err, ShouldBeNil)
-		defer nonce.Close()
+		defer releaseAuthNonce(nonce)
 
 		Convey("When Next is called twice under a frozen clock", func() {
 			clock := nonce.highWater.Load() + 1
@@ -75,7 +85,7 @@ func TestNext(t *testing.T) {
 			})
 
 			Convey("and a restart reloads the persisted high-water", func() {
-				So(nonce.Close(), ShouldBeNil)
+				So(releaseAuthNonce(nonce), ShouldBeNil)
 
 				restarted, err := NewAuthNonce(dir)
 				So(err, ShouldBeNil)
@@ -83,7 +93,7 @@ func TestNext(t *testing.T) {
 				restarted.clock = func() int64 { return second }
 				next, _ := strconv.ParseInt(restarted.Next(), 10, 64)
 				So(next, ShouldEqual, second+1)
-				So(restarted.Close(), ShouldBeNil)
+				So(releaseAuthNonce(restarted), ShouldBeNil)
 			})
 		})
 
@@ -135,7 +145,7 @@ func TestBump(t *testing.T) {
 		dir := t.TempDir()
 		nonce, err := NewAuthNonce(dir)
 		So(err, ShouldBeNil)
-		defer nonce.Close()
+		defer releaseAuthNonce(nonce)
 
 		hw := nonce.highWater.Load()
 		clock := hw
@@ -159,7 +169,7 @@ func TestErr(t *testing.T) {
 		dir := t.TempDir()
 		nonce, err := NewAuthNonce(dir)
 		So(err, ShouldBeNil)
-		defer nonce.Close()
+		defer releaseAuthNonce(nonce)
 
 		Convey("When persist fails on an invalid path", func() {
 			blocker := filepath.Join(dir, "blocker")
@@ -192,7 +202,7 @@ func BenchmarkNewAuthNonce(b *testing.B) {
 		_ = os.Mkdir(dir, 0o755)
 		nonce, err := NewAuthNonce(dir)
 		if err == nil {
-			_ = nonce.Close()
+			_ = releaseAuthNonce(nonce) //nolint:errcheck
 		}
 	}
 }
@@ -203,7 +213,7 @@ func BenchmarkNext(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer nonce.Close()
+	defer releaseAuthNonce(nonce)
 
 	clock := nonce.highWater.Load() + 1
 	nonce.clock = func() int64 { return clock }
@@ -222,7 +232,7 @@ func BenchmarkBump(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer nonce.Close()
+	defer releaseAuthNonce(nonce)
 
 	hw := nonce.highWater.Load()
 	nonce.clock = func() int64 { return hw }
@@ -243,7 +253,7 @@ func BenchmarkErr(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer nonce.Close()
+	defer releaseAuthNonce(nonce)
 
 	blocker := filepath.Join(dir, "blocker")
 	_ = os.WriteFile(blocker, []byte("x"), 0o600)

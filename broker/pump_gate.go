@@ -28,7 +28,7 @@ func PumpMoveOK(pump *equation.IgnitionOutput) bool {
 	}
 
 	if risk.MinImpulseAccelRatio <= 0 {
-		return true
+		return false
 	}
 
 	pace := math.Max(pump.Ignition, pump.Trend)

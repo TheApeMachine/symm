@@ -43,14 +43,13 @@ func TestForwardStoryNets(t *testing.T) {
 		curve[9] = 0.4
 
 		Convey("When ForwardStoryNets folds the oracle curve", func() {
-			enter, hold, exit, risk, ok := ForwardStoryNets(curve)
+			enter, hold, exit, ok := ForwardStoryNets(curve)
 
 			Convey("Story nets match the folded weights", func() {
 				So(ok, ShouldBeTrue)
 				So(enter, ShouldEqual, 0.9+1.5)
 				So(hold, ShouldEqual, 0.9+0.5)
 				So(exit, ShouldEqual, 0.5+0.5-0.5)
-				So(risk, ShouldEqual, 0.4)
 			})
 		})
 	})

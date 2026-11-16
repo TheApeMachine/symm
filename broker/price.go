@@ -507,7 +507,7 @@ func (price *Price) EntryDragOK(symbol string) bool {
 	max := system.Cfg.Risk.MaxEntryOpenDragPct
 
 	if max <= 0 {
-		return true
+		return false
 	}
 
 	drag, ok := price.EntryOpenDragPct(symbol)
@@ -526,7 +526,7 @@ func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
 	}
 
 	if cap <= 0 || cap >= 1 {
-		return true
+		return false
 	}
 
 	frac, ok := price.PeakFrac(symbol)
@@ -535,19 +535,18 @@ func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
 }
 
 /*
-TapeAccelOK is rising buy-tape vs the prior window. When MinTapeAccelRatio is
-zero the floor alone applies (lab override).
+TapeAccelOK is rising buy-tape vs the prior window against configured floors.
 */
 func (price *Price) TapeAccelOK(symbol string) bool {
 	risk := system.Cfg.Risk
 	recent, prior := price.TapeUptake(symbol, time.Now())
 
-	if recent < risk.MinTapeNotionalUSD {
+	if risk.MinTapeNotionalUSD <= 0 || risk.MinTapeAccelRatio <= 0 {
 		return false
 	}
 
-	if risk.MinTapeAccelRatio <= 0 {
-		return true
+	if recent < risk.MinTapeNotionalUSD {
+		return false
 	}
 
 	if prior <= 0 {

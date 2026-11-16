@@ -28,7 +28,9 @@ const tickerREST = `{
 func TestParseTicker(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When ParseTicker decodes a REST payload", func() {
-			rows, err := ParseTicker([]byte(tickerREST))
+			ticker := NewTicker()
+			err := ticker.UnmarshalJSON([]byte(tickerREST))
+			rows := ticker.Result
 
 			Convey("row metrics match wire fields", func() {
 				So(err, ShouldBeNil)
@@ -46,7 +48,9 @@ func TestParseTicker(t *testing.T) {
 		})
 
 		Convey("When the venue returns EService:Unavailable", func() {
-			rows, err := ParseTicker([]byte(`{"error":["EService:Unavailable"],"result":{}}`))
+			ticker := NewTicker()
+			err := ticker.UnmarshalJSON([]byte(`{"error":["EService:Unavailable"],"result":{}}`))
+			rows := ticker.Result
 
 			Convey("ParseTicker rejects the frame", func() {
 				So(rows, ShouldBeNil)
@@ -85,7 +89,8 @@ func BenchmarkParseTicker(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_, _ = ParseTicker(raw)
+		ticker := NewTicker()
+		_ = ticker.UnmarshalJSON(raw)
 	}
 }
 

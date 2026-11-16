@@ -5,7 +5,6 @@ import (
 
 	"github.com/gofiber/fiber/v3/client"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -35,10 +34,6 @@ func (rest *REST) Get(rawURL string, params map[string]string) (*client.Response
 		Param: params,
 	})
 
-	if err == nil {
-		pipeline.Hit("rest")
-	}
-
 	return response, err
 }
 
@@ -66,10 +61,6 @@ func (rest *REST) Post(url string, body any) (*client.Response, error) {
 		Header: header,
 		Body:   body,
 	})
-
-	if err == nil {
-		pipeline.Hit("rest")
-	}
 
 	return response, err
 }

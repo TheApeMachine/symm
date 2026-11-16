@@ -368,34 +368,6 @@ func (hub *Hub) WriteJSON(frame map[string]any) {
 }
 
 /*
-PrimeGrace opens the attach window without a socket so a test can read
-WriteJSON off the frame queue. The returned function restores the prior flags.
-*/
-func (hub *Hub) PrimeGrace() func() {
-	prevConnected := hub.connected.Load()
-	prevSince := hub.connectedSince.Load()
-	hub.connected.Store(false)
-	hub.connectedSince.Store(time.Now().UnixNano())
-
-	return func() {
-		hub.connected.Store(prevConnected)
-		hub.connectedSince.Store(prevSince)
-	}
-}
-
-/*
-NextFrame takes one queued dashboard payload, if any.
-*/
-func (hub *Hub) NextFrame() ([]byte, bool) {
-	select {
-	case buf := <-hub.frameCh:
-		return append([]byte(nil), buf...), true
-	default:
-		return nil, false
-	}
-}
-
-/*
 Active reports whether a frame should be enqueued: a live connection, or one
 established within the grace window.
 */

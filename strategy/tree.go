@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -279,7 +278,6 @@ func (tree *Tree) Ensure(path string, action Action) {
 	tree.persist(path, decision)
 }
 
-
 /*
 Delete drops one path leaf from memory and its action object. DeletePrefix would
 also remove descendant paths that share the key as a byte prefix.
@@ -334,5 +332,4 @@ func (tree *Tree) persist(path string, decision *runtime.Decision) {
 	}
 
 	tree.store.WriteAtPrefix(leafObjectKey(path), raw)
-	pipeline.Wrote(int64(tree.store.QueueDepth()))
 }

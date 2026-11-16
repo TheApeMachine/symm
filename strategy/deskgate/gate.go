@@ -9,6 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
@@ -16,9 +17,10 @@ import (
 )
 
 const (
-	stateKey         = "model/parameters/deskgate.bin"
-	warmupMinSamples = int64(48)
-	warmupCutCap     = 0.35
+	stateKey          = "model/parameters/deskgate.bin"
+	cutNeutral        = 0.5
+	trackReadyAt      = 0.5
+	brightnessScale   = 2.0
 )
 
 /*
@@ -30,6 +32,7 @@ type Axis struct {
 	Higher bool    `json:"higher"`
 	Cut    float64 `json:"cut"`
 	Sample int64   `json:"sample"`
+	track  *adaptive.Standardizer `json:"-"`
 }
 
 /*
@@ -50,14 +53,14 @@ type Gate struct {
 }
 
 /*
-NewGate seeds cuts at 0.5 and loads persisted state when a store client exists.
+NewGate seeds cuts at neutral brightness and loads persisted state when a store exists.
 */
 func NewGate(ctx context.Context, client *store.Client) *Gate {
 	gate := &Gate{
 		ctx:   ctx,
-		Axes:  defaultAxes(),
 		store: client,
 	}
+	gate.Axes = gate.seedAxes()
 
 	if client != nil {
 		gate.restore()
@@ -66,13 +69,30 @@ func NewGate(ctx context.Context, client *store.Client) *Gate {
 	return gate
 }
 
-func defaultAxes() map[string]*Axis {
+func (gate *Gate) seedAxes() map[string]*Axis {
 	return map[string]*Axis{
-		"volume": {Phase: "volume", Higher: true, Cut: warmupCutCap},
-		"day":    {Phase: "day", Higher: true, Cut: warmupCutCap},
-		"spread": {Phase: "spread", Higher: true, Cut: warmupCutCap},
-		"book":   {Phase: "book", Higher: true, Cut: warmupCutCap},
-		"peak":   {Phase: "peak", Higher: true, Cut: warmupCutCap},
+		"volume": gate.newAxis("volume", true),
+		"day":    gate.newAxis("day", true),
+		"spread": gate.newAxis("spread", true),
+		"book":   gate.newAxis("book", true),
+		"peak":   gate.newAxis("peak", true),
+	}
+}
+
+func (gate *Gate) newAxis(phase string, higher bool) *Axis {
+	return &Axis{
+		Phase:  phase,
+		Higher: higher,
+		Cut:    cutNeutral,
+		track:  adaptive.NewStandardizer(),
+	}
+}
+
+func (gate *Gate) bindTracks() {
+	for _, axis := range gate.Axes {
+		if axis != nil && axis.track == nil {
+			axis.track = adaptive.NewStandardizer()
+		}
 	}
 }
 
@@ -88,43 +108,82 @@ func (gate *Gate) Features(
 		return nil
 	}
 
+	now := time.Now()
 	out := map[string]float64{
-		"tape_accel": scoreTapeAccel(price, symbol),
-		"tape_recent": scoreTapeRecent(price, symbol),
-		"session_move": scoreSessionMove(price, symbol),
-		"impulse": scoreImpulse(pump),
-		"spread_room": scoreSpreadRoom(price, symbol),
-		"touch_backing": scoreTouchBacking(price, symbol),
-		"peak_room": scorePeakRoom(price, symbol),
+		"tape_recent":  gate.tapeRecent(price, symbol, now),
+		"tape_ratio":   gate.tapeRatio(price, symbol, now),
+		"session_move": math.Max(price.ChangePct(symbol), 0),
+		"impulse":      gate.impulseLevel(pump),
+		"spread_pct":   gate.spreadPct(price, symbol),
+		"touch_cash":   gate.touchCash(price, symbol),
+		"backing":      gate.backingRatio(price, symbol),
+		"peak_frac":    gate.peakFrac(price, symbol),
 	}
 
 	gate.mu.Lock()
+	gate.bindTracks()
 	for name, axis := range gate.Axes {
 		if axis == nil {
 			continue
 		}
-		var v float64
-		switch name {
-		case "volume":
-			v = 0.6*out["tape_accel"] + 0.4*out["tape_recent"]
-		case "day":
-			if out["impulse"] > 0.05 {
-				v = 0.5*out["session_move"] + 0.5*out["impulse"]
-			} else {
-				v = out["session_move"]
-			}
-		case "spread":
-			v = out["spread_room"]
-		case "book":
-			v = out["touch_backing"]
-		case "peak":
-			v = out["peak_room"]
-		}
-		out["axis_"+name] = v
+		raw := gate.rawAxis(name, out, pump)
+		out["axis_"+name] = axis.brightness(raw)
+		out["axis_"+name+"_raw"] = raw
 	}
 	gate.mu.Unlock()
 
 	return out
+}
+
+func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.IgnitionOutput) float64 {
+	switch name {
+	case "volume":
+		recent := out["tape_recent"]
+		ratio := out["tape_ratio"]
+		if ratio > 0 {
+			return recent + math.Log1p(ratio)
+		}
+		return recent
+	case "day":
+		move := out["session_move"]
+		if move <= 0 {
+			return out["impulse"]
+		}
+		if pump != nil && out["impulse"] > 0 {
+			return move + out["impulse"]
+		}
+		return move
+	case "spread":
+		return -out["spread_pct"]
+	case "book":
+		return out["touch_cash"] + out["backing"] + out["tape_ratio"]
+	case "peak":
+		frac := out["peak_frac"]
+		if frac < 0 {
+			return 0
+		}
+		return 1 - frac
+	default:
+		return 0
+	}
+}
+
+func (axis *Axis) brightness(raw float64) float64 {
+	if axis == nil || axis.track == nil {
+		return 0
+	}
+
+	out, err := axis.track.Measure(raw)
+	if err != nil || !out.Ready {
+		return 0
+	}
+
+	z := out.Value
+	if !axis.Higher {
+		z = -z
+	}
+
+	return 0.5 + 0.5*math.Tanh(z/brightnessScale)
 }
 
 /*
@@ -143,32 +202,35 @@ func (gate *Gate) Oracle(
 	gate.mu.Lock()
 	defer gate.mu.Unlock()
 
-	warm := gate.warmup()
+	return gate.oraclePass("volume", feat),
+		gate.oraclePass("day", feat),
+		gate.oraclePass("spread", feat),
+		gate.oraclePass("book", feat),
+		gate.oraclePass("peak", feat)
+}
 
-	pass := func(name string) bool {
-		axis := gate.Axes[name]
-		if axis == nil {
-			return false
-		}
-		score := feat["axis_"+name]
-		cut := axis.Cut
-		if warm {
-			cut = math.Min(cut, warmupCutCap)
-		}
-
-		learned := score >= cut
-		if !axis.Higher {
-			learned = score <= cut
-		}
-
-		if learned {
-			return true
-		}
-
-		return warm && mechanicalOK(price, symbol, name)
+func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
+	axis := gate.Axes[name]
+	if axis == nil || !axis.ready() {
+		return false
 	}
 
-	return pass("volume"), pass("day"), pass("spread"), pass("book"), pass("peak")
+	score := feat["axis_"+name]
+	if score <= 0 {
+		return false
+	}
+
+	if axis.Higher {
+		return score >= axis.Cut
+	}
+
+	return score <= axis.Cut
+}
+
+func (axis *Axis) ready() bool {
+	return axis != nil &&
+		axis.track != nil &&
+		axis.track.Precision() >= trackReadyAt
 }
 
 /*
@@ -181,18 +243,28 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 		return
 	}
 
-	step := system.Cfg.Learning.ThresholdStep
+	learn := system.Cfg.Learning
+	step := learn.ThresholdStep
 	if step <= 0 {
-		step = 0.05
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[deskgate] learning.threshold_step required",
+			nil,
+		))
+
+		return
 	}
 
+	floor, ceil := learn.ThresholdFloor, learn.ThresholdCeil
+
 	gate.mu.Lock()
+	gate.bindTracks()
 	for name, axis := range gate.Axes {
 		if axis == nil {
 			continue
 		}
 		score := features["axis_"+name]
-		if score == 0 && features["tape_accel"] != 0 {
+		if score == 0 && features["tape_recent"] == 0 {
 			continue
 		}
 
@@ -201,11 +273,11 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 		if developed {
 			axis.Cut = axis.Cut + step*(score-axis.Cut)
 		} else if score >= axis.Cut && axis.Higher {
-			axis.Cut = math.Min(0.95, axis.Cut+step)
+			axis.Cut = math.Min(ceil, axis.Cut+step)
 		} else if score <= axis.Cut && !axis.Higher {
-			axis.Cut = math.Max(0.05, axis.Cut-step)
+			axis.Cut = math.Max(floor, axis.Cut-step)
 		}
-		axis.Cut = clampCut(axis.Cut)
+		axis.Cut = math.Min(ceil, math.Max(floor, axis.Cut))
 	}
 	gate.mu.Unlock()
 
@@ -215,7 +287,7 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 /*
 Developed is true when the position showed the path deserved real attention.
 */
-func Developed(position *broker.Position) bool {
+func (gate *Gate) Developed(position *broker.Position) bool {
 	if position == nil {
 		return false
 	}
@@ -277,6 +349,7 @@ func (gate *Gate) restore() {
 				}
 				gate.Axes[name] = axis
 			}
+			gate.bindTracks()
 			gate.loaded = true
 			gate.mu.Unlock()
 			return
@@ -284,168 +357,60 @@ func (gate *Gate) restore() {
 	}
 }
 
-func (gate *Gate) warmup() bool {
-	gate.mu.Lock()
-	defer gate.mu.Unlock()
-
-	var total int64
-	for _, axis := range gate.Axes {
-		if axis != nil {
-			total += axis.Sample
-		}
-	}
-
-	return total < warmupMinSamples
-}
-
-/*
-mechanicalOK is the book feasibility path used only until desk axes have enough
-settle samples — not a second YAML gate, just liquidity/microstructure survival.
-*/
-func mechanicalOK(price *broker.Price, symbol, name string) bool {
-	if price == nil {
-		return false
-	}
-
-	switch name {
-	case "volume":
-		return price.TapeAccelOK(symbol)
-	case "day":
-		risk := system.Cfg.Risk
-		if price.ChangePct(symbol) < risk.MinMoverChangePct {
-			return false
-		}
-		recent, _ := price.TapeUptake(symbol, time.Now())
-		return recent >= risk.MinTapeNotionalUSD
-	case "spread":
-		max := system.Cfg.Risk.MaxEntrySpreadPct
-		if max <= 0 {
-			return true
-		}
-		spread, ok := price.SpreadPct(symbol)
-		return ok && spread != nil && spread.InexactFloat64() <= max
-	case "book":
-		risk := system.Cfg.Risk
-		cash, ok := price.TouchBidCash(symbol)
-		if ok && cash != nil && cash.InexactFloat64() >= risk.MinTouchBidCash {
-			ratio, ok := price.BackingRatio(symbol)
-			if ok && ratio >= risk.MinBackingRatio {
-				return true
-			}
-		}
-		return price.TapeAccelOK(symbol)
-	case "peak":
-		return price.EntryPeakOK(symbol, false)
-	default:
-		return false
-	}
-}
-
-func clampCut(v float64) float64 {
-	floor := system.Cfg.Learning.ThresholdFloor
-	ceil := system.Cfg.Learning.ThresholdCeil
-	if v < floor {
-		return floor
-	}
-	if v > ceil {
-		return ceil
-	}
-	return v
-}
-
-func scoreTapeAccel(price *broker.Price, symbol string) float64 {
-	recent, prior := price.TapeUptake(symbol, time.Now())
+func (gate *Gate) tapeRecent(price *broker.Price, symbol string, at time.Time) float64 {
+	recent, _ := price.TapeUptake(symbol, at)
 	if recent <= 0 {
 		return 0
 	}
-	if prior <= 0 {
-		return math.Min(recent/(system.Cfg.Risk.MinTapeNotionalUSD*2), 1)
-	}
-	return math.Min(recent/prior/2, 1)
+	return math.Log1p(recent)
 }
 
-func scoreTapeRecent(price *broker.Price, symbol string) float64 {
-	recent, _ := price.TapeUptake(symbol, time.Now())
-	floor := system.Cfg.Risk.MinTapeNotionalUSD
-	if floor <= 0 {
-		floor = 1
+func (gate *Gate) tapeRatio(price *broker.Price, symbol string, at time.Time) float64 {
+	recent, prior := price.TapeUptake(symbol, at)
+	if recent <= 0 || prior <= 0 {
+		return 0
 	}
-	return math.Min(recent/floor, 1)
+	return recent / prior
 }
 
-func scoreSessionMove(price *broker.Price, symbol string) float64 {
-	floor := system.Cfg.Risk.MinMoverChangePct
-	if floor <= 0 {
-		floor = 0.5
-	}
-	return math.Min(math.Max(price.ChangePct(symbol), 0)/floor/2, 1)
-}
-
-func scoreImpulse(pump *equation.IgnitionOutput) float64 {
+func (gate *Gate) impulseLevel(pump *equation.IgnitionOutput) float64 {
 	if pump == nil {
 		return 0
 	}
-
-	sel := system.Cfg.Selection
-
-	magnitude := 0.0
-	if sel.IgnitionPrecursorMin > 0 {
-		magnitude = math.Min(pump.Precursor/sel.IgnitionPrecursorMin, 1)
-	}
-
-	velocity := math.Min(pump.RVOL, 1)
-
-	accelScore := 0.5
-	if sel.IgnitionIgnitionMin > 0 {
-		pace := math.Max(pump.Ignition, pump.Trend)
-
-		if pace > 0 {
-			accelScore = math.Min(pace/sel.IgnitionIgnitionMin, 1)
-		}
-	}
-
-	return 0.5*magnitude + 0.25*velocity + 0.25*accelScore
+	return math.Log1p(pump.Precursor) +
+		math.Log1p(pump.Ignition) +
+		math.Log1p(pump.Compression) +
+		math.Log1p(pump.RVOL)
 }
 
-func scoreSpreadRoom(price *broker.Price, symbol string) float64 {
-	max := system.Cfg.Risk.MaxEntrySpreadPct
-	if max <= 0 {
-		return 1
-	}
+func (gate *Gate) spreadPct(price *broker.Price, symbol string) float64 {
 	spread, ok := price.SpreadPct(symbol)
 	if !ok || spread == nil {
 		return 0
 	}
-	return 1 - math.Min(spread.InexactFloat64()/max, 1)
+	return spread.InexactFloat64()
 }
 
-func scoreTouchBacking(price *broker.Price, symbol string) float64 {
-	risk := system.Cfg.Risk
+func (gate *Gate) touchCash(price *broker.Price, symbol string) float64 {
 	cash, ok := price.TouchBidCash(symbol)
-	touch := 0.0
-	if ok && cash != nil {
-		touch = math.Min(cash.InexactFloat64()/risk.MinTouchBidCash, 1)
+	if !ok || cash == nil || cash.Sign() <= 0 {
+		return 0
 	}
-	ratio, ok := price.BackingRatio(symbol)
-	back := 0.0
-	if ok {
-		back = math.Min(ratio/risk.MinBackingRatio, 1)
-	}
-	tape := scoreTapeAccel(price, symbol)
-	return (touch + back + tape) / 3
+	return math.Log1p(cash.InexactFloat64())
 }
 
-func scorePeakRoom(price *broker.Price, symbol string) float64 {
-	frac, ok := price.PeakFrac(symbol)
+func (gate *Gate) backingRatio(price *broker.Price, symbol string) float64 {
+	ratio, ok := price.BackingRatio(symbol)
 	if !ok {
 		return 0
 	}
-	cap := system.Cfg.Risk.MaxEntryPeakFrac
-	if cap <= 0 || cap >= 1 {
-		cap = 0.85
+	return ratio
+}
+
+func (gate *Gate) peakFrac(price *broker.Price, symbol string) float64 {
+	frac, ok := price.PeakFrac(symbol)
+	if !ok {
+		return -1
 	}
-	if frac >= cap {
-		return 0
-	}
-	return 1 - frac/cap
+	return frac
 }

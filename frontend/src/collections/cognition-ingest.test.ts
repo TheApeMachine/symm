@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { bookAtom } from "#/collections/book";
 import { applyPathsEnvelope } from "#/hub/apply-s3-compact";
 import {
+	ingestLivePaths,
+	pathSegments,
+} from "#/hub/ingest-live-paths";
+import {
 	cognitionStore,
 	ingestExploreListPrefix,
 	ingestPathWalks,
@@ -20,6 +24,45 @@ at <prefix>/train/regions/<SYM>/tokens with ["R01", ...]. These are exactly
 those two shapes from a live BTC/USD frame.
 */
 const PREFIX = "workspace/tick/aggregate/1792663234/0000000000000000075";
+
+describe("live envelope paths", () => {
+	it("segments sequencer tokens like the Go runtime", () => {
+		expect(
+			pathSegments([
+				{ symbols: ["R02"], brightness: 0.5 },
+				{ symbols: ["R00", "R06"], brightness: 0.3 },
+			]),
+		).toEqual(["R02", "[R00-R06]"]);
+	});
+
+	it("feeds cognition matches from hub paths + decisions", () => {
+		cognitionStore.setState((s) => ({ ...s, matches: {} }));
+
+		expect(
+			ingestLivePaths(
+				42,
+				{
+					"BTC/USD": [
+						{ symbols: ["R08.R03"], brightness: 0.6 },
+						{ symbols: ["R08.R05"], brightness: 0.4 },
+					],
+				},
+				{
+					"BTC/USD/virtual": {
+						symbol: "BTC/USD",
+						action: "hold",
+						reason: "test",
+					},
+				},
+			),
+		).toBe(true);
+
+		const match = cognitionStore.state.matches["BTC/USD"];
+		expect(match?.tokens).toEqual(["R08.R03", "R08.R05"]);
+		expect(match?.action).toBe("hold");
+		expect(match?.tick).toBe(42);
+	});
+});
 
 describe("path walks", () => {
 	it("keeps one sentence per symbol from the tick batch", () => {

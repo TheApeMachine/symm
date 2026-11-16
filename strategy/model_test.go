@@ -239,8 +239,10 @@ func TestStepRecordsDecision(t *testing.T) {
 
 		Convey("Step records a decision on the envelope", func() {
 			So(out, ShouldNotBeNil)
-			So(out.Decisions["BTC/USD"], ShouldNotBeNil)
-			So(out.Decisions["BTC/USD"].Symbol, ShouldEqual, "BTC/USD")
+			got := out.Decisions["BTC/USD/virtual"]
+			So(got, ShouldNotBeNil)
+			So(got.Symbol, ShouldEqual, "BTC/USD")
+			So(got.Tier, ShouldEqual, "virtual")
 		})
 	})
 }
@@ -271,7 +273,7 @@ func TestStep(t *testing.T) {
 			}
 
 			out := model.Step(envelope)
-			got := out.Decisions["BTC/USD"]
+			got := out.Decisions["BTC/USD/virtual"]
 
 			Convey("Decision is an oracle skip", func() {
 				So(got, ShouldNotBeNil)

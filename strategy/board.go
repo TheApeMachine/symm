@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/system"
@@ -39,7 +40,6 @@ type EnterCandidate struct {
 	Symbol     string
 	Path       string
 	Resistance float64
-	Bypass     bool
 	PathFound  bool
 	Score      float64
 }
@@ -153,9 +153,14 @@ func (board *Board) Place(
 	})
 
 	limit := sel.MaxEntersPerTick
-
 	if limit <= 0 {
-		limit = 1
+		board.Error(errnie.Err(
+			errnie.Validation,
+			"[board] selection.max_enters_per_tick required",
+			nil,
+		))
+
+		return
 	}
 
 	allowed := limit

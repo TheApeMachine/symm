@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue"
@@ -307,7 +306,6 @@ func (desk *Desk) Run() {
 			continue
 		}
 
-		pipeline.Hit("trade")
 		desk.ingest(desk.venue.Read(buf))
 	}
 }

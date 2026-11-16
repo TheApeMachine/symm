@@ -233,6 +233,7 @@ risk:
   min_impulse_change_pct: 0.20
   impulse_window: 15m
   min_tape_accel_ratio: 1.15
+  min_impulse_accel_ratio: 1.15
 
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.

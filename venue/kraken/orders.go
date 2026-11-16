@@ -119,43 +119,6 @@ type QueryOrders struct {
 	Result map[string]HistoryOrder `json:"result"`
 }
 
-/*
-NewOpenOrdersResult parses an OpenOrders envelope into the open map.
-*/
-func NewOpenOrdersResult(data []byte) map[string]HistoryOrder {
-	var envelope OpenOrders
-
-	if err := sonic.Unmarshal(data, &envelope); err != nil || len(envelope.Error) > 0 {
-		errnie.Error(errnie.Err(errnie.IO, "[kraken.OpenOrders] decode failed", err).
-			With("error", envelope.Error))
-		return nil
-	}
-
-	if envelope.Result.Open == nil {
-		return map[string]HistoryOrder{}
-	}
-
-	return envelope.Result.Open
-}
-
-/*
-NewClosedOrdersResult parses a ClosedOrders envelope into the closed map.
-*/
-func NewClosedOrdersResult(data []byte) map[string]HistoryOrder {
-	var envelope ClosedOrders
-
-	if err := sonic.Unmarshal(data, &envelope); err != nil || len(envelope.Error) > 0 {
-		errnie.Error(errnie.Err(errnie.IO, "[kraken.ClosedOrders] decode failed", err).
-			With("error", envelope.Error))
-		return nil
-	}
-
-	if envelope.Result.Closed == nil {
-		return map[string]HistoryOrder{}
-	}
-
-	return envelope.Result.Closed
-}
 
 /*
 NewQueryOrdersResult parses a QueryOrders envelope into the txid map.

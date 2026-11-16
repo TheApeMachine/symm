@@ -9,7 +9,6 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/data"
-	"github.com/theapemachine/symm/pipeline"
 )
 
 /*
@@ -96,10 +95,6 @@ func (catalog *GrammarCatalog) Persist(
 		return errnie.Error(errnie.Err(
 			errnie.IO, "[tokenizer.catalog] store grammar", err,
 		))
-	}
-
-	if depth, ok := client.(interface{ QueueDepth() int }); ok {
-		pipeline.Wrote(int64(depth.QueueDepth()))
 	}
 
 	return nil

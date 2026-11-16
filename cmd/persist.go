@@ -9,7 +9,7 @@ import (
 	"github.com/theapemachine/nomagique/data"
 	nmruntime "github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
-	"github.com/theapemachine/symm/pipeline"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
@@ -52,19 +52,32 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		return nil
 	}
 
-	if tickStoreReady(persist.store) {
-		if _, err := persist.store.WriteAtPrefixWithEnvelope(fmt.Sprintf(
-			"workspace/tick/aggregate/%019d/%019d", data.Epoch.Load(), envelope.N,
-		), envelope); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "failed to write envelope", err,
-			))
-		} else {
-			pipeline.Wrote(int64(persist.store.QueueDepth()))
+	if !tickStoreReady(persist.store) {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[tick-persist] store client required",
+			nil,
+		))
+	} else if _, err := persist.store.WriteAtPrefixWithEnvelope(fmt.Sprintf(
+		"workspace/tick/aggregate/%019d/%019d", data.Epoch.Load(), envelope.N,
+	), envelope); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO, "failed to write envelope", err,
+		))
+	}
+
+	for _, ctx := range types.SourceStrings {
+		if payload := envelope.Publish(ctx, types.Focus()); len(payload) > 0 {
+			ui.UI.Write(payload)
 		}
 	}
 
-	ui.PublishTickDashboard(envelope)
+	ui.UI.WriteJSON(map[string]any{
+		"tick": map[string]any{
+			"epoch": data.Epoch.Load(),
+			"n":     envelope.N,
+		},
+	})
 
 	return envelope
 }

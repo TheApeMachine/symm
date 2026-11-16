@@ -11,7 +11,12 @@ import (
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/strategy/deskgate"
 )
+
+func trainingGate(ctx context.Context) *deskgate.Gate {
+	return deskgate.NewGate(ctx, nil)
+}
 
 func trainingBook(t testing.TB, symbol string) *broker.Price {
 	t.Helper()
@@ -38,7 +43,7 @@ func TestNewTraining(t *testing.T) {
 		ctx := context.Background()
 
 		Convey("When NewTraining is called without a store client", func() {
-			training := NewTraining(ctx, trainingBook(t, "BTC/USD"), &broker.Desk{}, nil, nil)
+			training := NewTraining(ctx, trainingBook(t, "BTC/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 
 			Convey("Training owns a fresh grammar catalog", func() {
 				So(training, ShouldNotBeNil)
@@ -143,7 +148,7 @@ func TestRestoreSequencer(t *testing.T) {
 func TestResetSequencer(t *testing.T) {
 	Convey("Setup", t, func() {
 		ctx := context.Background()
-		training := NewTraining(ctx, trainingBook(t, "RST/USD"), &broker.Desk{}, nil, nil)
+		training := NewTraining(ctx, trainingBook(t, "RST/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 
 		Convey("When ResetSequencer clears a warmed symbol", func() {
 			seq := training.Sequencer("RST/USD")
@@ -169,7 +174,7 @@ func TestResetSequencer(t *testing.T) {
 func TestFlush(t *testing.T) {
 	Convey("Setup", t, func() {
 		ctx := context.Background()
-		training := NewTraining(ctx, trainingBook(t, "FLU/USD"), &broker.Desk{}, nil, nil)
+		training := NewTraining(ctx, trainingBook(t, "FLU/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 
 		Convey("When sequencers are warmed", func() {
 			seq := training.Sequencer("FLU/USD")
@@ -252,7 +257,7 @@ func BenchmarkNewTraining(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = NewTraining(ctx, trainingBook(b, "BTC/USD"), &broker.Desk{}, nil, nil)
+		_ = NewTraining(ctx, trainingBook(b, "BTC/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 	}
 }
 
@@ -302,7 +307,7 @@ func BenchmarkRestoreSequencer(b *testing.B) {
 
 func BenchmarkResetSequencer(b *testing.B) {
 	ctx := context.Background()
-	training := NewTraining(ctx, trainingBook(b, "RST/USD"), &broker.Desk{}, nil, nil)
+	training := NewTraining(ctx, trainingBook(b, "RST/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 	seq := training.Sequencer("RST/USD")
 	_, _ = seq.Step("R03", 0.7)
 
@@ -317,7 +322,7 @@ func BenchmarkResetSequencer(b *testing.B) {
 
 func BenchmarkFlush(b *testing.B) {
 	ctx := context.Background()
-	training := NewTraining(ctx, trainingBook(b, "FLU/USD"), &broker.Desk{}, nil, nil)
+	training := NewTraining(ctx, trainingBook(b, "FLU/USD"), &broker.Desk{}, nil, trainingGate(ctx))
 	seq := training.Sequencer("FLU/USD")
 	_, _ = seq.Step("R02", 0.6)
 

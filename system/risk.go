@@ -54,7 +54,7 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.min_impulse_change_pct", 0.20)
 	viper.SetDefault("risk.impulse_window", 15*time.Minute)
 	viper.SetDefault("risk.impulse_short_window", 5*time.Minute)
-	viper.SetDefault("risk.min_impulse_accel_ratio", 0.0)
+	viper.SetDefault("risk.min_impulse_accel_ratio", 1.15)
 	viper.SetDefault("risk.min_tape_accel_ratio", 1.15)
 
 	return &Risk{

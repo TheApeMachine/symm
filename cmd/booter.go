@@ -18,7 +18,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/pipeline"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -58,7 +57,6 @@ type Booter struct {
 	model      *strategy.Model
 	workspace  *nmruntime.Workspace
 	persist    *TickPersist
-	graph      *pipeline.Graph
 	store      *store.Client
 	replies    sync.Map
 	credErr    error
@@ -407,12 +405,6 @@ func (booter *Booter) initMarket() error {
 	})
 
 	ui.UI.RegisterCallback(func() {
-		// Topology first so a busy Hello fan-out cannot crowd it out of the
-		// hub queue on refresh.
-		if booter.graph != nil {
-			booter.graph.PublishTopology()
-		}
-
 		booter.desk.Hello()
 
 		if booter.engine != "" {
@@ -474,71 +466,19 @@ func (booter *Booter) initPipeline() error {
 	)
 
 	booter.workspace.Transition(nmruntime.READY)
-	// booter.graph.PublishTopology()
-	// go booter.watchPipeline()
 
 	booter.desk.OnTrade(func(trade *market.Trade) {
 		if booter.workspace == nil || trade == nil {
 			return
 		}
 
-		// started := time.Now()
 		tick := nmruntime.NewEnvelope(trade)
 		tick.N = data.Tick.Add(1)
 
 		booter.workspace.Step(tick)
-		// booter.graph.Ingress(time.Since(started))
 	})
 
 	return nil
-}
-
-/*
-watchPipeline fails the engine badge when ingress keeps moving while model is
-frozen. Tick count alone is not health — it publishes before the disruptor runs.
-*/
-func (booter *Booter) watchPipeline() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	var lastIngress, lastModel uint64
-	stalled := false
-
-	for {
-		select {
-		case <-booter.Context().Done():
-			return
-		case <-ticker.C:
-			if booter.graph == nil {
-				continue
-			}
-
-			ingress := booter.graph.Count("ingress")
-			model := booter.graph.Count("model")
-			correlation := booter.graph.Count("correlation")
-
-			if ingress >= lastIngress+50 && model == lastModel {
-				errnie.Error(errnie.Err(
-					errnie.Timeout,
-					"[booter] pipeline stall: ingress advancing while model is frozen",
-					nil,
-				).With("ingress", ingress).
-					With("model", model).
-					With("correlation", correlation))
-
-				if !stalled {
-					booter.setEngine("error")
-					stalled = true
-				}
-			} else if stalled && model > lastModel {
-				booter.setEngine("ready")
-				stalled = false
-			}
-
-			lastIngress = ingress
-			lastModel = model
-		}
-	}
 }
 
 /*
@@ -621,7 +561,6 @@ func (booter *Booter) readLevel3(client *network.WebsocketClient) {
 			continue
 		}
 
-		pipeline.Hit("level3")
 		booter.desk.Feed(buf)
 	}
 }

@@ -203,26 +203,6 @@ func (execution *Execution) Request() map[string]any {
 	}
 }
 
-func NewExecutionRequest(orderID string) map[string]any {
-	return map[string]any{
-		"method": "private",
-		"params": map[string]any{
-			"channel": "executions",
-		},
-	}
-}
-
-func NewExecutionResult(data []byte) *Execution {
-	var result Execution
-
-	if err := sonic.Unmarshal(data, &result); err != nil {
-		return nil
-	}
-
-	return &result
-}
-
-
 /*
 MarshalJSON aliases Execution for the wire.
 */

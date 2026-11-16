@@ -119,43 +119,17 @@ func TestActive(t *testing.T) {
 			})
 		})
 
-		Convey("When PrimeGrace opened the attach window", func() {
-			restore := hub.PrimeGrace()
+		Convey("When connectedSince is within the grace window", func() {
+			hub.connectedSince.Store(time.Now().UnixNano())
 
 			Convey("Active is true within grace", func() {
 				So(hub.Active(), ShouldBeTrue)
-				restore()
 			})
 		})
 
 		Convey("When neither connected nor graced", func() {
 			Convey("Active is false", func() {
 				So(hub.Active(), ShouldBeFalse)
-			})
-		})
-	})
-}
-
-func TestNextFrame(t *testing.T) {
-	Convey("Setup", t, func() {
-		hub := &Hub{frameCh: make(chan []byte, 1)}
-
-		Convey("When a frame is queued", func() {
-			hub.frameCh <- []byte("tick")
-
-			buf, ok := hub.NextFrame()
-
-			Convey("NextFrame returns a copy", func() {
-				So(ok, ShouldBeTrue)
-				So(string(buf), ShouldEqual, "tick")
-			})
-		})
-
-		Convey("When the queue is empty", func() {
-			_, ok := hub.NextFrame()
-
-			Convey("NextFrame reports none", func() {
-				So(ok, ShouldBeFalse)
 			})
 		})
 	})
@@ -208,14 +182,3 @@ func BenchmarkActive(b *testing.B) {
 	}
 }
 
-func BenchmarkNextFrame(b *testing.B) {
-	hub := &Hub{frameCh: make(chan []byte, 1)}
-	frame := []byte("tick")
-
-	b.ReportAllocs()
-
-	for b.Loop() {
-		hub.frameCh <- frame
-		_, _ = hub.NextFrame()
-	}
-}

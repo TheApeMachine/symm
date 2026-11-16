@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -89,7 +90,10 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 	} {
 		for position := range model.desk.Pending(tier) {
-			position.ExitPath = envelope.Paths[position.Symbol].String()
+			if cut := envelope.Paths[position.Symbol]; cut != nil {
+				position.ExitPath = cut.String()
+			}
+
 			errnie.Error(model.desk.Exit(position, false))
 		}
 	}
@@ -104,6 +108,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		wg.Go(func() {
 			path := cut.String()
 			open := model.desk.Has(symbol)
+			resistance := 1.0
 
 			// Oracle and resonance gates are entry filters. An open book still
 			// has to hold or exit when the reading is cold or surprising.
@@ -114,6 +119,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					Reason: "oracle veto lit — not tradable",
 					Gate:   "oracle",
 					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
 				})
 
 				return
@@ -121,99 +127,106 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			rez := envelope.Resonance[symbol]
 
-			if rez == nil && !open {
+			if rez == nil {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "no resonance reading",
 					Gate:   "resonance",
 					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
 				})
+
 				return
 			}
 
-			var (
-				surprise     float64
-				supported    int
-				precision    float64
-				hasPrecision bool
-			)
-
-			if rez != nil {
-				surprise = rez["surprise"]
-				supported = int(rez["supported_horizon"])
-				precision, hasPrecision = rez["task_relative_precision"]
-			}
+			surprise := rez["surprise"]
+			supported := int(rez["supported_horizon"])
+			precision, hasPrecision := rez["task_relative_precision"]
 
 			learn := system.Cfg.Learning
 
-			if rez != nil && !open && (rez["calibrated"] < 1 ||
-				supported < learn.MinSupportedHorizon ||
-				!hasPrecision ||
-				precision < learn.MinTaskRelativePrecision ||
-				surprise < learn.MinSurprise) {
+			if rez["calibrated"] < 1 || supported < learn.MinSupportedHorizon || !hasPrecision || precision < learn.MinTaskRelativePrecision || surprise < learn.MinSurprise {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: model.gateReason(rez, supported, hasPrecision, precision, surprise),
 					Gate:   "resonance",
 					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
 				})
+
 				return
 			}
 
 			curve := make([]float64, 0, len(resonance.Features))
 
-			if rez != nil {
-				for i := range len(resonance.Features) {
-					value, ok := rez["forward_curve_"+strconv.Itoa(i)]
-					if !ok {
-						break
-					}
+			for i := range len(resonance.Features) {
+				value, ok := rez["forward_curve_"+strconv.Itoa(i)]
 
-					curve = append(curve, value)
+				if !ok {
+					break
 				}
+
+				curve = append(curve, value)
 			}
 
-			enterNet, holdNet, exitNet, risk, ok := resonance.ForwardStoryNets(curve)
+			enterNet, holdNet, exitNet, ok := resonance.ForwardStoryNets(curve)
 
-			if !ok && !open {
+			if !ok {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "resonance curve incomplete",
 					Gate:   "resonance",
 					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
 				})
 
 				return
 			}
 
-			minEnter := system.Cfg.Learning.MinEnterZ
-			bullish := (enterNet >= minEnter && holdNet >= minEnter && exitNet <= holdNet && risk < minEnter)
+			var bullish int
 
-			if !bullish {
+			switch {
+			case enterNet >= holdNet && enterNet >= exitNet:
+				bullish = 1
+			case holdNet >= enterNet && holdNet >= exitNet:
+				bullish = 0
+			default:
+				bullish = -1
+			}
+
+			if !open && bullish < 0 {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
 					Reason: "forward story not bullish",
 					Gate:   "story",
 					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
+				})
+
+				return
+			} else if open && bullish >= 0 {
+				envelope.Decide(&runtime.Decision{
+					Symbol: symbol,
+					Action: "skip",
+					Reason: "forward story bullish",
+					Gate:   "story",
+					Path:   path,
+					Tier:   model.decisionTier(symbol, resistance),
 				})
 			}
 
 			tree := model.tree.Load()
 			action, resistance, matched := tree.Predict(*cut)
 
-			tier := broker.TierTypeVirtual
+			tier := model.routeTier(resistance)
 
 			// Matched + ActionNone: leaf existed but brightness lost to resistance
 			// (or the leaf was pruned). That is a veto, not an unexplored cold path.
 			if matched {
-				if resistance >= system.Cfg.Learning.PaperEligibleResistance {
-					tier = broker.TierTypePaper
-				}
-
 				position := model.desk.Position(tier, symbol)
 
 				if position != nil {
@@ -229,38 +242,96 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 							Reason: "path resistance veto",
 							Gate:   "tree",
 							Path:   path,
+							Tier:   model.decisionTier(symbol, resistance),
 						})
 					}
 				case ActionEnter:
-					model.desk.Enter(symbol, path, tier, true)
-
-					envelope.Decide(&runtime.Decision{
-						Symbol: symbol,
-						Action: "enter",
-						Reason: "path matched",
-						Gate:   "tree",
-						Path:   path,
-					})
+					if !open && model.desk.Enter(symbol, path, tier, true) == nil {
+						envelope.Decide(&runtime.Decision{
+							Symbol: symbol,
+							Action: "enter",
+							Reason: "path matched",
+							Gate:   "tree",
+							Path:   path,
+							Tier:   tier.String(),
+						})
+					}
 				case ActionExit:
+					if open {
+						position := model.desk.Position(tier, symbol)
+
+						if position != nil && position.PnLPct.Sign() > 0 {
+							model.Exit(position, path)
+						}
+					}
+
 					envelope.Decide(&runtime.Decision{
 						Symbol: symbol,
 						Action: "exit",
 						Reason: "path matched",
 						Gate:   "tree",
 						Path:   path,
+						Tier:   model.decisionTier(symbol, resistance),
 					})
 				}
 
 				return
 			}
 
-			model.desk.Enter(symbol, path, broker.TierTypeVirtual, false)
+			if !open && model.desk.Enter(symbol, path, tier, false) == nil {
+				envelope.Decide(&runtime.Decision{
+					Symbol: symbol,
+					Action: "enter",
+					Reason: "explore",
+					Gate:   "tree",
+					Path:   path,
+					Tier:   tier.String(),
+				})
+			}
 		})
 	}
 
 	wg.Wait()
 
+	if ui.UI != nil && ui.UI.Active() && len(envelope.Decisions) > 0 {
+		if payload := envelope.Publish("decisions", ""); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
+	}
+
 	return envelope
+}
+
+func (model *Model) openTierKey(symbol string) string {
+	for _, tier := range []broker.TierType{
+		broker.TierTypeReal, broker.TierTypePaper, broker.TierTypeVirtual,
+	} {
+		if model.desk.Position(tier, symbol) != nil {
+			return tier.String()
+		}
+	}
+
+	return ""
+}
+
+func (model *Model) routeTier(resistance float64) broker.TierType {
+	tier := broker.TierTypeVirtual
+
+	if system.Cfg.Market.Model == "real" {
+		tier = broker.TierTypeReal
+	} else if resistance <= system.Cfg.Learning.PaperEligibleResistance {
+		tier = broker.TierTypePaper
+	}
+
+	return tier
+}
+
+func (model *Model) decisionTier(symbol string, resistance float64) string {
+	if key := model.openTierKey(symbol); key != "" {
+		return key
+	}
+
+	return model.routeTier(resistance).String()
 }
 
 /*

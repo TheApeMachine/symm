@@ -55,11 +55,17 @@ func seedBuyTapeAccel(price *Price, symbol string, at time.Time) {
 
 func seedPumpImpulse() *equation.IgnitionOutput {
 	sel := system.Cfg.Selection
+	risk := system.Cfg.Risk
+	pace := sel.IgnitionIgnitionMin
+	if risk.MinImpulseAccelRatio > pace {
+		pace = risk.MinImpulseAccelRatio
+	}
+
 	return &equation.IgnitionOutput{
 		Precursor: sel.IgnitionPrecursorMin,
 		RVOL:      1,
-		Ignition:  sel.IgnitionIgnitionMin,
-		Trend:     sel.IgnitionIgnitionMin,
+		Ignition:  pace,
+		Trend:     pace,
 	}
 }
 

@@ -13,6 +13,7 @@ func TestGateLearn(t *testing.T) {
 		gate := NewGate(context.Background(), nil)
 
 		feat := map[string]float64{
+			"tape_recent": 1,
 			"axis_volume": 0.7,
 			"axis_day":    0.6,
 			"axis_spread": 0.8,
@@ -42,7 +43,8 @@ func TestDeveloped(t *testing.T) {
 			pos := &broker.Position{
 				Stoploss: &broker.Stoploss{PeakPnLPct: 1.2, ArmPnlPct: 1.0},
 			}
-			So(Developed(pos), ShouldBeTrue)
+			gate := NewGate(context.Background(), nil)
+			So(gate.Developed(pos), ShouldBeTrue)
 		})
 	})
 }

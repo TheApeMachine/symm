@@ -155,21 +155,6 @@ func (nonce *AuthNonce) Err() error {
 }
 
 /*
-Close releases the exclusive nonce lock. The process-wide generator keeps the
-lock for the life of the process; tests call Close before constructing a
-successor in the same directory.
-*/
-func (nonce *AuthNonce) Close() error {
-	if nonce == nil || nonce.lock == nil {
-		return nil
-	}
-
-	err := nonce.lock.Close()
-	nonce.lock = nil
-	return err
-}
-
-/*
 processAuthNonce returns the process-wide generator shared by authenticated
 Live transports. Construction errors prevent REST Nonce wiring and auth.
 */
