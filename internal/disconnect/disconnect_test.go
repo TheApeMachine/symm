@@ -39,6 +39,18 @@ func TestExpected(t *testing.T) {
 			})
 		})
 
+		Convey("When err is websocket close sent", func() {
+			Convey("Expected is true", func() {
+				So(Expected(errors.New("websocket: close sent")), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is a nil fiber conn", func() {
+			Convey("Expected is true", func() {
+				So(Expected(errors.New("nil *Conn")), ShouldBeTrue)
+			})
+		})
+
 		Convey("When err is nil", func() {
 			Convey("Expected is false", func() {
 				So(Expected(nil), ShouldBeFalse)

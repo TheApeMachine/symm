@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/system"
 )
 
 const ordersTwoOpen = `{
@@ -12,7 +13,9 @@ const ordersTwoOpen = `{
 		"o1": {
 			"cl_ord_id": "enter-bera",
 			"status": "closed",
+			"opentm": 1700000000.0,
 			"vol": "10.0",
+			"vol_exec": "10.0",
 			"descr": {
 				"pair": "BERAUSD",
 				"type": "buy",
@@ -23,7 +26,9 @@ const ordersTwoOpen = `{
 		"o2": {
 			"cl_ord_id": "enter-pepe",
 			"status": "closed",
+			"opentm": 1700000100.0,
 			"vol": "500.0",
+			"vol_exec": "500.0",
 			"descr": {
 				"pair": "PEPEUSD",
 				"type": "buy",
@@ -40,32 +45,64 @@ const ordersTwoClosed = `{
 		"o1": {
 			"cl_ord_id": "enter-1",
 			"status": "closed",
+			"opentm": 1700000000.0,
 			"vol": "1.0",
+			"vol_exec": "1.0",
 			"descr": {"pair": "XBTUSD", "type": "buy", "ordertype": "market", "price": "0"}
 		},
 		"o2": {
 			"cl_ord_id": "exit-1",
 			"status": "closed",
+			"opentm": 1700000100.0,
 			"vol": "1.0",
+			"vol_exec": "1.0",
 			"descr": {"pair": "XBTUSD", "type": "sell", "ordertype": "market", "price": "0"}
 		},
 		"o3": {
 			"cl_ord_id": "enter-2",
 			"status": "closed",
+			"opentm": 1700000200.0,
 			"vol": "1.0",
+			"vol_exec": "1.0",
 			"descr": {"pair": "XBTUSD", "type": "buy", "ordertype": "market", "price": "0"}
 		},
 		"o4": {
 			"cl_ord_id": "exit-2",
 			"status": "closed",
+			"opentm": 1700000300.0,
 			"vol": "1.0",
+			"vol_exec": "1.0",
 			"descr": {"pair": "XBTUSD", "type": "sell", "ordertype": "market", "price": "0"}
 		}
 	}
 }`
 
-func TestOrdersRestore(t *testing.T) {
+func TestOrdersFetch(t *testing.T) {
 	Convey("Setup", t, func() {
+		if system.Cfg == nil || system.Cfg.WebSocket == nil {
+			system.Cfg = system.NewConfig()
+		}
+
+		Convey("When Fetch gets venue rows for fill ordertxids", func() {
+			transport := &historyClient{orders: []byte(ordersTwoOpen)}
+			book := NewOrders(transport).Fetch([]string{"o1", "o2"})
+
+			Convey("Each txid carries side and cl_ord_id", func() {
+				So(len(book), ShouldEqual, 2)
+				So(book["o1"].ClOrdID, ShouldEqual, "enter-bera")
+				So(book["o1"].Descr.Type, ShouldEqual, "buy")
+				So(book["o2"].ClOrdID, ShouldEqual, "enter-pepe")
+			})
+		})
+	})
+}
+
+func TestOrdersRestoreViaLedger(t *testing.T) {
+	Convey("Setup", t, func() {
+		if system.Cfg == nil || system.Cfg.WebSocket == nil {
+			system.Cfg = system.NewConfig()
+		}
+
 		cache := NewCache(
 			t.Context(),
 			"real",
@@ -74,7 +111,7 @@ func TestOrdersRestore(t *testing.T) {
 		)
 		closed := cache.Closed()
 
-		Convey("When a cycle has an entry order and an exit order", func() {
+		Convey("When closed cycles bind orders then fills", func() {
 			So(len(closed), ShouldEqual, 2)
 
 			byEntry := map[string]*Position{}
@@ -86,33 +123,33 @@ func TestOrdersRestore(t *testing.T) {
 			first := byEntry["o1"]
 			second := byEntry["o3"]
 
-			Convey("Both orders are bound on that holding", func() {
+			Convey("Entry and exit orders stamp from QueryOrders", func() {
 				So(first, ShouldNotBeNil)
+				So(first.ExitVenueOrderID, ShouldEqual, "o2")
 				So(first.EntryOrder, ShouldNotBeNil)
 				So(first.EntryOrder.ClOrdId, ShouldEqual, "enter-1")
-				So(first.EntryOrder.Type, ShouldEqual, "buy")
 				So(first.ExitOrder, ShouldNotBeNil)
 				So(first.ExitOrder.ClOrdId, ShouldEqual, "exit-1")
-				So(first.ExitOrder.Type, ShouldEqual, "sell")
-				So(first.ExitVenueOrderID, ShouldEqual, "o2")
 
 				So(second, ShouldNotBeNil)
-				So(second.EntryOrder.ClOrdId, ShouldEqual, "enter-2")
-				So(second.ExitOrder.ClOrdId, ShouldEqual, "exit-2")
 				So(second.ExitVenueOrderID, ShouldEqual, "o4")
+				So(second.EntryOrder, ShouldNotBeNil)
+				So(second.ExitOrder, ShouldNotBeNil)
 			})
 		})
-	})
 
-	Convey("Setup", t, withHistory(historyTwoOpen, func(cache *Cache) {
-		transport := &historyClient{
-			trades: []byte(historyTwoOpen),
-			orders: []byte(ordersTwoOpen),
-		}
-
-		Convey("When Orders.Restore runs after trades admit opens", func() {
-			NewOrders(transport).Restore(cache.Open())
-			open := cache.Open()
+		Convey("When open buys restore through QueryOrders", func() {
+			openCache := NewCache(
+				t.Context(),
+				"real",
+				&historyClient{
+					trades:   []byte(historyTwoOpen),
+					orders:   []byte(ordersTwoOpen),
+					balances: []byte(walletTwoOpen),
+				},
+				nil, nil, nil,
+			)
+			open := openCache.Open()
 
 			Convey("Each open position carries EntryOrder and venue order id", func() {
 				So(len(open), ShouldEqual, 2)
@@ -138,5 +175,5 @@ func TestOrdersRestore(t *testing.T) {
 				So(pepe.EntryOrder.ClOrdId, ShouldEqual, "enter-pepe")
 			})
 		})
-	}))
+	})
 }

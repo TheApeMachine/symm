@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
@@ -56,6 +57,24 @@ func withTier(ctx context.Context, tt TierType, f func(*Tier)) func() {
 	}
 }
 
+func seedMarkable(pos *Position) {
+	if pos == nil {
+		return
+	}
+
+	if pos.EntryOrder == nil {
+		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1", Type: "buy", OrderType: "market"}
+	}
+
+	if pos.EntryVenueOrderID == "" {
+		pos.EntryVenueOrderID = "OID-1"
+	}
+
+	if pos.onSettled == nil {
+		pos.onSettled = func(*Position) {}
+	}
+}
+
 func TestTierTypeString(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When each tier constant is stringified", func() {
@@ -89,8 +108,12 @@ func TestNewTierExecutionsSubscribe(t *testing.T) {
 			price.Instrument.auth.SeedToken("tok")
 			host := venue.NewKraken("USD")
 
+			prevModel := system.Cfg.Market.Model
+			system.Cfg.Market.Model = "real"
 			tier := NewTier(t.Context(), TierTypeReal, nil, cap, price, host, nil)
+			system.Cfg.Market.Model = prevModel
 			So(tier, ShouldNotBeNil)
+			So(tier.Status(), ShouldEqual, runtime.READY)
 
 			var found bool
 
@@ -110,7 +133,7 @@ func TestNewTierExecutionsSubscribe(t *testing.T) {
 
 				So(params["token"], ShouldEqual, "tok")
 				So(params["snap_orders"], ShouldEqual, true)
-				So(params["snap_trades"], ShouldEqual, true)
+				So(params["snap_trades"], ShouldEqual, false)
 				found = true
 			}
 
@@ -124,6 +147,7 @@ func TestNewTierExecutionsSubscribe(t *testing.T) {
 func TestTierHello(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+		seedMarkable(pos)
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
 			LastQty: dec("1"), LastPrice: dec("100"),
@@ -132,6 +156,7 @@ func TestTierHello(t *testing.T) {
 		tier.positions.Add(testSymbol, pos, true)
 
 		Convey("When Hello refreshes open marks", func() {
+			tier.Update(testSymbol, dec("100"))
 			tier.Hello()
 
 			Convey("Unrealized PnL matches mark 100 at 0.40% taker", func() {
@@ -147,6 +172,7 @@ func TestTierHello(t *testing.T) {
 func TestTierUpdate(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+		seedMarkable(pos)
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
 			LastQty: dec("1"), LastPrice: dec("100"),
@@ -210,6 +236,7 @@ func TestTierEnter(t *testing.T) {
 func TestTierExit(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
 		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+		seedMarkable(pos)
 		pos.ExitPath = "R00/M1"
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
@@ -220,6 +247,7 @@ func TestTierExit(t *testing.T) {
 
 		Convey("When Exit is called on a READY row", func() {
 			setBook(tier.price, "120", "121", "30")
+			tier.Update(testSymbol, dec("120"))
 			err := tier.Exit(pos, false)
 
 			Convey("Closing is armed", func() {
@@ -231,6 +259,8 @@ func TestTierExit(t *testing.T) {
 		})
 
 		Convey("When Exit would sell into a fee-net loss", func() {
+			setBook(tier.price, "120", "121", "30")
+			tier.Update(testSymbol, dec("120"))
 			setBook(tier.price, "100", "101", "30")
 			err := tier.Exit(pos, false)
 
@@ -242,6 +272,8 @@ func TestTierExit(t *testing.T) {
 		})
 
 		Convey("When Exit hits a book that cannot absorb Qty", func() {
+			setBook(tier.price, "120", "121", "30")
+			tier.Update(testSymbol, dec("120"))
 			setBook(tier.price, "120", "121", "0.1")
 			err := tier.Exit(pos, false)
 
@@ -375,6 +407,18 @@ func TestTierApply(t *testing.T) {
 		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1"}
 		tier.positions.Add(testSymbol, pos, true)
 
+		Convey("When a fill arrives for an unknown symbol", func() {
+			So(func() {
+				tier.apply(&market.Execution{
+					Data: []*market.ExecutionData{{
+						ExecID: "x1", Side: "buy", Symbol: "MISSING/USD",
+						LastQty: dec("1"), LastPrice: dec("1"),
+						Timestamp: time.Unix(1, 0).UTC(),
+					}},
+				})
+			}, ShouldNotPanic)
+		})
+
 		Convey("When a matching buy fill arrives", func() {
 			tier.apply(&market.Execution{
 				Data: []*market.ExecutionData{{
@@ -385,10 +429,10 @@ func TestTierApply(t *testing.T) {
 				}},
 			})
 
-			Convey("Qty and Entry stamp", func() {
+			Convey("Qty and Entry stamp; row waits for the book", func() {
 				So(pos.Qty.String(), ShouldEqual, "1")
 				So(pos.Entry.String(), ShouldEqual, "100")
-				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(pos.Status(), ShouldEqual, runtime.WAITING)
 			})
 		})
 
@@ -444,6 +488,7 @@ func TestTierApply(t *testing.T) {
 				So(pos.ExitOrder, ShouldBeNil)
 			})
 		})
+
 	}))
 }
 

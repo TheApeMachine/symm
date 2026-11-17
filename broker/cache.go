@@ -49,6 +49,8 @@ func NewCache(
 		closed:  &sync.Map{},
 	}
 
+	// Restore while INIT: Fold binds orders/fills but leaves opens WAITING so
+	// Apply never READY/PnL before Price/Level3 can mark.
 	open, closed := cache.ledger.Restore(ctx)
 
 	for _, position := range open {
@@ -58,6 +60,8 @@ func NewCache(
 	for _, position := range closed {
 		cache.archive(position)
 	}
+
+	cache.Transition(runtime.WAITING)
 
 	return cache
 }

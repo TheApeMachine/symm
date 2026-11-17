@@ -89,8 +89,9 @@ func NewPosition(
 
 /*
 Update stamps Mark from the bid hint for the chart, then exact book PnL/PnLPct.
-Stoploss arms above risk.stoploss_arm_pnl_pct. Incomplete books leave PnL nil
-and skip the stop. Other stages are a silent no-op.
+WAITING opens (restored or just filled) arm to READY only once the book can
+mark — restore must not READY/PnL before Level3 exists. Incomplete books leave
+PnL nil and stay WAITING. Stoploss arms above risk.stoploss_arm_pnl_pct.
 */
 func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	if hint == nil {
@@ -101,13 +102,17 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 		), "symbol", position.Symbol)
 	}
 
-	if position.Status() != runtime.READY {
+	stage := position.Status()
+
+	if stage != runtime.READY && stage != runtime.WAITING {
 		return false, nil
 	}
 
 	position.mu.Lock()
 
-	if position.Status() != runtime.READY ||
+	stage = position.Status()
+
+	if (stage != runtime.READY && stage != runtime.WAITING) ||
 		position.Qty == nil || position.Qty.Sign() <= 0 || position.price == nil {
 		position.mu.Unlock()
 		return false, nil
@@ -122,6 +127,10 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	if position.PnLPct == nil {
 		position.mu.Unlock()
 		return false, nil
+	}
+
+	if stage == runtime.WAITING {
+		position.Transition(runtime.READY)
 	}
 
 	qty := *position.Qty
@@ -289,11 +298,14 @@ func (position *Position) Validate() error {
 }
 
 /*
-Apply is the only fill path. Entry fills refresh Qty/Entry/PnL; exit fills only
-stamp ClosedAt once buys and sells net to zero — PnL stays the last mark.
+Apply is the only fill path for one cycle. Entry fills refresh Qty/Entry and
+leave the row WAITING — Update arms READY once price/books can mark. Exit fills
+stamp ClosedAt once buys and sells net to zero. Ledger Fold restores the same
+way: closed cycles end DONE without ever READY; opens wait for the book.
 */
 func (position *Position) Apply(execution market.ExecutionData) {
-	if (execution.ExecType != "" && execution.ExecType != "trade") ||
+	if position == nil ||
+		(execution.ExecType != "" && execution.ExecType != "trade") ||
 		execution.LastQty == nil || execution.LastQty.Sign() <= 0 {
 		return
 	}
@@ -302,7 +314,19 @@ func (position *Position) Apply(execution market.ExecutionData) {
 	defer position.mu.Unlock()
 
 	for _, fill := range position.Fills {
-		if fill != nil && fill.ExecID == execution.ExecID && execution.ExecID != "" {
+		if fill == nil {
+			continue
+		}
+
+		if fill.ExecID != "" && fill.ExecID == execution.ExecID {
+			return
+		}
+
+		if execution.ExecID == "" &&
+			fill.OrderID == execution.OrderID &&
+			fill.Side == execution.Side &&
+			fill.Timestamp.Equal(execution.Timestamp) &&
+			fill.LastQty != nil && fill.LastQty.Equal(*execution.LastQty) {
 			return
 		}
 	}
@@ -319,16 +343,40 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		position.ClosedAt = nil
 
 		if position.Status() == runtime.DONE {
-			position.Transition(runtime.READY)
+			position.Transition(runtime.WAITING)
 		}
 
 		closed = false
 	}
 
 	position.Fills = append(position.Fills, &execution)
+	net, bought, notional := position.fillsNet()
+	position.Qty = &net
 
-	var net, bought, notional decimal.Decimal
+	if bought.Sign() > 0 {
+		vwap := notional.Div(bought)
+		position.Entry = &vwap
+	}
 
+	if execution.Side == "sell" {
+		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
+			position.ClosedAt = &execution.Timestamp
+			position.Transition(runtime.DONE)
+		}
+
+		return
+	}
+
+	if position.Qty != nil && position.Qty.Sign() > 0 {
+		switch position.Status() {
+		case runtime.READY, runtime.WAITING:
+		default:
+			position.Transition(runtime.WAITING)
+		}
+	}
+}
+
+func (position *Position) fillsNet() (net, bought, notional decimal.Decimal) {
 	for _, fill := range position.Fills {
 		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
 			continue
@@ -350,32 +398,5 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		}
 	}
 
-	position.Qty = &net
-
-	if bought.Sign() > 0 {
-		vwap := notional.Div(bought)
-		position.Entry = &vwap
-	}
-
-	if execution.Side == "sell" {
-		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
-			position.ClosedAt = &execution.Timestamp
-			position.Transition(runtime.DONE)
-		}
-
-		return
-	}
-
-	if position.Qty != nil && position.Qty.Sign() > 0 {
-		if position.Status() != runtime.READY {
-			position.Transition(runtime.READY)
-		}
-	}
-
-	if position.price == nil {
-		return
-	}
-
-	position.PnL = position.price.PnL(position)
-	position.PnLPct = position.price.PnLPct(position)
+	return net, bought, notional
 }

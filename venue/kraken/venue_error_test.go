@@ -7,6 +7,10 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+type errRateLimit struct{}
+
+func (errRateLimit) Error() string { return "EAPI:Rate limit exceeded" }
+
 func TestVenueErrors(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When the body carries a Kraken error array", func() {
@@ -41,6 +45,22 @@ func TestRateLimited(t *testing.T) {
 			limited := RateLimited("EAPI:Invalid nonce")
 
 			Convey("RateLimited is false", func() {
+				So(limited, ShouldBeFalse)
+			})
+		})
+
+		Convey("When a Go error carries the rate limit text", func() {
+			limited := RateLimited(errRateLimit{})
+
+			Convey("RateLimited is true", func() {
+				So(limited, ShouldBeTrue)
+			})
+		})
+
+		Convey("When the error is the trading-engine order limit", func() {
+			limited := RateLimited("EOrder:Rate limit exceeded")
+
+			Convey("RateLimited is false — that limiter is per-pair, not REST", func() {
 				So(limited, ShouldBeFalse)
 			})
 		})

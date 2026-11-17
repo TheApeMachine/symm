@@ -88,10 +88,25 @@ func (trade *HistoryTrade) UnmarshalJSON(data []byte) error {
 		Cost:       decoded.Cost,
 		Fee:        decoded.Fee,
 		Volume:     decoded.Volume,
-		Time:       time.Unix(int64(decoded.Time), 0).UTC(),
+		Time:       unixFloat(decoded.Time),
 	}
 
 	return nil
+}
+
+/*
+unixFloat keeps Kraken's fractional seconds. Truncating to whole seconds made
+same-second sell→buy cycles merge under Ledger.cycle's sort.
+*/
+func unixFloat(sec float64) time.Time {
+	whole := int64(sec)
+	frac := sec - float64(whole)
+
+	if frac < 0 {
+		frac = 0
+	}
+
+	return time.Unix(whole, int64(frac*1e9)).UTC()
 }
 
 /*
@@ -299,7 +314,7 @@ func NewTradesHistoryFromMap(model map[string]any) json.Marshaler {
 
 		switch value := trade["time"].(type) {
 		case float64:
-			when = time.Unix(int64(value), 0).UTC()
+			when = unixFloat(value)
 		case string:
 			if parsed, err := time.Parse(time.RFC3339, value); err == nil {
 				when = parsed.UTC()

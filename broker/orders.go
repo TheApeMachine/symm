@@ -2,7 +2,9 @@ package broker
 
 import (
 	"slices"
+	"time"
 
+	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
@@ -10,8 +12,8 @@ import (
 )
 
 /*
-Orders loads QueryOrders rows for fill order ids and sets them on the
-holdings the ledger restored.
+Orders is QueryOrders: fetch venue order rows by txid so restore can bind
+EntryOrder / ExitOrder the same way live enter/exit does — order first, fills after.
 */
 type Orders struct {
 	transport network.Client
@@ -21,48 +23,26 @@ type Orders struct {
 NewOrders wires the private transport used for QueryOrders.
 */
 func NewOrders(transport network.Client) *Orders {
-	orders := &Orders{
-		transport: transport,
-	}
-
-	if err := errnie.Require(map[string]any{
-		"transport": transport,
-	}); err != nil {
-		errnie.Error(err)
+	if transport == nil {
 		return nil
 	}
 
-	return orders
+	return &Orders{transport: transport}
 }
 
 /*
-Restore queries each fill's order id and sets EntryOrder or ExitOrder.
+Fetch loads HistoryOrder rows for the given txids (chunks of 50). Missing or
+failed pages leave those ids absent — callers still fold from fill sides.
 */
-func (orders *Orders) Restore(positions []*Position) {
-	owners := make(map[string]*Position)
+func (orders *Orders) Fetch(ids []string) map[string]kraken.HistoryOrder {
+	out := make(map[string]kraken.HistoryOrder, len(ids))
 
-	for _, position := range positions {
-		if position == nil {
-			continue
-		}
-
-		for _, fill := range position.Fills {
-			if fill == nil || fill.OrderID == "" {
-				continue
-			}
-
-			owners[fill.OrderID] = position
-		}
+	if orders == nil || orders.transport == nil || len(ids) == 0 {
+		return out
 	}
 
-	if len(owners) == 0 {
-		return
-	}
-
-	ids := make([]string, 0, len(owners))
-
-	for id := range owners {
-		ids = append(ids, id)
+	if system.Cfg == nil || system.Cfg.WebSocket == nil {
+		return out
 	}
 
 	for chunk := range slices.Chunk(ids, 50) {
@@ -73,31 +53,35 @@ func (orders *Orders) Restore(positions []*Position) {
 
 		if err != nil {
 			errnie.Error(err)
-			return
+			return out
 		}
 
 		batch := kraken.NewQueryOrdersResult(raw)
 
 		if batch == nil {
-			return
+			return out
 		}
 
 		for id, order := range batch {
-			position := owners[id]
-
-			if position == nil {
-				continue
-			}
-
-			req := order.Request()
-
-			if id == position.EntryVenueOrderID {
-				position.EntryOrder = req
-			}
-
-			if id == position.ExitVenueOrderID {
-				position.ExitOrder = req
-			}
+			out[id] = order
 		}
 	}
+
+	return out
+}
+
+/*
+openTm is the order's venue open time, or zero when the row has none.
+*/
+func openTm(order kraken.HistoryOrder) time.Time {
+	if order.OpenTm == nil {
+		return time.Time{}
+	}
+
+	sec, _ := order.OpenTm.Float64()
+	whole := int64(sec)
+	frac := decimal.NewFromFloat(sec).Sub(decimal.NewFromInt(whole))
+	nsec := frac.Mul(decimal.NewFromInt(1e9)).IntPart()
+
+	return time.Unix(whole, nsec).UTC()
 }

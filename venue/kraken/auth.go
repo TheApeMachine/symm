@@ -26,15 +26,8 @@ the subscription and the private stream (executions, balances) goes dark.
 const TokenReuse = 10 * time.Minute
 
 /*
-PrivateRESTMu serializes every signed spot REST call in the process,
-including the SDK path used for websockets tokens and network.Post — nonce
-and HMAC must not interleave across goroutines on the same API key.
-*/
-var PrivateRESTMu sync.Mutex
-
-/*
 Auth caches websockets tokens young enough for private subscribe after
-reconnect; token fetch goes through authenticated REST behind PrivateRESTMu.
+reconnect; token fetch goes through authenticated REST behind Private.
 */
 type Auth struct {
 	mu       sync.Mutex
@@ -319,6 +312,16 @@ func (auth *Auth) Token(ctx context.Context) (string, error) {
 		return "", errnie.Error(errnie.Err(errnie.IO, "[kraken.auth] token fetch cancelled", err))
 	}
 
+	// Refuse while the REST counter is cooling — calling GetWebSocketsToken
+	// during EAPI:Rate limit exceeded extends the restriction.
+	if wait := Private.Waiting(); wait > 0 {
+		return "", errnie.Error(errnie.Err(
+			errnie.IO,
+			"[kraken.auth] private REST cooling down",
+			nil,
+		).With("wait", wait.Round(time.Millisecond).String()))
+	}
+
 	token, err := fetch()
 
 	if err != nil {
@@ -340,12 +343,14 @@ func (auth *Auth) Token(ctx context.Context) (string, error) {
 }
 
 /*
-fetchWebSocketsToken holds PrivateRESTMu for the full SDK GetWebSocketsToken
-call so nonce and signing cannot race paper or balance polls.
+fetchWebSocketsToken holds Private for the full SDK GetWebSocketsToken call so
+nonce, HMAC, and the REST call counter stay exclusive with Balance polls.
 */
 func fetchWebSocketsToken() (string, error) {
-	PrivateRESTMu.Lock()
-	defer PrivateRESTMu.Unlock()
+	if err := Private.Hold(context.Background(), restCallCost); err != nil {
+		return "", err
+	}
+	defer Private.Release()
 
 	restClient, err := NewAuthenticatedREST()
 
@@ -356,12 +361,16 @@ func fetchWebSocketsToken() (string, error) {
 	tokenRes, err := restClient.GetWebSocketsToken()
 
 	if err != nil {
+		Private.ObserveError(err)
+
 		return "", errnie.Error(errnie.Err(
 			errnie.IO,
 			"[kraken.auth] failed to retrieve websockets token",
 			err,
 		))
 	}
+
+	Private.Commit(restCallCost)
 
 	if tokenRes == nil {
 		return "", errnie.Error(errnie.Err(

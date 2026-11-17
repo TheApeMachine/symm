@@ -43,6 +43,8 @@ system:
     # Private REST Balance + TradeBalance poll. Each call is +1 on Kraken's
     # REST counter; Intermediate decays 0.5/s / Pro 1/s, so 5s for both is fine.
     private_refresh: 5s
+    # Cap for exponential backoff on private REST transport failures.
+    private_backoff_max: 5m
     # Public Ticker REST poll. Kraken's unfiltered (and often multi-pair)
     # Ticker returns EService:Unavailable, so each cycle covers a slice of
     # desk symbols and hard failures back off up to ticker_backoff_max.
@@ -57,6 +59,12 @@ resonance:
   layers: 3
 
 kraken:
+  # Spot REST call-counter tier
+  # (https://docs.kraken.com/exchange/guides/rest/ratelimits).
+  # starter: max 15 decay 0.33/s | intermediate: 20 / 0.5/s | pro: 20 / 1/s
+  # Balance+TradeBalance every private_refresh (+2/5s) fits intermediate/pro;
+  # starter decays slower than that poll rate and will climb without headroom.
+  verification_tier: intermediate
   credentials:
     # Environment variable NAMES (never values) holding each process role's
     # Kraken API key pair. Kraken checks nonces per API key, so processes

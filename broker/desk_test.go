@@ -125,6 +125,7 @@ func TestDeskUpdate(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		paper := desk.tiers[TierTypePaper]
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", desk.price, nil, nil)
+		seedMarkable(pos)
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
 			LastQty: dec("1"), LastPrice: dec("100"),
@@ -169,6 +170,7 @@ func TestDeskExit(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		paper := desk.tiers[TierTypePaper]
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", desk.price, nil, nil)
+		seedMarkable(pos)
 		pos.ExitPath = "R00/M1"
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
@@ -179,6 +181,7 @@ func TestDeskExit(t *testing.T) {
 
 		Convey("When Exit routes through paper", func() {
 			setBook(desk.price, "120", "121", "30")
+			paper.Update(testSymbol, dec("120"))
 			err := desk.Exit(pos, false)
 
 			Convey("Closing is armed", func() {

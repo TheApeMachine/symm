@@ -23,7 +23,7 @@ func TestNewExecution(t *testing.T) {
 				params := req["params"].(map[string]any)
 				So(params["channel"], ShouldEqual, "executions")
 				So(params["snap_orders"], ShouldEqual, true)
-				So(params["snap_trades"], ShouldEqual, true)
+				So(params["snap_trades"], ShouldEqual, false)
 			})
 		})
 	})

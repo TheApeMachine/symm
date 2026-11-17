@@ -7,12 +7,13 @@ import (
 )
 
 type WebSocket struct {
-	Endpoints        *Endpoints
-	PingInterval     time.Duration
-	PrivateRefresh   time.Duration
-	TickerRefresh    time.Duration
-	TickerBackoffMax time.Duration
-	TickerBatchSize  int
+	Endpoints         *Endpoints
+	PingInterval      time.Duration
+	PrivateRefresh    time.Duration
+	PrivateBackoffMax time.Duration
+	TickerRefresh     time.Duration
+	TickerBackoffMax  time.Duration
+	TickerBatchSize   int
 }
 
 type Endpoints struct {
@@ -41,8 +42,11 @@ func NewWebSocket() *WebSocket {
 	// Balance + TradeBalance are +1 REST counter each. Intermediate decays
 	// 0.5/s (Pro 1/s), so a 5s private poll of both (+2/5s) stays under the
 	// Intermediate/Pro caps; Starter (0.33/s) is tighter if other private
-	// calls share the key.
+	// calls share the key. See https://docs.kraken.com/exchange/guides/rest/ratelimits
 	viper.SetDefault("system.websocket.private_refresh", 5*time.Second)
+	// Transport failures on private REST grow backoff up to this cap so a
+	// dead path does not keep spending the call counter.
+	viper.SetDefault("system.websocket.private_backoff_max", 5*time.Minute)
 	// Unfiltered / multi-pair public Ticker often returns EService:Unavailable;
 	// refresh a round-robin slice and back off on hard failures.
 	viper.SetDefault("system.websocket.ticker_refresh", 30*time.Second)
@@ -61,10 +65,11 @@ func NewWebSocket() *WebSocket {
 			TradesHistory: viper.GetString("system.websocket.endpoints.trades_history"),
 			QueryOrders:   viper.GetString("system.websocket.endpoints.query_orders"),
 		},
-		PingInterval:     viper.GetDuration("system.websocket.ping_interval"),
-		PrivateRefresh:   viper.GetDuration("system.websocket.private_refresh"),
-		TickerRefresh:    viper.GetDuration("system.websocket.ticker_refresh"),
-		TickerBackoffMax: viper.GetDuration("system.websocket.ticker_backoff_max"),
-		TickerBatchSize:  viper.GetInt("system.websocket.ticker_batch_size"),
+		PingInterval:      viper.GetDuration("system.websocket.ping_interval"),
+		PrivateRefresh:    viper.GetDuration("system.websocket.private_refresh"),
+		PrivateBackoffMax: viper.GetDuration("system.websocket.private_backoff_max"),
+		TickerRefresh:     viper.GetDuration("system.websocket.ticker_refresh"),
+		TickerBackoffMax:  viper.GetDuration("system.websocket.ticker_backoff_max"),
+		TickerBatchSize:   viper.GetInt("system.websocket.ticker_batch_size"),
 	}
 }

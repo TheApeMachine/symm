@@ -129,6 +129,12 @@ func NewDesk(
 		live:     live,
 	}
 
+	for _, tier := range tiers {
+		if tier != nil {
+			tier.onBook = desk.Hello
+		}
+	}
+
 	go desk.pumpLevel3()
 	go desk.pumpTrade()
 
@@ -335,15 +341,18 @@ func (desk *Desk) Hello() {
 	desk.publishModes()
 
 	positions := make(map[string]*Position)
-	balances := make(map[string]float64)
+	// UI atoms.balances expects { real|paper|virtual: { cash, unrealized, equity } },
+	// not a flat Reading() merge across tiers.
+	balances := make(map[string]any)
 
 	for _, tier := range desk.tiers {
 		if tier == nil {
 			continue
 		}
 
-		maps.Copy(positions, tier.Hello()["positions"].(map[string]*Position))
-		maps.Copy(balances, tier.Hello()["balances"].(map[string]float64))
+		hello := tier.Hello()
+		maps.Copy(positions, hello["positions"].(map[string]*Position))
+		balances[tier.Type.String()] = hello["balances"]
 	}
 
 	ui.UI.WriteJSON(map[string]any{

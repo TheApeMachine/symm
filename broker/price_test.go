@@ -74,6 +74,23 @@ func dec(raw string) *decimal.Decimal {
 	return &v
 }
 
+func pnlPosition(price *Price, qty, entry string) *Position {
+	return &Position{
+		ID:                "pnl-1",
+		Symbol:            testSymbol,
+		TierKey:           "paper",
+		price:             price,
+		Qty:               dec(qty),
+		Entry:             dec(entry),
+		EntryVenueOrderID: "OID-1",
+		EntryOrder:        &spot.OrderRequest{ClOrdId: "enter-1", Type: "buy", OrderType: "market"},
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec(qty), LastPrice: dec(entry),
+		}},
+		onSettled: func(*Position) {},
+	}
+}
+
 func seedPair(n *spot.Normalizer, symbol string) {
 	base, quote, _ := strings.Cut(symbol, "/")
 
@@ -606,30 +623,14 @@ func TestPnL(t *testing.T) {
 			// proceeds=1100 feeIn=4 feeOut=4.4
 			// pnl=1100-4.4-(1000+4)=91.6
 			setBook(price, "110", "111", "30")
-			pos := &Position{
-				Symbol: testSymbol,
-				price:  price,
-				Qty:    dec("10"),
-				Entry:  dec("100"),
-				Fills: []*market.ExecutionData{{
-					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
-				}},
-			}
+			pos := pnlPosition(price, "10", "100")
 			pnl := price.PnL(pos)
 
 			So(pnl.String(), ShouldEqual, "91.6")
 		})
 
 		Convey("When the book cannot absorb full qty PnL is nil", func() {
-			pos := &Position{
-				Symbol: testSymbol,
-				price:  price,
-				Qty:    dec("1000"),
-				Entry:  dec("100"),
-				Fills: []*market.ExecutionData{{
-					Side: "buy", LastQty: dec("1000"), LastPrice: dec("100"),
-				}},
-			}
+			pos := pnlPosition(price, "1000", "100")
 			So(price.PnL(pos), ShouldBeNil)
 		})
 	}))
@@ -670,15 +671,7 @@ func TestPnLPct(t *testing.T) {
 			// qty=10 all-in paid=1004 bid@100 -> pnl=1000-4-1004=-8
 			// pct≈-8/1004*100
 			setBook(price, "100", "101", "30")
-			pos := &Position{
-				Symbol: testSymbol,
-				price:  price,
-				Qty:    dec("10"),
-				Entry:  dec("100"),
-				Fills: []*market.ExecutionData{{
-					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
-				}},
-			}
+			pos := pnlPosition(price, "10", "100")
 			pct := price.PnLPct(pos)
 
 			So(pct.Round(2).String(), ShouldEqual, "-0.8")

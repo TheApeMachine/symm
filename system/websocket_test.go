@@ -18,6 +18,7 @@ func TestNewWebSocket(t *testing.T) {
 				So(ws.Endpoints.Level3, ShouldEqual, "wss://ws-l3.kraken.com/v2")
 				So(ws.PingInterval, ShouldEqual, 20*time.Second)
 				So(ws.PrivateRefresh, ShouldEqual, 5*time.Second)
+				So(ws.PrivateBackoffMax, ShouldEqual, 5*time.Minute)
 				So(ws.TickerRefresh, ShouldEqual, 30*time.Second)
 				So(ws.TickerBatchSize, ShouldEqual, 128)
 			})

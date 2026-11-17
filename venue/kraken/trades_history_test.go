@@ -77,6 +77,25 @@ func TestUnmarshalJSONHistoryTrade(t *testing.T) {
 				So(trade.Time, ShouldEqual, time.Unix(1700000000, 0).UTC())
 			})
 		})
+
+		Convey("When HistoryTrade unmarshals fractional unix time", func() {
+			frac := []byte(`{
+				"ordertxid":"O2",
+				"pair":"BTC/USD",
+				"type":"sell",
+				"price":"1",
+				"cost":"1",
+				"fee":"0",
+				"vol":"1",
+				"time":1700000000.25
+			}`)
+			var trade HistoryTrade
+			So(sonic.Unmarshal(frac, &trade), ShouldBeNil)
+
+			Convey("nanoseconds survive", func() {
+				So(trade.Time, ShouldEqual, time.Unix(1700000000, 250_000_000).UTC())
+			})
+		})
 	})
 }
 

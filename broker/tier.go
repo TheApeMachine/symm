@@ -82,6 +82,7 @@ type Tier struct {
 	pending    *sync.Map
 	balance    *market.Balance
 	normalizer *spot.Normalizer
+	onBook     func()
 }
 
 /*
@@ -155,7 +156,11 @@ func NewTier(
 		return nil
 	}
 
-	if tt != TierTypeReal {
+	// Paper/virtual always arm. Real arms only when this process is live
+	// (market.model real); a disarmed real lane in paper boots stays INIT so
+	// Desk.Update/Enter cannot mark or spend on it. Skipping READY on live
+	// real left restored opens with nil pnl_pct and an empty open-choice chart.
+	if tt != TierTypeReal || system.Cfg.Market.Model == "real" {
 		tier.Transition(runtime.READY)
 	}
 
@@ -213,7 +218,7 @@ func (tier *Tier) Hello() map[string]any {
 	unrealized := decimal.Zero
 
 	for _, position := range open {
-		if position == nil {
+		if position == nil || len(position.Fills) == 0 || position.ClosedAt != nil {
 			continue
 		}
 
@@ -276,7 +281,13 @@ func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
 	}
 
 	for _, position := range tier.positions.Open() {
-		if position == nil || position.Status() != runtime.READY {
+		if position == nil {
+			continue
+		}
+
+		switch position.Status() {
+		case runtime.READY, runtime.WAITING:
+		default:
 			continue
 		}
 
@@ -389,7 +400,6 @@ func (tier *Tier) Enter(
 		return errnie.Error(err)
 	}
 
-	// Chart consolidates on the next Level3 desk.Update Hello — no seed here.
 	return nil
 }
 
@@ -481,17 +491,51 @@ func (tier *Tier) abortExit(position *Position) {
 }
 
 /*
-apply folds venue fills into matching positions. Desk.Apply fans out here;
-the next Level3 desk.Update Hello consolidates the open book.
+apply folds new venue fills into the live open for that symbol. Closed cycles
+come from Ledger Fold — executions must not replay history onto the open
+(snap_trades is off). Flat rows Remove into pending.
 */
 func (tier *Tier) apply(execution *market.Execution) {
+	if execution == nil {
+		return
+	}
+
 	for _, data := range execution.Data {
 		if data == nil {
 			continue
 		}
 
 		position := tier.positions.Get(data.Symbol)
+
+		if position == nil {
+			continue
+		}
+
+		if data.ExecType == "canceled" {
+			switch position.Status() {
+			case runtime.BUSY:
+				tier.abortExit(position)
+			case runtime.WAITING, runtime.INIT:
+				if position.Qty == nil || position.Qty.Sign() <= 0 {
+					tier.positions.Drop(position.Symbol)
+				}
+			}
+
+			continue
+		}
+
 		position.Apply(*data)
+
+		if position.ClosedAt == nil {
+			continue
+		}
+
+		tier.positions.Remove(position.Symbol)
+		tier.pending.Store(position.Symbol, position)
+
+		if err := tier.positions.Save(position); err != nil {
+			errnie.Error(err)
+		}
 	}
 }
 
@@ -583,7 +627,7 @@ func (tier *Tier) Send(position *Position, action string) error {
 }
 
 /*
-ackOrder records venue order_id on the position so fills without cl_ord_id still Owns.
+ackOrder records venue order_id on the position from the add_order cl_ord_id.
 */
 func (tier *Tier) ackOrder(order *kraken.Order) {
 	clOrdID := order.Result.ClOrdID
@@ -777,8 +821,16 @@ func (tier *Tier) ingest(frame market.MarketType) {
 			typed.ToMarket(tier.price.balance)
 		}
 
+		if tier.onBook != nil {
+			tier.onBook()
+		}
+
 	case *kraken.TradeBalance:
 		typed.ToMarket(tier.balance)
+
+		if tier.onBook != nil {
+			tier.onBook()
+		}
 
 	case *kraken.Execution:
 		executions := &market.Execution{}

@@ -85,6 +85,7 @@ func TestQty(t *testing.T) {
 				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
+
 	}))
 }
 
@@ -126,6 +127,9 @@ func TestEntry(t *testing.T) {
 func TestUpdate(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
+		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1", Type: "buy", OrderType: "market"}
+		pos.EntryVenueOrderID = "OID-1"
+		pos.onSettled = func(*Position) {}
 		pos.Apply(market.ExecutionData{
 			ExecID: "b1", Side: "buy",
 			LastQty: dec("1"), LastPrice: dec("100"),
@@ -133,7 +137,7 @@ func TestUpdate(t *testing.T) {
 		})
 
 		Convey("When Update is called with a mark", func() {
-			So(pos.Status(), ShouldEqual, runtime.READY)
+			So(pos.Status(), ShouldEqual, runtime.WAITING)
 			setBook(price, "120", "121", "30")
 			_, err := pos.Update(dec("120"))
 
@@ -154,12 +158,12 @@ func TestUpdate(t *testing.T) {
 			setBook(price, "120", "121", "0.1")
 			_, err := pos.Update(dec("120"))
 
-			Convey("Mark stamps; exact PnL is nil so Stoploss stays nil", func() {
+			Convey("Mark stamps; stay WAITING until the book can mark", func() {
 				So(err, ShouldBeNil)
 				So(pos.Mark.String(), ShouldEqual, "120")
 				So(pos.PnL, ShouldBeNil)
 				So(pos.Stoploss, ShouldBeNil)
-				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(pos.Status(), ShouldEqual, runtime.WAITING)
 			})
 		})
 
@@ -279,11 +283,11 @@ func TestExit(t *testing.T) {
 			Timestamp: time.Unix(1, 0).UTC(),
 		})
 
-		Convey("When exit is called on a READY position", func() {
-			So(pos.Status(), ShouldEqual, runtime.READY)
+		Convey("When exit is called on a filled position", func() {
+			So(pos.Status(), ShouldEqual, runtime.WAITING)
 			err := pos.exit(false)
 
-			Convey("Closing is armed and stage moves READY → BUSY", func() {
+			Convey("Closing is armed and stage moves WAITING → BUSY", func() {
 				So(err, ShouldBeNil)
 				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 				So(pos.ExitTrigger, ShouldEqual, "policy exit match R00/M1")
@@ -310,6 +314,9 @@ func TestExit(t *testing.T) {
 func TestApply(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
+		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1", Type: "buy", OrderType: "market"}
+		pos.EntryVenueOrderID = "OID-1"
+		pos.onSettled = func(*Position) {}
 
 		Convey("When a buy fill is applied", func() {
 			pos.Apply(market.ExecutionData{
@@ -318,15 +325,13 @@ func TestApply(t *testing.T) {
 				Timestamp: time.Unix(1, 0).UTC(),
 			})
 
-			Convey("Qty, Entry, and mark PnL are set", func() {
+			Convey("Qty and Entry stamp; row stays WAITING for the book", func() {
 				So(len(pos.Fills), ShouldEqual, 1)
 				So(pos.Qty.String(), ShouldEqual, "1")
 				So(pos.Entry.String(), ShouldEqual, "100")
-				So(pos.PnL, ShouldNotBeNil)
-				So(pos.PnLPct, ShouldNotBeNil)
+				So(pos.PnL, ShouldBeNil)
 				So(pos.ClosedAt, ShouldBeNil)
-				So(pos.Status(), ShouldEqual, runtime.READY)
-				So(pos.Status() == runtime.READY, ShouldBeTrue)
+				So(pos.Status(), ShouldEqual, runtime.WAITING)
 			})
 		})
 
@@ -361,11 +366,13 @@ func TestApply(t *testing.T) {
 		})
 
 		Convey("When a flattening sell is applied", func() {
+			setBook(price, "100", "101", "30")
 			pos.Apply(market.ExecutionData{
 				ExecID: "b1", Side: "buy",
 				LastQty: dec("1"), LastPrice: dec("100"),
 				Timestamp: time.Unix(1, 0).UTC(),
 			})
+			_, _ = pos.Update(dec("100"))
 			beforePnL := pos.PnL.String()
 			beforePct := pos.PnLPct.String()
 
@@ -375,7 +382,7 @@ func TestApply(t *testing.T) {
 				Timestamp: time.Unix(2, 0).UTC(),
 			})
 
-			Convey("ClosedAt stamps and PnL is left alone", func() {
+			Convey("ClosedAt stamps and last mark PnL is left alone", func() {
 				So(pos.Qty.String(), ShouldEqual, "0")
 				So(pos.ClosedAt, ShouldNotBeNil)
 				So(pos.PnL.String(), ShouldEqual, beforePnL)

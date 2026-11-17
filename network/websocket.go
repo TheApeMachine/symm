@@ -249,7 +249,13 @@ func (client *WebsocketClient) reconnectLoop() {
 			return
 		}
 
-		if !client.sleep(min(backoff, client.maxBackoff)) {
+		wait := min(backoff, client.maxBackoff)
+
+		if cool := kraken.Private.Waiting(); cool > wait {
+			wait = cool
+		}
+
+		if !client.sleep(wait) {
 			return
 		}
 
@@ -270,9 +276,16 @@ func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {
 	response, err := client.rest.Post(url, body)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
+		wrapped := errnie.Err(
 			errnie.IO, "[network.websocket] rest post failed", err,
-		).With("url", url))
+		).With("url", url)
+
+		// Watch already backs off; transient closes must not ERROR every poll.
+		if restTransient(err) || Recoverable(err) {
+			return nil, wrapped
+		}
+
+		return nil, errnie.Error(wrapped)
 	}
 
 	if response == nil {
@@ -314,9 +327,14 @@ func (client *WebsocketClient) Watch(
 	go func() {
 		interval := 5 * time.Second
 		maxBackoff := client.maxBackoff
+		private := strings.Contains(url, "/private/")
 
-		if strings.Contains(url, "/private/") {
+		if private {
 			interval = system.Cfg.WebSocket.PrivateRefresh
+
+			if max := system.Cfg.WebSocket.PrivateBackoffMax; max > 0 {
+				maxBackoff = max
+			}
 		}
 
 		if strings.Contains(url, "/Ticker") {
@@ -378,7 +396,13 @@ func (client *WebsocketClient) pollWatch(
 	raw, err := client.fetch(url, body)
 
 	if err != nil {
-		*backoff += time.Second
+		if cool := kraken.Private.Waiting(); cool > 0 {
+			*backoff = cool
+		} else if *backoff == 0 {
+			*backoff = time.Second
+		} else {
+			*backoff *= 2
+		}
 
 		return client.Context().Err() == nil
 	}
@@ -388,6 +412,7 @@ func (client *WebsocketClient) pollWatch(
 	}
 
 	if errs := kraken.VenueErrors(raw); len(errs) > 0 {
+		// Private.Observe already ran under Post's Hold for private URLs.
 		if until, ok := kraken.ThrottleUntil(errs...); ok {
 			if wait := time.Until(until); wait > 0 {
 				if maxBackoff > 0 && wait > maxBackoff {
@@ -405,7 +430,11 @@ func (client *WebsocketClient) pollWatch(
 		}
 
 		if kraken.RateLimited(errs...) {
-			*backoff += time.Second
+			if cool := kraken.Private.Waiting(); cool > 0 {
+				*backoff = cool
+			} else {
+				*backoff += time.Second
+			}
 
 			return client.Context().Err() == nil
 		}

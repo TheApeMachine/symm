@@ -23,6 +23,7 @@ import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { kernelRowAt } from "#/lib/kernel-row";
+import { REGIONS } from "#/components/learning/regions";
 import { formatBlockedReason } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -48,15 +49,54 @@ const decisionReason = (decision: Decision): string => {
 	return `${gate}${reason}${path}${tier}`;
 };
 
+const regionKeyId = (key: number): string =>
+	`R${String(key).padStart(2, "0")}`;
+
+/*
+Mirrors strategy.Model.oracleAllows: any lit veto fails; need at least one approve.
+Hub merges decisions across ticks, so a stale oracle-skip can sit on the board
+after regions have already flipped to all-approve (green lamps).
+*/
+const regionsOracleAllows = (rows: Region[] | undefined): boolean => {
+	if (!rows?.length) return false;
+
+	let approved = false;
+
+	for (const row of rows) {
+		if (row == null || typeof row.key !== "number") continue;
+
+		const brightness =
+			typeof row.brightness === "number" && Number.isFinite(row.brightness)
+				? row.brightness
+				: 0;
+		if (brightness <= 0) continue;
+
+		const role = REGIONS[regionKeyId(row.key)]?.role;
+		if (role === "oracle_veto") return false;
+		if (role === "oracle_approve") approved = true;
+	}
+
+	return approved;
+};
+
 const decisionsFromLive = (
 	live: Record<string, Decision>,
 	book: Book,
+	regions: Record<string, Region[]>,
 ): DecisionRow[] => {
 	const rows: DecisionRow[] = [];
 
 	for (const decision of Object.values(live)) {
 		if (!decision?.symbol || !decision.action) continue;
 		if (!isBook(decision.tier) || decision.tier !== book) continue;
+
+		if (
+			decision.gate === "oracle" &&
+			(decision.action === "skip" || decision.action === "blocked") &&
+			regionsOracleAllows(kernelRowAt(regions, decision.symbol))
+		) {
+			continue;
+		}
 
 		rows.push({
 			id: decisionStoreKey(decision),
@@ -130,10 +170,9 @@ const gateSide = (
 	const veto = brightnessOf(regionAt(rows, gate.veto));
 	const approve = brightnessOf(regionAt(rows, gate.approve));
 
-	// Brightness 0 is off — sticky idle must re-emit last brightness > 0.
-	if (veto > 0 || approve > 0) {
-		return veto >= approve ? "veto" : "approve";
-	}
+	// Match model.oracleAllows per gate: any lit veto wins over a brighter approve.
+	if (veto > 0) return "veto";
+	if (approve > 0) return "approve";
 
 	if (lit.has(gate.veto)) return "veto";
 	if (lit.has(gate.approve)) return "approve";
@@ -223,8 +262,8 @@ export const Decisions = () => {
 	const regions = useSelector(signals.regions, (state) => state);
 	const overrides = useSelector(gateLabStore, (state) => state.overrides);
 	const decisions = useMemo(
-		() => decisionsFromLive(live, book),
-		[live, book],
+		() => decisionsFromLive(live, book, regions),
+		[live, book, regions],
 	);
 	const idleMessage = useMemo(
 		() => decisionIdleMessage(live, book),

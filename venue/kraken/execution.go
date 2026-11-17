@@ -56,8 +56,8 @@ type ExecutionFee struct {
 }
 
 /*
-NewExecution prepares subscribe defaults with snap_orders and snap_trades so
-reconnect replays open orders before new fills arrive.
+NewExecution prepares an empty executions frame. Subscribe defaults live on
+NewExecutionSubscription (snap_orders on; snap_trades off — Ledger owns history).
 */
 func NewExecution() *Execution {
 	return &Execution{
@@ -204,7 +204,9 @@ func NewExecutionSubscription(token string) map[string]any {
 	params := map[string]any{
 		"channel":     "executions",
 		"snap_orders": true,
-		"snap_trades": true,
+		// Ledger Restore already folded TradesHistory into per-cycle positions.
+		// Replaying trades here would dump prior-cycle sells onto today's open.
+		"snap_trades": false,
 	}
 
 	if token != "" {

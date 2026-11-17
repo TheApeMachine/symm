@@ -41,5 +41,7 @@ func Expected(err error) bool {
 	return strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "use of closed network connection") ||
-		strings.Contains(msg, "unexpected eof")
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "close sent") ||
+		strings.Contains(msg, "nil *conn")
 }

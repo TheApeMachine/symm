@@ -27,7 +27,10 @@ func Recoverable(err error) bool {
 		strings.Contains(msg, "reconnect hook failed") ||
 		strings.Contains(msg, "error dialing url") ||
 		strings.Contains(msg, "connection missing") ||
-		strings.Contains(msg, "[network.websocket] read failed") {
+		strings.Contains(msg, "[network.websocket] read failed") ||
+		strings.Contains(msg, "server closed connection before returning") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") {
 		return true
 	}
 

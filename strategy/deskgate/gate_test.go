@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestGateLearn(t *testing.T) {
@@ -45,6 +46,42 @@ func TestDeveloped(t *testing.T) {
 			}
 			gate := NewGate(context.Background(), nil)
 			So(gate.Developed(pos), ShouldBeTrue)
+		})
+	})
+}
+
+func TestOracleFromCold(t *testing.T) {
+	Convey("Setup", t, func() {
+		if system.Cfg == nil || system.Cfg.Risk == nil {
+			system.Cfg = system.NewConfig()
+		}
+
+		gate := NewGate(context.Background(), nil)
+		So(gate.Axes["day"].ready(), ShouldBeFalse)
+
+		Convey("When session move clears the risk floor before the track is warm", func() {
+			_, day, _, _, _ := gate.OracleFrom(map[string]float64{
+				"session_move": system.Cfg.Risk.MinMoverChangePct + 1,
+				"volume_usd":   system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"spread_pct":   0.5,
+				"touch_cash":   5,
+				"backing":      system.Cfg.Risk.MinBackingRatio + 0.1,
+				"peak_frac":    0.2,
+			})
+
+			Convey("Day approves from the static floor", func() {
+				So(day, ShouldBeTrue)
+			})
+		})
+
+		Convey("When session move is flat before the track is warm", func() {
+			_, day, _, _, _ := gate.OracleFrom(map[string]float64{
+				"session_move": 0,
+			})
+
+			Convey("Day vetoes", func() {
+				So(day, ShouldBeFalse)
+			})
 		})
 	})
 }

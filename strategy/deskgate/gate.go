@@ -118,6 +118,7 @@ func (gate *Gate) Features(
 		"touch_cash":   gate.touchCash(price, symbol),
 		"backing":      gate.backingRatio(price, symbol),
 		"peak_frac":    gate.peakFrac(price, symbol),
+		"volume_usd":   gate.volumeUSD(price, symbol),
 	}
 
 	gate.mu.Lock()
@@ -218,8 +219,15 @@ func (gate *Gate) OracleFrom(feat map[string]float64) (volume, day, spread, book
 
 func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
 	axis := gate.Axes[name]
-	if axis == nil || !axis.ready() {
+	if axis == nil {
 		return false
+	}
+
+	// Restored cuts keep empty Standardizers until Learn warms them. Hard-veto
+	// while !ready() painted every Day/Vol lamp red after boot even when the
+	// tape and session move were real — use risk floors until the track is live.
+	if !axis.ready() {
+		return gate.staticPass(name, feat)
 	}
 
 	score := feat["axis_"+name]
@@ -232,6 +240,44 @@ func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
 	}
 
 	return score <= axis.Cut
+}
+
+/*
+staticPass is the cold-oracle path: config risk floors, not learned cuts.
+*/
+func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
+	risk := system.Cfg.Risk
+
+	switch name {
+	case "volume":
+		return feat["volume_usd"] >= risk.MinMoverVolumeUSD
+	case "day":
+		return feat["session_move"] >= risk.MinMoverChangePct
+	case "spread":
+		if risk.MaxEntrySpreadPct <= 0 {
+			return true
+		}
+
+		spread := feat["spread_pct"]
+		return spread > 0 && spread <= risk.MaxEntrySpreadPct
+	case "book":
+		// touch_cash in Features is Log1p(USD) for the learned axis.
+		return feat["touch_cash"] >= math.Log1p(risk.MinTouchBidCash) &&
+			feat["backing"] >= risk.MinBackingRatio
+	case "peak":
+		if risk.MaxEntryPeakFrac <= 0 || risk.MaxEntryPeakFrac >= 1 {
+			return true
+		}
+
+		frac := feat["peak_frac"]
+		if frac < 0 {
+			return true
+		}
+
+		return frac < risk.MaxEntryPeakFrac
+	default:
+		return false
+	}
 }
 
 func (axis *Axis) ready() bool {
@@ -432,4 +478,12 @@ func (gate *Gate) peakFrac(price *broker.Price, symbol string) float64 {
 		return -1
 	}
 	return frac
+}
+
+func (gate *Gate) volumeUSD(price *broker.Price, symbol string) float64 {
+	if price == nil {
+		return 0
+	}
+
+	return price.VolumeUSD(symbol)
 }

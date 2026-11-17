@@ -128,6 +128,21 @@ func (price *Price) applyTicker(frame market.MarketType) {
 }
 
 /*
+VolumeUSD is the latest ticker 24h quote turnover for mover floors.
+*/
+func (price *Price) VolumeUSD(symbol string) float64 {
+	if price == nil || price.ticker == nil {
+		return 0
+	}
+
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
+
+	return price.ticker.VolumeUSD(symbol)
+}
+
+/*
 ChangePct is session open → live mark when both exist, else the REST open→last
 reading. Mark keeps day-move oracles current between ticker batches.
 */
@@ -655,15 +670,6 @@ func (price *Price) PnL(position *Position) *decimal.Decimal {
 	filled, gross := price.Walk(symbol, *position.Qty, false)
 
 	if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 || gross.Sign() <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.PreconditionFailed,
-			"[price] pnl failed",
-			nil,
-		).With(
-			"symbol", position.Symbol, "why", "incomplete walk",
-			"filled", filled, "gross", gross,
-		))
-
 		return nil
 	}
 
@@ -684,7 +690,7 @@ PnLPct is PnL as a percent of Entry times Qty.
 func (price *Price) PnLPct(position *Position) *decimal.Decimal {
 	pnl := price.PnL(position)
 
-	if position.Validate() != nil {
+	if pnl == nil || position.Validate() != nil {
 		return nil
 	}
 

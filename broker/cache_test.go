@@ -11,8 +11,9 @@ import (
 )
 
 type historyClient struct {
-	trades []byte
-	orders []byte
+	trades   []byte
+	orders   []byte
+	balances []byte
 }
 
 func (c *historyClient) Read(...string) ([]byte, error) { return nil, nil }
@@ -24,6 +25,18 @@ func (c *historyClient) Post(url string, _ any) ([]byte, error) {
 		}
 
 		return c.orders, nil
+	}
+
+	if strings.Contains(url, "TradeBalance") {
+		return []byte(`{"error":[],"result":{}}`), nil
+	}
+
+	if strings.Contains(url, "Balance") {
+		if len(c.balances) == 0 {
+			return []byte(`{"error":[],"result":{}}`), nil
+		}
+
+		return c.balances, nil
 	}
 
 	return c.trades, nil
@@ -142,12 +155,19 @@ const historyTwoOpen = `{
 	}
 }`
 
+const walletPartialOpen = `{"error":[],"result":{"ZEC":"0.6"}}`
+const walletTwoOpen = `{"error":[],"result":{"BERA":"10","PEPE":"500"}}`
+
 func withHistory(body string, f func(*Cache)) func() {
+	return withHistoryWallet(body, "", f)
+}
+
+func withHistoryWallet(body, wallet string, f func(*Cache)) func() {
 	return func() {
 		cache := NewCache(
 			context.Background(),
 			"real",
-			&historyClient{trades: []byte(body)},
+			&historyClient{trades: []byte(body), balances: []byte(wallet)},
 			nil,
 			nil,
 			nil,
@@ -217,7 +237,7 @@ func TestAll(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	Convey("Setup", t, withHistory(historyPartialOpen, func(cache *Cache) {
+	Convey("Setup", t, withHistoryWallet(historyPartialOpen, walletPartialOpen, func(cache *Cache) {
 		Convey("When history leaves a partial exit open", func() {
 			open := cache.Open()
 
@@ -244,7 +264,7 @@ func TestClosed(t *testing.T) {
 }
 
 func TestHas(t *testing.T) {
-	Convey("Setup", t, withHistory(historyPartialOpen, func(cache *Cache) {
+	Convey("Setup", t, withHistoryWallet(historyPartialOpen, walletPartialOpen, func(cache *Cache) {
 		Convey("When the symbol is open", func() {
 			So(cache.Has("ZECUSD"), ShouldBeTrue)
 			So(cache.Has("XBTUSD"), ShouldBeFalse)
@@ -390,7 +410,7 @@ func BenchmarkAll(b *testing.B) {
 
 func BenchmarkOpen(b *testing.B) {
 	var cache *Cache
-	withHistory(historyPartialOpen, func(c *Cache) { cache = c })()
+	withHistoryWallet(historyPartialOpen, walletPartialOpen, func(c *Cache) { cache = c })()
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -414,7 +434,7 @@ func BenchmarkClosed(b *testing.B) {
 
 func BenchmarkHas(b *testing.B) {
 	var cache *Cache
-	withHistory(historyPartialOpen, func(c *Cache) { cache = c })()
+	withHistoryWallet(historyPartialOpen, walletPartialOpen, func(c *Cache) { cache = c })()
 
 	b.ResetTimer()
 	b.ReportAllocs()

@@ -45,6 +45,10 @@ func RateLimited(errs ...any) bool {
 					return true
 				}
 			}
+		case error:
+			if value != nil && rateLimitedText(value.Error()) {
+				return true
+			}
 		default:
 			if rateLimitedText(fmt.Sprint(entry)) {
 				return true
@@ -56,10 +60,8 @@ func RateLimited(errs ...any) bool {
 }
 
 func rateLimitedText(line string) bool {
-	lower := strings.ToLower(line)
-
-	return strings.Contains(lower, "eapi:rate limit exceeded") ||
-		strings.Contains(lower, "rate limit exceeded")
+	// REST call counter only — not EOrder:Rate limit exceeded (trading engine).
+	return strings.Contains(strings.ToLower(line), "eapi:rate limit exceeded")
 }
 
 /*
@@ -75,6 +77,12 @@ func ThrottleUntil(errs ...any) (time.Time, bool) {
 		case []string:
 			for _, line := range value {
 				if until, ok := throttleUntilText(line); ok {
+					return until, true
+				}
+			}
+		case error:
+			if value != nil {
+				if until, ok := throttleUntilText(value.Error()); ok {
 					return until, true
 				}
 			}

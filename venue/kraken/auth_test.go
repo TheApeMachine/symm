@@ -137,6 +137,24 @@ func TestToken(t *testing.T) {
 				So(fetches, ShouldEqual, 0)
 			})
 		})
+
+		Convey("When private REST is cooling down", func() {
+			prev := Private
+			gate := NewPrivateREST()
+			gate.now = func() time.Time { return clock }
+			Private = gate
+			Reset(func() { Private = prev })
+			So(gate.Hold(t.Context(), 1), ShouldBeNil)
+			gate.ObserveError(errors.New("EAPI:Rate limit exceeded"))
+			gate.Release()
+			_, err := auth.Token(t.Context())
+
+			Convey("Token refuses without fetching", func() {
+				So(err, ShouldNotBeNil)
+				So(err.Error(), ShouldContainSubstring, "cooling down")
+				So(fetches, ShouldEqual, 0)
+			})
+		})
 	})
 }
 

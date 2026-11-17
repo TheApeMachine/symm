@@ -47,6 +47,8 @@ export const OpenChoiceSciChart = ({
 								id,
 								dataSeries: new XyDataSeries(api.wasmContext, {
 									fifoCapacity: 90,
+									containsNaN: false,
+									isSorted: true,
 								}),
 								stroke: strokeFor(id),
 								strokeThickness: 2,

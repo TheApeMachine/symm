@@ -6,12 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -67,6 +69,68 @@ func TestGet(t *testing.T) {
 			Convey("validation rejects private GET", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "[network.rest] private endpoints are POST")
+			})
+		})
+	})
+}
+
+func TestRestTransient(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When fasthttp reports an early server close", func() {
+			err := errnie.Err(
+				errnie.IO,
+				"fasthttp: the server closed connection before returning the first response byte",
+				nil,
+			)
+
+			Convey("restTransient and Recoverable agree", func() {
+				So(restTransient(err), ShouldBeTrue)
+				So(Recoverable(err), ShouldBeTrue)
+			})
+		})
+
+		Convey("When the error is a logic bug", func() {
+			err := errnie.Err(errnie.Validation, "bad args", nil)
+
+			Convey("restTransient is false", func() {
+				So(restTransient(err), ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func TestPostRetriesTransientClose(t *testing.T) {
+	Convey("Setup", t, func() {
+		var hits atomic.Int32
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if hits.Add(1) == 1 {
+				hj, ok := w.(http.Hijacker)
+				if !ok {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+
+				conn, _, err := hj.Hijack()
+				if err != nil {
+					return
+				}
+
+				_ = conn.Close()
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"error":[]}`))
+		}))
+		defer server.Close()
+
+		Convey("When the first dial is closed before a response", func() {
+			_, err := NewREST().Post(server.URL+"/0/public/Time", map[string]string{})
+
+			Convey("the second attempt succeeds", func() {
+				So(err, ShouldBeNil)
+				So(hits.Load(), ShouldEqual, 2)
 			})
 		})
 	})

@@ -151,7 +151,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
-					Reason: "oracle veto lit — not tradable",
+					Reason: model.oracleReason(envelope.Regions[symbol]),
 					Gate:   "oracle",
 					Path:   path,
 					Tier:   model.decisionTier(symbol, resistance),
@@ -436,6 +436,29 @@ func (model *Model) oracleAllows(regions []*runtime.Region) bool {
 	}
 
 	return approved
+}
+
+/*
+oracleReason names why oracleAllows failed — lit veto vs cold (no approve).
+*/
+func (model *Model) oracleReason(regions []*runtime.Region) string {
+	for _, region := range regions {
+		if region == nil || region.Brightness <= 0 {
+			continue
+		}
+
+		row := store.Catalog.ByKey(region.Key)
+
+		if row.Side == "veto" {
+			if row.Phase != "" {
+				return "oracle veto lit — " + row.Phase + " not tradable"
+			}
+
+			return "oracle veto lit — not tradable"
+		}
+	}
+
+	return "oracle cold — no approve lit"
 }
 
 /*

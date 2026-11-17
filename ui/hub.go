@@ -257,7 +257,7 @@ func (hub *Hub) retireConnection(conn *websocket.Conn, writeErr error, frameByte
 		))
 	}
 
-	if err := conn.Close(); err != nil {
+	if err := conn.Close(); err != nil && !disconnect.Expected(err) {
 		errnie.Error(errnie.Err(
 			errnie.IO, "[hub] websocket close failed", err,
 		))
