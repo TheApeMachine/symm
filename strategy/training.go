@@ -12,8 +12,6 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -92,12 +90,13 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			pump := envelope.Pumpdump[symbol]
 
-			if desk := training.deskGate.Features(training.price, symbol, pump); desk != nil {
-				sources["desk"] = desk
+			deskFeatures := training.deskGate.Features(training.price, symbol, pump)
+			if deskFeatures != nil {
+				sources["desk"] = deskFeatures
 			}
 
 			volumeOK, dayOK, spreadOK, bookOK, peakOK :=
-				training.deskGate.Oracle(training.price, symbol, pump)
+				training.deskGate.OracleFrom(deskFeatures)
 
 			regions, err := training.grid.Observe(
 				symbol,
@@ -125,16 +124,6 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	}
 
 	wg.Wait()
-
-	if ui.UI != nil && ui.UI.Active() && types.WantsGrid() {
-		if payload := envelope.Publish("regions", ""); len(payload) > 0 {
-			ui.UI.Write(payload)
-		}
-
-		if payload := envelope.Publish("paths", ""); len(payload) > 0 {
-			ui.UI.Write(payload)
-		}
-	}
 
 	return envelope
 }

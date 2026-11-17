@@ -14,8 +14,8 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 )
 
 /*
@@ -30,6 +30,7 @@ type Model struct {
 	store     *store.Client
 	tree      *atomic.Pointer[Tree]
 	board     *Board
+	deskGate  *deskgate.Gate
 	resetPath func(string)
 }
 
@@ -43,6 +44,7 @@ func NewModel(
 	price *broker.Price,
 	resetPath func(string),
 	client *store.Client,
+	deskGate *deskgate.Gate,
 ) *Model {
 	board := NewBoard(ctx)
 
@@ -53,6 +55,7 @@ func NewModel(
 		store:     client,
 		tree:      &atomic.Pointer[Tree]{},
 		board:     board,
+		deskGate:  deskGate,
 		resetPath: resetPath,
 	}
 
@@ -90,15 +93,47 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 	} {
 		for position := range model.desk.Pending(tier) {
+			if position.ClosedAt != nil {
+				model.desk.ClearPending(tier, position.Symbol)
+				continue
+			}
+
+			if !model.desk.Has(position.Symbol) {
+				model.desk.VetoPendingExit(position)
+				continue
+			}
+
 			if cut := envelope.Paths[position.Symbol]; cut != nil {
 				position.ExitPath = cut.String()
 			}
 
-			errnie.Error(model.desk.Exit(position, false))
+			if !model.desk.ProfitableExit(position) {
+				model.desk.VetoPendingExit(position)
+				continue
+			}
+
+			errnie.Info("[strategy.model] pending stoploss exit",
+				"tier", tier.String(),
+				"symbol", position.Symbol,
+				"exit_path", position.ExitPath,
+			)
+
+			if err := model.desk.Exit(position, false); err != nil {
+				if errnie.IsForbidden(err) {
+					continue
+				}
+
+				errnie.Error(err)
+				continue
+			}
+
+			model.desk.ClearPending(tier, position.Symbol)
 		}
 	}
 
 	var wg sync.WaitGroup
+	var candMu sync.Mutex
+	candidates := make([]EnterCandidate, 0)
 
 	for symbol, cut := range envelope.Paths {
 		if cut == nil || cut.Len() < system.Cfg.Learning.MinPathLength {
@@ -246,21 +281,24 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 						})
 					}
 				case ActionEnter:
-					if !open && model.desk.Enter(symbol, path, tier, true) == nil {
-						envelope.Decide(&runtime.Decision{
-							Symbol: symbol,
-							Action: "enter",
-							Reason: "path matched",
-							Gate:   "tree",
-							Path:   path,
-							Tier:   tier.String(),
+					if !open {
+						candMu.Lock()
+						candidates = append(candidates, EnterCandidate{
+							Symbol:     symbol,
+							Path:       path,
+							Resistance: resistance,
+							PathFound:  true,
+							Decide: func(d *runtime.Decision) {
+								envelope.Decide(d)
+							},
 						})
+						candMu.Unlock()
 					}
 				case ActionExit:
 					if open {
 						position := model.desk.Position(tier, symbol)
 
-						if position != nil && position.PnLPct.Sign() > 0 {
+						if position != nil && model.desk.ProfitableExit(position) {
 							model.Exit(position, path)
 						}
 					}
@@ -275,29 +313,65 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					})
 				}
 
+				if model.resetPath != nil {
+					model.resetPath(symbol)
+				}
+
 				return
 			}
 
-			if !open && model.desk.Enter(symbol, path, tier, false) == nil {
-				envelope.Decide(&runtime.Decision{
-					Symbol: symbol,
-					Action: "enter",
-					Reason: "explore",
-					Gate:   "tree",
-					Path:   path,
-					Tier:   tier.String(),
+			if !open {
+				candMu.Lock()
+				candidates = append(candidates, EnterCandidate{
+					Symbol:     symbol,
+					Path:       path,
+					Resistance: resistance,
+					PathFound:  false,
+					Decide: func(d *runtime.Decision) {
+						envelope.Decide(d)
+					},
 				})
+				candMu.Unlock()
 			}
 		})
 	}
 
 	wg.Wait()
 
-	if ui.UI != nil && ui.UI.Active() && len(envelope.Decisions) > 0 {
-		if payload := envelope.Publish("decisions", ""); len(payload) > 0 {
-			ui.UI.Write(payload)
-		}
-	}
+	live := system.Cfg.Market.Model == "real"
+	model.board.Place(candidates, envelope, model.price, model.desk, live,
+		func(cand EnterCandidate) {
+			tier := model.routeTier(cand.Resistance)
+
+			if !cand.PathFound {
+				model.tree.Load().Ensure(cand.Path, ActionEnter)
+			}
+
+			if model.desk.Enter(cand.Symbol, cand.Path, tier, cand.PathFound) != nil {
+				return
+			}
+
+			if model.resetPath != nil {
+				model.resetPath(cand.Symbol)
+			}
+
+			if position := model.desk.Position(tier, cand.Symbol); position != nil &&
+				model.deskGate != nil {
+				position.EntryDesk = model.deskGate.Features(
+					model.price, cand.Symbol, envelope.Pumpdump[cand.Symbol],
+				)
+			}
+
+			cand.Decide(&runtime.Decision{
+				Symbol: cand.Symbol,
+				Action: "enter",
+				Reason: map[bool]string{true: "path matched", false: "explore"}[cand.PathFound],
+				Gate:   "tree",
+				Path:   cand.Path,
+				Tier:   tier.String(),
+			})
+		},
+	)
 
 	return envelope
 }
@@ -412,6 +486,28 @@ func (model *Model) Exit(position *broker.Position, path string) {
 		return
 	}
 
+	if model.desk != nil {
+		if !model.desk.ProfitableExit(position) {
+			return
+		}
+
+		errnie.Info("[strategy.model] policy exit",
+			"symbol", position.Symbol,
+			"tier", position.TierKey,
+			"path", path,
+			"pos_stage", position.Status().String(),
+		)
+
+		if err := model.desk.Exit(position, false); err != nil {
+			if errnie.IsForbidden(err) {
+				return
+			}
+
+			errnie.Error(err)
+			return
+		}
+	}
+
 	position.ExitPath = path
 
 	if position.ExitPath == "" && len(position.HoldPaths) > 1 {
@@ -429,6 +525,17 @@ func (model *Model) Exit(position *broker.Position, path string) {
 	model.tree.Load().Update(
 		position.ExitPath, model.resistanceDelta(position),
 	)
+
+	if model.deskGate != nil && len(position.EntryDesk) > 0 {
+		model.deskGate.Learn(
+			position.EntryDesk,
+			model.deskGate.Developed(position),
+		)
+	}
+
+	if model.resetPath != nil {
+		model.resetPath(position.Symbol)
+	}
 }
 
 /*

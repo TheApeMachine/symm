@@ -195,17 +195,19 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 		stoploss.Confirms = 0
 	}
 
-	// 5. Arming Logic
-	effectiveArm := math.Max(stoploss.ArmPnlPct, friction*1.5)
-	if stoploss.State == StoplossHealthy && stoploss.PeakPnLPct >= effectiveArm {
+	// 5. Arming tracks live PnL against the arm line (not peak latch, not min profit).
+	if stoploss.State == StoplossArmed &&
+		stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
+		stoploss.Disarm()
+	} else if stoploss.State == StoplossHealthy &&
+		stoploss.CurrentPnLPct >= stoploss.ArmPnlPct {
 		stoploss.State = StoplossArmed
 	}
 
-	// 6. RULE 1: NEVER EXIT AT A LOSS
-	minProfitableExit := math.Max(friction+0.01, 0.01)
-	stoploss.updateFloorAndExhaustion(avgStep, avgDownStep, chaosRatio, minProfitableExit, delta)
+	// 6. RULE 1: NEVER EXIT AT A LOSS (PnLPct is fee-net; zero is break-even)
+	stoploss.updateFloorAndExhaustion(avgStep, avgDownStep, chaosRatio, delta)
 
-	if stoploss.CurrentPnLPct <= minProfitableExit {
+	if stoploss.CurrentPnLPct <= stepEps {
 		stoploss.Confirms = 0
 		// If an early spike faded before even reaching profit, exit burst mode
 		if stoploss.ExplosiveActive && delta < -stepEps {
@@ -217,12 +219,27 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 	}
 
 	// 7. Regime-Specific Exit Decisions (only once Armed and Profitable)
-	if stoploss.State == StoplossArmed {
-		stoploss.evaluateRegimeExit(delta, avgStep, friction, minProfitableExit)
+	if stoploss.State == StoplossArmed &&
+		stoploss.CurrentPnLPct >= stoploss.ArmPnlPct-stepEps {
+		stoploss.evaluateRegimeExit(delta, avgStep)
 	}
 }
 
+func (stoploss *Stoploss) Disarm() {
+	stoploss.State = StoplossHealthy
+	stoploss.Confirms = 0
+	stoploss.TriggerReason = ""
+	stoploss.ExplosiveActive = false
+	stoploss.ExplosivePushes = 0
+	stoploss.ExplosiveTTL = 0
+	stoploss.PeakPushDelta = 0
+}
+
 func (stoploss *Stoploss) trip(reason string) {
+	if stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
+		return
+	}
+
 	stoploss.State = StoplossTriggered
 	stoploss.TriggerReason = reason
 }
@@ -252,17 +269,20 @@ func (stoploss *Stoploss) detectExplosiveIgnition(delta, priorAvgStep, friction 
 	return delta >= baseline*3.5 && delta >= 0.50
 }
 
-func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRatio, minProfitableExit, delta float64) {
+func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRatio, delta float64) {
 	switch stoploss.Regime {
 	case RegimeExplosive:
 		// Give explosive runners room to breathe: floor trails below the peak by at least
 		// typical pullback or 40% of the peak push, while staying strictly profitable.
 		pushRef := math.Max(stoploss.PeakPushDelta, stoploss.PeakPnLPct-stoploss.InitialPnLPct)
 		room := math.Max(stoploss.TypicalPullback*1.2, math.Max(pushRef*0.40, avgStep*1.5))
+		
 		if room < 0.20 {
 			room = 0.20
 		}
-		stoploss.TrailingFloor = math.Max(stoploss.PeakPnLPct-room, minProfitableExit)
+		
+		stoploss.TrailingFloor = math.Max(stoploss.PeakPnLPct-room, 0)
+		
 		if delta < -stepEps {
 			dropFrac := 0.0
 			if room > stepEps {
@@ -276,30 +296,39 @@ func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRa
 	case RegimeCrawl, RegimeSmooth:
 		allowedRoom := stoploss.computeBreathingRoom(avgStep, avgDownStep)
 		floor := stoploss.PeakPnLPct - allowedRoom
-		if floor < minProfitableExit {
-			floor = minProfitableExit
+
+		if floor < 0 {
+			floor = 0
 		}
+		
 		stoploss.TrailingFloor = floor
 
 		dropRatio := 0.0
+		
 		if allowedRoom > stepEps {
 			dropRatio = stoploss.CurrentDrop / allowedRoom
 		}
+		
 		momPenalty := 0.0
+		
 		if stoploss.EmaDelta < 0 {
 			momPenalty = 0.25
 		}
+		
 		if stoploss.TypicalPush > stepEps && stoploss.TypicalPullback > stoploss.TypicalPush {
 			momPenalty += 0.20
 		}
+		
 		stoploss.ExhaustScore = math.Min(1.0, dropRatio*0.75+momPenalty)
 
 	case RegimeChaos:
 		chaosRoom := math.Max(stoploss.TypicalPullback*1.5, avgStep*2.5)
 		floor := stoploss.PeakPnLPct - chaosRoom
-		if floor < minProfitableExit {
-			floor = minProfitableExit
+		
+		if floor < 0 {
+			floor = 0
 		}
+
 		stoploss.TrailingFloor = floor
 		stoploss.ExhaustScore = math.Min(1.0, chaosRatio/8.0)
 	}
@@ -308,6 +337,7 @@ func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRa
 func (stoploss *Stoploss) computeBreathingRoom(avgStep, avgDownStep float64) float64 {
 	// Determine n1 vs n2 momentum health multiplier
 	mult := 1.35
+
 	if stoploss.TypicalPush > stepEps && stoploss.TypicalPullback > stepEps {
 		if stoploss.TypicalPush >= stoploss.TypicalPullback*1.20 && stoploss.EmaDelta >= 0 {
 			mult = 1.45 // Strong upward structure: respect normal pullbacks
@@ -317,14 +347,17 @@ func (stoploss *Stoploss) computeBreathingRoom(avgStep, avgDownStep float64) flo
 	}
 
 	downRef := avgDownStep
+
 	if downRef <= stepEps {
 		downRef = avgStep
 	}
+
 	if downRef <= stepEps {
 		downRef = 0.01
 	}
 
 	var stepFloor float64
+
 	if stoploss.Regime == RegimeCrawl {
 		// Crawl tolerates 3-4 step pullbacks before breaking structure
 		stepFloor = downRef * 4.5
@@ -336,7 +369,7 @@ func (stoploss *Stoploss) computeBreathingRoom(avgStep, avgDownStep float64) flo
 	return math.Max(stoploss.TypicalPullback*mult, stepFloor)
 }
 
-func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep, friction, minProfitableExit float64) {
+func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep float64) {
 	switch stoploss.Regime {
 	case RegimeExplosive:
 		// REGIME 2: Fast-moving runner.
@@ -351,8 +384,7 @@ func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep, friction, minProfit
 			return
 		}
 		// 3) Reversal after stall: if momentum turns distinctly negative after climbing well above minimum.
-		minCapture := math.Max(minProfitableExit*1.5, friction*2.0)
-		if stoploss.CurrentPnLPct >= minCapture && stoploss.EmaDelta < -stepEps && delta < -avgStep*0.5 {
+		if stoploss.CurrentPnLPct >= stoploss.ArmPnlPct && stoploss.EmaDelta < -stepEps && delta < -avgStep*0.5 {
 			stoploss.trip("explosive_reversal")
 			return
 		}
@@ -381,11 +413,10 @@ func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep, friction, minProfit
 
 	case RegimeChaos:
 		// REGIME 4: Wild swings. Do not stop out on down-noise; sell into an upward whip.
-		profitTarget := math.Max(minProfitableExit, math.Max(stoploss.ArmPnlPct, friction*2.0))
 		nearRangeTop := stoploss.CurrentPnLPct >= (stoploss.PeakPnLPct - avgStep*0.5)
 		strongWhipUp := delta >= avgStep*1.1
 
-		if delta > stepEps && stoploss.CurrentPnLPct >= profitTarget && (nearRangeTop || strongWhipUp) {
+		if delta > stepEps && stoploss.CurrentPnLPct >= stoploss.ArmPnlPct && (nearRangeTop || strongWhipUp) {
 			stoploss.trip("chaos_whip_up")
 			return
 		}
@@ -404,6 +435,7 @@ func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep, friction, minProfit
 
 func (stoploss *Stoploss) recordPush(push float64) {
 	stoploss.Pushes = append(stoploss.Pushes, push)
+
 	if len(stoploss.Pushes) > stoploss.MaxSwings {
 		stoploss.Pushes = stoploss.Pushes[1:]
 	}
@@ -411,6 +443,7 @@ func (stoploss *Stoploss) recordPush(push float64) {
 
 func (stoploss *Stoploss) recordPullback(pb float64) {
 	stoploss.Pullbacks = append(stoploss.Pullbacks, pb)
+
 	if len(stoploss.Pullbacks) > stoploss.MaxSwings {
 		stoploss.Pullbacks = stoploss.Pullbacks[1:]
 	}
@@ -420,9 +453,11 @@ func (stoploss *Stoploss) refreshSwingStats() {
 	livePush := stoploss.PeakPnLPct - stoploss.RallyStart
 	if len(stoploss.Pushes) > 0 {
 		var sum float64
+		
 		for _, p := range stoploss.Pushes {
 			sum += p
 		}
+
 		avgPush := sum / float64(len(stoploss.Pushes))
 		stoploss.TypicalPush = math.Max(avgPush, livePush*0.7)
 	} else if livePush > stoploss.TypicalPush {
@@ -434,14 +469,14 @@ func (stoploss *Stoploss) refreshSwingStats() {
 		// while letting ancient freak dips expire.
 		cp := make([]float64, len(stoploss.Pullbacks))
 		copy(cp, stoploss.Pullbacks)
+		
 		sort.Float64s(cp)
-		idx := int(math.Ceil(0.80*float64(len(cp)))) - 1
-		if idx < 0 {
-			idx = 0
-		}
+		idx := max(int(math.Ceil(0.80*float64(len(cp)))) - 1, 0)
+
 		if idx >= len(cp) {
 			idx = len(cp) - 1
 		}
+
 		stoploss.TypicalPullback = cp[idx]
 	}
 }

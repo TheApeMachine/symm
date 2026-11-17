@@ -26,7 +26,8 @@ func Recoverable(err error) bool {
 		strings.Contains(msg, "not ready for ping") ||
 		strings.Contains(msg, "reconnect hook failed") ||
 		strings.Contains(msg, "error dialing url") ||
-		strings.Contains(msg, "connection missing") {
+		strings.Contains(msg, "connection missing") ||
+		strings.Contains(msg, "[network.websocket] read failed") {
 		return true
 	}
 

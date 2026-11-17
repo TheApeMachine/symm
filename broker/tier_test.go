@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/venue"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -78,6 +79,46 @@ func TestNewTier(t *testing.T) {
 			So(tier.balance, ShouldNotBeNil)
 		})
 	}))
+}
+
+func TestNewTierExecutionsSubscribe(t *testing.T) {
+	Convey("Setup", t, func() {
+		withPrice(func(price *Price) {
+			cap := &captureClient{}
+			price.Instrument.auth = kraken.NewAuth()
+			price.Instrument.auth.SeedToken("tok")
+			host := venue.NewKraken("USD")
+
+			tier := NewTier(t.Context(), TierTypeReal, nil, cap, price, host, nil)
+			So(tier, ShouldNotBeNil)
+
+			var found bool
+
+			for _, raw := range cap.writes {
+				var msg map[string]any
+				So(sonic.Unmarshal(raw, &msg), ShouldBeNil)
+
+				if msg["method"] != "subscribe" {
+					continue
+				}
+
+				params, _ := msg["params"].(map[string]any)
+
+				if params["channel"] != "executions" {
+					continue
+				}
+
+				So(params["token"], ShouldEqual, "tok")
+				So(params["snap_orders"], ShouldEqual, true)
+				So(params["snap_trades"], ShouldEqual, true)
+				found = true
+			}
+
+			Convey("Real tier subscribes to executions on the private socket", func() {
+				So(found, ShouldBeTrue)
+			})
+		})()
+	})
 }
 
 func TestTierHello(t *testing.T) {

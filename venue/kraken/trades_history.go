@@ -38,10 +38,11 @@ func NewTradesHistoryRequest(symbols []string) *TradesHistoryRequest {
 }
 
 /*
-HistoryTrade is one closed position row in TradesHistory REST — broker reconciles
-tier ledger against these ids when executions snapshots are incomplete.
+HistoryTrade is one fill. The map key is the trade txid; ID is stamped from
+that key because the object body only carries ordertxid.
 */
 type HistoryTrade struct {
+	ID         string           `json:"-"`
 	OrderID    string           `json:"ordertxid"`
 	PositionID string           `json:"postxid"`
 	Pair       string           `json:"pair"`
@@ -98,8 +99,8 @@ TradesHistory is private REST ledger sync — broker tier polls this to backfill
 fills without trusting only the executions websocket.
 */
 type TradesHistory struct {
-	Error    []any             `json:"error"`
-	Result   TradesHistoryResult `json:"result"`
+	Error  []any               `json:"error"`
+	Result TradesHistoryResult `json:"result"`
 }
 
 /*
@@ -112,7 +113,6 @@ func NewTradesHistory() *TradesHistory {
 		},
 	}
 }
-
 
 /*
 Request asks for all types without embedded trades — map is built from top-level trades.
@@ -148,7 +148,6 @@ func (history *TradesHistory) UnmarshalJSON(data []byte) error {
 	if history.Result.Trades == nil {
 		history.Result.Trades = make(map[string]HistoryTrade)
 	}
-
 
 	return nil
 }
@@ -203,6 +202,28 @@ func NewTradesHistoryResult(data []byte) *TradesHistoryResult {
 
 	errnie.Debug("[tradeshistory] parsed", "trades", len(envelope.Result.Trades), "count", envelope.Result.Count)
 	return &envelope.Result
+}
+
+/*
+Fills returns every trade with its map key stamped onto ID. Partial prints of
+one order share ordertxid and are distinct only by that key.
+*/
+func (result *TradesHistoryResult) Fills() []HistoryTrade {
+	if result == nil || len(result.Trades) == 0 {
+		return nil
+	}
+
+	fills := make([]HistoryTrade, 0, len(result.Trades))
+
+	for id, trade := range result.Trades {
+		if trade.ID == "" {
+			trade.ID = id
+		}
+
+		fills = append(fills, trade)
+	}
+
+	return fills
 }
 
 /*

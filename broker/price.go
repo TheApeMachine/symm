@@ -107,14 +107,6 @@ func NewPrice(
 	return price
 }
 
-func (price *Price) SetTicker(row *market.TickerData) {
-	if row == nil {
-		return
-	}
-
-	price.ticker.Set(price.normalizer.Name(row.Symbol), row)
-}
-
 /*
 applyTicker folds a decoded venue ticker frame into the live reference book.
 */
@@ -133,10 +125,6 @@ func (price *Price) applyTicker(frame market.MarketType) {
 
 		price.ticker.Set(price.normalizer.Name(pair), row)
 	}
-}
-
-func (price *Price) VolumeUSD(symbol string) float64 {
-	return price.ticker.VolumeUSD(price.normalizer.Name(symbol))
 }
 
 /*
@@ -196,13 +184,11 @@ Returns filled base size and gross quote notional.
 func (price *Price) Walk(
 	symbol string, qty decimal.Decimal, buy bool,
 ) (filled, gross *decimal.Decimal) {
-	if price == nil || price.Books == nil || qty.Sign() <= 0 {
+	if price == nil || qty.Sign() <= 0 {
 		return nil, nil
 	}
 
-	if price.normalizer != nil {
-		symbol = price.normalizer.Name(symbol)
-	}
+	symbol = price.normalizer.Name(symbol)
 
 	price.Books.Book(symbol, func(book *market.Book) {
 		if book == nil {
@@ -345,14 +331,15 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 		return
 	}
 
-	at := trade.Timestamp
+	name := price.normalizer.Name(trade.Symbol)
 
-	if at.IsZero() {
-		at = time.Now()
+	if raw, ok := price.lastPrint.Load(trade.Symbol); ok {
+		if prev, ok := raw.(time.Time); ok && !trade.Timestamp.After(prev) {
+			return
+		}
 	}
 
-	name := price.normalizer.Name(trade.Symbol)
-	price.notePrint(name, at)
+	price.lastPrint.Store(trade.Symbol, trade.Timestamp)
 
 	if trade.Side != market.SideBuy {
 		return
@@ -361,22 +348,8 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 	price.tape.Note(
 		name,
 		trade.Price.Mul(trade.Qty).InexactFloat64(),
-		at,
+		trade.Timestamp,
 	)
-}
-
-func (price *Price) notePrint(symbol string, at time.Time) {
-	if symbol == "" || at.IsZero() {
-		return
-	}
-
-	if raw, ok := price.lastPrint.Load(symbol); ok {
-		if prev, ok := raw.(time.Time); ok && !at.After(prev) {
-			return
-		}
-	}
-
-	price.lastPrint.Store(symbol, at)
 }
 
 /*
@@ -462,60 +435,6 @@ func (price *Price) PeakFrac(symbol string) (float64, bool) {
 }
 
 /*
-EntryOpenDragPct is fee-net close-now PnL% after buying the touch ask and marking
-at the bid — the immediate drag a market enter eats before any move.
-*/
-func (price *Price) EntryOpenDragPct(symbol string) (float64, bool) {
-	symbol = price.normalizer.Name(symbol)
-
-	var bid, ask *decimal.Decimal
-
-	price.Books.Book(symbol, func(book *market.Book) {
-		if !book.Tradable() {
-			return
-		}
-
-		bid = book.BidPrice()
-		ask = book.AskPrice()
-	})
-
-	if bid == nil || ask == nil || bid.Sign() <= 0 || ask.Sign() <= 0 {
-		return 0, false
-	}
-
-	feeIn := price.Fee(symbol, ask)
-	feeOut := price.Fee(symbol, bid)
-
-	if feeIn == nil || feeOut == nil {
-		return 0, false
-	}
-
-	cost := ask.Add(*feeIn)
-
-	if cost.Sign() <= 0 {
-		return 0, false
-	}
-
-	pnl := bid.Sub(*feeOut).Sub(cost)
-	return pnl.Div(cost).Mul(decimalHundred).InexactFloat64(), true
-}
-
-/*
-EntryDragOK is true when immediate open drag is no worse than MaxEntryOpenDragPct.
-*/
-func (price *Price) EntryDragOK(symbol string) bool {
-	max := system.Cfg.Risk.MaxEntryOpenDragPct
-
-	if max <= 0 {
-		return false
-	}
-
-	drag, ok := price.EntryOpenDragPct(symbol)
-
-	return ok && drag >= -max
-}
-
-/*
 EntryPeakOK is true when PeakFrac is under the accum/ignition selection cap.
 */
 func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
@@ -554,14 +473,6 @@ func (price *Price) TapeAccelOK(symbol string) bool {
 	}
 
 	return recent/prior >= risk.MinTapeAccelRatio
-}
-
-/*
-MoverVolumeOK requires accelerating buy tape — REST 24h volume must not admit
-names that only traded hours ago.
-*/
-func (price *Price) MoverVolumeOK(symbol string) bool {
-	return price.TapeAccelOK(symbol)
 }
 
 /*
@@ -697,11 +608,7 @@ func (price *Price) PulseSymbols(batch, start int) ([]string, int) {
 		batch = len(all)
 	}
 
-	if start < 0 {
-		start = 0
-	}
-
-	start %= len(all)
+	start = max(0, start) % len(all)
 	out := make([]string, 0, batch)
 
 	for i := range batch {
@@ -735,100 +642,70 @@ func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) 
 }
 
 /*
-paid is remaining quote spent on open size from buy fills (Cost, else
-px×qty), scaled to Qty. Entry is not used.
-*/
-func paid(position *Position) *decimal.Decimal {
-	if position == nil || position.Qty == nil || position.Qty.Sign() <= 0 {
-		return nil
-	}
-
-	var cost, bought decimal.Decimal
-
-	for _, fill := range position.Fills {
-		if fill == nil || fill.Side != "buy" || fill.LastQty == nil ||
-			fill.LastQty.Sign() <= 0 {
-			continue
-		}
-
-		switch {
-		case fill.Cost != nil && fill.Cost.Sign() > 0:
-			cost = cost.Add(*fill.Cost)
-		case fill.LastPrice != nil:
-			cost = cost.Add(fill.LastPrice.Mul(*fill.LastQty))
-		default:
-			continue
-		}
-
-		bought = bought.Add(*fill.LastQty)
-	}
-
-	if bought.Sign() <= 0 || cost.Sign() <= 0 {
-		return nil
-	}
-
-	kept := cost.Mul(*position.Qty).Div(bought)
-	return &kept
-}
-
-/*
-PnL is fee-net bid-walk proceeds minus fee-net fill-paid cost. Incomplete
-walks return nil. Entry is unused.
+PnL is bid-walk proceeds, minus the exit fee and the entry fee, minus
+Entry times Qty. Incomplete walks return nil.
 */
 func (price *Price) PnL(position *Position) *decimal.Decimal {
-	if position == nil || price == nil || price.normalizer == nil ||
-		position.Qty == nil || position.Qty.Sign() <= 0 {
+	if position == nil || position.Validate() != nil {
 		return nil
 	}
 
-	cost := paid(position)
-
-	if cost == nil {
-		return nil
-	}
-
+	cost := position.Entry.Mul(*position.Qty)
 	symbol := price.normalizer.Name(position.Symbol)
 	filled, gross := price.Walk(symbol, *position.Qty, false)
 
-	if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 ||
-		gross.Sign() <= 0 {
+	if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 || gross.Sign() <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"[price] pnl failed",
+			nil,
+		).With(
+			"symbol", position.Symbol, "why", "incomplete walk",
+			"filled", filled, "gross", gross,
+		))
+
 		return nil
 	}
 
-	proceeds := *gross
-	feeIn := price.Fee(symbol, cost)
-	feeOut := price.Fee(symbol, &proceeds)
+	feeIn := price.Fee(symbol, &cost)
+	feeOut := price.Fee(symbol, gross)
 
 	if feeIn == nil || feeOut == nil {
 		return nil
 	}
 
-	p := proceeds.Sub(*feeOut).Sub(cost.Add(*feeIn))
+	p := gross.Sub(*feeOut).Sub(cost).Sub(*feeIn)
 	return &p
 }
 
 /*
-PnLPct is PnL as percent of fill-paid cost. PnL is already fee-net, so zero
-is break-even after fees without re-applying Fee here.
+PnLPct is PnL as a percent of Entry times Qty.
 */
 func (price *Price) PnLPct(position *Position) *decimal.Decimal {
 	pnl := price.PnL(position)
-	cost := paid(position)
 
-	if pnl == nil || cost == nil || cost.Sign() <= 0 {
+	if position.Validate() != nil {
 		return nil
 	}
 
-	pct := pnl.Div(*cost).Mul(decimalHundred)
+	cost := position.Entry.Mul(*position.Qty)
+
+	if cost.Sign() <= 0 {
+		return nil
+	}
+
+	pct := pnl.Div(cost).Mul(decimalHundred)
 	return &pct
 }
 
 /*
 Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
+spendableQuote is optional remaining quote cash (e.g. after in-flight enters); nil
+uses full wallet cash. Budget is MaxFraction of that; size is touch ask / TouchDivisor,
+or venue minimum when the touch cap is too small.
 */
 func (price *Price) Allocate(
-	symbol string,
-	wallet *market.Balance,
+	symbol string, wallet *market.Balance,
 ) (*decimal.Decimal, error) {
 	symbol = price.normalizer.Name(symbol)
 
@@ -901,7 +778,7 @@ func (price *Price) Allocate(
 			return
 		}
 
-		touch = book.BidSize()
+		touch = book.AskSize()
 	})
 
 	if touch == nil || touch.Sign() <= 0 {
@@ -943,6 +820,40 @@ func (price *Price) Allocate(
 		}
 
 		sized = &parsed
+	}
+
+	if enforceMins && pair.QtyMin != nil && sized.Cmp(*pair.QtyMin) < 0 {
+		sized = pair.QtyMin
+
+		if price.normalizer != nil {
+			raw, err := sdkdecimal.NewFromString(pair.QtyMin.String())
+
+			if err != nil {
+				return nil, errnie.Error(err)
+			}
+
+			formatted, err := price.normalizer.FormatSize(symbol, raw)
+
+			if err != nil || formatted == nil {
+				return nil, errnie.Err(
+					errnie.UnprocessableContent,
+					"[price] allocate failed",
+					nil,
+				).With("symbol", symbol, "why", "venue minimum below size step")
+			}
+
+			parsed, err := decimal.NewFromString(formatted.String())
+
+			if err != nil || parsed.Sign() <= 0 {
+				return nil, errnie.Err(
+					errnie.UnprocessableContent,
+					"[price] allocate failed",
+					nil,
+				).With("symbol", symbol, "why", "venue minimum below size step")
+			}
+
+			sized = &parsed
+		}
 	}
 
 	for range 8 {

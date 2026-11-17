@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"maps"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -333,9 +334,23 @@ the hub stays consistent without every tier mutating UI directly.
 func (desk *Desk) Hello() {
 	desk.publishModes()
 
+	positions := make(map[string]*Position)
+	balances := make(map[string]float64)
+
 	for _, tier := range desk.tiers {
-		tier.Hello()
+		if tier == nil {
+			continue
+		}
+
+		maps.Copy(positions, tier.Hello()["positions"].(map[string]*Position))
+		maps.Copy(balances, tier.Hello()["balances"].(map[string]float64))
 	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"positions":          positions,
+		"balances":           balances,
+		"positions_snapshot": true,
+	})
 }
 
 /*
@@ -413,7 +428,7 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 
 		for _, tier := range desk.tiers {
-			if tier == nil {
+			if tier == nil || tier.Status() != runtime.READY {
 				continue
 			}
 
@@ -493,17 +508,32 @@ func (desk *Desk) Exit(position *Position, force bool) error {
 	return errnie.Error(tier.Exit(position, force))
 }
 
-/*
-GetPosition returns the position by tier and symbol.
-*/
-func (desk *Desk) GetPosition(tt TierType, symbol string) *Position {
-	tier := desk.tiers[tt]
-
-	if tier == nil {
-		return nil
+func (desk *Desk) ProfitableExit(position *Position) bool {
+	if desk == nil || position == nil {
+		return false
 	}
 
-	return tier.positions.Get(symbol)
+	tier := desk.tiers[TierString(position.TierKey)]
+
+	if tier == nil {
+		return false
+	}
+
+	return tier.ProfitableExit(position)
+}
+
+func (desk *Desk) VetoPendingExit(position *Position) {
+	if desk == nil || position == nil {
+		return
+	}
+
+	tier := desk.tiers[TierString(position.TierKey)]
+
+	if tier == nil {
+		return
+	}
+
+	tier.abortExit(position)
 }
 
 /*
@@ -585,29 +615,4 @@ func (desk *Desk) ClearPending(tt TierType, symbol string) {
 	if tier := desk.tiers[tt]; tier != nil {
 		tier.ClearPending(symbol)
 	}
-}
-
-/*
-CanSize is the cheap pre-check before model work — it reuses Allocate so Observe
-and enter share one sizing truth.
-*/
-func (desk *Desk) CanSize(symbol string) bool {
-	if symbol == "" || desk.price == nil {
-		return false
-	}
-
-	qty, _ := desk.price.Allocate(symbol, nil)
-	return qty != nil && qty.Sign() > 0
-}
-
-/*
-BookStale surfaces instrument disconnect to strategy before Observe spends CPU
-on a book that will never pass BookIntact.
-*/
-func (desk *Desk) BookStale(symbol string) bool {
-	if desk.price == nil || desk.price.Books == nil {
-		return true
-	}
-
-	return desk.price.Books.StaleSymbol(symbol)
 }

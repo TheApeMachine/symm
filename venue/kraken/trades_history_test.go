@@ -141,6 +141,15 @@ func TestNewTradesHistoryResult(t *testing.T) {
 				So(len(result.Trades), ShouldEqual, 2)
 				So(result.Trades["T1"].Pair, ShouldEqual, "BTC/USD")
 				So(result.Trades["T2"].Pair, ShouldEqual, "ETH/USD")
+
+				ids := map[string]bool{}
+
+				for _, fill := range result.Fills() {
+					ids[fill.ID] = true
+				}
+
+				So(ids["T1"], ShouldBeTrue)
+				So(ids["T2"], ShouldBeTrue)
 			})
 		})
 	})

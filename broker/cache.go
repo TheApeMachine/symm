@@ -4,18 +4,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -24,14 +19,12 @@ Closing until exit fills land — desk logic and object keys must match that sea
 */
 type Cache struct {
 	*runtime.System
-	tierKey   string
-	store     *store.Client
-	stops     *StopHistory
-	transport network.Client
-	price     *Price
-	onSettled func(*Position)
-	open      *sync.Map
-	closed    *sync.Map
+	tierKey string
+	store   *store.Client
+	stops   *StopHistory
+	ledger  *Ledger
+	open    *sync.Map
+	closed  *sync.Map
 }
 
 /*
@@ -47,208 +40,38 @@ func NewCache(
 	client *store.Client,
 ) *Cache {
 	cache := &Cache{
-		System:    runtime.NewSystem(ctx, "cache"),
-		tierKey:   tierKey,
-		store:     client,
-		stops:     NewStopHistory(tierKey, client),
-		transport: transport,
-		price:     price,
-		onSettled: onSettled,
-		open:      &sync.Map{},
-		closed:    &sync.Map{},
+		System:  runtime.NewSystem(ctx, "cache"),
+		tierKey: tierKey,
+		store:   client,
+		stops:   NewStopHistory(tierKey, client),
+		ledger:  NewLedger(tierKey, price, transport, onSettled),
+		open:    &sync.Map{},
+		closed:  &sync.Map{},
 	}
 
-	if transport == nil {
-		errnie.Debug("[cache] trades history skipped: nil transport", "tier", tierKey)
-		return cache
+	open, closed := cache.ledger.Restore(ctx)
+
+	for _, position := range open {
+		cache.Add(position.Symbol, position, true)
 	}
 
-	type row struct {
-		id    string
-		trade kraken.HistoryTrade
-	}
-
-	rows := make([]row, 0)
-	cursor := ""
-
-	for {
-		req := kraken.NewTradesHistoryRequest([]string{})
-		req.Cursor = cursor
-
-		raw, err := transport.Post(system.Cfg.WebSocket.Endpoints.TradesHistory, req)
-
-		if err != nil {
-			errnie.Error(err)
-			break
-		}
-
-		history := kraken.NewTradesHistoryResult(raw)
-
-		if history == nil {
-			break
-		}
-
-		for id, trade := range history.Trades {
-			rows = append(rows, row{id: id, trade: trade})
-		}
-
-		if history.Cursor.Next == "" {
-			break
-		}
-
-		cursor = history.Cursor.Next
-	}
-
-	slices.SortFunc(rows, func(a, b row) int {
-		return a.trade.Time.Compare(b.trade.Time)
-	})
-
-	active := make(map[string]*Position)
-
-	for _, row := range rows {
-		trade := row.trade
-		symbol := trade.Pair
-
-		if price != nil && price.normalizer != nil {
-			symbol = price.normalizer.Name(symbol)
-		}
-
-		if symbol == "" {
-			continue
-		}
-
-		position := active[symbol]
-
-		if position == nil {
-			if trade.Type != "buy" {
-				continue
-			}
-
-			position = NewPosition(
-				cache.Context(),
-				symbol,
-				tierKey,
-				"",
-				price,
-				cache.transport,
-				cache.onSettled,
-			)
-			position.OpenedAt = trade.Time
-			active[symbol] = position
-		}
-
-		position.Apply(market.ExecutionData{
-			ExecID:      row.id,
-			ExecType:    "trade",
-			OrderID:     trade.OrderID,
-			Symbol:      symbol,
-			Side:        trade.Type,
-			LastQty:     trade.Volume,
-			LastPrice:   trade.Price,
-			Cost:        trade.Cost,
-			FeeUsdEquiv: trade.Fee,
-			OrderType:   trade.OrderType,
-			Timestamp:   trade.Time,
-			OrderStatus: "filled",
-		})
-
-		if position.ClosedAt == nil {
-			continue
-		}
-
-		cache.closed.Store(position.ID, position)
-		delete(active, symbol)
-	}
-
-	for symbol, position := range active {
-		cache.open.Store(symbol, position)
+	for _, position := range closed {
+		cache.archive(position)
 	}
 
 	return cache
 }
 
 /*
-Bound drops open positions the wallet no longer holds and aligns qty to
-spendable capital. History proposes; Balance confirms — never invents opens.
+archive is the only closed-lane write. The key is the position id, so one
+symbol can keep every flat-to-flat cycle.
 */
-func (cache *Cache) Bound(balance *market.Balance) {
-	if balance == nil {
+func (cache *Cache) archive(position *Position) {
+	if cache == nil || position == nil || position.ID == "" {
 		return
 	}
 
-	// Empty frame must not wipe live positions — that invented "exits" with no trade.
-	if len(balance.Assets) == 0 {
-		return
-	}
-
-	quote := balance.Quote
-
-	if quote == "" {
-		quote = system.Cfg.Market.QuoteCurrency
-	}
-
-	held := make(map[string]decimal.Decimal)
-
-	for _, asset := range balance.Assets {
-		if asset == nil || asset.Symbol == "" || asset.Symbol == quote {
-			continue
-		}
-
-		if asset.Capital.Sign() <= 0 {
-			continue
-		}
-
-		held[asset.Symbol] = asset.Capital
-	}
-
-	// Still no spendable bases — incomplete snapshot, do not drop.
-	if len(held) == 0 {
-		return
-	}
-
-	for _, position := range cache.Open() {
-		if position == nil {
-			continue
-		}
-
-		// WAITING (order out) and BUSY (exit armed) are not wallet-backed yet
-		// or still exiting — Bound must not drop them on a partial snapshot.
-		if position.Status() != runtime.READY {
-			continue
-		}
-
-		base := position.Symbol
-
-		if b, _, ok := strings.Cut(position.Symbol, "/"); ok {
-			base = b
-		} else if quote != "" && strings.HasSuffix(position.Symbol, quote) {
-			base = strings.TrimSuffix(position.Symbol, quote)
-		}
-
-		capital, ok := held[base]
-
-		if !ok {
-			cache.open.Delete(position.Symbol)
-			continue
-		}
-
-		// Never raise Qty above fill-derived size — incomplete history + wallet
-		// capital invented a cheap entry on a full bag (fake +pnl_pct).
-		filled := position.qty()
-		if filled == nil || filled.Sign() <= 0 {
-			cache.open.Delete(position.Symbol)
-			continue
-		}
-
-		qty := capital
-		if qty.GreaterThan(*filled) {
-			qty = *filled
-		}
-
-		if position.Qty == nil || !position.Qty.Equal(qty) {
-			position.Qty = &qty
-		}
-	}
+	cache.closed.Store(position.ID, position)
 }
 
 /*
@@ -344,29 +167,41 @@ func (cache *Cache) Get(symbol string) *Position {
 }
 
 /*
-Add is idempotent on restore — it refuses to overwrite a live open position unless
-the incumbent already claimed ClosedAt during settle.
+Add is idempotent. The open lane is keyed by symbol and refuses a second live
+position unless the incumbent already claimed ClosedAt during settle. The closed
+lane is keyed by position id.
 */
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
-	if symbol == "" || position == nil {
+	if position == nil {
 		return true
 	}
 
-	lane := cache.closed
+	if !open {
+		if position.ID == "" {
+			return true
+		}
 
-	if open {
-		lane = cache.open
+		if _, loaded := cache.closed.Load(position.ID); loaded {
+			return true
+		}
+
+		cache.archive(position)
+		return false
 	}
 
-	if existing, loaded := lane.Load(symbol); loaded {
+	if symbol == "" {
+		return true
+	}
+
+	if existing, loaded := cache.open.Load(symbol); loaded {
 		pos := existing.(*Position)
 
-		if !(open && pos != nil && pos.ClosedAt != nil) {
+		if pos == nil || pos.ClosedAt == nil {
 			return true
 		}
 	}
 
-	lane.Store(symbol, position)
+	cache.open.Store(symbol, position)
 	return false
 }
 
@@ -429,7 +264,7 @@ func (cache *Cache) Remove(symbol string) bool {
 	}
 
 	loaded := raw.(*Position)
-	cache.closed.Store(loaded.ID, loaded)
+	cache.archive(loaded)
 
 	if err := cache.move(loaded); err != nil {
 		errnie.Error(err)

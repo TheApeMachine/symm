@@ -61,12 +61,12 @@ func TestStoplossUpdate(t *testing.T) {
 			})
 		})
 
-		Convey("When friction raises the effective arm", func() {
+		Convey("When friction does not move the arm line", func() {
 			sl := NewStoploss(1.2)
 			sl.Update(1.2, 1.0)
 
-			Convey("Peak below friction*1.5 keeps healthy", func() {
-				So(sl.State, ShouldEqual, StoplossHealthy)
+			Convey("Arming follows ArmPnlPct only", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
 				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
@@ -134,29 +134,41 @@ func TestStoplossUpdate(t *testing.T) {
 			})
 		})
 
-		Convey("When an explosive runner reverses and breaks floor", func() {
+		Convey("When an explosive runner collapses below the arm line", func() {
 			sl := NewStoploss(1.0)
 			sl.Update(1.0, 0)
-			sl.Update(2.6, 0) // ignition; floor trails under peak by ~avgStep room
+			sl.Update(2.6, 0)
 			sl.Update(0.15, 0)
 
-			Convey("Trip records an explosive exit reason", func() {
-				So(sl.Triggered(), ShouldBeTrue)
-				So(sl.TriggerReason, ShouldBeIn, "explosive_floor_break", "explosive_reversal")
+			Convey("Disarm wins over trip", func() {
+				So(sl.State, ShouldEqual, StoplossHealthy)
+				So(sl.Triggered(), ShouldBeFalse)
 				So(sl.Regime, ShouldEqual, RegimeExplosive)
 			})
 		})
 
-		Convey("When underwater after arm, Update refuses a loss exit", func() {
+		Convey("When current falls below the arm line", func() {
 			sl := NewStoploss(2.0)
 			sl.Update(2.0, 0)
-			sl.Update(0.005, 0)
+			sl.Update(0.5, 0)
 
-			Convey("State stays armed without TriggerReason", func() {
-				So(sl.State, ShouldEqual, StoplossArmed)
+			Convey("State disarms without triggering", func() {
+				So(sl.State, ShouldEqual, StoplossHealthy)
 				So(sl.Triggered(), ShouldBeFalse)
 				So(sl.TriggerReason, ShouldEqual, "")
 				So(sl.Confirms, ShouldEqual, 0)
+			})
+		})
+
+		Convey("When price re-enters above the arm line after disarm", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(2.0, 0)
+			sl.Update(0.5, 0)
+			sl.Update(2.0, 0)
+
+			Convey("Stoploss re-arms", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
 	})

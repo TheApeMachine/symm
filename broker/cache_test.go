@@ -7,10 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/nomagique/runtime"
 )
 
 type historyClient struct {
@@ -184,56 +181,6 @@ func TestNewCache(t *testing.T) {
 	}))
 }
 
-func TestBound(t *testing.T) {
-	Convey("Setup", t, withHistory(historyTwoOpen, func(cache *Cache) {
-		So(len(cache.Open()), ShouldEqual, 2)
-
-		bera := decimal.NewFromFloat(10)
-		book := market.NewBalance(map[string]any{
-			"quote": "USD",
-			"assets": []*market.Asset{
-				market.NewAsset(nil, "BERA", bera, decimal.Zero, bera),
-			},
-		})
-
-		Convey("When Bound runs against a partial wallet", func() {
-			cache.Bound(book)
-			open := cache.Open()
-
-			Convey("Only BERAUSD remains with wallet qty", func() {
-				So(len(open), ShouldEqual, 1)
-				So(open[0].Symbol, ShouldEqual, "BERAUSD")
-				So(open[0].Qty.String(), ShouldEqual, "10")
-				So(len(cache.Closed()), ShouldEqual, 0)
-			})
-		})
-	}))
-
-	Convey("Setup waiting position", t, withEmptyCache(func(cache *Cache) {
-		pos := NewPosition(cache.Context(), testSymbol, "paper", "path", nil, nil, nil)
-		So(pos.Enter("R00/M1", dec("1"), nil), ShouldBeNil)
-		So(pos.Status(), ShouldEqual, runtime.WAITING)
-		cache.open.Store(testSymbol, pos)
-
-		book := market.NewBalance(map[string]any{
-			"quote": "USD",
-			"assets": []*market.Asset{
-				market.NewAsset(nil, "ETH", decimal.NewFromInt(1), decimal.Zero, decimal.NewFromInt(1)),
-			},
-		})
-
-		Convey("When Bound sees a WAITING enter not yet in the wallet", func() {
-			cache.Bound(book)
-
-			Convey("The position stays open until fill or Drop", func() {
-				So(cache.Has(testSymbol), ShouldBeTrue)
-				So(len(cache.Open()), ShouldEqual, 1)
-				So(cache.Open()[0].Status(), ShouldEqual, runtime.WAITING)
-			})
-		})
-	}))
-}
-
 func TestGet(t *testing.T) {
 	Convey("Setup", t, withEmptyCache(func(cache *Cache) {
 		pos := NewPosition(cache.Context(), testSymbol, "paper", "path", nil, nil, nil)
@@ -329,6 +276,26 @@ func TestAdd(t *testing.T) {
 				So(cache.Open(testSymbol)[0].ID, ShouldEqual, live.ID)
 			})
 		})
+
+		Convey("When Add archives two closed cycles of one symbol", func() {
+			first := NewPosition(cache.Context(), testSymbol, "paper", "", nil, nil, nil)
+			second := NewPosition(cache.Context(), testSymbol, "paper", "", nil, nil, nil)
+			closedAt := time.Unix(1, 0).UTC()
+			first.ClosedAt = &closedAt
+			second.ClosedAt = &closedAt
+
+			firstDup := cache.Add(testSymbol, first, false)
+			again := cache.Add(testSymbol, first, false)
+			secondDup := cache.Add(testSymbol, second, false)
+
+			Convey("Closed is keyed by id and both cycles remain", func() {
+				So(firstDup, ShouldBeFalse)
+				So(again, ShouldBeTrue)
+				So(secondDup, ShouldBeFalse)
+				So(cache.Has(testSymbol), ShouldBeFalse)
+				So(len(cache.Closed(testSymbol)), ShouldEqual, 2)
+			})
+		})
 	}))
 }
 
@@ -398,25 +365,6 @@ func BenchmarkNewCache(b *testing.B) {
 
 	for b.Loop() {
 		_ = NewCache(ctx, "real", &historyClient{trades: body}, nil, nil, nil)
-	}
-}
-
-func BenchmarkBound(b *testing.B) {
-	var cache *Cache
-	withHistory(historyTwoOpen, func(c *Cache) { cache = c })()
-	bera := decimal.NewFromFloat(10)
-	book := market.NewBalance(map[string]any{
-		"quote": "USD",
-		"assets": []*market.Asset{
-			market.NewAsset(nil, "BERA", bera, decimal.Zero, bera),
-		},
-	})
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		cache.Bound(book)
 	}
 }
 

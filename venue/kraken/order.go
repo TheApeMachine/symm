@@ -56,6 +56,7 @@ func NewOrderFromMap(model map[string]any) json.Marshaler {
 	}
 
 	out.Result.OrderID = orderID
+	out.Result.ClOrdID, _ = model["cl_ord_id"].(string)
 	out.Success = success
 
 	return out

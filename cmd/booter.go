@@ -305,10 +305,13 @@ func (booter *Booter) initTransports() error {
 	if !booter.live {
 		booter.virtual = network.NewVirtual(ctx)
 		booter.paper = kraken.NewPaper(ctx)
+		// Disarmed real tier private — same websocket-shaped emulator, not live Kraken.
+		booter.private = network.NewVirtual(ctx)
+	} else {
+		booter.private = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Private)
 	}
 
 	booter.public = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Public)
-	booter.private = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Private)
 
 	return nil
 }
@@ -380,7 +383,7 @@ func (booter *Booter) initMarket() error {
 			tt = broker.TierTypeReal
 		}
 
-		position := booter.desk.GetPosition(tt, symbol)
+		position := booter.desk.Position(tt, symbol)
 
 		if position == nil {
 			return errnie.Error(errnie.Err(
@@ -417,7 +420,7 @@ func (booter *Booter) initPipeline() error {
 	)
 
 	model := strategy.NewModel(
-		ctx, booter.desk, booter.price, training.ResetSequencer, booter.store,
+		ctx, booter.desk, booter.price, training.ResetSequencer, booter.store, deskGate,
 	)
 
 	booter.training = training

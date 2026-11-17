@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -56,7 +57,6 @@ type Position struct {
 	PnL               *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	ExitWireStale     bool                    `json:"exit_wire_stale,omitempty"`
-	ExitAttempts      int                     `json:"exit_attempts,omitempty"`
 	EntryDesk         map[string]float64      `json:"entry_desk,omitempty"`
 	TreeApplied       bool                    `json:"-"`
 }
@@ -75,7 +75,7 @@ func NewPosition(
 	onSettled func(*Position),
 ) *Position {
 	return &Position{
-		System:    runtime.NewSystem(ctx, "position"),
+		System:    runtime.NewSystem(ctx, tierKey+":"+symbol),
 		price:     price,
 		transport: transport,
 		onSettled: onSettled,
@@ -87,55 +87,14 @@ func NewPosition(
 	}
 }
 
-func (position *Position) qty() *decimal.Decimal {
-	qty := decimal.NewFromInt(0)
-
-	for _, fill := range position.Fills {
-		if fill == nil || fill.LastQty == nil {
-			continue
-		}
-
-		switch fill.Side {
-		case "buy":
-			qty = qty.Add(*fill.LastQty)
-		case "sell":
-			qty = qty.Sub(*fill.LastQty)
-		}
-	}
-
-	return &qty
-}
-
-func (position *Position) entry() *decimal.Decimal {
-	var cost, qty decimal.Decimal
-
-	for _, fill := range position.Fills {
-		if fill == nil || fill.Side != "buy" ||
-			fill.LastPrice == nil || fill.LastQty == nil {
-			continue
-		}
-
-		cost = cost.Add(fill.LastPrice.Mul(*fill.LastQty))
-		qty = qty.Add(*fill.LastQty)
-	}
-
-	if qty.Sign() <= 0 {
-		zero := decimal.Zero
-		return &zero
-	}
-
-	vwap := cost.Div(qty)
-	return &vwap
-}
-
 /*
 Update stamps Mark from the bid hint for the chart, then exact book PnL/PnLPct.
 Stoploss arms above risk.stoploss_arm_pnl_pct. Incomplete books leave PnL nil
 and skip the stop. Other stages are a silent no-op.
 */
-func (position *Position) Update(hint *decimal.Decimal) error {
+func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	if hint == nil {
-		return errnie.Error(errnie.Err(
+		return false, errnie.Error(errnie.Err(
 			errnie.Conflict,
 			"[position.Update] price is nil",
 			nil,
@@ -143,7 +102,7 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 	}
 
 	if position.Status() != runtime.READY {
-		return nil
+		return false, nil
 	}
 
 	position.mu.Lock()
@@ -151,8 +110,10 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 	if position.Status() != runtime.READY ||
 		position.Qty == nil || position.Qty.Sign() <= 0 || position.price == nil {
 		position.mu.Unlock()
-		return nil
+		return false, nil
 	}
+
+	stale := position.Mark != nil && hint.Equal(*position.Mark)
 
 	position.Mark = hint
 	position.PnL = position.price.PnL(position)
@@ -160,7 +121,7 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 
 	if position.PnLPct == nil {
 		position.mu.Unlock()
-		return nil
+		return false, nil
 	}
 
 	qty := *position.Qty
@@ -181,7 +142,7 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 
 	if !position.Stoploss.Triggered() {
 		position.mu.Unlock()
-		return nil
+		return !stale, nil
 	}
 
 	position.Transition(runtime.BUSY)
@@ -191,122 +152,7 @@ func (position *Position) Update(hint *decimal.Decimal) error {
 		position.onSettled(position)
 	}
 
-	return nil
-}
-
-/*
-AbortExit cancels a pending or unfilled sell after a profit-floor abort,
-reject, or IOC expiration. BUSY → READY so marks resume; ExitOrder clears so
-the next trigger mints a fresh ClOrdId.
-*/
-func (position *Position) AbortExit() {
-	if position == nil {
-		return
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if position.Stoploss != nil {
-		position.Stoploss.State = StoplossHealthy
-		position.Stoploss.TriggerReason = ""
-		position.Stoploss.Confirms = 0
-	}
-
-	position.ExitPath = ""
-	position.ExitTrigger = ""
-	position.ExitVenueOrderID = ""
-	position.ExitOrder = nil
-
-	if position.Status() == runtime.BUSY {
-		position.Transition(runtime.READY)
-	}
-}
-
-/*
-HasExitOrder reports whether an exit order slot is currently armed.
-*/
-func (position *Position) HasExitOrder() bool {
-	if position == nil {
-		return false
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	return position.ExitOrder != nil
-}
-
-/*
-ExitAttempt returns the number of exit attempts armed so far.
-*/
-func (position *Position) ExitAttempt() int {
-	if position == nil {
-		return 0
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	return position.ExitAttempts
-}
-
-func (position *Position) snapshotPnL() (string, *decimal.Decimal) {
-	if position == nil {
-		return "", nil
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	return position.ID, position.PnL
-}
-
-func (position *Position) remainingQty() decimal.Decimal {
-	if position == nil {
-		return decimal.Zero
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if position.Qty == nil {
-		return decimal.Zero
-	}
-
-	return *position.Qty
-}
-
-func (position *Position) isExitOrder(data *market.ExecutionData) bool {
-	if position == nil || data == nil {
-		return false
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if data.ClientOrderID != "" && position.ExitOrder != nil &&
-		position.ExitOrder.ClOrdId == data.ClientOrderID {
-		return true
-	}
-
-	return data.OrderID != "" && data.OrderID == position.ExitVenueOrderID
-}
-
-func (position *Position) isEntryOrder(data *market.ExecutionData) bool {
-	if position == nil || data == nil {
-		return false
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if data.ClientOrderID != "" && position.EntryOrder != nil &&
-		position.EntryOrder.ClOrdId == data.ClientOrderID {
-		return true
-	}
-
-	return data.OrderID != "" && data.OrderID == position.EntryVenueOrderID
+	return true, nil
 }
 
 /*
@@ -341,7 +187,6 @@ func (position *Position) Enter(
 		ClOrdId:   uuid.NewString(),
 		OrderType: "market",
 		Type:      "sell",
-		Volume:    vol,
 	}
 
 	position.OpenedAt = time.Now().UTC()
@@ -369,10 +214,42 @@ func (position *Position) exit(force bool) error {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 
-	vol := ""
+	if position.Qty == nil || position.Qty.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[position.exit] no fill-derived qty for "+position.Symbol,
+			nil,
+		))
+	}
 
-	if position.Qty != nil {
-		vol = position.Qty.String()
+	wire := *position.Qty
+
+	var pair kraken.InstrumentPair
+
+	if position.price != nil && position.price.Instrument != nil &&
+		position.price.normalizer != nil {
+		pair = position.price.Instrument.Pair(
+			position.price.normalizer.Name(position.Symbol),
+		)
+
+		if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
+			inc := *pair.QtyIncrement
+			wire = wire.Div(inc).Floor().Mul(inc)
+		}
+	}
+
+	if wire.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[position.exit] wire qty rounds to zero",
+			nil,
+		))
+	}
+
+	vol := wire.String()
+
+	if pair.QtyPrecision > 0 {
+		vol = wire.StringFixed(int32(pair.QtyPrecision))
 	}
 
 	if position.ExitOrder == nil {
@@ -386,7 +263,6 @@ func (position *Position) exit(force bool) error {
 		position.ExitOrder.Volume = vol
 	}
 
-	position.ExitAttempts++
 	position.ExitTrigger = trigger
 	position.Transition(runtime.BUSY)
 
@@ -413,77 +289,6 @@ func (position *Position) Validate() error {
 }
 
 /*
-Bind attaches a restored wire order onto the matching entry or exit slot.
-*/
-func (position *Position) Bind(txid, side string, order *spot.OrderRequest) {
-	if position == nil || txid == "" || order == nil {
-		return
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	switch side {
-	case "buy":
-		if position.EntryOrder == nil {
-			position.EntryOrder = order
-		}
-
-		if position.EntryVenueOrderID == "" {
-			position.EntryVenueOrderID = txid
-		}
-	case "sell":
-		if position.ExitOrder == nil {
-			position.ExitOrder = order
-		}
-
-		if position.ExitVenueOrderID == "" {
-			position.ExitVenueOrderID = txid
-		}
-	}
-}
-
-/*
-owns is true when this fill belongs to the position. No order id means refuse —
-symbol-only matching flats real holdings on unrelated account prints.
-*/
-func (position *Position) owns(data *market.ExecutionData) bool {
-	if position == nil || data == nil {
-		return false
-	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
-
-	if data.ClientOrderID != "" {
-		if position.EntryOrder != nil && position.EntryOrder.ClOrdId == data.ClientOrderID {
-			return true
-		}
-
-		if position.ExitOrder != nil && position.ExitOrder.ClOrdId == data.ClientOrderID {
-			return true
-		}
-
-		return false
-	}
-
-	if data.OrderID != "" {
-		if data.OrderID == position.EntryVenueOrderID ||
-			data.OrderID == position.ExitVenueOrderID {
-			return true
-		}
-
-		for _, fill := range position.Fills {
-			if fill != nil && fill.OrderID == data.OrderID {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-/*
 Apply is the only fill path. Entry fills refresh Qty/Entry/PnL; exit fills only
 stamp ClosedAt once buys and sells net to zero — PnL stays the last mark.
 */
@@ -502,9 +307,55 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		}
 	}
 
+	closed := position.ClosedAt != nil || position.Status() == runtime.DONE
+
+	if closed && execution.Side == "buy" {
+		if position.ClosedAt != nil &&
+			!execution.Timestamp.After(*position.ClosedAt) {
+			return
+		}
+
+		position.Fills = make([]*market.ExecutionData, 0)
+		position.ClosedAt = nil
+
+		if position.Status() == runtime.DONE {
+			position.Transition(runtime.READY)
+		}
+
+		closed = false
+	}
+
 	position.Fills = append(position.Fills, &execution)
-	position.Qty = position.qty()
-	position.Entry = position.entry()
+
+	var net, bought, notional decimal.Decimal
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		switch fill.Side {
+		case "buy":
+			px := decimal.Zero
+
+			if fill.LastPrice != nil {
+				px = *fill.LastPrice
+			}
+
+			bought = bought.Add(*fill.LastQty)
+			notional = notional.Add(px.Mul(*fill.LastQty))
+			net = net.Add(*fill.LastQty)
+		case "sell":
+			net = net.Sub(*fill.LastQty)
+		}
+	}
+
+	position.Qty = &net
+
+	if bought.Sign() > 0 {
+		vwap := notional.Div(bought)
+		position.Entry = &vwap
+	}
 
 	if execution.Side == "sell" {
 		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
@@ -516,7 +367,9 @@ func (position *Position) Apply(execution market.ExecutionData) {
 	}
 
 	if position.Qty != nil && position.Qty.Sign() > 0 {
-		position.Transition(runtime.READY)
+		if position.Status() != runtime.READY {
+			position.Transition(runtime.READY)
+		}
 	}
 
 	if position.price == nil {

@@ -15,6 +15,8 @@ import (
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
+const readNotReadyDelay = 50 * time.Millisecond
+
 /*
 WebsocketClient is a reconnecting Kraken WS transport. Disconnects drop to
 WAITING and redial with backoff — never System.Error, or every later Read/Write
@@ -23,14 +25,16 @@ floods "client is not ready".
 type WebsocketClient struct {
 	*runtime.System
 
-	dialer     *gorilla.Dialer
-	conn       *gorilla.Conn
-	rest       *REST
-	url        string
-	pinger     *Pinger
-	writeMu    sync.Mutex
-	maxBackoff time.Duration
-	callbacks  []func() error
+	dialer       *gorilla.Dialer
+	conn         *gorilla.Conn
+	rest         *REST
+	url          string
+	pinger       *Pinger
+	writeMu      sync.Mutex
+	reconnectMu  sync.Mutex
+	reconnecting bool
+	maxBackoff   time.Duration
+	callbacks    []func() error
 }
 
 func NewWebsocketClient(
@@ -60,13 +64,29 @@ func (client *WebsocketClient) Callback(hook func() error) {
 }
 
 func (client *WebsocketClient) Open() (err error) {
+	if client.Context().Err() != nil {
+		return errnie.Error(client.Context().Err())
+	}
+
 	client.writeMu.Lock()
+
+	if client.conn != nil {
+		_ = client.conn.Close()
+		client.conn = nil
+	}
+
 	client.conn, _, err = client.dialer.Dial(client.url, nil)
 	conn := client.conn
 	client.writeMu.Unlock()
 
 	if err != nil {
-		return errnie.Error(err)
+		client.Transition(runtime.ERROR)
+
+		return errnie.Err(
+			errnie.IO,
+			"[network.websocket] error dialing url",
+			err,
+		)
 	}
 
 	status := client.Status()
@@ -84,30 +104,78 @@ func (client *WebsocketClient) Open() (err error) {
 
 	for _, callback := range client.callbacks {
 		if err := callback(); err != nil {
-			return errnie.Error(err)
+			client.abortOpen(conn)
+
+			return errnie.Err(
+				errnie.IO,
+				"[network.websocket] reconnect hook failed",
+				err,
+			)
 		}
 	}
 
 	return nil
 }
 
-func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
+func (client *WebsocketClient) abortOpen(conn *gorilla.Conn) {
 	client.writeMu.Lock()
-	conn := client.conn
-	ready := conn != nil && client.Status() == runtime.READY
+
+	if client.conn == conn {
+		if client.conn != nil {
+			_ = client.conn.Close()
+		}
+
+		client.conn = nil
+	}
+
+	client.pinger.conn = nil
 	client.writeMu.Unlock()
 
-	if !ready {
-		return nil, nil
+	client.Transition(runtime.ERROR)
+	client.pinger.Transition(runtime.ERROR)
+}
+
+func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
+	for {
+		if err := client.Context().Err(); err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		conn, ready := client.liveConn()
+
+		if !ready {
+			if !client.sleep(readNotReadyDelay) {
+				return nil, errnie.Error(client.Context().Err())
+			}
+
+			continue
+		}
+
+		_, message, err := conn.ReadMessage()
+
+		if err != nil {
+			client.scheduleReconnect(err)
+
+			return nil, errnie.Err(
+				errnie.IO,
+				"[network.websocket] read failed",
+				err,
+			)
+		}
+
+		return message, nil
+	}
+}
+
+func (client *WebsocketClient) liveConn() (*gorilla.Conn, bool) {
+	client.writeMu.Lock()
+	defer client.writeMu.Unlock()
+
+	if client.conn == nil || client.Status() != runtime.READY {
+		return nil, false
 	}
 
-	_, message, err := conn.ReadMessage()
-
-	if err != nil {
-		client.Reconnect(err)
-	}
-
-	return message, nil
+	return client.conn, true
 }
 
 func (client *WebsocketClient) Write(message []byte) error {
@@ -127,19 +195,39 @@ func (client *WebsocketClient) Write(message []byte) error {
 	client.writeMu.Unlock()
 
 	if err != nil {
-		client.Reconnect(err)
+		client.scheduleReconnect(err)
+
 		return errnie.Error(err)
 	}
 
 	return nil
 }
 
-func (client *WebsocketClient) Reconnect(err error) {
+func (client *WebsocketClient) scheduleReconnect(err error) {
 	if err == nil {
 		return
 	}
 
-	backoff := time.Second
+	client.reconnectMu.Lock()
+
+	if client.reconnecting {
+		client.reconnectMu.Unlock()
+
+		return
+	}
+
+	client.reconnecting = true
+	client.reconnectMu.Unlock()
+
+	go client.reconnectLoop()
+}
+
+func (client *WebsocketClient) reconnectLoop() {
+	defer func() {
+		client.reconnectMu.Lock()
+		client.reconnecting = false
+		client.reconnectMu.Unlock()
+	}()
 
 	client.Transition(runtime.ERROR)
 	client.pinger.Transition(runtime.ERROR)
@@ -154,8 +242,16 @@ func (client *WebsocketClient) Reconnect(err error) {
 	client.pinger.conn = nil
 	client.writeMu.Unlock()
 
+	backoff := time.Second
+
 	for {
-		time.Sleep(min(backoff, client.maxBackoff))
+		if client.Context().Err() != nil {
+			return
+		}
+
+		if !client.sleep(min(backoff, client.maxBackoff)) {
+			return
+		}
 
 		if openErr := client.Open(); openErr == nil {
 			return
@@ -163,6 +259,11 @@ func (client *WebsocketClient) Reconnect(err error) {
 
 		backoff += time.Second
 	}
+}
+
+// Reconnect starts a single background redial loop (idempotent).
+func (client *WebsocketClient) Reconnect(err error) {
+	client.scheduleReconnect(err)
 }
 
 func (client *WebsocketClient) Post(url string, body any) ([]byte, error) {

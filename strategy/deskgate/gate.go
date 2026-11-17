@@ -127,7 +127,7 @@ func (gate *Gate) Features(
 			continue
 		}
 		raw := gate.rawAxis(name, out, pump)
-		out["axis_"+name] = axis.brightness(raw)
+		out["axis_"+name] = axis.score(raw)
 		out["axis_"+name+"_raw"] = raw
 	}
 	gate.mu.Unlock()
@@ -168,12 +168,12 @@ func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.Ig
 	}
 }
 
-func (axis *Axis) brightness(raw float64) float64 {
+func (axis *Axis) score(raw float64) float64 {
 	if axis == nil || axis.track == nil {
 		return 0
 	}
 
-	out, err := axis.track.Measure(raw)
+	out, err := axis.track.ZScore(raw)
 	if err != nil || !out.Ready {
 		return 0
 	}
@@ -194,7 +194,14 @@ func (gate *Gate) Oracle(
 	symbol string,
 	pump *equation.IgnitionOutput,
 ) (volume, day, spread, book, peak bool) {
-	feat := gate.Features(price, symbol, pump)
+	return gate.OracleFrom(gate.Features(price, symbol, pump))
+}
+
+/*
+OracleFrom applies learned cuts to a desk feature map — Training computes Features
+once per symbol and passes the same map here and to grid Observe.
+*/
+func (gate *Gate) OracleFrom(feat map[string]float64) (volume, day, spread, book, peak bool) {
 	if feat == nil {
 		return false, false, false, false, false
 	}
@@ -263,9 +270,21 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 		if axis == nil {
 			continue
 		}
-		score := features["axis_"+name]
-		if score == 0 && features["tape_recent"] == 0 {
+		rawKey := "axis_" + name + "_raw"
+		raw := features[rawKey]
+		if raw == 0 && features["tape_recent"] == 0 {
 			continue
+		}
+
+		if raw != 0 {
+			if _, err := axis.track.Measure(raw); err != nil {
+				errnie.Error(err)
+			}
+		}
+
+		score := features["axis_"+name]
+		if score == 0 {
+			score = axis.score(raw)
 		}
 
 		axis.Sample++

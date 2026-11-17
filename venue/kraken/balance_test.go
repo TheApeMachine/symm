@@ -14,7 +14,7 @@ import (
 
 /*
 seedLedgerNames mirrors Assets/AssetPairs aliases the booter loads — old REST
-ledger codes collapse onto the same desk names Bound uses for pair bases.
+ledger codes collapse onto the desk asset names.
 */
 func seedLedgerNames() *spot.Normalizer {
 	names := spot.NewNormalizer()

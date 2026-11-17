@@ -5,6 +5,7 @@ import {
 	resetLongtailSourcesRequest,
 } from "#/collections/longtail";
 import { hubWsUrl } from "#/lib/hub";
+import type { Position } from "#/collections/types";
 import { resetClosedHistoryRequest } from "#/lib/lifecycle";
 import { batch } from "@tanstack/store";
 import { useEffect } from "react";
@@ -228,6 +229,11 @@ const applyEnvelope = (payload: Record<string, unknown>) => {
 			const store = signals[key];
 
 			if (!store) {
+				continue;
+			}
+
+			if (key === "positions" && payload.positions_snapshot === true) {
+				store.setState(() => value as Record<string, Position>);
 				continue;
 			}
 

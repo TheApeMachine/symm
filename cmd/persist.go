@@ -84,9 +84,11 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		}
 	}
 
-	for _, ctx := range []string{"regions", "paths", "decisions", "trade"} {
-		if payload := envelope.Publish(ctx, ""); len(payload) > 0 {
-			ui.UI.Write(payload)
+	if types.WantsGrid() {
+		for _, ctx := range []string{"regions", "paths", "decisions", "trade"} {
+			if payload := envelope.Publish(ctx, ""); len(payload) > 0 {
+				ui.UI.Write(payload)
+			}
 		}
 	}
 

@@ -190,16 +190,30 @@ func NewExecutionFromMap(model map[string]any) json.Marshaler {
 }
 
 /*
-Request is the authenticated private subscribe envelope for executions.
+Request is the private subscribe envelope for executions without a ws token.
 */
 func (execution *Execution) Request() map[string]any {
+	return NewExecutionSubscription("")
+}
+
+/*
+NewExecutionSubscription builds the private ws subscribe frame; token is required
+on live Kraken after Open and on every reconnect within TokenReuse.
+*/
+func NewExecutionSubscription(token string) map[string]any {
+	params := map[string]any{
+		"channel":     "executions",
+		"snap_orders": true,
+		"snap_trades": true,
+	}
+
+	if token != "" {
+		params["token"] = token
+	}
+
 	return map[string]any{
 		"method": "subscribe",
-		"params": map[string]any{
-			"channel":     "executions",
-			"snap_orders": true,
-			"snap_trades": true,
-		},
+		"params": params,
 	}
 }
 

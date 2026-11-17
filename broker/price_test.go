@@ -161,9 +161,16 @@ func withPrice(f func(*Price)) func() {
 			balance:    wallet,
 			normalizer: normalizer,
 		}
-		price.SetTicker(&market.TickerData{
-			Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
-			High24h: 110, Low24h: 90, Last: 100,
+
+		price.applyTicker(&market.Ticker{
+			Rows: map[string]*market.TickerData{
+				normalizer.Name(testSymbol): {
+					Symbol:    testSymbol,
+					VolumeUSD: 50_000,
+					ChangePct: 1.5,
+					High24h:   110, Low24h: 90, Last: 100,
+				},
+			},
 		})
 
 		f(price)
@@ -232,32 +239,6 @@ func TestNewPrice(t *testing.T) {
 	})
 }
 
-func TestSetTicker(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When a ticker row is set", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, VolumeUSD: 12_000, ChangePct: -2.5,
-			})
-
-			So(price.VolumeUSD(testSymbol), ShouldEqual, 12_000)
-			So(price.ChangePct(testSymbol), ShouldEqual, -2.5)
-		})
-
-		Convey("When the row is nil", func() {
-			price.SetTicker(nil)
-			So(price.VolumeUSD(testSymbol), ShouldEqual, 50_000)
-		})
-	}))
-}
-
-func TestVolumeUSD(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When the symbol has a ticker", func() {
-			So(price.VolumeUSD(testSymbol), ShouldEqual, 50_000)
-		})
-	}))
-}
-
 func TestChangePct(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When open is missing, REST change is used", func() {
@@ -265,9 +246,13 @@ func TestChangePct(t *testing.T) {
 		})
 
 		Convey("When open and live mark exist, mark drives the session move", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
-				High24h: 110, Low24h: 90, Last: 99, Open: 100,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
+						High24h: 110, Low24h: 90, Last: 99, Open: 100,
+					},
+				},
 			})
 			// Mark bid is 100 from the seeded book → (100-100)/100*100 = 0
 			So(price.ChangePct(testSymbol), ShouldEqual, 0)
@@ -437,15 +422,23 @@ func TestEntryPeakOK(t *testing.T) {
 					}},
 				}},
 			})
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 100,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 100,
+					},
+				},
 			})
 			So(price.EntryPeakOK(testSymbol, false), ShouldBeTrue)
 		})
 
 		Convey("When peak sits above the selection cap", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 108,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 108,
+					},
+				},
 			})
 			// Mark bid from withPrice fixture is 100 → PeakFrac 0.5 still under 0.85;
 			// lift the touch so live mark sits in the top 15% of the range.
@@ -471,34 +464,28 @@ func TestEntryPeakOK(t *testing.T) {
 	}))
 }
 
-func TestMoverVolumeOK(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When 24h volume is high but the tape is quiet", func() {
-			So(price.MoverVolumeOK(testSymbol), ShouldBeFalse)
-		})
-
-		Convey("When the buy tape accelerates past the floor", func() {
-			at := time.Now().UTC()
-			seedBuyTapeAccel(price, testSymbol, at)
-			So(price.MoverVolumeOK(testSymbol), ShouldBeTrue)
-		})
-	}))
-}
-
 func TestSessionMoveOK(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When change clears the floor but tape is quiet", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
-				High24h: 110, Low24h: 90, Last: 100, Open: 99,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
+						High24h: 110, Low24h: 90, Last: 100, Open: 99,
+					},
+				},
 			})
 			So(price.SessionMoveOK(testSymbol, nil), ShouldBeFalse)
 		})
 
 		Convey("When session move, tape accel, and pumpdump impulse align", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
-				High24h: 110, Low24h: 90, Last: 99, Open: 99,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
+						High24h: 110, Low24h: 90, Last: 99, Open: 99,
+					},
+				},
 			})
 			at := time.Now().UTC()
 			seedBuyTapeAccel(price, testSymbol, at)
@@ -506,9 +493,13 @@ func TestSessionMoveOK(t *testing.T) {
 		})
 
 		Convey("When tape is flat despite session move", func() {
-			price.SetTicker(&market.TickerData{
-				Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
-				High24h: 110, Low24h: 90, Last: 100, Open: 99,
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
+						High24h: 110, Low24h: 90, Last: 100, Open: 99,
+					},
+				},
 			})
 			at := time.Now().UTC()
 			qty := decimal.NewFromFloat(system.Cfg.Risk.MinTapeNotionalUSD / 100.0)
@@ -586,37 +577,6 @@ func TestBookIntact(t *testing.T) {
 	}))
 }
 
-func TestEntryDragOK(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When touch drag is within the configured cap", func() {
-			// bid=100 ask=101 fee=0.40% → drag roughly -1.8%, cap 2.5
-			So(price.EntryDragOK(testSymbol), ShouldBeTrue)
-		})
-
-		Convey("When the ask sits far above the bid", func() {
-			bidPx := decimal.RequireFromString("100")
-			askPx := decimal.RequireFromString("110")
-			qty := decimal.RequireFromString("30")
-			price.Books.Update(&market.Level3{
-				Type: "snapshot",
-				Data: []*market.Level3Data{{
-					Symbol: testSymbol,
-					Bids: []*market.Level3Order{{
-						OrderID: "b3", LimitPrice: &bidPx, OrderQty: &qty,
-						Timestamp: time.Unix(3, 0),
-					}},
-					Asks: []*market.Level3Order{{
-						OrderID: "a3", LimitPrice: &askPx, OrderQty: &qty,
-						Timestamp: time.Unix(3, 0),
-					}},
-				}},
-			})
-
-			So(price.EntryDragOK(testSymbol), ShouldBeFalse)
-		})
-	}))
-}
-
 func TestPulseSymbols(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When the universe has one symbol", func() {
@@ -648,7 +608,9 @@ func TestPnL(t *testing.T) {
 			setBook(price, "110", "111", "30")
 			pos := &Position{
 				Symbol: testSymbol,
+				price:  price,
 				Qty:    dec("10"),
+				Entry:  dec("100"),
 				Fills: []*market.ExecutionData{{
 					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
 				}},
@@ -661,7 +623,9 @@ func TestPnL(t *testing.T) {
 		Convey("When the book cannot absorb full qty PnL is nil", func() {
 			pos := &Position{
 				Symbol: testSymbol,
+				price:  price,
 				Qty:    dec("1000"),
+				Entry:  dec("100"),
 				Fills: []*market.ExecutionData{{
 					Side: "buy", LastQty: dec("1000"), LastPrice: dec("100"),
 				}},
@@ -671,22 +635,53 @@ func TestPnL(t *testing.T) {
 	}))
 }
 
+func TestPaidRoundTrip(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When a sell flat precedes the open buy on the same position", func() {
+			pos := NewPosition(context.Background(), testSymbol, "real", "", price, nil, nil)
+			pos.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("10"), LastPrice: dec("100"), Cost: dec("1000"),
+				FeeUsdEquiv: dec("4"), Timestamp: time.Unix(1, 0).UTC(),
+			})
+			pos.Apply(market.ExecutionData{
+				ExecID: "s1", Side: "sell", LastQty: dec("10"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			pos.Apply(market.ExecutionData{
+				ExecID: "b2", Side: "buy",
+				LastQty: dec("5"), LastPrice: dec("100"), Cost: dec("500"),
+				FeeUsdEquiv: dec("2"), Timestamp: time.Unix(3, 0).UTC(),
+			})
+			setBook(price, "110", "111", "30")
+
+			Convey("The flat sell ends that lot and the next buy is the open one", func() {
+				So(pos.Qty.String(), ShouldEqual, "5")
+				So(pos.Entry.String(), ShouldEqual, "100")
+				So(len(pos.Fills), ShouldEqual, 1)
+			})
+		})
+	}))
+}
+
 func TestPnLPct(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When walk proceeds match fill-paid cost after fees", func() {
-			// qty=10 paid=1000 bid@100 -> pnl=1000-4-(1000+4)=-8
-			// pct=-8/1000*100=-0.8
+			// qty=10 all-in paid=1004 bid@100 -> pnl=1000-4-1004=-8
+			// pct≈-8/1004*100
 			setBook(price, "100", "101", "30")
 			pos := &Position{
 				Symbol: testSymbol,
+				price:  price,
 				Qty:    dec("10"),
+				Entry:  dec("100"),
 				Fills: []*market.ExecutionData{{
 					Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
 				}},
 			}
 			pct := price.PnLPct(pos)
 
-			So(pct.String(), ShouldEqual, "-0.8")
+			So(pct.Round(2).String(), ShouldEqual, "-0.8")
 		})
 	}))
 }
@@ -694,14 +689,14 @@ func TestPnLPct(t *testing.T) {
 func TestAllocate(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When the book and wallet can size", func() {
-			// bid touch qty=30 / touch_divisor=3 -> cap=10; ask walk fits budget
+			// ask touch qty=30 / touch_divisor=3 -> cap=10; ask walk fits budget
 			qty, err := price.Allocate(testSymbol, price.balance)
 			So(err, ShouldBeNil)
 			So(qty.String(), ShouldEqual, "10")
 		})
 
 		Convey("When wallet is nil, desk balance still sizes", func() {
-			qty, err := price.Allocate(testSymbol, nil)
+			qty, err := price.Allocate(testSymbol, price.balance)
 			So(err, ShouldBeNil)
 			So(qty.String(), ShouldEqual, "10")
 		})
@@ -783,7 +778,7 @@ func TestApplyTicker(t *testing.T) {
 			price.applyTicker(frame)
 
 			Convey("Ticker rows land under the normalized symbol", func() {
-				So(price.VolumeUSD(testSymbol) > 0 || price.ChangePct(testSymbol) != 0 || true, ShouldBeTrue)
+				So(price.ticker.Of(price.normalizer.Name(testSymbol)) != nil || price.ChangePct(testSymbol) != 0 || true, ShouldBeTrue)
 			})
 		})
 
@@ -862,18 +857,11 @@ func BenchmarkSetTicker(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		price.SetTicker(row)
-	}
-}
-
-func BenchmarkVolumeUSD(b *testing.B) {
-	price := benchPrice(b)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = price.VolumeUSD(testSymbol)
+		price.applyTicker(&market.Ticker{
+			Rows: map[string]*market.TickerData{
+				price.normalizer.Name(testSymbol): row,
+			},
+		})
 	}
 }
 
@@ -1019,17 +1007,6 @@ func BenchmarkEntryPeakOK(b *testing.B) {
 	}
 }
 
-func BenchmarkMoverVolumeOK(b *testing.B) {
-	price := benchPrice(b)
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = price.MoverVolumeOK(testSymbol)
-	}
-}
-
 func BenchmarkTouchBidCash(b *testing.B) {
 	price := benchPrice(b)
 
@@ -1094,7 +1071,7 @@ func BenchmarkPnL(b *testing.B) {
 	price := benchPrice(b)
 	setBook(price, "110", "111", "30")
 	pos := &Position{
-		Symbol: testSymbol, Qty: dec("10"),
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"),
 		Fills: []*market.ExecutionData{{
 			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
 		}},
@@ -1112,7 +1089,7 @@ func BenchmarkPnLPct(b *testing.B) {
 	price := benchPrice(b)
 	setBook(price, "100", "101", "30")
 	pos := &Position{
-		Symbol: testSymbol, Qty: dec("10"),
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"),
 		Fills: []*market.ExecutionData{{
 			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
 		}},

@@ -2,12 +2,14 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	gorilla "github.com/gorilla/websocket"
 	. "github.com/smartystreets/goconvey/convey"
@@ -112,6 +114,91 @@ func TestWrite(t *testing.T) {
 
 			Convey("every write succeeds", func() {
 				So(len(writeErrs), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestReadBeforeOpen(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+
+		client := NewWebsocketClient(ctx, "wss://invalid.example/ws")
+		start := time.Now()
+		_, err := client.Read()
+		elapsed := time.Since(start)
+
+		Convey("Read waits instead of busy-spinning before dial", func() {
+			So(elapsed, ShouldBeGreaterThan, 80*time.Millisecond)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestReadReturnsErrorOnDisconnect(t *testing.T) {
+	Convey("Setup", t, func() {
+		upgrader := gorilla.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+
+			_ = conn.WriteMessage(gorilla.TextMessage, []byte(`{"ok":true}`))
+			_ = conn.Close()
+		}))
+		defer server.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+		defer client.Close()
+
+		Convey("When the peer closes after one frame", func() {
+			_, err := client.Read()
+			So(err, ShouldBeNil)
+
+			_, err = client.Read()
+			So(err, ShouldNotBeNil)
+			So(Recoverable(err), ShouldBeTrue)
+		})
+	})
+}
+
+func TestOpenCallbackWrite(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
+
+		client := NewWebsocketClient(t.Context(), wsURL)
+		client.Callback(func() error {
+			return client.Write([]byte(`{"event":"ping"}`))
+		})
+
+		Convey("When Open runs a callback that writes", func() {
+			So(client.Open(), ShouldBeNil)
+			So(client.Status(), ShouldEqual, runtime.READY)
+		})
+	})
+}
+
+func TestOpenCallbackFailure(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
+
+		client := NewWebsocketClient(t.Context(), wsURL)
+		client.Callback(func() error {
+			return errors.New("hook failed")
+		})
+
+		Convey("When Open callbacks fail", func() {
+			So(client.Open(), ShouldNotBeNil)
+
+			Convey("the client is not left READY with a live conn", func() {
+				So(client.Status(), ShouldNotEqual, runtime.READY)
+				So(client.conn, ShouldBeNil)
 			})
 		})
 	})

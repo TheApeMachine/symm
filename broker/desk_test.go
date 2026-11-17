@@ -113,18 +113,6 @@ func TestDeskHas(t *testing.T) {
 	}))
 }
 
-func TestDeskCanSize(t *testing.T) {
-	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
-		Convey("When the book and balance can allocate", func() {
-			So(desk.CanSize(testSymbol), ShouldBeTrue)
-		})
-
-		Convey("When the symbol is empty", func() {
-			So(desk.CanSize(""), ShouldBeFalse)
-		})
-	}))
-}
-
 func TestDeskHello(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		Convey("When Hello fans out to tiers", func() {
@@ -331,19 +319,6 @@ func TestDeskApply(t *testing.T) {
 
 		Convey("When Apply gets nil", func() {
 			So(func() { desk.Apply(nil) }, ShouldNotPanic)
-		})
-	}))
-}
-
-func TestDeskBookStale(t *testing.T) {
-	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
-		Convey("When the symbol has a live book", func() {
-			So(desk.BookStale(testSymbol), ShouldBeFalse)
-		})
-
-		Convey("When the book is marked stale", func() {
-			desk.price.Books.Stale([]string{testSymbol})
-			So(desk.BookStale(testSymbol), ShouldBeTrue)
 		})
 	}))
 }
@@ -573,19 +548,6 @@ func BenchmarkDeskHas(b *testing.B) {
 	}
 }
 
-func BenchmarkDeskCanSize(b *testing.B) {
-	ctx := context.Background()
-	var desk *Desk
-	withDesk(ctx, false, func(d *Desk) { desk = d })()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = desk.CanSize(testSymbol)
-	}
-}
-
 func BenchmarkDeskHello(b *testing.B) {
 	ctx := context.Background()
 	var desk *Desk
@@ -749,18 +711,5 @@ func BenchmarkDeskApply(b *testing.B) {
 
 	for b.Loop() {
 		desk.Apply(exec)
-	}
-}
-
-func BenchmarkDeskBookStale(b *testing.B) {
-	ctx := context.Background()
-	var desk *Desk
-	withDesk(ctx, false, func(d *Desk) { desk = d })()
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = desk.BookStale(testSymbol)
 	}
 }

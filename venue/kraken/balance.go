@@ -17,10 +17,10 @@ Balance is private ws/REST cash keyed by Kraken asset codes — broker tier ledg
 reads spendable spot via Normalize and ToMarket, not TradeBalance equity.
 */
 type Balance struct {
-	Channel  string                      `json:"channel,omitempty"`
-	Error    []any                       `json:"error"`
-	Result   map[string]*decimal.Decimal `json:"result"`
-	names    *spot.Normalizer
+	Channel string                      `json:"channel,omitempty"`
+	Error   []any                       `json:"error"`
+	Result  map[string]*decimal.Decimal `json:"result"`
+	names   *spot.Normalizer
 }
 
 /*
@@ -34,7 +34,7 @@ func NewBalance() *Balance {
 
 /*
 Use attaches the desk AssetPairs normalizer so REST ledger codes (XXRP, ZUSD)
-collapse onto the same names Bound and positions already use.
+collapse onto the desk asset names.
 */
 func (balance *Balance) Use(names *spot.Normalizer) *Balance {
 	if balance == nil {
@@ -108,7 +108,6 @@ func balanceNonceRejected(errs ...any) bool {
 
 	return false
 }
-
 
 /*
 MarshalJSON aliases Balance for REST cache payloads.
@@ -191,7 +190,6 @@ func (balance *Balance) UnmarshalJSON(data []byte) error {
 
 	balance.Normalize()
 
-
 	return nil
 }
 
@@ -263,8 +261,8 @@ func (row balanceRow) spendable() (decimal.Decimal, bool) {
 
 /*
 Normalize rewrites REST ledger codes onto desk names in Result via the seeded
-spot.Normalizer. Call after every REST Balance decode so QuoteCash, Bound, and
-pair bases agree without a hand-maintained asset table.
+spot.Normalizer. Call after every REST Balance decode so QuoteCash and pair
+bases agree without a hand-maintained asset table.
 */
 func (balance *Balance) Normalize() {
 	if balance == nil || balance.Result == nil {
@@ -294,7 +292,7 @@ func (balance *Balance) Normalize() {
 }
 
 /*
-assetName is the Bound/position base for a ledger or ws asset code.
+assetName is the desk name for a ledger or ws asset code.
 */
 func (balance *Balance) assetName(asset string) string {
 	if asset == "" {

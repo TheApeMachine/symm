@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
-	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -16,7 +15,6 @@ import (
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/ui"
 	"github.com/theapemachine/symm/venue/kraken"
 )
 
@@ -73,6 +71,7 @@ Tier is one parallel book of positions sharing Price but not cache or socket —
 paper proof unlocks disarmed real without mixing fills across lanes.
 */
 type Tier struct {
+	*runtime.System
 	ctx        context.Context
 	Type       TierType
 	public     network.Client
@@ -99,6 +98,7 @@ func NewTier(
 	client *store.Client,
 ) *Tier {
 	tier := &Tier{
+		System:  runtime.NewSystem(ctx, "tier:"+tt.String()),
 		ctx:     ctx,
 		Type:    tt,
 		public:  public,
@@ -116,10 +116,6 @@ func NewTier(
 	tier.positions = NewCache(
 		ctx, tt.String(), private, price, tier.settle, client,
 	)
-
-	if orders := NewOrders(private); orders != nil {
-		orders.Restore(append(tier.positions.Open(), tier.positions.Closed()...))
-	}
 
 	for _, position := range tier.positions.Open() {
 		errnie.Error(position.Validate())
@@ -144,7 +140,10 @@ func NewTier(
 	}
 
 	if client, ok := tier.private.(*network.WebsocketClient); ok {
+		client.Callback(func() error { return tier.subscribeExecutions() })
 		errnie.Error(client.Open())
+	} else if host != nil {
+		errnie.Error(tier.subscribeExecutions())
 	}
 
 	if err := errnie.Require(map[string]any{
@@ -156,17 +155,59 @@ func NewTier(
 		return nil
 	}
 
+	if tt != TierTypeReal {
+		tier.Transition(runtime.READY)
+	}
+
 	return tier
 }
 
 /*
-Hello publishes a full positions_snapshot of open positions as an id-keyed map
-(hub/UI contract). Desk.Update is the only live caller — Level3 consolidates the
-open book. READY, WAITING, and BUSY all ship — BUSY is still open on the venue
-until fold removes it after the exit fill. Omitting BUSY made the chart drop
-rows that the exchange still held.
+subscribeExecutions opens the private executions channel so add_order acks are
+not the only private traffic — fills fold positions without REST lag.
 */
-func (tier *Tier) Hello() {
+func (tier *Tier) subscribeExecutions() error {
+	if tier.private == nil || tier.venue == nil {
+		return nil
+	}
+
+	req := kraken.NewExecutionSubscription("")
+
+	if tier.Type == TierTypeReal {
+		if tier.price == nil || tier.price.Instrument == nil {
+			return errnie.Err(
+				errnie.Forbidden,
+				"[broker.Tier] executions subscribe missing auth",
+				nil,
+			)
+		}
+
+		token, err := tier.price.Instrument.auth.Token(tier.ctx)
+
+		if err != nil {
+			return errnie.Error(err)
+		}
+
+		req = kraken.NewExecutionSubscription(token)
+	}
+
+	buf, err := sonic.Marshal(req)
+
+	if err != nil {
+		return errnie.Err(
+			errnie.Internal,
+			"[broker.Tier] executions subscribe marshal failed",
+			err,
+		)
+	}
+
+	return errnie.Error(tier.private.Write(buf))
+}
+
+/*
+Hello ...
+*/
+func (tier *Tier) Hello() map[string]any {
 	open := tier.positions.Open()
 	positions := make(map[string]*Position, len(open))
 	unrealized := decimal.Zero
@@ -176,7 +217,8 @@ func (tier *Tier) Hello() {
 			continue
 		}
 
-		id, pnl := position.snapshotPnL()
+		id := position.ID
+		pnl := position.PnL
 
 		if id == "" {
 			continue
@@ -201,7 +243,7 @@ func (tier *Tier) Hello() {
 		}
 
 		if position.Stoploss != nil {
-			position.Stoploss = &Stoploss{
+			positions[id].Stoploss = &Stoploss{
 				State:           position.Stoploss.State,
 				Regime:          position.Stoploss.Regime,
 				InitialPnLPct:   position.Stoploss.InitialPnLPct,
@@ -217,16 +259,11 @@ func (tier *Tier) Hello() {
 	}
 
 	tier.balance.Unrealized = &unrealized
-	reading := tier.balance.Reading()
 
-	ui.UI.WriteJSON(map[string]any{
-		"tier":      tier.Type.String(),
+	return map[string]any{
 		"positions": positions,
-		"balances": map[string]any{
-			tier.Type.String(): reading,
-		},
-		"positions_snapshot": true,
-	})
+		"balances":  tier.balance.Reading(),
+	}
 }
 
 /*
@@ -234,6 +271,10 @@ Update marks READY positions for the symbol. Desk.Update owns Hello — one full
 open-universe snapshot per Level3/trade batch, not a per-symbol touch gate.
 */
 func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
+	if tier.Status() != runtime.READY {
+		return
+	}
+
 	for _, position := range tier.positions.Open() {
 		if position == nil || position.Status() != runtime.READY {
 			continue
@@ -245,8 +286,10 @@ func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
 			continue
 		}
 
-		if err := position.Update(mark); err == nil {
-			tier.positions.Save(position)
+		if dirty, err := position.Update(mark); err != nil {
+			errnie.Error(err)
+		} else if dirty {
+			errnie.Error(tier.positions.Save(position))
 		}
 	}
 }
@@ -275,6 +318,16 @@ func (tier *Tier) ClearPending(symbol string) {
 	tier.pending.Delete(symbol)
 }
 
+func (tier *Tier) ProfitableExit(position *Position) bool {
+	if tier == nil || tier.price == nil || position == nil {
+		return false
+	}
+
+	pnl := tier.price.PnL(position)
+
+	return pnl != nil && pnl.Sign() > 0
+}
+
 /*
 Enter binds spot wallet to Allocate so mins and cash match what Send will spend.
 Cache keys use the normalized symbol so desk mark Hellos hit the same position.
@@ -294,10 +347,10 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	if tier.price != nil && !tier.price.EntryDragOK(symbol) {
+	if tier.Status() != runtime.READY {
 		return errnie.Err(
 			errnie.UnprocessableContent,
-			"[broker.Tier.Enter] open drag exceeds max_entry_open_drag_pct",
+			"[broker.Tier.Enter] tier not ready",
 			nil,
 		)
 	}
@@ -356,6 +409,14 @@ func (tier *Tier) Exit(
 		))
 	}
 
+	if tier.Status() != runtime.READY {
+		return errnie.Error(errnie.Err(
+			errnie.UnprocessableContent,
+			"[broker.Tier.Exit] tier not ready",
+			nil,
+		))
+	}
+
 	if !force {
 		if pnl := tier.price.PnL(position); pnl == nil || pnl.Sign() <= 0 {
 			tier.abortExit(position)
@@ -396,7 +457,23 @@ func (tier *Tier) abortExit(position *Position) {
 	}
 
 	tier.pending.Delete(position.Symbol)
-	position.AbortExit()
+
+	position.mu.Lock()
+
+	if position.Stoploss != nil {
+		position.Stoploss.Disarm()
+	}
+
+	position.ExitPath = ""
+	position.ExitTrigger = ""
+	position.ExitVenueOrderID = ""
+	position.ExitOrder = nil
+
+	if position.Status() == runtime.BUSY {
+		position.Transition(runtime.READY)
+	}
+
+	position.mu.Unlock()
 
 	if err := tier.positions.Save(position); err != nil {
 		errnie.Error(err)
@@ -408,111 +485,14 @@ apply folds venue fills into matching positions. Desk.Apply fans out here;
 the next Level3 desk.Update Hello consolidates the open book.
 */
 func (tier *Tier) apply(execution *market.Execution) {
-	tier.fold(execution)
-}
+	for _, data := range execution.Data {
+		if data == nil {
+			continue
+		}
 
-/*
-fold applies only fills this position owns. Foreign/symbol-only prints must not
-flat real money. Flat sells move open → pending after the exchange fill;
-canceled/expired IOC exits with remaining Qty return BUSY → READY.
-*/
-func (tier *Tier) fold(execution *market.Execution) bool {
-	if execution == nil {
-		return false
+		position := tier.positions.Get(data.Symbol)
+		position.Apply(*data)
 	}
-
-	touched := false
-
-	for _, position := range tier.positions.All() {
-		if position == nil {
-			continue
-		}
-
-		applied := false
-		abortedOrDropped := false
-
-		for _, data := range execution.Data {
-			if data == nil || tier.normalizer.Name(
-				data.Symbol,
-			) != tier.normalizer.Name(
-				position.Symbol,
-			) || !position.owns(data) {
-				continue
-			}
-
-			execType := strings.ToLower(data.ExecType)
-			orderStatus := strings.ToLower(data.OrderStatus)
-			isCancel := execType == "canceled" || execType == "expired" ||
-				orderStatus == "canceled" || orderStatus == "expired"
-
-			if isCancel {
-				if position.isExitOrder(data) && position.remainingQty().Sign() > 0 {
-					tier.abortExit(position)
-					touched = true
-					abortedOrDropped = true
-					break
-				}
-
-				if position.isEntryOrder(data) && position.remainingQty().Sign() <= 0 {
-					tier.positions.Drop(position.Symbol)
-					touched = true
-					abortedOrDropped = true
-					break
-				}
-
-				continue
-			}
-
-			if (execType == "" || execType == "trade") &&
-				data.LastQty != nil && data.LastQty.Sign() > 0 {
-				position.Apply(*data)
-				applied = true
-			}
-		}
-
-		if abortedOrDropped {
-			if !applied {
-				continue
-			}
-		}
-
-		if !applied {
-			continue
-		}
-
-		touched = true
-
-		position.mu.Lock()
-		closed := position.ClosedAt != nil
-		position.mu.Unlock()
-
-		if closed {
-			tier.pending.Store(position.Symbol, position)
-			tier.positions.Remove(position.Symbol)
-			continue
-		}
-
-		// Apply → READY; stamp mark/pnl before Hello so the chart has a y.
-		if position.Status() == runtime.READY {
-			mark := tier.price.Mark(position.Symbol)
-
-			if mark == nil {
-				position.mu.Lock()
-				mark = position.Entry
-				position.mu.Unlock()
-			}
-
-			if mark != nil {
-				errnie.Error(position.Update(mark))
-			}
-		}
-
-		if err := tier.positions.Save(position); err != nil {
-			errnie.Error(err)
-		}
-	}
-
-	return touched
 }
 
 /*
@@ -654,6 +634,75 @@ func (tier *Tier) rejectOrder(order *kraken.Order) {
 	clOrdID := order.Result.ClOrdID
 
 	if clOrdID == "" {
+		waiting := make([]*Position, 0, 1)
+		busy := make([]*Position, 0, 1)
+
+		for _, position := range tier.positions.Open() {
+			if position == nil {
+				continue
+			}
+
+			switch position.Status() {
+			case runtime.WAITING:
+				position.mu.Lock()
+				hasQty := position.Qty != nil && position.Qty.Sign() > 0
+				hasVenue := position.EntryVenueOrderID != ""
+				position.mu.Unlock()
+
+				if !hasQty && !hasVenue {
+					waiting = append(waiting, position)
+				}
+
+			case runtime.BUSY:
+				position.mu.Lock()
+				inFlight := position.ExitOrder != nil &&
+					position.ExitVenueOrderID == ""
+				position.mu.Unlock()
+
+				if inFlight {
+					busy = append(busy, position)
+				}
+			}
+		}
+
+		for _, pos := range busy {
+			pos.mu.Lock()
+			symbol := pos.Symbol
+			vol := ""
+			side := ""
+			fillQty := ""
+
+			if pos.Qty != nil {
+				fillQty = pos.Qty.String()
+			}
+
+			if pos.ExitOrder != nil {
+				vol = pos.ExitOrder.Volume
+				side = pos.ExitOrder.Type
+			}
+
+			pos.mu.Unlock()
+
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[broker.Tier.rejectOrder] rejected in-flight order",
+				nil,
+			).With("symbol", symbol).
+				With("side", side).
+				With("order_qty", vol).
+				With("fill_qty", fillQty).
+				With("venue_error", order.Error).
+				With("in_flight_exits", len(busy)))
+		}
+
+		if len(busy) == 1 {
+			tier.abortExit(busy[0])
+		}
+
+		if len(waiting) == 1 {
+			tier.positions.Drop(waiting[0].Symbol)
+		}
+
 		return
 	}
 
@@ -728,15 +777,13 @@ func (tier *Tier) ingest(frame market.MarketType) {
 			typed.ToMarket(tier.price.balance)
 		}
 
-		tier.positions.Bound(tier.balance)
-
 	case *kraken.TradeBalance:
 		typed.ToMarket(tier.balance)
 
 	case *kraken.Execution:
 		executions := &market.Execution{}
 		typed.ToMarket(executions)
-		tier.fold(executions)
+		tier.apply(executions)
 
 	case *kraken.Order:
 		if typed.Success {

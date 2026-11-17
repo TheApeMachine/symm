@@ -31,7 +31,7 @@ func TestNewModel(t *testing.T) {
 		desk := &broker.Desk{}
 
 		Convey("When NewModel is called", func() {
-			model := NewModel(ctx, desk, nil, func(string) {}, nil)
+			model := NewModel(ctx, desk, nil, func(string) {}, nil, nil)
 
 			Convey("Model wires desk board and tree", func() {
 				So(model, ShouldNotBeNil)
@@ -349,7 +349,7 @@ func BenchmarkNewModel(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = NewModel(ctx, desk, nil, func(string) {}, nil)
+		_ = NewModel(ctx, desk, nil, func(string) {}, nil, nil)
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 )
 
 /*
-Orders restores venue order rows onto positions after trades admit them.
-Tier composes this — Cache only holds lanes.
+Orders loads QueryOrders rows for fill order ids and sets them on the
+holdings the ledger restored.
 */
 type Orders struct {
 	transport network.Client
@@ -36,7 +36,7 @@ func NewOrders(transport network.Client) *Orders {
 }
 
 /*
-Restore QueryOrders every fill OrderID and Bind as each batch returns.
+Restore queries each fill's order id and sets EntryOrder or ExitOrder.
 */
 func (orders *Orders) Restore(positions []*Position) {
 	owners := make(map[string]*Position)
@@ -83,8 +83,20 @@ func (orders *Orders) Restore(positions []*Position) {
 		}
 
 		for id, order := range batch {
-			if position := owners[id]; position != nil {
-				position.Bind(id, order.Descr.Type, order.Request())
+			position := owners[id]
+
+			if position == nil {
+				continue
+			}
+
+			req := order.Request()
+
+			if id == position.EntryVenueOrderID {
+				position.EntryOrder = req
+			}
+
+			if id == position.ExitVenueOrderID {
+				position.ExitOrder = req
 			}
 		}
 	}

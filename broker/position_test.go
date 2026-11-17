@@ -135,7 +135,7 @@ func TestUpdate(t *testing.T) {
 		Convey("When Update is called with a mark", func() {
 			So(pos.Status(), ShouldEqual, runtime.READY)
 			setBook(price, "120", "121", "30")
-			err := pos.Update(dec("120"))
+			_, err := pos.Update(dec("120"))
 
 			Convey("Mark is the bid hint; PnL is exact full-qty book walk", func() {
 				// feeIn=0.40, feeOut=0.48 -> pnl=120-0.48-(100+0.40)=19.12
@@ -152,7 +152,7 @@ func TestUpdate(t *testing.T) {
 
 		Convey("When the visible book cannot absorb Qty", func() {
 			setBook(price, "120", "121", "0.1")
-			err := pos.Update(dec("120"))
+			_, err := pos.Update(dec("120"))
 
 			Convey("Mark stamps; exact PnL is nil so Stoploss stays nil", func() {
 				So(err, ShouldBeNil)
@@ -181,25 +181,8 @@ func TestUpdate(t *testing.T) {
 			})
 		})
 
-		Convey("When AbortExit resets a pending sell", func() {
-			pos.ExitPath = "R00/M1"
-			So(pos.exit(false), ShouldBeNil)
-			So(pos.Status(), ShouldEqual, runtime.BUSY)
-			oldClOrd := pos.ExitOrder.ClOrdId
-
-			pos.AbortExit()
-
-			Convey("Position returns to READY with cleared ExitOrder and fresh retry ClOrdId", func() {
-				So(pos.Status(), ShouldEqual, runtime.READY)
-				So(pos.ExitOrder, ShouldBeNil)
-				So(pos.ExitPath, ShouldEqual, "")
-				So(pos.exit(false), ShouldBeNil)
-				So(pos.ExitOrder.ClOrdId, ShouldNotEqual, oldClOrd)
-			})
-		})
-
 		Convey("When Update is called with a nil mark", func() {
-			err := pos.Update(nil)
+			_, err := pos.Update(nil)
 
 			Convey("It returns a conflict for a nil price", func() {
 				So(err, ShouldNotBeNil)
@@ -211,7 +194,7 @@ func TestUpdate(t *testing.T) {
 			open := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
 			So(open.Enter("R00/M1", dec("1"), price.balance), ShouldBeNil)
 			So(open.Status(), ShouldEqual, runtime.WAITING)
-			err := open.Update(dec("120"))
+			_, err := open.Update(dec("120"))
 
 			Convey("WAITING is a silent no-op — marks wait for Apply → READY", func() {
 				So(err, ShouldBeNil)
@@ -229,7 +212,7 @@ func TestUpdate(t *testing.T) {
 			})
 			So(pos.Status(), ShouldEqual, runtime.DONE)
 			So(pos.Status() == runtime.READY, ShouldBeFalse)
-			err := pos.Update(dec("120"))
+			_, err := pos.Update(dec("120"))
 
 			Convey("DONE is a silent no-op so mark ticks skip Save", func() {
 				So(err, ShouldBeNil)
@@ -241,7 +224,7 @@ func TestUpdate(t *testing.T) {
 			So(pos.exit(false), ShouldBeNil)
 			So(pos.Status(), ShouldEqual, runtime.BUSY)
 			So(pos.Status() == runtime.READY, ShouldBeFalse)
-			err := pos.Update(dec("120"))
+			_, err := pos.Update(dec("120"))
 
 			Convey("BUSY is a silent no-op without mutating mark", func() {
 				So(err, ShouldBeNil)
@@ -266,7 +249,7 @@ func TestEnter(t *testing.T) {
 				So(pos.EntryOrder.Volume, ShouldEqual, "1")
 				So(pos.ExitOrder, ShouldNotBeNil)
 				So(pos.ExitOrder.Type, ShouldEqual, "sell")
-				So(pos.ExitOrder.Volume, ShouldEqual, "1")
+				So(pos.ExitOrder.Volume, ShouldEqual, "")
 				So(pos.OpenedAt.IsZero(), ShouldBeFalse)
 				So(pos.Qty, ShouldBeNil)
 				So(pos.Entry, ShouldBeNil)
@@ -404,46 +387,6 @@ func TestApply(t *testing.T) {
 	}))
 }
 
-func TestHasExitOrder(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		Convey("When ExitOrder is nil", func() {
-			pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-			So(pos.HasExitOrder(), ShouldBeFalse)
-			So((*Position)(nil).HasExitOrder(), ShouldBeFalse)
-		})
-
-		Convey("When ExitOrder is armed", func() {
-			pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-			pos.ExitOrder = &spot.OrderRequest{ClOrdId: "exit-1"}
-			So(pos.HasExitOrder(), ShouldBeTrue)
-		})
-	}))
-}
-
-func TestExitAttempt(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-		pos.ExitPath = "R00/M1"
-		pos.Apply(market.ExecutionData{
-			ExecID: "b1", Side: "buy",
-			LastQty: dec("1"), LastPrice: dec("100"),
-			Timestamp: time.Unix(1, 0).UTC(),
-		})
-
-		Convey("When exit has not been armed", func() {
-			So(pos.ExitAttempt(), ShouldEqual, 0)
-			So((*Position)(nil).ExitAttempt(), ShouldEqual, 0)
-		})
-
-		Convey("When exit is armed twice", func() {
-			So(pos.exit(false), ShouldBeNil)
-			So(pos.ExitAttempt(), ShouldEqual, 1)
-			So(pos.exit(false), ShouldBeNil)
-			So(pos.ExitAttempt(), ShouldEqual, 2)
-		})
-	}))
-}
-
 func TestValidate(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
@@ -463,81 +406,6 @@ func TestValidate(t *testing.T) {
 		Convey("When EntryOrder is missing", func() {
 			pos.EntryOrder = nil
 			So(pos.Validate(), ShouldNotBeNil)
-		})
-	}))
-}
-
-func TestBind(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-
-		Convey("When Bind attaches a buy order", func() {
-			pos.Bind("OID-1", "buy", &spot.OrderRequest{ClOrdId: "enter-1"})
-
-			Convey("Entry order and venue id stamp", func() {
-				So(pos.EntryOrder.ClOrdId, ShouldEqual, "enter-1")
-				So(pos.EntryVenueOrderID, ShouldEqual, "OID-1")
-			})
-		})
-
-		Convey("When Bind attaches a sell order", func() {
-			pos.Bind("OID-2", "sell", &spot.OrderRequest{ClOrdId: "exit-1"})
-
-			Convey("Exit order and venue id stamp", func() {
-				So(pos.ExitOrder.ClOrdId, ShouldEqual, "exit-1")
-				So(pos.ExitVenueOrderID, ShouldEqual, "OID-2")
-			})
-		})
-	}))
-}
-
-func TestOwns(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-		pos.EntryVenueOrderID = "OID-1"
-		pos.ExitVenueOrderID = "OID-X"
-		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1"}
-		pos.ExitOrder = &spot.OrderRequest{ClOrdId: "exit-1"}
-		pos.Fills = []*market.ExecutionData{{
-			ExecID: "b0", OrderID: "OID-FILL",
-		}}
-
-		Convey("When ClientOrderID matches entry", func() {
-			So(pos.owns(&market.ExecutionData{ClientOrderID: "enter-1"}), ShouldBeTrue)
-		})
-
-		Convey("When OrderID matches entry venue id", func() {
-			So(pos.owns(&market.ExecutionData{OrderID: "OID-1"}), ShouldBeTrue)
-		})
-
-		Convey("When OrderID matches a prior fill", func() {
-			So(pos.owns(&market.ExecutionData{OrderID: "OID-FILL"}), ShouldBeTrue)
-		})
-
-		Convey("When ids do not match", func() {
-			So(pos.owns(&market.ExecutionData{OrderID: "other"}), ShouldBeFalse)
-			So(pos.owns(nil), ShouldBeFalse)
-		})
-	}))
-}
-
-func TestIsEntryOrder(t *testing.T) {
-	Convey("Setup", t, withPrice(func(price *Price) {
-		pos := NewPosition(t.Context(), testSymbol, "paper", "path", price, nil, nil)
-		pos.EntryOrder = &spot.OrderRequest{ClOrdId: "enter-1"}
-		pos.EntryVenueOrderID = "OID-1"
-
-		Convey("When ClientOrderID matches", func() {
-			So(pos.isEntryOrder(&market.ExecutionData{ClientOrderID: "enter-1"}), ShouldBeTrue)
-		})
-
-		Convey("When OrderID matches venue id", func() {
-			So(pos.isEntryOrder(&market.ExecutionData{OrderID: "OID-1"}), ShouldBeTrue)
-		})
-
-		Convey("When nothing matches", func() {
-			So(pos.isEntryOrder(&market.ExecutionData{OrderID: "x"}), ShouldBeFalse)
-			So(pos.isEntryOrder(nil), ShouldBeFalse)
 		})
 	}))
 }
@@ -606,7 +474,7 @@ func BenchmarkUpdate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = pos.Update(mark)
+		_, _ = pos.Update(mark)
 	}
 }
 
