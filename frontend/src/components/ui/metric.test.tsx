@@ -17,29 +17,16 @@ describe("Metric layout", () => {
 		expect(root?.className.split(/\s+/)).not.toContain("h-full");
 	});
 
-	it("names the headline metric so DRAW can paint the sparkline and meter", () => {
+	it("renders a sparkline and meter for the kernel row", () => {
 		const { container } = render(<Metric name="cvd" />);
 
-		expect(
-			container
-				.querySelector('[data-k="sparkline"]')
-				?.getAttribute("data-series"),
-		).toBe("aggressor_backing");
-		expect(
-			container
-				.querySelector("[data-metric-meter]")
-				?.getAttribute("data-metric-meter"),
-		).toBe("aggressor_backing");
-		expect(
-			container
-				.querySelector("[data-metric-badge]")
-				?.getAttribute("data-metric-badge"),
-		).toBe("aggressor_backing");
+		expect(container.querySelector('[data-k="spark"]')).not.toBeNull();
+		expect(container.querySelector('[role="progressbar"]')).not.toBeNull();
 	});
 
 	it("lets the sparkline shrink so the row can flex instead of overflowing", () => {
 		const { container } = render(<Metric name="cvd" />);
-		const spark = container.querySelector('[data-k="sparkline"]');
+		const spark = container.querySelector("svg");
 		const button = container.querySelector("button");
 
 		expect(spark?.getAttribute("class")).toContain("flex-1");

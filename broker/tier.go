@@ -186,7 +186,34 @@ func (tier *Tier) Hello() {
 			unrealized = unrealized.Add(*pnl)
 		}
 
-		positions[id] = position
+		positions[id] = &Position{
+			ID:        position.ID,
+			Symbol:    position.Symbol,
+			TierKey:   position.TierKey,
+			OpenedAt:  position.OpenedAt,
+			ClosedAt:  position.ClosedAt,
+			EntryPath: position.EntryPath,
+			Qty:       position.Qty,
+			Entry:     position.Entry,
+			Mark:      position.Mark,
+			PnL:       position.PnL,
+			PnLPct:    position.PnLPct,
+		}
+
+		if position.Stoploss != nil {
+			position.Stoploss = &Stoploss{
+				State:           position.Stoploss.State,
+				Regime:          position.Stoploss.Regime,
+				InitialPnLPct:   position.Stoploss.InitialPnLPct,
+				CurrentPnLPct:   position.Stoploss.CurrentPnLPct,
+				PeakPnLPct:      position.Stoploss.PeakPnLPct,
+				ArmPnlPct:       position.Stoploss.ArmPnlPct,
+				TrailingFloor:   position.Stoploss.TrailingFloor,
+				TypicalPullback: position.Stoploss.TypicalPullback,
+				Confirms:        position.Stoploss.Confirms,
+				ExhaustScore:    position.Stoploss.ExhaustScore,
+			}
+		}
 	}
 
 	tier.balance.Unrealized = &unrealized

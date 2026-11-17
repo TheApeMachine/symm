@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { atoms } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Engine } from "#/components/engine";
 
 describe("Engine", () => {
@@ -9,7 +9,7 @@ describe("Engine", () => {
 
 		expect(markup).toContain('data-e="seq"');
 		expect(markup).toContain('data-e="phase"');
-		expect(markup).toContain('data-e="cand"');
+		expect(markup).toContain('data-e="decisions"');
 		expect(markup).toContain('data-e="open"');
 		expect(markup).toContain("observations");
 		expect(markup).toContain("phase");
@@ -17,7 +17,18 @@ describe("Engine", () => {
 
 	it("reads observations, decisions and phase from the live telemetry stores", () => {
 		atoms.tick.set({ epoch: 0, n: 100 });
-		atoms.candidates.set(20);
+		signals.decisions.setState(
+			Object.fromEntries(
+				Array.from({ length: 20 }, (_, i) => [
+					`SYM${i}/USD/virtual`,
+					{
+						symbol: `SYM${i}/USD`,
+						action: "skip",
+						tier: "virtual",
+					},
+				]),
+			),
+		);
 		atoms.positionCount.set(3);
 		atoms.phase.set("learning");
 		atoms.online.set("ONLINE");

@@ -22,6 +22,7 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
+import { kernelRowAt } from "#/lib/kernel-row";
 import { formatBlockedReason } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -150,8 +151,7 @@ const GateLamps = ({
 	regions: Record<string, Region[]>;
 	overrides: Record<string, OracleOverride>;
 }) => {
-	const rows =
-		regions[symbol] ?? regions[symbol.replace(/\//g, "-")] ?? undefined;
+	const rows = kernelRowAt(regions, symbol);
 	const lit = pathKeys(path);
 
 	return (

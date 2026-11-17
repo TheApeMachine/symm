@@ -1,10 +1,4 @@
-import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
-import { direct } from "#/collections/diag-burst";
-import "#/collections/diag-burst";
-import "#/hub/apply-s3-compact";
-import "#/hub/ingest-live-paths";
-import { normalizeKernelStoreValue } from "#/hub/signal-envelope";
 import {
 	ensureLongtailRecorder,
 	requestLongtailSources,
@@ -12,6 +6,8 @@ import {
 } from "#/collections/longtail";
 import { hubWsUrl } from "#/lib/hub";
 import { resetClosedHistoryRequest } from "#/lib/lifecycle";
+import { batch } from "@tanstack/store";
+import { useEffect } from "react";
 
 type HubStatus = "ONLINE" | "OFFLINE" | "CONNECTING";
 
@@ -217,79 +213,30 @@ export const trySendCommand = (command: Record<string, unknown>): boolean => {
 	}
 };
 
-export const applyPositionsSnapshot = (
-	positions: Record<string, unknown>,
-	tier?: string,
-) => {
-	signals.positions.setState((prev: Record<string, unknown> | null) => {
-		const next: Record<string, unknown> = {};
-		if (prev && typeof prev === "object") {
-			for (const [id, pos] of Object.entries(prev)) {
-				const posObj = pos as { tier_key?: string };
-				const posTier = posObj?.tier_key || "paper";
-				// Preserve positions belonging to other tiers
-				if (tier && posTier !== tier) {
-					next[id] = pos;
-				}
-			}
-		}
-		// Populate fresh open positions for this tier snapshot
-		if (positions && typeof positions === "object") {
-			for (const [id, pos] of Object.entries(positions)) {
-				next[id] = pos;
-			}
-		}
-		return next;
-	});
-};
-
 const applyEnvelope = (payload: Record<string, unknown>) => {
-	for (const key of Object.keys(payload)) {
-		const value = payload[key];
+	batch(() => {
+		for (const key of Object.keys(payload)) {
+			const value = payload[key];
 
-		const sink = direct[key];
+			const atom = atoms[key];
+			
+			if (atom) {
+				atom.set(value);
+				continue;
+			}
 
-		if (sink) {
-			sink(value, payload);
-			continue;
-		}
+			const store = signals[key];
 
-		const atom = atoms[key];
-		if (atom) {
-			atom.set(value);
-			continue;
-		}
+			if (!store) {
+				continue;
+			}
 
-		if (key === "positions" && (payload.positions_snapshot || payload.tier)) {
-			applyPositionsSnapshot(
-				(value && typeof value === "object" && !Array.isArray(value)
-					? value
-					: {}) as Record<string, unknown>,
-				typeof payload.tier === "string" ? payload.tier : undefined,
-			);
-			continue;
-		}
-
-		const store = signals[key];
-		if (!store) {
-			continue;
-		}
-
-		const merged = normalizeKernelStoreValue(
-			key,
-			value,
-			atoms.focus.get(),
-		);
-
-		if (merged && typeof merged === "object" && !Array.isArray(merged)) {
 			store.setState((prev: Record<string, unknown> | null) => ({
-				...(prev && typeof prev === "object" ? prev : {}),
-				...(merged as Record<string, unknown>),
+				...prev,
+				...(value as Record<string, unknown>),
 			}));
-		} else {
-			store.setState(() => merged);
 		}
-	}
+	});
 };
 
 export const WsFeed = () => {

@@ -1,4 +1,3 @@
-import { createStore } from "@tanstack/store";
 import { createRef } from "react";
 import { atoms } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -17,17 +16,11 @@ import {
 	type LatentPoint,
 	latentPointsFromFrames,
 } from "#/components/terminal/xray-view";
-import type { Value as ResonanceFrame } from "#/types/value";
 
 const latentCanvasRef = createRef<HTMLCanvasElement>();
-const latentPointsStore = createStore<LatentPoint[]>([]);
+let lastPaintedPoints: LatentPoint[] = [];
 let latentFingerprint = "";
 let latentGeometry = "";
-
-const retainedLatentPoints = (): LatentPoint[] =>
-	[...latentPointsStore.state].sort((left, right) =>
-		left.symbol.localeCompare(right.symbol),
-	);
 
 const latentKey = (point: LatentPoint): string =>
 	`${point.symbol}|${point.x.toFixed(6)}|${point.y.toFixed(6)}|${point.category}`;
@@ -35,35 +28,21 @@ const latentKey = (point: LatentPoint): string =>
 const latentSignature = (points: LatentPoint[], focusSymbol: string): string =>
 	`${focusSymbol}::${points.map(latentKey).join(";")}`;
 
-/*
-paintXrayLatent draws the resonance store's complete bounded carrier snapshot.
-It retains only projected canvas geometry, not another copy of backend rows.
-*/
 export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	const canvas = latentCanvasRef.current;
-
-	if (canvas === null) {
-		return;
-	}
+	if (canvas === null) return;
 
 	const context = resizeCanvas(canvas);
-
-	if (context === null) {
-		return;
-	}
+	if (context === null) return;
 
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Array<ResonanceFrame | Record<string, unknown>>;
-	const newPoints = latentPointsFromFrames(frames);
-	if (newPoints.length > 0) {
-		const incomingSymbols = new Set(newPoints.map((point) => point.symbol));
-		const retained = latentPointsStore.state.filter(
-			(point) => !incomingSymbols.has(point.symbol),
-		);
-		latentPointsStore.setState(() => [...retained, ...newPoints]);
-	}
-	const pointsToDraw = retainedLatentPoints();
+	) as Array<Record<string, unknown>>;
+	const pointsToDraw = latentPointsFromFrames(frames).sort((left, right) =>
+		left.symbol.localeCompare(right.symbol),
+	);
+	lastPaintedPoints = pointsToDraw;
+
 	const width = canvas.clientWidth;
 	const height = canvas.clientHeight;
 	const geometry = `${width}x${height}`;
@@ -106,16 +85,9 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 		context.stroke();
 	}
 
-	/*
-		Every carrier is named. The embedding routinely holds a handful of symbols
-		at most, and an unlabelled dot says nothing about which one settled where.
-	*/
 	for (let index = 0; index < pointsToDraw.length; index += 1) {
 		const point = pointsToDraw[index];
-
-		if (point === undefined) {
-			continue;
-		}
+		if (point === undefined) continue;
 
 		const focus = point.symbol === focusSymbol;
 		const x = pad + projectX(point.x) * (width - pad * 2);
@@ -150,20 +122,14 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	}
 };
 
-/*
-XrayLatentPanel is the static latent scatter shell. DRAW paints via
-paintXrayLatent; clicks update focus from the last painted points.
-*/
 export const XrayLatentPanel = () => (
 	<canvas
 		ref={latentCanvasRef}
 		onClick={(event) => {
 			const canvas = latentCanvasRef.current;
-			const points = retainedLatentPoints();
+			const points = lastPaintedPoints;
 
-			if (canvas === null || points.length === 0) {
-				return;
-			}
+			if (canvas === null || points.length === 0) return;
 
 			const rect = canvas.getBoundingClientRect();
 			const clickX = event.clientX - rect.left;
@@ -186,9 +152,7 @@ export const XrayLatentPanel = () => (
 				}
 			}
 
-			if (nearest === null) {
-				return;
-			}
+			if (nearest === null) return;
 
 			atoms.focus.set(nearest.symbol);
 			terminalStore.actions.selectFocusSymbol(nearest.symbol);

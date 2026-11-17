@@ -1,11 +1,38 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useMemo } from "react";
+import { atoms, signals } from "#/collections/app";
 import { bookAtom, triePrefix } from "#/collections/book";
-import { type CognitionMatch, cognitionStore } from "#/collections/cognition";
+import {
+	type CognitionMatch,
+	cognitionStore,
+	ingestExploreListPrefix,
+} from "#/collections/cognition";
+import type { PathToken, Tokens } from "#/collections/envelope";
+import { pathsListingFromEnvelope } from "#/hub/s3-prefix-compact";
 import { sendCommand } from "#/providers/websocket";
 import { ModelProblem } from "./model-problem";
 import { RadixTreeViz } from "./radix-tree-viz";
 import type { SymbolProgress } from "./types";
+
+const pathTokens = (cut: Tokens | undefined): string[] => {
+	if (!Array.isArray(cut)) return [];
+
+	const out: string[] = [];
+
+	for (const raw of cut) {
+		if (!raw || typeof raw !== "object") continue;
+		const symbols = (raw as PathToken).symbols;
+		if (!Array.isArray(symbols) || symbols.length === 0) continue;
+		if (symbols.length === 1) {
+			const lone = symbols[0];
+			if (lone !== undefined) out.push(lone);
+		} else {
+			out.push(`[${symbols.join("-")}]`);
+		}
+	}
+
+	return out;
+};
 
 export const progressOf = (match: CognitionMatch): SymbolProgress => {
 	const phase =
@@ -40,6 +67,9 @@ export const CognitiveTree = () => {
 	);
 	const gate = useSelector(cognitionStore, (state) => state.tree?.gate ?? null);
 	const book = useSelector(bookAtom, (state) => state);
+	const focus = useSelector(atoms.focus, (state) => state);
+	const cut = useSelector(signals.paths, (state) => state[focus]);
+	const pathbook = useSelector(signals.pathbook, (state) => state);
 	const prefix = triePrefix(book);
 	const tradingLabel =
 		trading === true
@@ -49,12 +79,11 @@ export const CognitiveTree = () => {
 				: "trading unknown";
 
 	useEffect(() => {
-		const other = "model/paths";
-		cognitionStore.setState((state) => ({
-			...state,
-			policyKeys: state.policyKeys.filter((key) => !key.startsWith(other)),
-		}));
+		const compact = pathsListingFromEnvelope(pathbook);
+		if (compact) ingestExploreListPrefix(compact);
+	}, [pathbook]);
 
+	useEffect(() => {
 		try {
 			sendCommand({ type: "s3", prefix });
 		} catch (err) {
@@ -67,8 +96,22 @@ export const CognitiveTree = () => {
 		for (const [symbol, match] of Object.entries(matches)) {
 			next[symbol] = progressOf(match);
 		}
+
+		const tokens = pathTokens(cut);
+		if (focus !== "" && tokens.length > 0) {
+			const phase = tokens.join("/");
+			next[focus] = {
+				symbol: focus,
+				path: phase,
+				depth: tokens.length,
+				tokens,
+				matched: [],
+				rejected: [],
+			};
+		}
+
 		return next;
-	}, [matches]);
+	}, [matches, focus, cut]);
 
 	if (policyKeys.length === 0) {
 		return (

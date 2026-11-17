@@ -1,17 +1,12 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-	clearRetainedTelemetry,
-	getAllRetainedResonance,
-	getRetainedHawkes,
-	getRetainedResonance,
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
 	intensitySeriesFromRingRows,
 	latentPointsFromFrames,
-	retainHawkesMetric,
-	retainResonanceRow,
 	xrayLayersFromResonance,
 } from "#/components/terminal/xray-view";
+import { resonanceUniverseRows } from "#/lib/resonance";
 import { Value } from "#/types/value";
 
 const hawkesValue = (
@@ -35,10 +30,6 @@ const hawkesValue = (
 };
 
 describe("xray-view", () => {
-	beforeEach(() => {
-		clearRetainedTelemetry();
-	});
-
 	it("builds hierarchy rows from resonance layers", () => {
 		const layers = xrayLayersFromResonance({
 			source: "resonance",
@@ -66,9 +57,9 @@ describe("xray-view", () => {
 			at: "2026-07-12T00:00:00Z",
 			surprise: 0.85,
 			layers: [
-				{ state: [0.1, -0.2], prediction: [0.0] }, // Mismatched lengths
-				{ state: [], prediction: [] }, // Empty
-				{ state: [0.5] }, // Missing prediction
+				{ state: [0.1, -0.2], prediction: [0.0] },
+				{ state: [], prediction: [] },
+				{ state: [0.5] },
 			],
 		});
 
@@ -200,32 +191,31 @@ describe("xray-view", () => {
 		]);
 	});
 
-	it("projects live gate-coder readings into hierarchy layers and a latent point per carrier", () => {
-		const reading = (scope: string, x: number, y: number) => ({
-			symbol: scope,
-			metrics: [
-					{ name: "energy", raw: 0.12 },
-					{ name: "surprise", raw: 0.45 },
-					{ name: "latent_0", raw: x },
-					{ name: "latent_1", raw: y },
-					{ name: "layer_0_state_0", raw: 1 },
-					{ name: "layer_0_prediction_0", raw: 0.5 },
-					{ name: "layer_1_state_0", raw: 0.3 },
-					{ name: "layer_1_prediction_0", raw: 0.1 },
-				],
+	it("unfolds flat wire keys into hierarchy layers and latent points", () => {
+		const universe = resonanceUniverseRows({
+			"BTC/USD": {
+				energy: 0.12,
+				surprise: 0.45,
+				latent_0: 0.2,
+				latent_1: -0.4,
+				layer_0_state_0: 1,
+				layer_0_prediction_0: 0.5,
+				layer_1_state_0: 0.3,
+				layer_1_prediction_0: 0.1,
+			},
+			"ETH/USD": {
+				latent_0: -0.1,
+				latent_1: 0.7,
+			},
 		});
 
-		retainResonanceRow("BTC/USD", reading("BTC/USD", 0.2, -0.4));
-		retainResonanceRow("ETH/USD", reading("ETH/USD", -0.1, 0.7));
-
-		const retained = getAllRetainedResonance();
-		const btc = retained.find((row) => row.symbol === "BTC/USD");
+		const btc = universe.find((row) => row.symbol === "BTC/USD");
 		const layers = xrayLayersFromResonance(btc);
 
 		expect(layers).toHaveLength(2);
 		expect(layers[0]?.state).toEqual([1]);
 		expect(layers[0]?.prediction).toEqual([0.5]);
-		expect(latentPointsFromFrames(retained)).toEqual([
+		expect(latentPointsFromFrames(universe)).toEqual([
 			{
 				key: "BTC/USD:",
 				symbol: "BTC/USD",
@@ -241,34 +231,5 @@ describe("xray-view", () => {
 				category: "",
 			},
 		]);
-	});
-
-	it("retains per-symbol resonance state across sparse updates", () => {
-		retainResonanceRow("BTC/USD", {
-			symbol: "BTC/USD",
-			energy: 0.42,
-			layers: [{ state: [0.1], prediction: [0.0], errorNorm: 0.1 }],
-		});
-
-		retainResonanceRow("ETH/USD", {
-			symbol: "ETH/USD",
-			energy: 0.88,
-		});
-
-		const btc = getRetainedResonance("BTC/USD");
-		expect(btc?.energy).toBe(0.42);
-		expect(btc?.layers).toHaveLength(1);
-
-		const all = getAllRetainedResonance();
-		expect(all.length).toBeGreaterThanOrEqual(2);
-	});
-
-	it("retains per-symbol hawkes metrics", () => {
-		retainHawkesMetric("BTC/USD", "conditional_intensity:buy", 0.1234);
-		retainHawkesMetric("BTC/USD", "branching_spectral_radius", 0.75);
-
-		const hwk = getRetainedHawkes("BTC/USD");
-		expect(hwk["conditional_intensity:buy"]).toBe(0.1234);
-		expect(hwk.branching_spectral_radius).toBe(0.75);
 	});
 });

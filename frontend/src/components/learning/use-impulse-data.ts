@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { atoms, DEFAULT_KERNELS, signals } from "#/collections/app";
 import type { Region } from "#/collections/envelope";
+import { asFinite } from "#/lib/format";
+import { kernelRowAt } from "#/lib/kernel-row";
+import { symbolScopeAliases } from "#/lib/symbol-scope";
 import {
 	createCanonicalGridNodes,
 	getCanonicalPinDefs,
@@ -97,12 +100,10 @@ const pinMetric = (
 	const store = signals[pin.source];
 	if (!store) return undefined;
 
-	const reading =
-		store.state[symbol] ?? store.state[symbol.replace(/\//g, "-")];
+	const reading = kernelRowAt(store.state, symbol);
 	if (!reading || typeof reading !== "object") return undefined;
 
-	const raw = (reading as Record<string, unknown>)[pin.metric];
-	return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+	return asFinite((reading as Record<string, unknown>)[pin.metric]) ?? undefined;
 };
 
 export type UseImpulseDataOptions = {
@@ -241,11 +242,8 @@ export const useImpulseData = (
 				return frames[0];
 			}
 
-			const dashed = symbol.replace(/\//g, "-");
-
-			return frames.find(
-				(frame) => frame.symbol === symbol || frame.symbol === dashed,
-			);
+			const aliases = new Set(symbolScopeAliases(symbol));
+			return frames.find((frame) => aliases.has(frame.symbol));
 		};
 
 		const updateFromTelemetry = () => {

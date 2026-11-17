@@ -8,29 +8,12 @@ export type HawkesTraceSample = {
 
 export type HawkesTracePoint = { at: bigint; intensity: number };
 
-/*
-hawkesLevelAt evaluates λ along the decay published with one fitted event.
-*/
-export const hawkesLevelAt = (
-	sample: HawkesTraceSample,
-	at: bigint,
-): number => {
-	if (at <= sample.at) {
-		return sample.intensity;
+const maxBigint = (left: bigint, right: bigint): bigint => {
+	let larger = right;
+	if (left > right) {
+		larger = left;
 	}
-
-	const seconds = Number(at - sample.at) / 1e9;
-	const restBelowPeak = sample.baseline < sample.postArrival;
-
-	if (restBelowPeak && sample.decay > 0) {
-		return (
-			sample.baseline +
-			(sample.postArrival - sample.baseline) *
-				Math.exp(-sample.decay * seconds)
-		);
-	}
-
-	return sample.postArrival;
+	return larger;
 };
 
 const segmentIntensity = (
@@ -54,8 +37,7 @@ const segmentIntensity = (
 		if (next !== undefined && end > start) {
 			const progress = Number(at - start) / Number(end - start);
 			return (
-				current.postArrival +
-				(next.intensity - current.postArrival) * progress
+				current.postArrival + (next.intensity - current.postArrival) * progress
 			);
 		}
 		return current.postArrival;
@@ -86,10 +68,10 @@ export const hawkesTrace = (
 
 	if (!first || !last) return { points, from: marketAt, through: marketAt };
 
-	const through = marketAt > last.at ? marketAt : last.at;
+	const through = maxBigint(marketAt, last.at);
 	const eventSpan = last.at - first.at;
 	const decaySpan = BigInt(Math.ceil(1e9 / last.decay));
-	const span = viewportSpan ?? (eventSpan > decaySpan ? eventSpan : decaySpan);
+	const span = viewportSpan ?? maxBigint(eventSpan, decaySpan);
 	const from = through - span;
 
 	for (let index = 0; index < samples.length; index++) {
@@ -106,7 +88,7 @@ export const hawkesTrace = (
 			}
 		}
 
-		const start = current.at > from ? current.at : from;
+		const start = maxBigint(current.at, from);
 		const gap = end - start;
 
 		if (gap <= 0n) continue;

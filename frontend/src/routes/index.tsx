@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DEFAULT_KERNELS } from "#/collections/app";
-import { KernelMetricStrip } from "#/components/ui/metric-strip";
 import { Decisions } from "#/components/dashboard/decisions";
 import { LongtailPaperPanel } from "#/components/dashboard/longtail-paper";
 import { Positions } from "#/components/dashboard/positions";
@@ -9,6 +8,7 @@ import { Pulse } from "#/components/pulse";
 import { TerminalPredictionChart } from "#/components/terminal/charts";
 import { LiveResonanceTitle } from "#/components/terminal/live-resonance-title";
 import { Canvas, Flex, Grid, Section, Typography } from "#/components/ui";
+import { Metric } from "#/components/ui/metric";
 
 const RouteComponent = () => {
 	return (
@@ -28,7 +28,9 @@ const RouteComponent = () => {
 							meta={`${DEFAULT_KERNELS.length} kernels`}
 						/>
 						<Section.Body scroll={false} className="flex flex-col">
-							<KernelMetricStrip />
+							{DEFAULT_KERNELS.map((kernel) => (
+								<Metric key={kernel} name={kernel} />
+							))}
 						</Section.Body>
 					</Section>
 

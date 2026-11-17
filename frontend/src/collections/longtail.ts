@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { createStore } from "@tanstack/store";
+import { signals } from "#/collections/app";
 import type { Book } from "#/collections/book";
 import { Circular, type CircularBuffer } from "#/collections/circular";
 import { cognitionStore } from "#/collections/cognition";
@@ -22,10 +23,12 @@ import {
 	EXPLORE_PRUNE_THRESHOLD,
 	isPathBookKey,
 } from "#/components/learning/explore-path";
+import { closedListingFromEnvelope } from "#/hub/s3-prefix-compact";
 import { asFinite } from "#/lib/format";
 import {
 	deskRowsForStats,
 	ingestDeskClosedPositions,
+	ingestHistoryClosedBatch,
 	requestClosedPositionHistory,
 } from "#/lib/lifecycle";
 import { stopArmed, stopProximity } from "#/lib/stop-telemetry";
@@ -839,6 +842,7 @@ const maybeRecordLongtailSample = () => {
 };
 
 let recorderHandle: number | null = null;
+let closedIngestUnsubscribe: (() => void) | null = null;
 let historyBuffer: CircularBuffer<LongtailSample> | null = null;
 
 const countOrZero = (value: unknown): number => asFinite(value) ?? 0;
@@ -1085,6 +1089,16 @@ export const ensureLongtailRecorder = () => {
 		return;
 	}
 
+	if (closedIngestUnsubscribe === null) {
+		const sub = signals.closed.subscribe(() => {
+			const compact = closedListingFromEnvelope(signals.closed.state);
+			if (!compact) return;
+			ingestHistoryClosedBatch(compact.entries);
+			seedFromClosedPositions();
+		});
+		closedIngestUnsubscribe = () => sub.unsubscribe();
+	}
+
 	requestLongtailSources();
 	seedFromClosedPositions();
 	recordLongtailSample();
@@ -1099,6 +1113,8 @@ export const resetLongtailRecorder = () => {
 		window.clearInterval(recorderHandle);
 		recorderHandle = null;
 	}
+	closedIngestUnsubscribe?.();
+	closedIngestUnsubscribe = null;
 	historyBuffer = null;
 	priorPathKeys = null;
 	resetLongtailSourcesRequest();

@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { atoms } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { ModelProblem } from "#/components/learning/model-problem";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
@@ -21,7 +21,10 @@ export const Engine = () => {
 	const online = useSelector(atoms.online, (state) => state === "ONLINE");
 	const phase = useSelector(atoms.phase, (state) => state);
 	const seq = useSelector(atoms.tick, (state) => state?.n ?? 0);
-	const cand = useSelector(atoms.candidates, (state) => state);
+	const decisionCount = useSelector(
+		signals.decisions,
+		(state) => Object.keys(state ?? {}).length,
+	);
 	const open = useSelector(atoms.positionCount, (state) => state);
 
 	let phaseText = "offline";
@@ -46,8 +49,8 @@ export const Engine = () => {
 				</Flex>
 			</Row>
 			<Row label="decisions">
-				<Flex data-e="cand" className="text-(--f1)">
-					{String(cand ?? "—")}
+				<Flex data-e="decisions" className="text-(--f1)">
+					{String(decisionCount)}
 				</Flex>
 			</Row>
 			<Row label="open">

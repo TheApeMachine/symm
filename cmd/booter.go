@@ -61,7 +61,6 @@ type Booter struct {
 	replies    sync.Map
 	credErr    error
 	live       bool
-	engine     string
 }
 
 func NewBooter(ctx context.Context, name string) *Booter {
@@ -148,7 +147,7 @@ func NewBooter(ctx context.Context, name string) *Booter {
 
 func (booter *Booter) Run() error {
 	if booter.credErr != nil {
-		booter.setEngine("error")
+		ui.UI.WriteJSON(map[string]any{"engine": "error"})
 		return booter.credErr
 	}
 
@@ -157,36 +156,40 @@ func (booter *Booter) Run() error {
 	))
 
 	started := time.Now()
-	booter.setEngine("booting")
+
+	ui.UI.WriteJSON(map[string]any{"engine": "booting"})
 
 	// Transports and the market come first: training paper-trades through the
 	// price and the desk. The workspace is up before any trade is subscribed.
 	booter.Transition(nmruntime.WAITING)
 
 	if err := booter.initTransports(); err != nil {
-		booter.setEngine("error")
+		ui.UI.WriteJSON(map[string]any{"engine": "error"})
 		return err
 	}
 
 	if err := booter.initMarket(); err != nil {
-		booter.setEngine("error")
+		ui.UI.WriteJSON(map[string]any{"engine": "error"})
 		return err
 	}
 
 	if err := booter.initPipeline(); err != nil {
-		booter.setEngine("error")
+		ui.UI.WriteJSON(map[string]any{"engine": "error"})
 		return err
 	}
 
 	if err := booter.seedBooks(); err != nil {
-		booter.setEngine("error")
+		ui.UI.WriteJSON(map[string]any{"engine": "error"})
 		return err
 	}
 
 	booter.desk.Start()
 
 	if err := booter.openFirehose(); err != nil {
-		booter.setEngine("error")
+		if ui.UI != nil {
+			ui.UI.WriteJSON(map[string]any{"engine": "error"})
+		}
+
 		return err
 	}
 
@@ -197,29 +200,13 @@ func (booter *Booter) Run() error {
 		time.Since(started).Round(time.Millisecond),
 	))
 
-	booter.setEngine("ready")
+	ui.UI.WriteJSON(map[string]any{"engine": "ready"})
 
 	// Run is the daemon's lifetime: ingress runs in goroutines, so returning
 	// here would let the command return, cancel the context, and exit.
 	<-booter.Context().Done()
 
 	return booter.shutdown()
-}
-
-/*
-setEngine publishes booting / ready / error so the dashboard ONLINE badge
-tracks firehose readiness, not only hub socket connect.
-*/
-func (booter *Booter) setEngine(status string) {
-	booter.engine = status
-
-	if ui.UI == nil {
-		return
-	}
-
-	ui.UI.WriteJSON(map[string]any{
-		"engine": status,
-	})
 }
 
 /*
@@ -405,11 +392,16 @@ func (booter *Booter) initMarket() error {
 	})
 
 	ui.UI.RegisterCallback(func() {
-		booter.desk.Hello()
+		if ui.UI != nil {
+			status := "booting"
+			if booter.Status() == nmruntime.READY {
+				status = "ready"
+			}
 
-		if booter.engine != "" {
-			booter.setEngine(booter.engine)
+			ui.UI.WriteJSON(map[string]any{"engine": status})
 		}
+
+		booter.desk.Hello()
 	})
 
 	return nil

@@ -66,8 +66,26 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 		))
 	}
 
-	for _, ctx := range types.SourceStrings {
-		if payload := envelope.Publish(ctx, types.Focus()); len(payload) > 0 {
+	focus := types.Focus()
+
+	for _, ctx := range types.SignalSourceStrings {
+		if focus == "" {
+			continue
+		}
+
+		if payload := envelope.Publish(ctx, focus); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
+	}
+
+	for _, ctx := range types.LogicSourceStrings {
+		if payload := envelope.Publish(ctx, ""); len(payload) > 0 {
+			ui.UI.Write(payload)
+		}
+	}
+
+	for _, ctx := range []string{"regions", "paths", "decisions", "trade"} {
+		if payload := envelope.Publish(ctx, ""); len(payload) > 0 {
 			ui.UI.Write(payload)
 		}
 	}

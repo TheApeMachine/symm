@@ -102,7 +102,6 @@ export const atoms: Record<string, Atom<any>> = {
 		real_ceiling: false,
 	}),
 	phase: createAtom<string>("—"),
-	candidates: createAtom<number>(0),
 	positionCount: createAtom<number>(0),
 	signalSources: createAtom<string[]>(DEFAULT_KERNELS),
 	kernelDetail: createAtom<string>("cvd"),

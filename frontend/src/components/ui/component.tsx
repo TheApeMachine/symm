@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
+import { asFinite } from "#/lib/format";
 import { decodeText } from "#/lib/json-bytes";
 import type { Value } from "#/types/value";
 import { Alert } from "./alert";
@@ -21,19 +22,15 @@ export const nameOf = (val: unknown): string => {
 /*
 reset restores all bound telemetry and metric elements in root to their fallback state.
 */
-const finiteSample = (value: number | undefined): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
-
 const sampleMetric = (item: Value, name: string | null): number | null => {
 	if (name) {
-		const value = item.metric(name);
-		return finiteSample(typeof value === "number" ? value : undefined);
+		return asFinite(item.metric(name));
 	}
 
 	const metrics = item.metrics();
 	const keys = Object.keys(metrics);
 	if (keys.length === 0) return null;
-	return finiteSample(metrics[keys[0] ?? ""]);
+	return asFinite(metrics[keys[0] ?? ""]);
 };
 
 /*
@@ -263,6 +260,8 @@ export const Component = ({
 				walkFrame(root, propValue);
 				appendSeries(root, propValue);
 				if (onValue) onValue(propValue, root);
+			} else {
+				reset(root);
 			}
 			return;
 		}

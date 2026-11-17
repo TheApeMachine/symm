@@ -115,8 +115,11 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				return
 			}
 
+			cut := training.stepCut(symbol, regions)
+
 			mu.Lock()
 			envelope.Regions[symbol] = regions
+			envelope.Paths[symbol] = cut
 			mu.Unlock()
 		})
 	}
