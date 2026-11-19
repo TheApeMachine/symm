@@ -32,6 +32,7 @@ type WebsocketClient struct {
 	pinger       *Pinger
 	writeMu      sync.Mutex
 	reconnectMu  sync.Mutex
+	callbackMu   sync.Mutex
 	reconnecting bool
 	maxBackoff   time.Duration
 	callbacks    []func() error
@@ -60,7 +61,29 @@ func NewWebsocketClient(
 }
 
 func (client *WebsocketClient) Callback(hook func() error) {
+	client.callbackMu.Lock()
 	client.callbacks = append(client.callbacks, hook)
+	client.callbackMu.Unlock()
+}
+
+/*
+SetCallback replaces reconnect hooks (does not append). L3 recovery peels
+symbols onto the same socket and must not stack duplicate subscribe handlers.
+*/
+func (client *WebsocketClient) SetCallback(hook func() error) {
+	if client == nil {
+		return
+	}
+
+	client.callbackMu.Lock()
+	defer client.callbackMu.Unlock()
+
+	if hook == nil {
+		client.callbacks = nil
+		return
+	}
+
+	client.callbacks = []func() error{hook}
 }
 
 func (client *WebsocketClient) Open() (err error) {
@@ -102,7 +125,11 @@ func (client *WebsocketClient) Open() (err error) {
 	client.Transition(runtime.READY)
 	client.pinger.Transition(runtime.READY)
 
-	for _, callback := range client.callbacks {
+	client.callbackMu.Lock()
+	hooks := append([]func() error(nil), client.callbacks...)
+	client.callbackMu.Unlock()
+
+	for _, callback := range hooks {
 		if err := callback(); err != nil {
 			client.abortOpen(conn)
 

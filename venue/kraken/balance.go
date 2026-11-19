@@ -377,16 +377,12 @@ func (balance *Balance) ToMarket(other market.MarketType) market.MarketType {
 		))
 	}
 
-	equity := book.Equity
-	unrealized := book.Unrealized
-
-	market.NewBalance(map[string]any{
-		"quote":  book.Quote,
-		"assets": assets,
-	}).ToMarket(book)
-
-	book.Equity = equity
-	book.Unrealized = unrealized
+	// ReplaceAssets preserves equity/unrealized under the book mutex.
+	quote := book.Quote
+	if quote == "" {
+		quote = "USD"
+	}
+	book.ReplaceAssets(quote, assets)
 
 	return book
 }

@@ -43,8 +43,9 @@ var typeMap = map[string]func(model map[string]any) json.Marshaler{
 }
 
 var restMap = map[string]string{
-	"/0/private/Balance":      "balances",
-	"/0/private/TradeBalance": "tradebalance",
+	"/0/private/Balance":       "balances",
+	"/0/private/TradeBalance":  "tradebalance",
+	"/0/private/TradesHistory": "history",
 }
 
 /*
@@ -151,7 +152,7 @@ func (virtual *Virtual) Write(message []byte) error {
 
 	if build == nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation, "[kraken.Paper.Write] no adapter for entity", nil,
+			errnie.Validation, "[kraken.Virtual.Write] no adapter for entity", nil,
 		), "entity", entity)
 	}
 

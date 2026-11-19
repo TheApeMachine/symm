@@ -30,10 +30,49 @@ func TestGateLearn(t *testing.T) {
 			So(gate.Axes["volume"].Cut, ShouldBeLessThan, feat["axis_volume"])
 		})
 
-		Convey("stalled raises cut when score cleared the bar", func() {
+		Convey("borderline stall raises cut; soft revert keeps the gate open", func() {
 			cut := gate.Axes["day"].Cut
 			gate.Learn(feat, false)
-			So(gate.Axes["day"].Cut, ShouldBeGreaterThanOrEqualTo, cut)
+			So(gate.Axes["day"].Cut, ShouldBeGreaterThan, cut)
+			So(gate.Axes["day"].Cut, ShouldBeLessThan, system.Cfg.Learning.ThresholdCeil)
+		})
+
+		Convey("strong-looking stall eases cut instead of ratcheting toward ceil", func() {
+			axis := gate.Axes["volume"]
+			axis.Cut = 0.55
+			strong := map[string]float64{
+				"tape_recent": 1,
+				"axis_volume": 0.9,
+				"axis_day":    0.9,
+				"axis_spread": 0.9,
+				"axis_book":   0.9,
+				"axis_peak":   0.9,
+			}
+			before := axis.Cut
+			gate.Learn(strong, false)
+			So(gate.Axes["volume"].Cut, ShouldBeLessThan, before)
+		})
+	})
+}
+
+func TestStaticPassPeakMissing(t *testing.T) {
+	Convey("Setup", t, func() {
+		if system.Cfg == nil || system.Cfg.Risk == nil {
+			system.Cfg = system.NewConfig()
+		}
+
+		gate := NewGate(context.Background(), nil)
+
+		Convey("Missing peak_frac fails closed", func() {
+			_, _, _, _, peak := gate.OracleFrom(map[string]float64{
+				"session_move": system.Cfg.Risk.MinMoverChangePct + 1,
+				"volume_usd":   system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"spread_pct":   0.5,
+				"touch_cash":   5,
+				"backing":      system.Cfg.Risk.MinBackingRatio + 0.1,
+				"peak_frac":    -1,
+			})
+			So(peak, ShouldBeFalse)
 		})
 	})
 }

@@ -129,6 +129,13 @@ func (gate *Gate) Features(
 			continue
 		}
 		raw := gate.rawAxis(name, out, pump)
+		// Measure every scored candidate so the track mean is the universe,
+		// not only entered trades (selection-bias drift after ~3 settles).
+		if raw != 0 {
+			if _, err := axis.track.Measure(raw); err != nil {
+				errnie.Error(err)
+			}
+		}
 		out["axis_"+name] = axis.score(raw)
 		out["axis_"+name+"_raw"] = raw
 	}
@@ -289,8 +296,9 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 		}
 
 		frac := feat["peak_frac"]
+		// Missing ticker peak must fail closed — matches Price.EntryPeakOK.
 		if frac < 0 {
-			return true
+			return false
 		}
 
 		return frac < risk.MaxEntryPeakFrac
@@ -309,6 +317,10 @@ func (axis *Axis) ready() bool {
 Learn nudges cuts from settle outcomes. developed means the trade proved the
 enter reading (armed stop or fee-net win) — tighten toward those features;
 otherwise push the cut away from borderline passes.
+
+Every Learn also soft-reverts Cut toward cutNeutral so five Higher axes cannot
+monotonically ratchet to ThresholdCeil and seal the universe (entered trades
+always clear Cut, so EMA-toward-score alone only moves up).
 */
 func (gate *Gate) Learn(features map[string]float64, developed bool) {
 	if len(features) == 0 {
@@ -328,6 +340,9 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 	}
 
 	floor, ceil := learn.ThresholdFloor, learn.ThresholdCeil
+	// Soft mean-reversion fraction of step — keeps directional learning without
+	// a one-way seal once tracks are warm.
+	revert := step * 0.25
 
 	gate.mu.Lock()
 	gate.bindTracks()
@@ -341,14 +356,9 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 			continue
 		}
 
-		if raw != 0 {
-			if _, err := axis.track.Measure(raw); err != nil {
-				errnie.Error(err)
-			}
-		}
-
 		axis.Sample++
 
+		// Tracks update in Features (all candidates). Learn only nudges Cut.
 		score := features["axis_"+name]
 		if score == 0 {
 			// Cold tracks score 0 — never drag Cut toward that ghost zero.
@@ -360,11 +370,22 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 
 		if developed {
 			axis.Cut = axis.Cut + step*(score-axis.Cut)
-		} else if score >= axis.Cut && axis.Higher {
-			axis.Cut = math.Min(ceil, axis.Cut+step)
-		} else if score <= axis.Cut && !axis.Higher {
+		} else if axis.Higher {
+			if score >= axis.Cut && score < axis.Cut+2*step {
+				// Borderline loser: raise the bar.
+				axis.Cut = math.Min(ceil, axis.Cut+step)
+			} else if score >= axis.Cut+2*step {
+				// Strong-looking entry that still failed — ease Cut so the
+				// gate does not seal on overfit winner features.
+				axis.Cut = math.Max(floor, axis.Cut-step)
+			}
+		} else if score <= axis.Cut && score > axis.Cut-2*step {
 			axis.Cut = math.Max(floor, axis.Cut-step)
+		} else if score <= axis.Cut-2*step {
+			axis.Cut = math.Min(ceil, axis.Cut+step)
 		}
+
+		axis.Cut += revert * (cutNeutral - axis.Cut)
 		axis.Cut = math.Min(ceil, math.Max(floor, axis.Cut))
 	}
 	gate.mu.Unlock()

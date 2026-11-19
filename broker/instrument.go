@@ -408,7 +408,8 @@ func (instrument *Instrument) resubscribe(
 
 		if victim.client != nil {
 			kept := slices.Clone(keep)
-			victim.client.Callback(func() error {
+			// Replace — Callback appends and would re-subscribe the pre-peel set.
+			victim.client.SetCallback(func() error {
 				fresh, err := instrument.auth.Token(instrument.Context())
 				if err != nil {
 					return errnie.Err(
@@ -432,7 +433,19 @@ func (instrument *Instrument) resubscribe(
 
 	errnie.Warn("[instrument] level3 resubscribe " + strings.Join(failed, ","))
 
-	if err := instrument.openBooks(read, failed); err != nil {
+	// Prefer spare capacity on live sockets over opening a dedicated WS per
+	// peel — repeated single-symbol checksum recoveries otherwise accumulate
+	// orphan connections for the rest of the session.
+	attachToken := ""
+	if tokenErr == nil {
+		attachToken = token
+	}
+	remaining, err := instrument.attachBooks(failed, attachToken, depth, frameFromCfg())
+	if err != nil {
+		return err
+	}
+
+	if err := instrument.openBooks(read, remaining); err != nil {
 		syms := append([]string(nil), failed...)
 		go func() {
 			time.Sleep(time.Second)
@@ -443,6 +456,98 @@ func (instrument *Instrument) resubscribe(
 	}
 
 	return nil
+}
+
+func frameFromCfg() int {
+	batch := system.Cfg.Market.Subscribe.Batch
+	frame := system.Cfg.Market.Level3.RateLimit / 5
+	if frame <= 0 {
+		frame = batch
+	}
+	if frame > batch {
+		frame = batch
+	}
+	return frame
+}
+
+/*
+attachBooks packs as many symbols as fit onto existing Level3 sockets under
+Subscribe.Batch. Returns symbols that still need a new openBooks socket.
+Caller holds booksMu. token may be empty when auth failed — then nothing
+attaches and the full set is returned for openBooks to reject.
+*/
+func (instrument *Instrument) attachBooks(
+	symbols []string,
+	token string,
+	depth, frame int,
+) ([]string, error) {
+	if token == "" || len(symbols) == 0 {
+		return symbols, nil
+	}
+
+	batch := system.Cfg.Market.Subscribe.Batch
+	if batch <= 0 {
+		return symbols, nil
+	}
+
+	remaining := slices.Clone(symbols)
+	var hosts []level3Batch
+
+	instrument.Level3.Range(func(key, value any) bool {
+		batchKey, _ := key.(string)
+		client, _ := value.(*network.WebsocketClient)
+		if client == nil || batchKey == "" {
+			return true
+		}
+		hosts = append(hosts, level3Batch{
+			key:    batchKey,
+			parts:  strings.Split(batchKey, "|"),
+			client: client,
+		})
+		return true
+	})
+
+	for _, host := range hosts {
+		if len(remaining) == 0 {
+			break
+		}
+
+		room := batch - len(host.parts)
+		if room <= 0 {
+			continue
+		}
+
+		take := remaining
+		if len(take) > room {
+			take = remaining[:room]
+		}
+
+		if err := instrument.writeLevel3(host.client, take, token, depth, frame); err != nil {
+			return remaining, err
+		}
+
+		newParts := append(slices.Clone(host.parts), take...)
+		newKey := strings.Join(newParts, "|")
+		instrument.Level3.Delete(host.key)
+		instrument.Level3.Store(newKey, host.client)
+
+		kept := slices.Clone(newParts)
+		host.client.SetCallback(func() error {
+			fresh, err := instrument.auth.Token(instrument.Context())
+			if err != nil {
+				return errnie.Err(
+					errnie.Forbidden,
+					"[instrument] level3 reconnect token unavailable",
+					err,
+				)
+			}
+			return instrument.writeLevel3(host.client, kept, fresh, depth, frameFromCfg())
+		})
+
+		remaining = remaining[len(take):]
+	}
+
+	return remaining, nil
 }
 
 func (instrument *Instrument) writeLevel3Unsub(
@@ -620,8 +725,8 @@ func (instrument *Instrument) openBooks(
 			return instrument.Error(err)
 		}
 
-		// After the first subscribe: Open's reconnect path re-runs Callback.
-		l3Client.Callback(func() error {
+		// After the first subscribe: Open's reconnect path re-runs SetCallback.
+		l3Client.SetCallback(func() error {
 			fresh, err := instrument.auth.Token(instrument.Context())
 
 			if err != nil {

@@ -171,25 +171,29 @@ func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType
 		return other
 	}
 
-	book.Equity = balance.Result.EquivalentBalance
+	equity := balance.Result.EquivalentBalance
 	equitySrc := "eb"
 
-	if book.Equity == nil {
-		book.Equity = balance.Result.Equity
+	if equity == nil {
+		equity = balance.Result.Equity
 		equitySrc = "e"
 	}
 
+	var unrealized *decimal.Decimal
 	unrealizedSrc := "n"
 
 	switch {
 	case balance.Result.Valuation != nil && balance.Result.CostBasis != nil &&
 		(!balance.Result.Valuation.IsZero() || !balance.Result.CostBasis.IsZero()):
-		unrealized := balance.Result.Valuation.Sub(*balance.Result.CostBasis)
-		book.Unrealized = &unrealized
+		delta := balance.Result.Valuation.Sub(*balance.Result.CostBasis)
+		unrealized = &delta
 		unrealizedSrc = "v-c"
 	default:
-		book.Unrealized = balance.Result.UnrealizedPnL
+		unrealized = balance.Result.UnrealizedPnL
 	}
+
+	book.SetEquity(equity)
+	book.SetUnrealized(unrealized)
 
 	errnie.Debug("[tradebalance] ToMarket",
 		"eb", balance.Result.EquivalentBalance,
@@ -198,9 +202,9 @@ func (balance *TradeBalance) ToMarket(other market.MarketType) market.MarketType
 		"c", balance.Result.CostBasis,
 		"v", balance.Result.Valuation,
 		"equity_src", equitySrc,
-		"equity", book.Equity,
+		"equity", equity,
 		"unrealized_src", unrealizedSrc,
-		"unrealized", book.Unrealized,
+		"unrealized", unrealized,
 	)
 
 	return book

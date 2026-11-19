@@ -51,8 +51,9 @@ var typeMap = map[string]func(model map[string]any) json.Marshaler{
 restMap keys private REST paths to paper entities for Watch/Post balance polls.
 */
 var restMap = map[string]string{
-	"/0/private/Balance":      "balances",
-	"/0/private/TradeBalance": "tradebalance",
+	"/0/private/Balance":       "balances",
+	"/0/private/TradeBalance":  "tradebalance",
+	"/0/private/TradesHistory": "history",
 }
 
 /*

@@ -117,8 +117,7 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 		return false, nil
 	}
 
-	stale := position.Mark != nil && hint.Equal(*position.Mark)
-
+	prevPct := position.PnLPct
 	position.Mark = hint
 	position.PnL, position.PnLPct = position.price.markPnLLocked(position)
 
@@ -131,9 +130,10 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 		position.Transition(runtime.READY)
 	}
 
-	// Unchanged bid mark (ask-only L3, etc.): do not feed zero-delta ticks into
-	// stoploss confirms / ExplosiveTTL — trail_confirm would trip on flat books.
-	if stale && position.Stoploss != nil {
+	// Skip stoploss when fee-net mark is unchanged — flat top-of-book must not
+	// tick Confirms, but deeper walk changes (thinning) still move PnLPct.
+	pnlFlat := prevPct != nil && position.PnLPct.Equal(*prevPct)
+	if pnlFlat && position.Stoploss != nil {
 		position.mu.Unlock()
 		return false, nil
 	}
@@ -159,7 +159,7 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 
 	if !position.Stoploss.WantsExit() {
 		position.mu.Unlock()
-		return !stale, nil
+		return !pnlFlat, nil
 	}
 
 	position.Transition(runtime.BUSY)
@@ -200,11 +200,9 @@ func (position *Position) Enter(
 		Volume:    vol,
 	}
 
-	position.ExitOrder = &spot.OrderRequest{
-		ClOrdId:   uuid.NewString(),
-		OrderType: "market",
-		Type:      "sell",
-	}
+	// ExitOrder is created only in exit() with a real Volume. Pre-allocating a
+	// sell ClOrdId here made Tier.Exit treat stoploss-BUSY rows as already armed
+	// and silently skip Send — a live exit deadlock on every new enter.
 
 	position.OpenedAt = time.Now().UTC()
 	position.PolicyEpoch = data.Epoch.Load()
@@ -220,19 +218,20 @@ exit arms a market sell and moves READY → BUSY. force stamps trigger "manual"
 so real Send keeps the market flatten instead of the break-even IOC limit.
 */
 func (position *Position) exit(force bool) error {
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
 	trigger := "policy exit match"
 
 	if force {
 		trigger = "manual"
-	} else if position.ExitPath != "" {
-		trigger = "policy exit match " + position.ExitPath
 	} else if position.Stoploss != nil && position.Stoploss.WantsExit() &&
 		position.Stoploss.TriggerReason != "" {
+		// Stoploss tranche/trip reasons win over a path stamp used for tree credit.
 		trigger = position.Stoploss.TriggerReason
+	} else if position.ExitPath != "" {
+		trigger = "policy exit match " + position.ExitPath
 	}
-
-	position.mu.Lock()
-	defer position.mu.Unlock()
 
 	if position.Qty == nil || position.Qty.Sign() <= 0 {
 		return errnie.Error(errnie.Err(
@@ -247,12 +246,27 @@ func (position *Position) exit(force bool) error {
 
 	if position.price != nil && position.price.Instrument != nil &&
 		position.price.normalizer != nil {
-		pair := position.price.Instrument.Pair(
-			position.price.normalizer.Name(position.Symbol),
-		)
+		name := position.price.normalizer.Name(position.Symbol)
+		pair := position.price.Instrument.Pair(name)
+
+		// Snap to QtyIncrement like Allocate, then StringFixed for the wire so
+		// trailing zeros match Kraken's volume precision. Never leave a
+		// sub-venue-min dust remainder — that loops rejected dust sells.
+		sized := wire
+		if formatted, err := position.price.formatQty(name, wire); err == nil &&
+			formatted != nil && formatted.Sign() > 0 && formatted.Cmp(wire) <= 0 {
+			rem := wire.Sub(*formatted)
+			if rem.Sign() > 0 && position.belowVenueMin(rem) {
+				sized = wire
+			} else {
+				sized = *formatted
+			}
+		}
 
 		if pair.QtyPrecision > 0 {
-			vol = wire.StringFixed(int32(pair.QtyPrecision))
+			vol = sized.StringFixed(int32(pair.QtyPrecision))
+		} else {
+			vol = sized.String()
 		}
 	}
 
@@ -503,11 +517,17 @@ func (position *Position) fillsNet() (net, bought, notional decimal.Decimal) {
 }
 
 /*
-stampFillRealizedLocked writes fee-agnostic settle PnL from fill notionals.
+stampFillRealizedLocked writes fee-net settle PnL from fill notionals.
 Caller holds position.mu. Used when the book can no longer mark a flat Qty.
+Must match markPnLLocked's fee deduction — gross-only PnL would credit the
+tree for net-losing round trips inside taker friction.
 */
 func (position *Position) stampFillRealizedLocked() {
-	var buyQty, buyNotional, sellQty, sellNotional decimal.Decimal
+	var buyQty, buyNotional, sellQty, sellNotional, fees decimal.Decimal
+	name := ""
+	if position.price != nil && position.price.normalizer != nil {
+		name = position.price.normalizer.Name(position.Symbol)
+	}
 
 	for _, fill := range position.Fills {
 		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
@@ -515,18 +535,27 @@ func (position *Position) stampFillRealizedLocked() {
 		}
 
 		px := decimal.Zero
-
 		if fill.LastPrice != nil {
 			px = *fill.LastPrice
 		}
 
+		notional := px.Mul(*fill.LastQty)
+
 		switch fill.Side {
 		case "buy":
 			buyQty = buyQty.Add(*fill.LastQty)
-			buyNotional = buyNotional.Add(px.Mul(*fill.LastQty))
+			buyNotional = buyNotional.Add(notional)
 		case "sell":
 			sellQty = sellQty.Add(*fill.LastQty)
-			sellNotional = sellNotional.Add(px.Mul(*fill.LastQty))
+			sellNotional = sellNotional.Add(notional)
+		}
+
+		if fill.FeeUsdEquiv != nil && fill.FeeUsdEquiv.Sign() > 0 {
+			fees = fees.Add(*fill.FeeUsdEquiv)
+		} else if position.price != nil && name != "" && notional.Sign() > 0 {
+			if fee := position.price.Fee(name, &notional); fee != nil {
+				fees = fees.Add(*fee)
+			}
 		}
 	}
 
@@ -534,7 +563,7 @@ func (position *Position) stampFillRealizedLocked() {
 		return
 	}
 
-	pnl := sellNotional.Sub(buyNotional)
+	pnl := sellNotional.Sub(buyNotional).Sub(fees)
 	pct := pnl.Div(buyNotional).Mul(decimalHundred)
 	position.PnL = &pnl
 	position.PnLPct = &pct

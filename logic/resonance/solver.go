@@ -35,12 +35,14 @@ type Feature struct {
 }
 
 /*
-symbolState is one symbol's coder, feature moments, and deferred target.
+symbolState is one symbol's coder, feature moments, and the prior-tick forecast
+retained for strict-prequential ObserveTask (z_{t-1}, pred_{t-1} → x_t).
 */
 type symbolState struct {
-	manifold  *learning.ResonanceManifold
-	scorer    *featureScorer
-	pending   []float64
+	manifold      *learning.ResonanceManifold
+	scorer        *featureScorer
+	prevLatent    []float64
+	prevPred      []float64
 	surpriseZ     *adaptive.ZScore
 	surpriseRank  *probability.Calibrator
 	precisionRank *probability.Calibrator
@@ -109,8 +111,9 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 /*
-stepSymbol standardizes a complete observation, settles the manifold, and
-trains the supervised head on the prior epoch once this epoch has arrived.
+stepSymbol standardizes a complete observation, resolves the prior forecast
+against today's features (ObserveTask), then settles without lag-training the
+task head. forward_curve_* is then V·z_t — a genuine next-step forecast.
 */
 func (solver *Solver) stepSymbol(
 	symbol string,
@@ -130,14 +133,25 @@ func (solver *Solver) stepSymbol(
 		return nil
 	}
 
-	target := state.pending
-	hadTarget := len(target) == len(input)
-
-	if !hadTarget {
-		target = nil
+	// Strict prior: the forecast issued on z_{t-1} is scored against x_t before
+	// Settle moves the latent to z_t. Learn(nil) below must not retrain the
+	// task head on lagged x_{t-1} (that was the backcast bug).
+	resolved := false
+	if len(state.prevLatent) > 0 && len(state.prevPred) == len(input) {
+		if err := state.manifold.ObserveTask(
+			state.prevLatent, state.prevPred, input,
+		); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				fmt.Sprintf("resonance: %s observe-task failed", symbol),
+				err,
+			))
+		} else {
+			resolved = true
+		}
 	}
 
-	if _, err := state.manifold.SettleFromBatchOptions(input, target, true, false); err != nil {
+	if _, err := state.manifold.SettleFromBatchOptions(input, nil, true, false); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			fmt.Sprintf("resonance: %s settle failed", symbol),
@@ -147,8 +161,9 @@ func (solver *Solver) stepSymbol(
 		return nil
 	}
 
-	state.pending = append([]float64(nil), input...)
-	return solver.publish(state, hadTarget)
+	state.prevLatent = append([]float64(nil), state.manifold.LatentState()...)
+	state.prevPred = append([]float64(nil), state.manifold.TaskPrediction()...)
+	return solver.publish(state, resolved)
 }
 
 /*
@@ -399,7 +414,8 @@ func (solver *Solver) Reset(resetPrecision bool) {
 		state.surpriseZ = adaptive.NewZScore()
 		state.surpriseRank = newRegimeCalibrator()
 		state.precisionRank = newRegimeCalibrator()
-		state.pending = nil
+		state.prevLatent = nil
+		state.prevPred = nil
 		return true
 	})
 }

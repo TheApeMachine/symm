@@ -275,11 +275,13 @@ func TestTierExit(t *testing.T) {
 			tier.Update(testSymbol, dec("120"))
 			err := tier.Exit(pos, false)
 
-			Convey("Closing is armed", func() {
+			Convey("Closing is armed with stoploss trigger (path is attribution only)", func() {
 				So(err, ShouldBeNil)
 				So(pos.Status() == runtime.BUSY, ShouldBeTrue)
 				So(pos.ExitOrder, ShouldNotBeNil)
-				So(pos.ExitTrigger, ShouldEqual, "policy exit match R00/M1")
+				// Update armed the stop; ExitPath must not overwrite TriggerReason.
+				So(pos.ExitTrigger, ShouldNotEqual, "")
+				So(pos.ExitTrigger, ShouldNotStartWith, "policy exit match")
 			})
 		})
 
@@ -305,6 +307,24 @@ func TestTierExit(t *testing.T) {
 			Convey("It returns ErrExitAborted", func() {
 				So(errnie.IsForbidden(err), ShouldBeTrue)
 				So(pos.Status(), ShouldEqual, runtime.READY)
+			})
+		})
+
+		Convey("When stoploss parks BUSY before ExitOrder has Volume", func() {
+			setBook(tier.price, "120", "121", "30")
+			tier.Update(testSymbol, dec("120"))
+			pos.Transition(runtime.BUSY)
+			// Pre-alloc ClOrdId with empty Volume used to deadlock Tier.Exit.
+			pos.ExitOrder = &spot.OrderRequest{
+				ClOrdId: "prealloc-exit", OrderType: "market", Type: "sell",
+			}
+			err := tier.Exit(pos, false)
+
+			Convey("Exit still arms a real sell Volume and Sends", func() {
+				So(err, ShouldBeNil)
+				So(pos.ExitOrder, ShouldNotBeNil)
+				So(pos.ExitOrder.Volume, ShouldNotEqual, "")
+				So(pos.ExitOrder.ClOrdId, ShouldNotEqual, "prealloc-exit")
 			})
 		})
 

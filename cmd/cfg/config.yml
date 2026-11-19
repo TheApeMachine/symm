@@ -280,7 +280,9 @@ selection:
   weight_depth: 0.30
 
 learning:
-  threshold_start: 0.5
+  # Must stay ≤ typical single-tick Brightness (~0.15–0.40 with pins=8) or
+  # explore leaves deadlock at ActionNone forever (see system/learning.go).
+  threshold_start: 0.25
   threshold_step: 0.05
   threshold_floor: 0.05
   threshold_ceil: 0.95

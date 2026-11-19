@@ -20,7 +20,7 @@ func TestLoadConfig(t *testing.T) {
 
 			Convey("It loads learning.threshold_start", func() {
 				So(err, ShouldBeNil)
-				So(viper.GetFloat64("learning.threshold_start"), ShouldEqual, 0.5)
+				So(viper.GetFloat64("learning.threshold_start"), ShouldEqual, 0.25)
 			})
 		})
 

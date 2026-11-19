@@ -176,7 +176,21 @@ func (tree *Tree) Predict(tokens runtime.Tokens) (Action, float64, bool) {
 	}
 
 	if decision.Resistance > 0.8 {
-		tree.Delete(path)
+		// Tombstone at ceil — Delete would make matched=false next tick so
+		// Model treats a proven loser as a cold path and Ensure reseeds it.
+		ceil := system.Cfg.Learning.ThresholdCeil
+		if decision.Resistance < ceil {
+			capped := *decision
+			capped.Resistance = ceil
+			tree.mu.Lock()
+			root := tree.root.Load()
+			root, _, _ = root.Insert([]byte(path), &capped)
+			tree.root.Store(root)
+			tree.mu.Unlock()
+			tree.persist(path, &capped)
+			return ActionNone, capped.Resistance, true
+		}
+
 		return ActionNone, decision.Resistance, true
 	}
 

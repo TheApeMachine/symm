@@ -142,10 +142,10 @@ func TestStoplossUpdate(t *testing.T) {
 			sl.CommitPending()
 			sl.Update(0.15, 0)
 
-			Convey("Filled Tranche 1 keeps Armed so the floor still protects", func() {
+			Convey("Crash tick trips explosive_floor_break without avgStep self-widen", func() {
 				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
-				So(sl.State, ShouldEqual, StoplossArmed)
-				So(sl.Triggered(), ShouldBeFalse)
+				So(sl.Triggered(), ShouldBeTrue)
+				So(sl.TriggerReason, ShouldEqual, "explosive_floor_break")
 				So(sl.Regime, ShouldEqual, RegimeExplosive)
 			})
 		})

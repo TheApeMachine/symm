@@ -100,21 +100,14 @@ func (ledger *Ledger) history() (fills []kraken.HistoryTrade, complete bool) {
 
 		if err != nil {
 			errnie.Error(err)
-
-			if len(fills) == 0 {
-				return nil, true
-			}
-
+			// Page-1 failure is not an empty account — refuse restore so live
+			// spot holdings are not left unmanaged / re-bought.
 			return nil, false
 		}
 
 		page := kraken.NewTradesHistoryResult(raw)
 
 		if page == nil {
-			if len(fills) == 0 {
-				return nil, true
-			}
-
 			return nil, false
 		}
 

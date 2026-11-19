@@ -170,12 +170,13 @@ func TestPredict(t *testing.T) {
 
 			predicted, strength, matched := tree.Predict(tokensAt(path, 1.0))
 
-			Convey("Leaf is pruned and Predict returns matched ActionNone", func() {
+			Convey("Leaf is tombstoned at ceil and Predict returns matched ActionNone", func() {
 				So(matched, ShouldBeTrue)
 				So(predicted, ShouldEqual, ActionNone)
-				So(strength, ShouldEqual, 0.85)
-				_, ok := get(tree, path)
-				So(ok, ShouldBeFalse)
+				So(strength, ShouldEqual, system.Cfg.Learning.ThresholdCeil)
+				decision, ok := get(tree, path)
+				So(ok, ShouldBeTrue)
+				So(decision.Resistance, ShouldEqual, system.Cfg.Learning.ThresholdCeil)
 			})
 		})
 	}))

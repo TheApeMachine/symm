@@ -104,10 +104,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				continue
 			}
 
-			if cut := envelope.Paths[position.Symbol]; cut != nil {
-				position.SetExitPath(cut.String())
-			}
-
 			if !model.desk.ProfitableExit(position) {
 				model.desk.VetoPendingExit(position)
 				continue
@@ -119,6 +115,8 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				"exit_path", position.ExitPath,
 			)
 
+			// Do not SetExitPath before Exit — that overwrote Stoploss.TriggerReason
+			// with "policy exit match". Attribution path stamps after arming.
 			if err := model.desk.Exit(position, false); err != nil {
 				if errnie.IsForbidden(err) {
 					continue
@@ -128,9 +126,17 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				continue
 			}
 
-			// Drop the pre-fill park so the next tick does not re-Send. The
-			// fill path re-queues into pending with ClosedAt for creditExit.
-			model.desk.ClearPending(tier, position.Symbol)
+			if cut := envelope.Paths[position.Symbol]; cut != nil {
+				position.SetExitPath(cut.String())
+			}
+
+			// Stoploss exits bypass Model.Exit — still clear open-phase tokens
+			// so the next flat cycle does not inherit R06/R07 hold/exit crumbs.
+			if model.resetPath != nil {
+				model.resetPath(position.Symbol)
+			}
+			// Tier.Exit clears the pre-fill pending park before Send so a fast
+			// fill's ClosedAt re-queue cannot be deleted by a late ClearPending.
 		}
 	}
 
@@ -302,13 +308,15 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 							Path:       path,
 							Resistance: resistance,
 							PathFound:  true,
+							Tier:       model.decisionTier(symbol, resistance),
 							Decide: func(d *runtime.Decision) {
 								envelope.Decide(d)
 							},
 						})
 						candMu.Unlock()
 						acted = true
-						consumePath = true
+						// Do not resetPath here — board.Place may skip the
+						// candidate; reset only after a successful Enter.
 					}
 				case ActionHold:
 					if open {
@@ -355,6 +363,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					Path:       path,
 					Resistance: resistance,
 					PathFound:  false,
+					Tier:       model.decisionTier(symbol, resistance),
 					Decide: func(d *runtime.Decision) {
 						envelope.Decide(d)
 					},

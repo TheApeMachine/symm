@@ -195,6 +195,16 @@ func TestLedgerRestore(t *testing.T) {
 			})
 		})
 
+		Convey("When the first history page fails", func() {
+			ledger := NewLedger("real", nil, &pagingHistoryClient{pages: [][]byte{nil}}, nil)
+			open, closed := ledger.Restore(t.Context())
+
+			Convey("Restore does not treat it as an empty account", func() {
+				So(open, ShouldBeNil)
+				So(closed, ShouldBeNil)
+			})
+		})
+
 		Convey("When history is a single complete page", func() {
 			complete := []byte(`{
 				"error": [],

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
@@ -62,7 +63,9 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		})
 
 		if err != nil {
-			signal.Error(err)
+			// Transient tick validation (crossed book, etc.) must not park the
+			// signal System in ERROR for the rest of the process.
+			errnie.Error(err)
 			return
 		}
 

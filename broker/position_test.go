@@ -251,9 +251,9 @@ func TestEnter(t *testing.T) {
 				So(pos.EntryOrder, ShouldNotBeNil)
 				So(pos.EntryOrder.Type, ShouldEqual, "buy")
 				So(pos.EntryOrder.Volume, ShouldEqual, "1")
-				So(pos.ExitOrder, ShouldNotBeNil)
-				So(pos.ExitOrder.Type, ShouldEqual, "sell")
-				So(pos.ExitOrder.Volume, ShouldEqual, "")
+				// ExitOrder is created only in exit() — pre-allocating it
+				// deadlocked Tier.Exit on every live stoploss park.
+				So(pos.ExitOrder, ShouldBeNil)
 				So(pos.OpenedAt.IsZero(), ShouldBeFalse)
 				So(pos.Qty, ShouldBeNil)
 				So(pos.Entry, ShouldBeNil)
@@ -463,8 +463,9 @@ func TestApply(t *testing.T) {
 				So(pos.ClosedAt, ShouldNotBeNil)
 				So(beforePnL, ShouldNotBeEmpty)
 				So(beforePct, ShouldNotBeEmpty)
-				So(pos.PnL.String(), ShouldEqual, "10")
-				So(pos.PnLPct.String(), ShouldEqual, "10")
+				// Fee-net: buy/sell taker 0.40% on 100/110 → 9.16, not gross 10.
+				So(pos.PnL.String(), ShouldEqual, "9.16")
+				So(pos.PnLPct.String(), ShouldEqual, "9.16")
 				So(pos.Status(), ShouldEqual, runtime.DONE)
 				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})

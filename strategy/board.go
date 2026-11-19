@@ -21,7 +21,7 @@ pipeline outputs — and the shared price book, then applies MaxEntersPerTick
 and real open caps. Peer memory lets single-symbol frames compete with recent
 movers instead of auto-winning a 1-of-1 slice.
 
-Short-hold winners may draw from the reserved cash pool and use reserve extra
+Short-hold winners budget against full free cash and may use reserve extra
 slots so hot micro-moves are not blocked by capital locked in slow books —
 without forcing lossy rotation.
 */
@@ -47,6 +47,7 @@ type EnterCandidate struct {
 	PathFound  bool
 	Score      float64
 	ShortHold  bool
+	Tier       string
 }
 
 /*
@@ -246,6 +247,7 @@ func (board *Board) Place(
 					Reason: "board cap — max open positions",
 					Gate:   "board",
 					Path:   cand.Path,
+					Tier:   cand.Tier,
 				})
 			}
 
@@ -314,6 +316,7 @@ func (board *Board) Place(
 			),
 			Gate: "board",
 			Path: cand.Path,
+			Tier: cand.Tier,
 		})
 	}
 }

@@ -244,7 +244,14 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 	}
 
 	// 6. RULE 1: NEVER EXIT AT A LOSS (PnLPct is fee-net; zero is break-even)
-	stoploss.updateFloorAndExhaustion(avgStep, avgDownStep, chaosRatio, delta)
+	// Floor/exit room must not inflate on the crash tick that just entered
+	// Deltas — use priorAvgStep so a -2.45% drop cannot widen Explosive room
+	// and drop TrailingFloor to 0 before explosive_floor_break can fire.
+	stepForFloor := priorAvgStep
+	if stepForFloor <= stepEps {
+		stepForFloor = avgStep
+	}
+	stoploss.updateFloorAndExhaustion(stepForFloor, avgDownStep, chaosRatio, delta)
 
 	if stoploss.CurrentPnLPct <= stepEps {
 		stoploss.Confirms = 0
@@ -259,10 +266,10 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 
 	// 7. Staged Scale-Out (Tranches 1..3) & Final Runner Exit (Tranche 4 / Floor Break)
 	if stoploss.State == StoplossArmed {
-		stoploss.evaluateTrancheScaleOut(delta, avgStep)
+		stoploss.evaluateTrancheScaleOut(delta, stepForFloor)
 
 		if stoploss.State != StoplossTriggered {
-			stoploss.evaluateRegimeExit(delta, avgStep)
+			stoploss.evaluateRegimeExit(delta, stepForFloor)
 		}
 	}
 }

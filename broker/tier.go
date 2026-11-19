@@ -235,7 +235,7 @@ func (tier *Tier) Hello() map[string]any {
 		positions[snap.ID] = snap
 	}
 
-	tier.balance.Unrealized = &unrealized
+	tier.balance.SetUnrealized(&unrealized)
 
 	return map[string]any{
 		"positions": positions,
@@ -403,6 +403,16 @@ func (tier *Tier) Exit(
 		))
 	}
 
+	// Stoploss parks BUSY before exit() runs. Skip only when a sell with Volume
+	// is already on the wire — Enter used to pre-allocate ExitOrder{ClOrdId}
+	// with empty Volume, which deadlocked every live exit here.
+	if position.Status() == runtime.BUSY &&
+		position.ExitOrder != nil &&
+		position.ExitOrder.ClOrdId != "" &&
+		position.ExitOrder.Volume != "" {
+		return nil
+	}
+
 	if !force {
 		if pnl := tier.price.PnL(position); pnl == nil || pnl.Sign() <= 0 {
 			tier.abortExit(position)
@@ -413,6 +423,10 @@ func (tier *Tier) Exit(
 			))
 		}
 	}
+
+	// Drop the pre-fill park before Send. A fast fill stores ClosedAt back into
+	// pending for creditExit; clearing after Send in Model.Step raced that store.
+	tier.pending.Delete(position.Symbol)
 
 	if err := position.exit(force); err != nil {
 		return errnie.Error(err)
@@ -483,7 +497,12 @@ func (tier *Tier) apply(execution *market.Execution) {
 			continue
 		}
 
-		position := tier.positions.Get(data.Symbol)
+		symbol := data.Symbol
+		if tier.normalizer != nil {
+			symbol = tier.normalizer.Name(symbol)
+		}
+
+		position := tier.positions.Get(symbol)
 
 		if position == nil {
 			continue

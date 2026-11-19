@@ -16,7 +16,7 @@ func TestLoadEmbeddedConfig(t *testing.T) {
 
 			Convey("Viper holds the embedded learning threshold_start", func() {
 				So(err, ShouldBeNil)
-				So(viper.GetFloat64("learning.threshold_start"), ShouldEqual, 0.5)
+				So(viper.GetFloat64("learning.threshold_start"), ShouldEqual, 0.25)
 				So(viper.GetString("market.model"), ShouldEqual, "real")
 			})
 		})

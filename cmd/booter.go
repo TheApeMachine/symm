@@ -253,6 +253,14 @@ func (booter *Booter) shutdown() error {
 		)))
 	}
 
+	if booter.workspace != nil {
+		if err := booter.workspace.Close(); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] workspace close failed", err,
+			)))
+		}
+	}
+
 	if errs != nil {
 		return errs
 	}
@@ -390,6 +398,20 @@ func (booter *Booter) initMarket() error {
 		}
 
 		position := booter.desk.Position(tt, symbol)
+
+		// Prefer exact id when the dashboard sends one — symbol-only lookup
+		// can miss or hit the wrong row if the UI key is the position id.
+		if position == nil || (id != "" && position.ID != id) {
+			for pos := range booter.desk.Positions(tt) {
+				if id != "" && pos.ID == id {
+					position = pos
+					break
+				}
+				if position == nil && pos.Symbol == symbol {
+					position = pos
+				}
+			}
+		}
 
 		if position == nil {
 			return errnie.Error(errnie.Err(
