@@ -220,9 +220,25 @@ func TestStepCut(t *testing.T) {
 				{Key: 2, Brightness: 0.8},
 			})
 
-			Convey("stepCut does not emit R02", func() {
+			Convey("stepCut does not append R02", func() {
 				So(cut, ShouldNotBeNil)
 				So(cut.Len(), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When opposition follows a prior enter token", func() {
+			_ = training.stepCut("KEEP/USD", []*runtime.Region{
+				{Key: 0, Brightness: 0.8},
+			})
+			cut := training.stepCut("KEEP/USD", []*runtime.Region{
+				{Key: 0, Brightness: 0.1},
+				{Key: 2, Brightness: 0.9},
+			})
+
+			Convey("stepCut Peeks the live path instead of wiping Len", func() {
+				So(cut.String(), ShouldEqual, "R00")
+				So(cut.Len(), ShouldEqual, 1)
+				So(cut.Last().Brightness, ShouldEqual, 0)
 			})
 		})
 

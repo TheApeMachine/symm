@@ -162,6 +162,56 @@ func TestReadReturnsErrorOnDisconnect(t *testing.T) {
 			_, err = client.Read()
 			So(err, ShouldNotBeNil)
 			So(Recoverable(err), ShouldBeTrue)
+			// Failed conn must be cleared before return — Tier.Run retries
+			// Read immediately; a second ReadMessage would panic.
+			So(client.conn, ShouldBeNil)
+
+			Convey("Immediate retry Read waits instead of panicking", func() {
+				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				defer cancel()
+				fast := NewWebsocketClient(ctx, wsURL)
+				fast.conn = nil
+				fast.Transition(runtime.ERROR)
+				_, err := fast.Read()
+				So(err, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestReadAfterFailedConnDoesNotPanic(t *testing.T) {
+	Convey("Setup", t, func() {
+		upgrader := gorilla.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}))
+		defer server.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+
+		Convey("When Read fails then retries like Tier.Run", func() {
+			_, err := client.Read()
+			So(err, ShouldNotBeNil)
+			So(client.conn, ShouldBeNil)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = client.Read()
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(200 * time.Millisecond):
+				// Blocked in !ready sleep — not panicking on the dead conn.
+			}
+			_ = client.Close()
 		})
 	})
 }

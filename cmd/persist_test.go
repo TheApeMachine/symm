@@ -90,7 +90,7 @@ func TestStep(t *testing.T) {
 			}
 
 			wantKey := fmt.Sprintf(
-				"workspace/tick/aggregate/%019d/%019d", epoch, envelope.N,
+				"workspace/tick/aggregate/%019d/latest", epoch,
 			)
 
 			out := persist.Step(envelope)
@@ -116,12 +116,12 @@ func TestStep(t *testing.T) {
 				persist.Step(envelope)
 			}
 
-			Convey("Each key keeps the aggregate prefix and zero-padded tick", func() {
+			Convey("Each tick reuses the latest-wins aggregate key", func() {
 				So(len(backing.keys), ShouldEqual, 3)
 
-				for i, key := range backing.keys {
+				for _, key := range backing.keys {
 					So(strings.HasPrefix(key, "workspace/tick/aggregate/"), ShouldBeTrue)
-					So(strings.HasSuffix(key, fmt.Sprintf("%019d", uint64(i+1))), ShouldBeTrue)
+					So(strings.HasSuffix(key, "/latest"), ShouldBeTrue)
 				}
 			})
 		})

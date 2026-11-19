@@ -193,8 +193,8 @@ type prefixObject struct {
 }
 
 /*
-downloadPrefix lists keys then fetches bodies in parallel so a large closed/
-paths listing cannot serialize hundreds of S3 GETs on one goroutine.
+downloadPrefix lists keys then fetches bodies through a bounded worker pool so
+inspecting model/paths/ or closed/ cannot open thousands of S3 GETs at once.
 */
 func (hub *Hub) downloadPrefix(prefix string) []prefixObject {
 	keys := make([]string, 0, 256)
@@ -204,25 +204,37 @@ func (hub *Hub) downloadPrefix(prefix string) []prefixObject {
 	}
 
 	out := make([]prefixObject, len(keys))
+	workers := 32
+	if workers > len(keys) {
+		workers = len(keys)
+	}
+	if workers <= 0 {
+		return nil
+	}
 
+	jobs := make(chan int, workers)
 	var wg sync.WaitGroup
 
-	for i, key := range keys {
+	for range workers {
 		wg.Go(func() {
-			raw, err := hub.store.Download(hub.ctx, key)
-
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO, "[hub] error downloading prefix object", err,
-				))
-
-				return
+			for i := range jobs {
+				key := keys[i]
+				raw, err := hub.store.Download(hub.ctx, key)
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO, "[hub] error downloading prefix object", err,
+					))
+					continue
+				}
+				out[i] = prefixObject{key: key, raw: raw}
 			}
-
-			out[i] = prefixObject{key: key, raw: raw}
 		})
 	}
 
+	for i := range keys {
+		jobs <- i
+	}
+	close(jobs)
 	wg.Wait()
 
 	kept := make([]prefixObject, 0, len(out))

@@ -59,7 +59,9 @@ func (persist *TickPersist) Step(envelope *nmruntime.Envelope) *nmruntime.Envelo
 			nil,
 		))
 	} else if _, err := persist.store.WriteAtPrefixWithEnvelope(fmt.Sprintf(
-		"workspace/tick/aggregate/%019d/%019d", data.Epoch.Load(), envelope.N,
+		// Latest-wins per epoch — unique N keys never coalesced in latestGen
+		// and piled full envelopes into the upload queue during bursts.
+		"workspace/tick/aggregate/%019d/latest", data.Epoch.Load(),
 	), envelope); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO, "failed to write envelope", err,

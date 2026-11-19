@@ -28,6 +28,32 @@ const (
 	trancheFraction = 1.0 / float64(totalTranches)
 )
 
+/*
+exitProfitFloor is PolicyExitMinProfitPct — first exits must not flatten into a
++0.01% "win". Runners that already banked a tranche may trail to break-even.
+*/
+func exitProfitFloor() float64 {
+	if system.Cfg == nil || system.Cfg.Learning == nil {
+		return stepEps
+	}
+
+	floor := system.Cfg.Learning.PolicyExitMinProfitPct
+	if floor <= 0 {
+		return stepEps
+	}
+
+	return floor
+}
+
+func (stoploss *Stoploss) trailFloorMin() float64 {
+	if stoploss != nil &&
+		(stoploss.TranchesExited > 0 || stoploss.PendingTranches > 0) {
+		return 0
+	}
+
+	return exitProfitFloor()
+}
+
 type StoplossState int
 
 const (
@@ -243,7 +269,7 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 		stoploss.onArm()
 	}
 
-	// 6. RULE 1: NEVER EXIT AT A LOSS (PnLPct is fee-net; zero is break-even)
+	// 6. RULE 1: never exit below the policy profit floor (not mere break-even).
 	// Floor/exit room must not inflate on the crash tick that just entered
 	// Deltas — use priorAvgStep so a -2.45% drop cannot widen Explosive room
 	// and drop TrailingFloor to 0 before explosive_floor_break can fire.
@@ -253,9 +279,22 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 	}
 	stoploss.updateFloorAndExhaustion(stepForFloor, avgDownStep, chaosRatio, delta)
 
+	// First exit must clear the policy floor. After a tranche is banked, the
+	// runner may trail down to break-even (never a fee-net loss).
+	underFloor := stoploss.CurrentPnLPct < exitProfitFloor()
+	if underFloor &&
+		stoploss.TranchesExited == 0 &&
+		stoploss.PendingTranches == 0 {
+		stoploss.Confirms = 0
+		if stoploss.ExplosiveActive && delta < -stepEps {
+			stoploss.ExplosiveActive = false
+			stoploss.ExplosivePushes = 0
+			stoploss.PeakPushDelta = 0
+		}
+		return
+	}
 	if stoploss.CurrentPnLPct <= stepEps {
 		stoploss.Confirms = 0
-		// If an early spike faded before even reaching profit, exit burst mode
 		if stoploss.ExplosiveActive && delta < -stepEps {
 			stoploss.ExplosiveActive = false
 			stoploss.ExplosivePushes = 0
@@ -381,12 +420,14 @@ fires — the final cake slice (and any unsold earlier stages). Claims the
 remainder; CommitPending advances TranchesExited only after the fill.
 */
 func (stoploss *Stoploss) trip(reason string) {
-	if stoploss.CurrentPnLPct <= stepEps {
-		return
-	}
-	if stoploss.TranchesExited == 0 &&
-		stoploss.PendingTranches == 0 &&
-		stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
+	if stoploss.TranchesExited == 0 && stoploss.PendingTranches == 0 {
+		if stoploss.CurrentPnLPct < exitProfitFloor() {
+			return
+		}
+		if stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
+			return
+		}
+	} else if stoploss.CurrentPnLPct <= stepEps {
 		return
 	}
 	remaining := totalTranches - stoploss.TranchesExited
@@ -509,7 +550,8 @@ func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRa
 		if room < 0.20 {
 			room = 0.20
 		}
-		stoploss.TrailingFloor = math.Max(stoploss.PeakPnLPct-room, 0)
+		minFloor := stoploss.trailFloorMin()
+		stoploss.TrailingFloor = math.Max(stoploss.PeakPnLPct-room, minFloor)
 		if delta < -stepEps {
 			dropFrac := 0.0
 			if room > stepEps {
@@ -522,8 +564,9 @@ func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRa
 	case RegimeCrawl, RegimeSmooth:
 		allowedRoom := stoploss.computeBreathingRoom(avgStep, avgDownStep)
 		floor := stoploss.PeakPnLPct - allowedRoom
-		if floor < 0 {
-			floor = 0
+		minFloor := stoploss.trailFloorMin()
+		if floor < minFloor {
+			floor = minFloor
 		}
 		stoploss.TrailingFloor = floor
 		dropRatio := 0.0
@@ -541,8 +584,9 @@ func (stoploss *Stoploss) updateFloorAndExhaustion(avgStep, avgDownStep, chaosRa
 	case RegimeChaos:
 		chaosRoom := math.Max(stoploss.TypicalPullback*1.5, avgStep*2.5)
 		floor := stoploss.PeakPnLPct - chaosRoom
-		if floor < 0 {
-			floor = 0
+		minFloor := stoploss.trailFloorMin()
+		if floor < minFloor {
+			floor = minFloor
 		}
 		stoploss.TrailingFloor = floor
 		stoploss.ExhaustScore = math.Min(1.0, chaosRatio/8.0)

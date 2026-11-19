@@ -474,6 +474,8 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 	desk.updateMu.Lock()
 	defer desk.updateMu.Unlock()
 
+	touched := false
+
 	for _, trade := range trades {
 		if trade == nil {
 			continue
@@ -482,11 +484,20 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		desk.price.NoteTrade(trade)
 		symbol := trade.Symbol
 		symbol = desk.price.normalizer.Name(symbol)
+
+		// Flat symbols: NoteTrade is enough — Mark takes book locks and
+		// scheduleHello would rebuild the open universe on every L3 frame.
+		if !desk.Has(symbol) {
+			continue
+		}
+
 		mark := desk.price.Mark(symbol)
 
 		if mark == nil {
 			continue
 		}
+
+		touched = true
 
 		for _, tier := range desk.tiers {
 			if tier == nil || tier.Status() != runtime.READY {
@@ -497,7 +508,9 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 	}
 
-	desk.scheduleHello()
+	if touched {
+		desk.scheduleHello()
+	}
 }
 
 /*

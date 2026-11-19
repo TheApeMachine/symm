@@ -352,11 +352,15 @@ func TestOpenPosition(t *testing.T) {
 			So(model.openTierKey("BTC/USD"), ShouldEqual, "")
 		})
 
-		Convey("When routeTier would pick paper but nothing is open", func() {
-			So(model.routeTier(0.0), ShouldEqual, broker.TierTypePaper)
+		Convey("When routeTier picks paper for a known low-resistance path", func() {
+			So(model.routeTier(0.0, true), ShouldEqual, broker.TierTypePaper)
 			So(model.decisionTier("BTC/USD", 0.0), ShouldEqual, "paper")
 			So(desk.Position(broker.TierTypeVirtual, "BTC/USD"), ShouldBeNil)
 			So(desk.Position(broker.TierTypePaper, "BTC/USD"), ShouldBeNil)
+		})
+
+		Convey("When routeTier sees a cold explore at resistance 0", func() {
+			So(model.routeTier(0.0, false), ShouldEqual, broker.TierTypeVirtual)
 		})
 
 		Convey("When the model has no desk", func() {

@@ -114,16 +114,18 @@ func (client *WebsocketClient) Open() (err error) {
 
 	status := client.Status()
 
-	if client.pinger.Status() == runtime.WAITING {
+	// Start whenever writeMu was never wired — reconnectLoop can leave pinger
+	// in ERROR before the first Open, which used to skip Start forever.
+	if client.pinger.writeMu == nil {
 		client.pinger.Start(conn, &client.writeMu, &status)
 	} else {
 		client.writeMu.Lock()
 		client.pinger.conn = conn
 		client.writeMu.Unlock()
+		client.pinger.Transition(runtime.READY)
 	}
 
 	client.Transition(runtime.READY)
-	client.pinger.Transition(runtime.READY)
 
 	client.callbackMu.Lock()
 	hooks := append([]func() error(nil), client.callbacks...)
@@ -181,6 +183,9 @@ func (client *WebsocketClient) Read(_ ...string) (msg []byte, err error) {
 		_, message, err := conn.ReadMessage()
 
 		if err != nil {
+			// Drop the dead conn before returning — Tier.Run retries Read
+			// immediately, and gorilla panics on a second ReadMessage of a
+			// failed connection ("repeated read on failed websocket connection").
 			client.scheduleReconnect(err)
 
 			return nil, errnie.Err(
@@ -235,6 +240,10 @@ func (client *WebsocketClient) scheduleReconnect(err error) {
 		return
 	}
 
+	// Synchronously retire the failed conn so a concurrent Read cannot call
+	// ReadMessage on it again (gorilla panics). reconnectLoop only redials.
+	client.invalidateConn()
+
 	client.reconnectMu.Lock()
 
 	if client.reconnecting {
@@ -249,16 +258,11 @@ func (client *WebsocketClient) scheduleReconnect(err error) {
 	go client.reconnectLoop()
 }
 
-func (client *WebsocketClient) reconnectLoop() {
-	defer func() {
-		client.reconnectMu.Lock()
-		client.reconnecting = false
-		client.reconnectMu.Unlock()
-	}()
-
-	client.Transition(runtime.ERROR)
-	client.pinger.Transition(runtime.ERROR)
-
+/*
+invalidateConn closes and clears the live socket under writeMu so liveConn
+refuses it before reconnectLoop starts.
+*/
+func (client *WebsocketClient) invalidateConn() {
 	client.writeMu.Lock()
 
 	if client.conn != nil {
@@ -266,8 +270,29 @@ func (client *WebsocketClient) reconnectLoop() {
 		client.conn = nil
 	}
 
-	client.pinger.conn = nil
+	if client.pinger != nil {
+		client.pinger.conn = nil
+	}
+
 	client.writeMu.Unlock()
+
+	if client.Status() == runtime.READY {
+		client.Transition(runtime.ERROR)
+	}
+
+	if client.pinger != nil && client.pinger.Status() == runtime.READY {
+		client.pinger.Transition(runtime.ERROR)
+	}
+}
+
+func (client *WebsocketClient) reconnectLoop() {
+	defer func() {
+		client.reconnectMu.Lock()
+		client.reconnecting = false
+		client.reconnectMu.Unlock()
+	}()
+
+	client.invalidateConn()
 
 	backoff := time.Second
 

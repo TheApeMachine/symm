@@ -45,6 +45,16 @@ func (sequencer *Sequencer) Reset() {
 }
 
 /*
+Peek returns the live cut without appending — quiet grid ticks must not wipe
+envelope Paths to Len=0 or MinPathLength seals every idle frame.
+*/
+func (sequencer *Sequencer) Peek(brightness float64) Tokens {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
+	return sequencer.cut(brightness)
+}
+
+/*
 Step appends one path symbol into Sequitur, feeds the new tail symbol to MDL,
 and returns the current cut plus whether grammar/MDL state mutated.
 */
@@ -106,14 +116,32 @@ func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) (Toke
 /*
 cut projects grammar Tail into runtime.Tokens with brightness only on the tail
 segment — Model.Predict compares Last().Brightness against tree resistance.
+
+M-rules are expanded to terminals so the global Tree never sees per-symbol
+aliases (BTC's M1 ≠ DOGE's M1).
 */
 func (sequencer *Sequencer) cut(tailBrightness float64) Tokens {
 	segments := sequencer.grammar.Tail(system.Cfg.Learning.MaxPathLength)
+	expanded := make([]string, 0, len(segments)*2)
+
+	for _, segment := range segments {
+		terms := sequencer.grammar.TerminalsForRef(segment)
+		if len(terms) == 0 {
+			expanded = append(expanded, segment)
+			continue
+		}
+		expanded = append(expanded, terms...)
+	}
+
+	if max := system.Cfg.Learning.MaxPathLength; max > 0 && len(expanded) > max {
+		expanded = expanded[len(expanded)-max:]
+	}
+
 	tokens := NewTokens()
 
-	for i, segment := range segments {
+	for i, segment := range expanded {
 		b := 0.0
-		if i == len(segments)-1 {
+		if i == len(expanded)-1 {
 			b = tailBrightness
 		}
 

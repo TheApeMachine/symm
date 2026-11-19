@@ -17,7 +17,7 @@ func TestNewLearning(t *testing.T) {
 				So(learning.MinSurprise, ShouldEqual, 0.5)
 				So(learning.MinEnterZ, ShouldEqual, 0.35)
 				So(learning.MaxPathLength, ShouldEqual, 8)
-				So(learning.MinPathLength, ShouldEqual, 2)
+				So(learning.MinPathLength, ShouldEqual, 1)
 			})
 		})
 	})

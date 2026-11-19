@@ -200,7 +200,7 @@ func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 	if existing, loaded := cache.open.Load(symbol); loaded {
 		pos := existing.(*Position)
 
-		if pos == nil || pos.ClosedAt == nil {
+		if pos == nil || !pos.IsClosed() {
 			return true
 		}
 	}
@@ -322,7 +322,9 @@ func (cache *Cache) move(position *Position) error {
 	closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, symbol, id)
 	open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, symbol, id)
 
-	if _, err := cache.store.WriteAtPrefix(closed, body); err != nil {
+	// WriteSync before DeletePrefix — async WriteAtPrefix could lose the closed
+	// object if the process dies between enqueue and the open-key delete.
+	if _, err := cache.store.WriteSync(closed, body); err != nil {
 		return err
 	}
 

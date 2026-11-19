@@ -63,7 +63,7 @@ func TestStaticPassPeakMissing(t *testing.T) {
 
 		gate := NewGate(context.Background(), nil)
 
-		Convey("Missing peak_frac fails closed", func() {
+		Convey("Missing peak_frac does not seal the peak lamp", func() {
 			_, _, _, _, peak := gate.OracleFrom(map[string]float64{
 				"session_move": system.Cfg.Risk.MinMoverChangePct + 1,
 				"volume_usd":   system.Cfg.Risk.MinMoverVolumeUSD + 1,
@@ -72,7 +72,54 @@ func TestStaticPassPeakMissing(t *testing.T) {
 				"backing":      system.Cfg.Risk.MinBackingRatio + 0.1,
 				"peak_frac":    -1,
 			})
-			So(peak, ShouldBeFalse)
+			So(peak, ShouldBeTrue)
+		})
+
+		Convey("Unknown buy tape passes volume on 24h turnover alone", func() {
+			volume, _, _, _, _ := gate.OracleFrom(map[string]float64{
+				"volume_usd":    system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"tape_known":    0,
+				"tape_notional": 0,
+				"tape_ratio":    0,
+			})
+			So(volume, ShouldBeTrue)
+		})
+
+		Convey("Known dead buy tape still fails volume", func() {
+			volume, _, _, _, _ := gate.OracleFrom(map[string]float64{
+				"volume_usd":    system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"tape_known":    1,
+				"tape_notional": 1,
+				"tape_ratio":    0.5,
+			})
+			So(volume, ShouldBeFalse)
+		})
+	})
+}
+
+func TestOraclePassIgnoresRestoredCutWithoutLearn(t *testing.T) {
+	Convey("Setup", t, func() {
+		if system.Cfg == nil || system.Cfg.Risk == nil {
+			system.Cfg = system.NewConfig()
+		}
+
+		gate := NewGate(context.Background(), nil)
+		axis := gate.Axes["volume"]
+		axis.Cut = 0.95
+		axis.Sample = 0
+		for i := 0; i < 16; i++ {
+			_, _ = axis.track.Measure(float64(i) + 1)
+		}
+		So(axis.ready(), ShouldBeTrue)
+
+		Convey("Warm track with Sample 0 still clears on static floors", func() {
+			volume, _, _, _, _ := gate.OracleFrom(map[string]float64{
+				"volume_usd":    system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"tape_known":    0,
+				"tape_notional": 0,
+				"axis_volume":   0.1,
+			})
+			So(volume, ShouldBeTrue)
 		})
 	})
 }

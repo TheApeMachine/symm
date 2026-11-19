@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"maps"
 	"strings"
 	"time"
 
@@ -62,6 +63,92 @@ func (position *Position) SnapshotHello() *Position {
 	}
 
 	return out
+}
+
+/*
+IsClosed is true when ClosedAt is stamped — safe across Apply/Update races.
+*/
+func (position *Position) IsClosed() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	return position.ClosedAt != nil
+}
+
+/*
+ExitSellArmed is true when a sell with Volume is already on the wire.
+*/
+func (position *Position) ExitSellArmed() bool {
+	if position == nil {
+		return false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	return position.ExitOrder != nil &&
+		position.ExitOrder.ClOrdId != "" &&
+		position.ExitOrder.Volume != ""
+}
+
+/*
+ClaimsFullExit is true when the working exit flattens the remainder.
+Partial tranche claims (PendingTranches > 0, PendingExitPct < 1) must not wipe
+ExitPath / sequencer state. Policy/story exits with no pending claim sell 100%
+via exitWireQty even while StoplossArmed — those are full exits.
+*/
+func (position *Position) ClaimsFullExit() bool {
+	if position == nil {
+		return true
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.Stoploss == nil {
+		return true
+	}
+
+	if position.Stoploss.PendingExitPct >= 0.999 || position.Stoploss.Triggered() {
+		return true
+	}
+
+	// No active tranche claim → exitWireQty sells full Qty (policy flatten,
+	// dust promotion, or post-AbortPending retry of a full trip).
+	return position.Stoploss.PendingTranches == 0
+}
+
+/*
+DevelopedPeak copies PeakPnLPct under mu for deskgate.Developed.
+*/
+func (position *Position) DevelopedPeak() (peak float64, ok bool) {
+	if position == nil {
+		return 0, false
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.Stoploss == nil {
+		return 0, false
+	}
+
+	return position.Stoploss.PeakPnLPct, true
+}
+
+/*
+PnLPctCopy returns a detached PnLPct under mu.
+*/
+func (position *Position) PnLPctCopy() *decimal.Decimal {
+	if position == nil {
+		return nil
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	return cloneDecimal(position.PnLPct)
 }
 
 /*
@@ -220,8 +307,6 @@ func cloneFloatMap(values map[string]float64) map[string]float64 {
 		return nil
 	}
 	out := make(map[string]float64, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
+	maps.Copy(out, values)
 	return out
 }

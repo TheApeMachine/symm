@@ -247,6 +247,7 @@ func (scorer *featureScorer) Observe(
 	}
 
 	updated := false
+	arrived := make([]bool, len(Features))
 
 	for i, feature := range Features {
 		labels := sources[feature.Source]
@@ -261,6 +262,7 @@ func (scorer *featureScorer) Observe(
 
 		scorer.held[i] = value
 		scorer.seen[i] = true
+		arrived[i] = true
 		updated = true
 	}
 
@@ -278,7 +280,18 @@ func (scorer *featureScorer) Observe(
 	ready := false
 
 	for i, reading := range scorer.held {
-		output, err := scorer.standardizers[i].Measure(reading)
+		// Only absorb Welford updates for features that arrived this tick.
+		// Re-Measuring frozen held values collapses infrequent-signal variance
+		// and spikes surprise when they finally move.
+		var (
+			output adaptive.StandardizerOutput
+			err    error
+		)
+		if arrived[i] {
+			output, err = scorer.standardizers[i].Measure(reading)
+		} else {
+			output, err = scorer.standardizers[i].ZScore(reading)
+		}
 		if err != nil {
 			return nil, false
 		}

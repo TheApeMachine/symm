@@ -286,9 +286,10 @@ learning:
   threshold_step: 0.05
   threshold_floor: 0.05
   threshold_ceil: 0.95
-  # Sequencer cut depth: reject / ignore leaves shorter than min.
+  # Sequencer cut depth. min=1: SNM often sticks on one regime token, and
+  # lastEmitted dedupe will not grow past Len=1 — requiring 2 sealed enters.
   max_path_length: 8
-  min_path_length: 2
+  min_path_length: 1
   # Virtual → paper promotion floor on path resistance.
   paper_eligible_resistance: 0.2
   # Fee-net PnL% floor before a tree exit leaf may settle a position.

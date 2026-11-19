@@ -30,6 +30,7 @@ type Model struct {
 	tree      *atomic.Pointer[Tree]
 	board     *Board
 	deskGate  *deskgate.Gate
+	funnel    *funnel
 	resetPath func(string)
 }
 
@@ -55,6 +56,7 @@ func NewModel(
 		tree:      &atomic.Pointer[Tree]{},
 		board:     board,
 		deskGate:  deskGate,
+		funnel:    newFunnel(),
 		resetPath: resetPath,
 	}
 
@@ -93,7 +95,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	} {
 		for position := range model.desk.Pending(tier) {
 			// Settled rows train once ClosedAt exists — never on the send tick.
-			if position.ClosedAt != nil {
+			if position.IsClosed() {
 				model.creditExit(position)
 				model.desk.ClearPending(tier, position.Symbol)
 				continue
@@ -126,14 +128,15 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				continue
 			}
 
-			if cut := envelope.Paths[position.Symbol]; cut != nil {
-				position.SetExitPath(cut.String())
-			}
-
-			// Stoploss exits bypass Model.Exit — still clear open-phase tokens
-			// so the next flat cycle does not inherit R06/R07 hold/exit crumbs.
-			if model.resetPath != nil {
-				model.resetPath(position.Symbol)
+			// Partial tranche scale-outs must keep open-phase grammar; only a
+			// full remainder claim stamps ExitPath and resets the sequencer.
+			if position.ClaimsFullExit() {
+				if cut := envelope.Paths[position.Symbol]; cut != nil {
+					position.SetExitPath(cut.String())
+				}
+				if model.resetPath != nil {
+					model.resetPath(position.Symbol)
+				}
 			}
 			// Tier.Exit clears the pre-fill pending park before Send so a fast
 			// fill's ClosedAt re-queue cannot be deleted by a late ClearPending.
@@ -145,13 +148,30 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	candidates := make([]EnterCandidate, 0)
 
 	for symbol, cut := range envelope.Paths {
-		if cut == nil || cut.Len() < system.Cfg.Learning.MinPathLength {
+		if cut == nil {
 			continue
 		}
 
 		wg.Go(func() {
 			path := cut.String()
 			open := model.desk.Has(symbol)
+
+			// Sequitur/MDL collapses can shrink the root below MinPathLength.
+			// Flat symbols skip until length rebuilds; open books still need
+			// story/tree exit evaluation and Decide telemetry.
+			if cut.Len() < system.Cfg.Learning.MinPathLength {
+				if !open {
+					envelope.Decide(&runtime.Decision{
+						Symbol: symbol,
+						Action: "skip",
+						Reason: "path below min length",
+						Gate:   "tree",
+						Path:   path,
+						Tier:   model.decisionTier(symbol, 1),
+					})
+					return
+				}
+			}
 			resistance := 1.0
 
 			// Oracle and resonance gates are entry filters. An open book still
@@ -197,7 +217,13 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				surpriseFloor = learn.MinEnterZ
 			}
 
-			if rez["calibrated"] < 1 || supported < learn.MinSupportedHorizon || !hasPrecision || precision < learn.MinTaskRelativePrecision || surprise < surpriseFloor {
+			// Entry-only: open books must still evaluate tree hold/exit and
+			// story exits when surprise cools — otherwise only Stoploss can flatten.
+			if !open && (rez["calibrated"] < 1 ||
+				supported < learn.MinSupportedHorizon ||
+				!hasPrecision ||
+				precision < learn.MinTaskRelativePrecision ||
+				surprise < surpriseFloor) {
 				envelope.Decide(&runtime.Decision{
 					Symbol: symbol,
 					Action: "skip",
@@ -289,10 +315,14 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 				switch action {
 				case ActionNone:
-					if open && path != "" {
+					if path != "" {
+						action := "skip"
+						if open {
+							action = "hold"
+						}
 						envelope.Decide(&runtime.Decision{
 							Symbol: symbol,
-							Action: "hold",
+							Action: action,
 							Reason: "path resistance veto",
 							Gate:   "tree",
 							Path:   path,
@@ -417,7 +447,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	live := system.Cfg.Market.Model == "real"
 	model.board.Place(candidates, envelope, model.price, model.desk, live,
 		func(cand EnterCandidate) {
-			tier := model.routeTier(cand.Resistance)
+			tier := model.routeTier(cand.Resistance, cand.PathFound)
 
 			if !cand.PathFound {
 				model.tree.Load().Ensure(cand.Path, ActionEnter)
@@ -430,7 +460,18 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				ShortHold:  cand.ShortHold,
 			}
 
-			if model.desk.Enter(cand.Symbol, cand.Path, tier, cand.PathFound, hint) != nil {
+			if err := model.desk.Enter(
+				cand.Symbol, cand.Path, tier, cand.PathFound, hint,
+			); err != nil {
+				model.funnel.failedEnter(err)
+				cand.Decide(&runtime.Decision{
+					Symbol: cand.Symbol,
+					Action: "skip",
+					Reason: shortErr(err),
+					Gate:   "enter",
+					Path:   cand.Path,
+					Tier:   tier.String(),
+				})
 				return
 			}
 
@@ -438,11 +479,16 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				model.resetPath(cand.Symbol)
 			}
 
-			if position := model.desk.Position(tier, cand.Symbol); position != nil &&
-				model.deskGate != nil {
-				position.SetEntryDesk(model.deskGate.Features(
-					model.price, cand.Symbol, envelope.Pumpdump[cand.Symbol],
-				))
+			if position := model.desk.Position(tier, cand.Symbol); position != nil {
+				// Reuse Training's desk Features — a second Features() call would
+				// Measure entered rows twice into axis.track.
+				if metrics := envelope.Metrics(); metrics != nil {
+					if sources := metrics[cand.Symbol]; sources != nil {
+						if desk := sources["desk"]; len(desk) > 0 {
+							position.SetEntryDesk(desk)
+						}
+					}
+				}
 			}
 
 			reason := map[bool]string{true: "path matched", false: "explore"}[cand.PathFound]
@@ -460,6 +506,20 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			})
 		},
 	)
+
+	cash := math.NaN()
+	open := 0
+	if model.price != nil {
+		cash = model.price.SpendableCash()
+	}
+	if model.desk != nil {
+		open = model.desk.OpenCount(broker.TierTypeReal)
+		if !live {
+			open += model.desk.OpenCount(broker.TierTypePaper)
+			open += model.desk.OpenCount(broker.TierTypeVirtual)
+		}
+	}
+	model.funnel.observe(envelope, len(candidates), cash, open)
 
 	return envelope
 }
@@ -492,16 +552,22 @@ func (model *Model) openPosition(symbol string) *broker.Position {
 	return nil
 }
 
-func (model *Model) routeTier(resistance float64) broker.TierType {
-	tier := broker.TierTypeVirtual
-
+func (model *Model) routeTier(resistance float64, pathFound bool) broker.TierType {
 	if system.Cfg.Market.Model == "real" {
-		tier = broker.TierTypeReal
-	} else if resistance <= system.Cfg.Learning.PaperEligibleResistance {
-		tier = broker.TierTypePaper
+		return broker.TierTypeReal
 	}
 
-	return tier
+	// Cold explores report resistance=0 from Predict miss — that must not
+	// clear PaperEligibleResistance and skip Virtual on the first sighting.
+	if !pathFound {
+		return broker.TierTypeVirtual
+	}
+
+	if resistance <= system.Cfg.Learning.PaperEligibleResistance {
+		return broker.TierTypePaper
+	}
+
+	return broker.TierTypeVirtual
 }
 
 func (model *Model) decisionTier(symbol string, resistance float64) string {
@@ -509,7 +575,7 @@ func (model *Model) decisionTier(symbol string, resistance float64) string {
 		return key
 	}
 
-	return model.routeTier(resistance).String()
+	return model.routeTier(resistance, true).String()
 }
 
 /*
@@ -610,7 +676,7 @@ func (model *Model) Exit(position *broker.Position, path string) bool {
 		return false
 	}
 
-	if position.Status() == runtime.BUSY || position.ClosedAt != nil {
+	if position.Status() == runtime.BUSY || position.IsClosed() {
 		return false
 	}
 
@@ -636,10 +702,11 @@ func (model *Model) Exit(position *broker.Position, path string) bool {
 		}
 	}
 
-	position.SetExitPath(path)
-
-	if model.resetPath != nil {
-		model.resetPath(position.Symbol)
+	if position.ClaimsFullExit() {
+		position.SetExitPath(path)
+		if model.resetPath != nil {
+			model.resetPath(position.Symbol)
+		}
 	}
 
 	return true
@@ -652,7 +719,7 @@ EntryPath must Update here: Ensure alone leaves ActionEnter leaves at
 ThresholdStart forever, so virtual→paper promotion and prune never move.
 */
 func (model *Model) creditExit(position *broker.Position) {
-	if position == nil || position.ClosedAt == nil {
+	if position == nil || !position.IsClosed() {
 		return
 	}
 

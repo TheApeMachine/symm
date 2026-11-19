@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"iter"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -83,6 +84,9 @@ type Tier struct {
 	balance    *market.Balance
 	normalizer *spot.Normalizer
 	onBook     func()
+	// reserved maps symbol → fee-gross quote spend parked between Allocate and
+	// fill/reject so the next Enter cannot reuse the same stale Balance cash.
+	reserved sync.Map
 }
 
 /*
@@ -295,14 +299,34 @@ func (tier *Tier) ClearPending(symbol string) {
 	tier.pending.Delete(symbol)
 }
 
+/*
+ProfitableExit is true when fee-net mark PnL% clears PolicyExitMinProfitPct.
+Sign()>0 alone let policy/tree exits flatten at +0.01% "break-even" wins.
+*/
 func (tier *Tier) ProfitableExit(position *Position) bool {
 	if tier == nil || tier.price == nil || position == nil {
 		return false
 	}
 
-	pnl := tier.price.PnL(position)
+	pct := tier.price.PnLPct(position)
+	if pct == nil {
+		return false
+	}
 
-	return pnl != nil && pnl.Sign() > 0
+	return clearsExitProfitFloor(pct.InexactFloat64())
+}
+
+func clearsExitProfitFloor(pnlPct float64) bool {
+	floor := 0.0
+	if system.Cfg != nil && system.Cfg.Learning != nil {
+		floor = system.Cfg.Learning.PolicyExitMinProfitPct
+	}
+
+	if floor <= 0 {
+		return pnlPct > 0
+	}
+
+	return pnlPct >= floor
 }
 
 /*
@@ -346,6 +370,16 @@ func (tier *Tier) Enter(
 		)
 	}
 
+	spend := tier.enterSpend(symbol, *qty)
+	quote := ""
+	if pair := tier.price.Instrument.Pair(symbol); pair.Quote != "" {
+		quote = pair.Quote
+	}
+	if spend.Sign() > 0 && quote != "" {
+		tier.balance.Reserve(quote, spend)
+		tier.reserved.Store(symbol, spend)
+	}
+
 	position := NewPosition(
 		tier.ctx,
 		symbol,
@@ -357,6 +391,7 @@ func (tier *Tier) Enter(
 	)
 
 	if err := position.Enter(path, qty, tier.balance); err != nil {
+		tier.releaseReserved(symbol, quote)
 		return errnie.Error(err)
 	}
 
@@ -371,12 +406,74 @@ func (tier *Tier) Enter(
 
 		if !acked {
 			tier.positions.Drop(symbol)
+			tier.releaseReserved(symbol, quote)
 		}
 
 		return errnie.Error(err)
 	}
 
 	return nil
+}
+
+func (tier *Tier) enterSpend(symbol string, qty decimal.Decimal) decimal.Decimal {
+	if tier.price == nil {
+		return decimal.Zero
+	}
+
+	filled, gross := tier.price.Walk(symbol, qty, true)
+	if filled == nil || gross == nil || filled.Sign() <= 0 {
+		return decimal.Zero
+	}
+
+	fee := tier.price.Fee(symbol, gross)
+	if fee == nil {
+		return *gross
+	}
+
+	return gross.Add(*fee)
+}
+
+func (tier *Tier) releaseReserved(symbol, quote string) {
+	if v, ok := tier.reserved.LoadAndDelete(symbol); ok {
+		if spend, ok := v.(decimal.Decimal); ok && quote != "" {
+			tier.balance.Release(quote, spend)
+		}
+	}
+}
+
+/*
+syncReservedAfterBalance frees leftovers after a Balance poll. Buy fills already
+CommitSpend; this clears parks for Dropped/canceled WAITING rows and any
+symbol that somehow stayed reserved after Qty landed.
+*/
+func (tier *Tier) syncReservedAfterBalance() {
+	quote := ""
+	if system.Cfg != nil && system.Cfg.Market != nil {
+		quote = system.Cfg.Market.QuoteCurrency
+	}
+
+	tier.reserved.Range(func(key, _ any) bool {
+		symbol, _ := key.(string)
+		if symbol == "" {
+			return true
+		}
+
+		pos := tier.positions.Get(symbol)
+		if pos == nil {
+			tier.releaseReserved(symbol, quote)
+			return true
+		}
+
+		pos.mu.Lock()
+		waiting := pos.Qty == nil || pos.Qty.Sign() <= 0
+		pos.mu.Unlock()
+
+		if !waiting {
+			tier.releaseReserved(symbol, quote)
+		}
+
+		return true
+	})
 }
 
 /*
@@ -406,22 +503,17 @@ func (tier *Tier) Exit(
 	// Stoploss parks BUSY before exit() runs. Skip only when a sell with Volume
 	// is already on the wire — Enter used to pre-allocate ExitOrder{ClOrdId}
 	// with empty Volume, which deadlocked every live exit here.
-	if position.Status() == runtime.BUSY &&
-		position.ExitOrder != nil &&
-		position.ExitOrder.ClOrdId != "" &&
-		position.ExitOrder.Volume != "" {
+	if position.Status() == runtime.BUSY && position.ExitSellArmed() {
 		return nil
 	}
 
-	if !force {
-		if pnl := tier.price.PnL(position); pnl == nil || pnl.Sign() <= 0 {
-			tier.abortExit(position)
-			return errnie.Error(errnie.Err(
-				errnie.Forbidden,
-				"[broker.Tier.Exit] position is not profitable",
-				nil,
-			))
-		}
+	if !force && !tier.ProfitableExit(position) {
+		tier.abortExit(position)
+		return errnie.Error(errnie.Err(
+			errnie.Forbidden,
+			"[broker.Tier.Exit] position is not profitable",
+			nil,
+		))
 	}
 
 	// Drop the pre-fill park before Send. A fast fill stores ClosedAt back into
@@ -433,8 +525,12 @@ func (tier *Tier) Exit(
 	}
 
 	if err := tier.Send(position, "exit"); err != nil {
-		// Keep Closing unless Send itself aborted: Write may have delivered the
-		// sell. Clearing on uncertain send allows a double sell in flight.
+		// Pre-wire failures never reached Kraken — roll BUSY back or the row
+		// freezes forever (Update skips BUSY, pending was cleared). Ambiguous
+		// Write errors keep Closing so we do not double-sell.
+		if sendMissedWire(err) {
+			tier.abortExit(position)
+		}
 		return errnie.Error(err)
 	}
 
@@ -523,7 +619,21 @@ func (tier *Tier) apply(execution *market.Execution) {
 
 		position.Apply(*data)
 
-		if position.ClosedAt == nil {
+		if data.Side == "buy" {
+			quote := ""
+			if tier.price != nil && tier.price.Instrument != nil {
+				quote = tier.price.Instrument.Pair(symbol).Quote
+			}
+			// Commit into local Assets now — do not wait for Balance REST.
+			// Outages left reserved parks stuck and Cash collapsed to ~0.
+			if v, ok := tier.reserved.LoadAndDelete(symbol); ok {
+				if spend, ok := v.(decimal.Decimal); ok {
+					tier.balance.CommitSpend(quote, spend)
+				}
+			}
+		}
+
+		if !position.IsClosed() {
 			// Partial scale-out: only release BUSY once this ExitOrder is fully
 			// filled. Mid-order partials must keep ExitOrder armed or the next
 			// tick re-fires a second market sell against the working remainder.
@@ -699,6 +809,23 @@ func (tier *Tier) Send(position *Position, action string) error {
 }
 
 /*
+sendMissedWire is true when the order never left the process — safe to roll
+BUSY back. Ambiguous Write failures after a possible deliver stay Closing.
+*/
+func sendMissedWire(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+	return strings.Contains(msg, "cooling down") ||
+		strings.Contains(msg, "not ready for write") ||
+		strings.Contains(msg, "order is incomplete") ||
+		strings.Contains(msg, "failed to marshal") ||
+		strings.Contains(msg, "private REST")
+}
+
+/*
 ackOrder records venue order_id on the position from the add_order cl_ord_id.
 */
 func (tier *Tier) ackOrder(order *kraken.Order) {
@@ -816,7 +943,13 @@ func (tier *Tier) rejectOrder(order *kraken.Order) {
 		}
 
 		if len(waiting) == 1 {
-			tier.positions.Drop(waiting[0].Symbol)
+			sym := waiting[0].Symbol
+			quote := ""
+			if tier.price != nil && tier.price.Instrument != nil {
+				quote = tier.price.Instrument.Pair(sym).Quote
+			}
+			tier.positions.Drop(sym)
+			tier.releaseReserved(sym, quote)
 		}
 
 		return
@@ -840,7 +973,12 @@ func (tier *Tier) rejectOrder(order *kraken.Order) {
 		}
 
 		if isEntry && !hasQty {
+			quote := ""
+			if tier.price != nil && tier.price.Instrument != nil {
+				quote = tier.price.Instrument.Pair(symbol).Quote
+			}
 			tier.positions.Drop(symbol)
+			tier.releaseReserved(symbol, quote)
 			return
 		}
 	}
@@ -892,6 +1030,8 @@ func (tier *Tier) ingest(frame market.MarketType) {
 		if tier.price != nil && tier.price.balance != nil {
 			typed.ToMarket(tier.price.balance)
 		}
+
+		tier.syncReservedAfterBalance()
 
 		if tier.onBook != nil {
 			tier.onBook()

@@ -232,10 +232,14 @@ func (board *Board) Place(
 
 	if live && desk != nil && sel.MaxOpenPositions > 0 {
 		open := desk.OpenCount(broker.TierTypeReal)
-		slots := sel.MaxOpenPositions - open
 		extra := sel.ReserveExtraSlots
+		// Absolute ceiling — never reopen ShortHold past Max+Reserve once open
+		// already sits at or above Max (clamping slots to 0 first reset the
+		// reserve budget to `extra` every tick).
+		reserveSlots := sel.MaxOpenPositions + extra - open
+		workingSlots := sel.MaxOpenPositions - open
 
-		if slots <= 0 && extra <= 0 {
+		if reserveSlots <= 0 {
 			for _, cand := range candidates {
 				if cand.Decide == nil {
 					continue
@@ -254,15 +258,14 @@ func (board *Board) Place(
 			return
 		}
 
-		if slots < 0 {
-			slots = 0
+		if workingSlots < 0 {
+			workingSlots = 0
 		}
 
-		if slots < allowed {
-			allowed = slots
+		if workingSlots < allowed {
+			allowed = workingSlots
 		}
 
-		reserveSlots := slots + extra
 		if reserveSlots < reserveAllowed {
 			reserveAllowed = reserveSlots
 		}

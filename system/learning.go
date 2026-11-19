@@ -39,7 +39,7 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.threshold_floor", 0.05)
 	viper.SetDefault("learning.threshold_ceil", 0.95)
 	viper.SetDefault("learning.max_path_length", 8)
-	viper.SetDefault("learning.min_path_length", 2)
+	viper.SetDefault("learning.min_path_length", 1)
 	viper.SetDefault("learning.policy_exit_min_profit_pct", 0.5)
 	viper.SetDefault("learning.resistance_hold_half_life_sec", 14400)
 	viper.SetDefault("learning.resistance_pnl_ref_pct", 1.0)

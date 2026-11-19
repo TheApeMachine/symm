@@ -98,6 +98,8 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			volumeOK, dayOK, spreadOK, bookOK, peakOK :=
 				training.deskGate.OracleFrom(deskFeatures)
 
+			peakKnown := deskFeatures != nil && deskFeatures["peak_frac"] >= 0
+
 			regions, err := training.grid.Observe(
 				symbol,
 				sources,
@@ -107,6 +109,7 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				spreadOK,
 				bookOK,
 				peakOK,
+				peakKnown,
 			)
 
 			if err != nil {
@@ -178,9 +181,13 @@ func (training *Training) ResetSequencer(symbol string) {
 
 /*
 stepCut feeds Sequencer.Step from the phase net (detector + support − opposition).
-Opposition keys R02/R05/R08 are not path tokens; when they dominate, the cut is empty.
+Opposition keys R02/R05/R08 are not path tokens. When they dominate (or action is
+dark), Peek the live cut at brightness 0 — returning an empty Tokens wiped Len
+and made MinPathLength seal every quiet tick after a single regime append.
 */
 func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
+	seq := training.Sequencer(symbol)
+
 	var detector, support, opposition *runtime.Region
 
 	for _, region := range regions {
@@ -207,7 +214,7 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 	}
 
 	if bright(detector)+bright(support)-bright(opposition) <= 0 {
-		cut := runtime.Tokens{}
+		cut := seq.Peek(0)
 		return &cut
 	}
 
@@ -218,11 +225,10 @@ func (training *Training) stepCut(symbol string, regions []*runtime.Region) *run
 	}
 
 	if action == nil || action.Brightness <= 0 {
-		cut := runtime.Tokens{}
+		cut := seq.Peek(0)
 		return &cut
 	}
 
-	seq := training.Sequencer(symbol)
 	cut, mutated := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
 
 	if mutated {

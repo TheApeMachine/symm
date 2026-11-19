@@ -792,15 +792,16 @@ func TestAllocate(t *testing.T) {
 			So(qty, ShouldBeNil)
 		})
 
-		Convey("When touch size is below QtyMin but the minimum fits budget", func() {
-			// touch/3 = 10; lift to QtyMin=15 (15*101 fits 20% of 10k).
+		Convey("When touch size is below QtyMin", func() {
+			// touch/3 = 10 < QtyMin=15 — reject rather than lift past the cap.
 			min := decimal.RequireFromString("15")
 			pair := price.Instrument.Pair(testSymbol)
 			pair.QtyMin = &min
 			price.Instrument.cache.Store(testSymbol, pair)
 			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
-			So(err, ShouldBeNil)
-			So(qty.String(), ShouldEqual, "15")
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+			So(err.Error(), ShouldContainSubstring, "touch slice below venue minimum")
 		})
 
 		Convey("When QtyMin clears but CostMin needs a larger size", func() {
@@ -820,8 +821,9 @@ func TestAllocate(t *testing.T) {
 			So(gross.Cmp(costMin), ShouldBeGreaterThanOrEqualTo, 0)
 		})
 
-		Convey("When CostMin spans a steep ask book", func() {
-			// Level1 1@$1, Level2 10@$100; CostMin=$10, budget covers ~1.09 units.
+		Convey("When touch slice cannot clear CostMin without lifting past the cap", func() {
+			// Top ask qty=1 → touch/3 < QtyMin=1; must reject instead of walking
+			// deeper ask levels to manufacture a venue-legal size.
 			qtyMin := decimal.RequireFromString("1")
 			costMin := decimal.RequireFromString("10")
 			pair := price.Instrument.Pair(testSymbol)
@@ -857,12 +859,8 @@ func TestAllocate(t *testing.T) {
 			})
 
 			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
-			So(err, ShouldBeNil)
-			So(qty, ShouldNotBeNil)
-			_, gross := price.Walk(testSymbol, *qty, true)
-			So(gross, ShouldNotBeNil)
-			So(gross.Cmp(costMin), ShouldBeGreaterThanOrEqualTo, 0)
-			So(qty.Cmp(decimal.RequireFromString("2")), ShouldBeLessThan, 0)
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
 		})
 
 		Convey("When touch divisor is invalid", func() {

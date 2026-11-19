@@ -113,7 +113,7 @@ func TestNewTree(t *testing.T) {
 func TestPredict(t *testing.T) {
 	Convey("Setup", t, withTree(func(tree *Tree) {
 		Convey("When the cut is shorter than min path length", func() {
-			predicted, strength, matched := tree.Predict(tokensAt("R06.R00", 1.0))
+			predicted, strength, matched := tree.Predict(runtime.NewTokens())
 
 			Convey("Predict returns ActionNone without a match", func() {
 				So(matched, ShouldBeFalse)
@@ -234,7 +234,7 @@ func TestUpdate(t *testing.T) {
 		Convey("When the path is shorter than min path length", func() {
 			tree := emptyTree()
 			put(tree, path, leaf(ActionEnter, start))
-			tree.Update("R06.R00", -0.05)
+			tree.Update("", -0.05)
 
 			decision, ok := get(tree, path)
 

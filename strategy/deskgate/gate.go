@@ -109,15 +109,32 @@ func (gate *Gate) Features(
 	}
 
 	now := time.Now()
+	recent, prior := price.TapeUptake(symbol, now)
+	spread := gate.spreadPct(price, symbol)
+	peakFrac := gate.peakFrac(price, symbol)
+	peakRoom := 0.0
+	if peakFrac >= 0 {
+		peakRoom = 1 - peakFrac
+	}
+	tapeKnown := 0.0
+	if recent > 0 || prior > 0 {
+		tapeKnown = 1
+	}
+
 	out := map[string]float64{
-		"tape_recent":  gate.tapeRecent(price, symbol, now),
-		"tape_ratio":   gate.tapeRatio(price, symbol, now),
-		"session_move": math.Max(price.ChangePct(symbol), 0),
-		"impulse":      gate.impulseLevel(pump),
-		"spread_pct":   gate.spreadPct(price, symbol),
+		"tape_recent":   gate.tapeRecent(price, symbol, now),
+		"tape_ratio":    gate.tapeRatio(price, symbol, now),
+		"tape_notional": math.Max(recent, 0),
+		"tape_known":    tapeKnown,
+		"session_move":  math.Max(price.ChangePct(symbol), 0),
+		"impulse":       gate.impulseLevel(pump),
+		"spread_pct":    spread,
+		// Polarity-correct approve metrics for Catalog pinMove (rising = good).
+		"spread_tight": -spread,
 		"touch_cash":   gate.touchCash(price, symbol),
 		"backing":      gate.backingRatio(price, symbol),
-		"peak_frac":    gate.peakFrac(price, symbol),
+		"peak_frac":    peakFrac,
+		"peak_room":    peakRoom,
 		"volume_usd":   gate.volumeUSD(price, symbol),
 		"open_drag":    gate.openDrag(price, symbol),
 	}
@@ -237,12 +254,18 @@ func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
 
 	// Risk floors never drop out — a 3-sample Standardizer must not replace
 	// MinMoverVolumeUSD / MaxEntrySpreadPct / … with cuts fit only on entered
-	// trades. Cold track: static only. Warm track: static AND learned cut.
+	// trades. Cold track: static only. Learned cut only after Learn evidence
+	// (Sample>0); restored Cuts ANDed with warm tracks sealed every desk.
 	if !gate.staticPass(name, feat) {
 		return false
 	}
 
-	if !axis.ready() {
+	if !axis.ready() || axis.Sample <= 0 {
+		return true
+	}
+
+	// Missing ticker: zero axis_peak must not veto once the track is warm.
+	if name == "peak" && feat["peak_frac"] < 0 {
 		return true
 	}
 
@@ -266,7 +289,30 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 
 	switch name {
 	case "volume":
-		return feat["volume_usd"] >= risk.MinMoverVolumeUSD
+		if feat["volume_usd"] < risk.MinMoverVolumeUSD {
+			return false
+		}
+		// No buy-tape lane yet: 24h volume alone. Dead recent tape (known
+		// lane with notional under the floor) still fails closed.
+		if feat["tape_known"] < 1 {
+			return true
+		}
+		if risk.MinTapeNotionalUSD > 0 &&
+			feat["tape_notional"] < risk.MinTapeNotionalUSD {
+			return false
+		}
+		if risk.MinTapeAccelRatio > 0 {
+			ratio := feat["tape_ratio"]
+			if ratio > 0 && ratio < risk.MinTapeAccelRatio {
+				return false
+			}
+			// Nascent tape (no prior window): absolute floor is enough —
+			// requiring MinTape×Accel sealed first prints on a quiet prior.
+			if ratio <= 0 {
+				return true
+			}
+		}
+		return true
 	case "day":
 		return feat["session_move"] >= risk.MinMoverChangePct
 	case "spread":
@@ -282,11 +328,10 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 			feat["backing"] < risk.MinBackingRatio {
 			return false
 		}
-		// open_drag == -1 means OpenDragPct failed — never treat as free pass.
-		if feat["open_drag"] < 0 {
-			return false
-		}
-		if risk.MaxEntryOpenDragPct > 0 && feat["open_drag"] > risk.MaxEntryOpenDragPct {
+		// open_drag < 0 means OpenDragPct failed (book/fee gap) — skip the
+		// drag cap rather than hard-veto; known-too-high still fails.
+		if feat["open_drag"] >= 0 && risk.MaxEntryOpenDragPct > 0 &&
+			feat["open_drag"] > risk.MaxEntryOpenDragPct {
 			return false
 		}
 		return true
@@ -296,9 +341,10 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 		}
 
 		frac := feat["peak_frac"]
-		// Missing ticker peak must fail closed — matches Price.EntryPeakOK.
+		// Unknown peak (Ticker REST gap): do not static-fail — Grid skips the
+		// forced peak desk lamp when peak_frac < 0. Known-too-high still fails.
 		if frac < 0 {
-			return false
+			return true
 		}
 
 		return frac < risk.MaxEntryPeakFrac
@@ -402,12 +448,12 @@ func (gate *Gate) Developed(position *broker.Position) bool {
 	}
 
 	arm := system.Cfg.Risk.StoplossArmPnLPct
-	if position.Stoploss != nil && position.Stoploss.PeakPnLPct >= arm {
+	if peak, ok := position.DevelopedPeak(); ok && peak >= arm {
 		return true
 	}
 
-	if position.PnLPct != nil {
-		return position.PnLPct.InexactFloat64() >= system.Cfg.Learning.PolicyExitMinProfitPct
+	if pct := position.PnLPctCopy(); pct != nil {
+		return pct.InexactFloat64() >= system.Cfg.Learning.PolicyExitMinProfitPct
 	}
 
 	return false
@@ -456,6 +502,11 @@ func (gate *Gate) restore() {
 				if axis == nil {
 					continue
 				}
+				// Re-center Cut and clear Sample — a prior-session ratchet
+				// ANDed with warm tracks sealed volume/day/… on every symbol.
+				axis.Cut = cutNeutral
+				axis.Sample = 0
+				axis.track = nil
 				gate.Axes[name] = axis
 			}
 			gate.bindTracks()

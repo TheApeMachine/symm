@@ -90,6 +90,19 @@ func TestStep(t *testing.T) {
 				So(mutated, ShouldBeTrue)
 			})
 		})
+
+		Convey("When a digram collapses into an M-rule", func() {
+			_, _ = seq.Step("R01", 0.5)
+			_, _ = seq.Step("R02", 0.5)
+			_, _ = seq.Step("R01", 0.5)
+			cut, _ := seq.Step("R02", 0.6)
+
+			Convey("Cut expands M1 to terminals for the global Tree", func() {
+				So(cut.String(), ShouldNotContainSubstring, "M1")
+				So(cut.String(), ShouldContainSubstring, "R01")
+				So(cut.String(), ShouldContainSubstring, "R02")
+			})
+		})
 	})
 }
 

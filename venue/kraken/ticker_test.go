@@ -50,12 +50,11 @@ func TestParseTicker(t *testing.T) {
 		Convey("When the venue returns EService:Unavailable", func() {
 			ticker := NewTicker()
 			err := ticker.UnmarshalJSON([]byte(`{"error":["EService:Unavailable"],"result":{}}`))
-			rows := ticker.Result
 
 			Convey("ParseTicker rejects the frame", func() {
-				So(rows, ShouldBeNil)
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "EService:Unavailable")
+				So(len(ticker.Result), ShouldEqual, 0)
 			})
 		})
 	})

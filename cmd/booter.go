@@ -223,6 +223,16 @@ func (booter *Booter) shutdown() error {
 		errs = errors.Join(errs, err)
 	}
 
+	// Stop the Disruptor before Flush/store.Close so Training/Model/TickPersist
+	// cannot mutate sequencers or enqueue after the store is closed.
+	if booter.workspace != nil {
+		if err := booter.workspace.Close(); err != nil {
+			errs = errors.Join(errs, errnie.Error(errnie.Err(
+				errnie.IO, "[booter] workspace close failed", err,
+			)))
+		}
+	}
+
 	if booter.desk != nil {
 		if err := booter.desk.Flush(); err != nil {
 			errs = errors.Join(errs, errnie.Error(errnie.Err(
@@ -251,14 +261,6 @@ func (booter *Booter) shutdown() error {
 		errs = errors.Join(errs, errnie.Error(errnie.Err(
 			errnie.IO, "[booter] hub close failed", err,
 		)))
-	}
-
-	if booter.workspace != nil {
-		if err := booter.workspace.Close(); err != nil {
-			errs = errors.Join(errs, errnie.Error(errnie.Err(
-				errnie.IO, "[booter] workspace close failed", err,
-			)))
-		}
 	}
 
 	if errs != nil {

@@ -298,6 +298,22 @@ func TestTierExit(t *testing.T) {
 			})
 		})
 
+		Convey("When Exit is only a tiny win below PolicyExitMinProfitPct", func() {
+			prev := system.Cfg.Learning.PolicyExitMinProfitPct
+			system.Cfg.Learning.PolicyExitMinProfitPct = 5.0
+			defer func() { system.Cfg.Learning.PolicyExitMinProfitPct = prev }()
+
+			setBook(tier.price, "101", "102", "30")
+			tier.Update(testSymbol, dec("101"))
+			err := tier.Exit(pos, false)
+
+			Convey("It aborts break-even-ish flats", func() {
+				So(errnie.IsForbidden(err), ShouldBeTrue)
+				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(tier.ProfitableExit(pos), ShouldBeFalse)
+			})
+		})
+
 		Convey("When Exit hits a book that cannot absorb Qty", func() {
 			setBook(tier.price, "120", "121", "30")
 			tier.Update(testSymbol, dec("120"))

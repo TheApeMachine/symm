@@ -446,7 +446,9 @@ func (instrument *Instrument) resubscribe(
 	}
 
 	if err := instrument.openBooks(read, remaining); err != nil {
-		syms := append([]string(nil), failed...)
+		// Retry only what still needs a socket — not symbols attachBooks already
+		// packed onto live connections.
+		syms := append([]string(nil), remaining...)
 		go func() {
 			time.Sleep(time.Second)
 			instrument.RecoverBooks(read, syms, stale)
@@ -671,11 +673,11 @@ func (instrument *Instrument) openBooks(
 	symbols []string,
 ) error {
 	if read == nil {
-		return instrument.Error(errnie.Err(
+		return errnie.Err(
 			errnie.Validation,
 			"[instrument] level3 reader is required before subscribe",
 			nil,
-		))
+		)
 	}
 
 	if len(symbols) == 0 {
@@ -685,11 +687,13 @@ func (instrument *Instrument) openBooks(
 	token, err := instrument.auth.Token(instrument.Context())
 
 	if err != nil {
-		return instrument.Error(errnie.Err(
+		// Do not System.Error — that permanently fails Status()!=READY and
+		// blocks every later recovery after a transient token cooldown.
+		return errnie.Err(
 			errnie.Forbidden,
 			"[instrument] level3 auth token unavailable",
 			err,
-		))
+		)
 	}
 
 	depth := system.Cfg.Market.Level3.Depth
@@ -711,18 +715,18 @@ func (instrument *Instrument) openBooks(
 		l3Client := network.NewWebsocketClient(instrument.System.Context(), instrument.level3URL)
 
 		if err := l3Client.Open(); err != nil {
-			return instrument.Error(errnie.Err(
+			return errnie.Err(
 				errnie.IO,
 				"[instrument] level3 open failed for "+batchKey,
 				err,
-			))
+			)
 		}
 
 		instrument.Level3.Store(batchKey, l3Client)
 		read(l3Client)
 
 		if err := instrument.writeLevel3(l3Client, connSymbols, token, depth, frame); err != nil {
-			return instrument.Error(err)
+			return errnie.Error(err)
 		}
 
 		// After the first subscribe: Open's reconnect path re-runs SetCallback.

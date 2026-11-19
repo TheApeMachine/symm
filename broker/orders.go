@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"maps"
 	"slices"
 	"time"
 
@@ -62,9 +63,7 @@ func (orders *Orders) Fetch(ids []string) map[string]kraken.HistoryOrder {
 			return out
 		}
 
-		for id, order := range batch {
-			out[id] = order
-		}
+		maps.Copy(out, batch)
 	}
 
 	return out
@@ -78,9 +77,9 @@ func openTm(order kraken.HistoryOrder) time.Time {
 		return time.Time{}
 	}
 
-	sec, _ := order.OpenTm.Float64()
-	whole := int64(sec)
-	frac := decimal.NewFromFloat(sec).Sub(decimal.NewFromInt(whole))
+	// Stay in decimal — float64 loses sub-ms at ~1.7e9 epoch scale.
+	whole := order.OpenTm.IntPart()
+	frac := order.OpenTm.Sub(decimal.NewFromInt(whole))
 	nsec := frac.Mul(decimal.NewFromInt(1e9)).IntPart()
 
 	return time.Unix(whole, nsec).UTC()

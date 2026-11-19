@@ -742,6 +742,24 @@ func (price *Price) markPnLLocked(
 }
 
 /*
+SpendableCash is quote free cash after in-flight Enter reservations — the same
+number Allocate budgets against. NaN when the wallet is unwired.
+*/
+func (price *Price) SpendableCash() float64 {
+	if price == nil || price.balance == nil ||
+		system.Cfg == nil || system.Cfg.Market == nil {
+		return math.NaN()
+	}
+
+	raw := price.balance.Cash(system.Cfg.Market.QuoteCurrency)
+	if raw == nil {
+		return math.NaN()
+	}
+
+	return raw.InexactFloat64()
+}
+
+/*
 Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
 
 All free cash is allocatable — nothing is parked idle. ShortHold (favored,
@@ -751,7 +769,9 @@ lock a slice that ShortHold cannot spend. Exits return cash to the wallet and
 the next Allocate sees it — no rebalancing ledger.
 
 Budget = lane × MaxFraction × conviction. Size starts at touch ask /
-TouchDivisor and lifts to QtyMin/CostMin when spend fits.
+TouchDivisor. If that slice is below QtyMin/CostMin, reject — never lift
+past the touch cap (that would walk the ask book as the market event
+touch_divisor exists to prevent).
 */
 func (price *Price) Allocate(
 	symbol string, wallet *market.Balance, hint SizeHint,
@@ -868,8 +888,13 @@ func (price *Price) Allocate(
 			return nil, err
 		}
 
+		// Below instrument minimum → no entry (config: touch slice or nothing).
 		if sized.Cmp(*minQty) < 0 {
-			sized = minQty
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "touch slice below venue minimum")
 		}
 	}
 
@@ -902,9 +927,11 @@ func (price *Price) Allocate(
 				return filled, nil
 			}
 
-			// Touch/trim undershot venue mins but still had budget headroom —
-			// lift to QtyMin/CostMin when that spend still fits MaxFraction.
-			return price.allocateVenueMin(symbol, pair, budget)
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "touch slice below venue minimum")
 		}
 
 		avg := gross.Div(*filled)
@@ -1187,58 +1214,6 @@ func (price *Price) venueMinQty(
 	}
 
 	return formatted, nil
-}
-
-/*
-allocateVenueMin walks the QtyMin/CostMin size and accepts it only when fee-gross
-spend still fits the MaxFraction cash budget.
-*/
-func (price *Price) allocateVenueMin(
-	symbol string, pair kraken.InstrumentPair, budget decimal.Decimal,
-) (*decimal.Decimal, error) {
-	minQty, err := price.venueMinQty(symbol, pair)
-
-	if err != nil {
-		return nil, err
-	}
-
-	filled, gross := price.Walk(symbol, *minQty, true)
-
-	if filled == nil || gross == nil || filled.Sign() <= 0 {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[price] allocate failed",
-			nil,
-		).With("symbol", symbol, "why", "ask walk produced zero size")
-	}
-
-	if filled.Cmp(*pair.QtyMin) < 0 || gross.Cmp(*pair.CostMin) < 0 {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[price] allocate failed",
-			nil,
-		).With("symbol", symbol, "why", "size below venue minimum")
-	}
-
-	fee := price.Fee(symbol, gross)
-
-	if fee == nil {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[price] allocate failed",
-			nil,
-		).With("symbol", symbol, "why", "fee unknown")
-	}
-
-	if gross.Add(*fee).Cmp(budget) > 0 {
-		return nil, errnie.Err(
-			errnie.UnprocessableContent,
-			"[price] allocate failed",
-			nil,
-		).With("symbol", symbol, "why", "venue minimum exceeds risk budget")
-	}
-
-	return filled, nil
 }
 
 func (price *Price) loadFees() bool {
