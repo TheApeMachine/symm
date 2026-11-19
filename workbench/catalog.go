@@ -112,7 +112,7 @@ func positionProjections() []string {
 		"timestamp",
 		"json_extract_string(position, '$.id') AS id",
 		"json_extract_string(position, '$.symbol') AS symbol",
-		"json_extract_string(position, '$.book') AS book",
+		"coalesce(json_extract_string(position, '$.book'), json_extract_string(position, '$.tier_key')) AS book",
 		"json_extract_string(position, '$.entry_path') AS entry_path",
 		"json_extract_string(position, '$.exit_path') AS exit_path",
 		"json_extract_string(position, '$.exit_trigger') AS exit_trigger",

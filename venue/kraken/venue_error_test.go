@@ -1,15 +1,12 @@
 package kraken
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-type errRateLimit struct{}
-
-func (errRateLimit) Error() string { return "EAPI:Rate limit exceeded" }
 
 func TestVenueErrors(t *testing.T) {
 	Convey("Setup", t, func() {
@@ -50,7 +47,7 @@ func TestRateLimited(t *testing.T) {
 		})
 
 		Convey("When a Go error carries the rate limit text", func() {
-			limited := RateLimited(errRateLimit{})
+			limited := RateLimited(errors.New("EAPI:Rate limit exceeded"))
 
 			Convey("RateLimited is true", func() {
 				So(limited, ShouldBeTrue)

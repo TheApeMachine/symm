@@ -196,7 +196,7 @@ func TestTierUpdate(t *testing.T) {
 func TestTierEnter(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
 		Convey("When Enter opens a new position", func() {
-			err := tier.Enter(testSymbol, "R00/M1", true)
+			err := tier.Enter(testSymbol, "R00/M1", true, SizeHint{})
 
 			Convey("Orders arm and cache holds the symbol", func() {
 				So(err, ShouldBeNil)
@@ -209,8 +209,8 @@ func TestTierEnter(t *testing.T) {
 		})
 
 		Convey("When Enter hits an existing symbol", func() {
-			So(tier.Enter(testSymbol, "R00/M1", true), ShouldBeNil)
-			err := tier.Enter(testSymbol, "R00/M2", true)
+			So(tier.Enter(testSymbol, "R00/M1", true, SizeHint{}), ShouldBeNil)
+			err := tier.Enter(testSymbol, "R00/M2", true, SizeHint{})
 
 			Convey("It returns too-many-requests", func() {
 				So(err, ShouldNotBeNil)
@@ -223,15 +223,40 @@ func TestTierEnter(t *testing.T) {
 				"quote":  "USD",
 				"assets": []*market.Asset{},
 			})
-			err := tier.Enter(testSymbol, "R00/M1", true)
+			err := tier.Enter(testSymbol, "R00/M1", true, SizeHint{})
 
 			Convey("It returns the allocate failure", func() {
 				So(err, ShouldNotBeNil)
 				So(err.Error(), ShouldContainSubstring, "[price] allocate failed")
 			})
 		})
+
+		Convey("When Enter Send fails before venue ack", func() {
+			tier.private = &failWriteClient{}
+			err := tier.Enter(testSymbol, "R00/M1", true, SizeHint{})
+
+			Convey("Ghost WAITING row is Dropped so the symbol can re-enter", func() {
+				So(err, ShouldNotBeNil)
+				So(tier.positions.Has(testSymbol), ShouldBeFalse)
+			})
+		})
 	}))
 }
+
+type failWriteClient struct{}
+
+func (c *failWriteClient) Read(...string) ([]byte, error) { return nil, nil }
+func (c *failWriteClient) Write([]byte) error {
+	return errnie.Error(errnie.Err(
+		errnie.IO,
+		"[test] write not ready",
+		nil,
+	))
+}
+func (c *failWriteClient) Post(string, any) ([]byte, error) {
+	return []byte(`{"error":[],"result":{"trades":{}}}`), nil
+}
+func (c *failWriteClient) Watch(string, any, json.Unmarshaler, func()) {}
 
 func TestTierExit(t *testing.T) {
 	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
@@ -513,6 +538,38 @@ func TestTierSettle(t *testing.T) {
 					So(p.ID, ShouldEqual, pos.ID)
 				}
 				So(n, ShouldEqual, 1)
+			})
+		})
+	}))
+}
+
+func TestTierAbortExit(t *testing.T) {
+	Convey("Setup", t, withTier(t.Context(), TierTypePaper, func(tier *Tier) {
+		pos := NewPosition(tier.ctx, testSymbol, "paper", "path", tier.price, nil, nil)
+		pos.Apply(market.ExecutionData{
+			ExecID: "b1", Side: "buy",
+			LastQty: dec("1"), LastPrice: dec("100"),
+			Timestamp: time.Unix(1, 0).UTC(),
+		})
+		pos.Transition(runtime.READY)
+		pos.Stoploss = NewStoploss(2.0)
+		pos.Stoploss.State = StoplossArmed
+		pos.Stoploss.BasisQty = 1
+		pos.Stoploss.trip("trail_confirm")
+		pos.Transition(runtime.BUSY)
+		tier.positions.Add(testSymbol, pos, true)
+		tier.settle(pos)
+
+		Convey("When a tripped exit is vetoed", func() {
+			tier.abortExit(pos)
+
+			Convey("Triggered claim rolls back so WantsExit does not re-fire", func() {
+				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(pos.Stoploss.Triggered(), ShouldBeFalse)
+				So(pos.Stoploss.WantsExit(), ShouldBeFalse)
+				So(pos.Stoploss.PendingTranches, ShouldEqual, 0)
+				So(pos.Stoploss.TranchesExited, ShouldEqual, 0)
+				So(pos.Stoploss.State, ShouldEqual, StoplossHealthy)
 			})
 		})
 	}))
@@ -831,7 +888,7 @@ func BenchmarkTierEnter(b *testing.B) {
 
 	for b.Loop() {
 		withTier(ctx, TierTypePaper, func(tier *Tier) {
-			_ = tier.Enter(testSymbol, "R00/M1", true)
+			_ = tier.Enter(testSymbol, "R00/M1", true, SizeHint{})
 		})()
 	}
 }

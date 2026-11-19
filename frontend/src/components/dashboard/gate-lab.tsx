@@ -9,7 +9,6 @@ import {
 	setResonanceField,
 	setRiskField,
 	toggleGateLab,
-	toggleResonanceBypass,
 } from "#/collections/gate-lab";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
@@ -24,6 +23,24 @@ const RISK_FIELDS: Array<{
 	step: string;
 	hint: string;
 }> = [
+	{
+		key: "max_fraction",
+		label: "frac",
+		step: "0.01",
+		hint: "Max fraction of the working/reserve cash lane one enter may spend.",
+	},
+	{
+		key: "touch_divisor",
+		label: "touch÷",
+		step: "0.5",
+		hint: "Entry size starts at top-of-book ask ÷ this divisor.",
+	},
+	{
+		key: "reserve_fraction",
+		label: "rsv",
+		step: "0.05",
+		hint: "Fraction of quote cash reserved for short-hold (fast) enters — not spent by normal books.",
+	},
 	{
 		key: "min_mover_volume_usd",
 		label: "vol$",
@@ -75,7 +92,7 @@ const RISK_FIELDS: Array<{
 ];
 
 const RESONANCE_FIELDS: Array<{
-	key: Exclude<keyof ResonanceDraft, "bypass">;
+	key: keyof ResonanceDraft;
 	label: string;
 	step: string;
 	hint: string;
@@ -102,7 +119,7 @@ const RESONANCE_FIELDS: Array<{
 		key: "min_enter_z",
 		label: "enterZ",
 		step: "0.05",
-		hint: "Minimum forward-story enter/hold net (z). Below this → story skip. Bypass forces bullish.",
+		hint: "Minimum surprise_regime_z for enter. Preferred over raw surprise once resonance is warm.",
 	},
 ];
 
@@ -199,7 +216,7 @@ export const GateLab = () => {
 						>
 							Apply risk
 						</Button>
-						<Hint text="Push risk floors into the live desk (WS risk). Max ceilings at 0 = unlimited. Oracle force lamps are local-only — use rez:bypass to skip the board." />
+						<Hint text="Push risk floors into the live desk (WS risk). Max ceilings at 0 = unlimited. Oracle force lamps are local-only." />
 					</span>
 					<span className="group relative inline-flex">
 						<Button
@@ -211,7 +228,7 @@ export const GateLab = () => {
 						>
 							Apply rez
 						</Button>
-						<Hint text="Push resonance gate floors / bypass into the live model (WS resonance)." />
+						<Hint text="Push resonance gate floors into the live model (WS resonance). Resonance is never bypassed." />
 					</span>
 				</Flex.Row>
 			</Flex.Row>
@@ -282,29 +299,6 @@ export const GateLab = () => {
 			</Flex.Row>
 
 			<Flex.Row gap={2} wrap="wrap" align="end" className="min-w-0">
-				<span className="group relative inline-flex">
-					<Button
-						variant="bare"
-						size="xxs"
-						onClick={() => {
-							toggleResonanceBypass();
-							applyResonance({
-								...gateLabStore.state.resonance,
-								bypass: !resonance.bypass,
-							});
-						}}
-						data-gate-lab-rez-bypass={resonance.bypass ? "on" : "off"}
-						className={cn(
-							"rounded-xs border px-1.5 py-px font-mono text-[8.5px] uppercase",
-							resonance.bypass
-								? "border-(--up)/50 text-(--up)"
-								: "border-(--line) text-(--f3)",
-						)}
-					>
-						rez:{resonance.bypass ? "bypass" : "gate"}
-					</Button>
-					<Hint text="Bypass auto-applies: skips missing readings, story floors, and the region oracle gate (volume / day / spread / book / peak). Cold explores still need a full-length path." />
-				</span>
 				{RESONANCE_FIELDS.map((field) => {
 					const inputId = `gate-lab-rez-${field.key}`;
 

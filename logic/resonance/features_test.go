@@ -47,9 +47,12 @@ func TestForwardStoryNets(t *testing.T) {
 
 			Convey("Story nets match the folded weights", func() {
 				So(ok, ShouldBeTrue)
+				// story enter 0.9 + peak/sync/depth supports 0.5+0.5+0.5
 				So(enter, ShouldEqual, 0.9+1.5)
+				// story hold 0.9 + capacity depth 0.5
 				So(hold, ShouldEqual, 0.9+0.5)
-				So(exit, ShouldEqual, 0.5+0.5-0.5)
+				// story exit 0.5 + slump/decoupled/vacuum 0.4+0.05+0.05
+				So(exit, ShouldEqual, 0.5+0.5)
 			})
 		})
 	})

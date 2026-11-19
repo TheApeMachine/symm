@@ -19,6 +19,32 @@ func TestNewSequencer(t *testing.T) {
 	})
 }
 
+func TestSequencerConcurrentResetStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+		done := make(chan struct{})
+
+		Convey("When Reset and Step race across rings", func() {
+			go func() {
+				for i := 0; i < 200; i++ {
+					_, _ = seq.Step("R01", 0.5)
+					_ = seq.State()
+				}
+				close(done)
+			}()
+
+			for i := 0; i < 200; i++ {
+				seq.Reset()
+			}
+			<-done
+
+			Convey("Mutex keeps grammar mutations from overlapping", func() {
+				So(func() { _, _ = seq.Step("R02", 0.4) }, ShouldNotPanic)
+			})
+		})
+	})
+}
+
 func TestReset(t *testing.T) {
 	Convey("Setup", t, func() {
 		seq := NewSequencer()

@@ -83,5 +83,23 @@ func TestOracleFromCold(t *testing.T) {
 				So(day, ShouldBeFalse)
 			})
 		})
+
+		Convey("When the track is warm but session move fails the risk floor", func() {
+			dayAxis := gate.Axes["day"]
+			for i := 0; i < 8; i++ {
+				_, _ = dayAxis.track.Measure(float64(i) + 1)
+			}
+			So(dayAxis.ready(), ShouldBeTrue)
+			dayAxis.Cut = 0
+
+			_, day, _, _, _ := gate.OracleFrom(map[string]float64{
+				"session_move": 0,
+				"axis_day":     1,
+			})
+
+			Convey("Static floors still veto under a permissive cut", func() {
+				So(day, ShouldBeFalse)
+			})
+		})
 	})
 }

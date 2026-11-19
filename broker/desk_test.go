@@ -113,6 +113,21 @@ func TestDeskHas(t *testing.T) {
 	}))
 }
 
+func TestDeskPosition(t *testing.T) {
+	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
+		Convey("When the open row lives on virtual", func() {
+			pos := NewPosition(t.Context(), testSymbol, "virtual", "path", desk.price, nil, nil)
+			desk.tiers[TierTypeVirtual].positions.Add(testSymbol, pos, true)
+
+			Convey("Paper lookup misses while virtual and Has hit", func() {
+				So(desk.Position(TierTypePaper, testSymbol), ShouldBeNil)
+				So(desk.Position(TierTypeVirtual, testSymbol), ShouldEqual, pos)
+				So(desk.Has(testSymbol), ShouldBeTrue)
+			})
+		})
+	}))
+}
+
 func TestDeskHello(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		Convey("When Hello fans out to tiers", func() {
@@ -147,7 +162,7 @@ func TestDeskUpdate(t *testing.T) {
 func TestDeskEnter(t *testing.T) {
 	Convey("Setup", t, withDesk(t.Context(), false, func(desk *Desk) {
 		Convey("When Enter routes to paper", func() {
-			err := desk.Enter(testSymbol, "R00/M1", TierTypePaper, true)
+			err := desk.Enter(testSymbol, "R00/M1", TierTypePaper, true, SizeHint{})
 
 			Convey("Paper cache holds the symbol", func() {
 				So(err, ShouldBeNil)
@@ -156,7 +171,7 @@ func TestDeskEnter(t *testing.T) {
 		})
 
 		Convey("When Enter targets an unknown tier", func() {
-			err := desk.Enter(testSymbol, "R00/M1", TierType(99), true)
+			err := desk.Enter(testSymbol, "R00/M1", TierType(99), true, SizeHint{})
 
 			Convey("Desk returns not-found", func() {
 				So(err, ShouldNotBeNil)
@@ -595,7 +610,7 @@ func BenchmarkDeskEnter(b *testing.B) {
 
 	for b.Loop() {
 		withDesk(ctx, false, func(desk *Desk) {
-			_ = desk.Enter(testSymbol, "R00/M1", TierTypePaper, true)
+			_ = desk.Enter(testSymbol, "R00/M1", TierTypePaper, true, SizeHint{})
 		})()
 	}
 }

@@ -44,6 +44,9 @@ const (
 ForwardStoryNets is the Model story contract — enter/hold/exit nets sum opposing
 features from resonance.Features, then oracle approve/veto pairs adjust nets so
 grid brightness becomes tradability without hardcoding observe rules in strategy.
+
+Oracle pairs (board / contagion / capacity) are ordered (pressure, support):
+approve sides lift enter; capacity support also lifts hold; pressure sides lift exit.
 */
 func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet float64, ok bool) {
 	if len(curve) < storyFeatureCount {
@@ -53,6 +56,22 @@ func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet float64, ok b
 	enterNet = curve[0] + curve[1] - curve[2]
 	exitNet = curve[3] + curve[4] - curve[5]
 	holdNet = curve[6] + curve[7] - curve[8]
+
+	need := oracleFirst + 2*oraclePairs
+	if len(curve) < need {
+		return enterNet, holdNet, exitNet, true
+	}
+
+	for pair := range oraclePairs {
+		pressure := curve[oracleFirst+2*pair]
+		support := curve[oracleFirst+2*pair+1]
+		enterNet += support
+		exitNet += pressure
+
+		if pair == oraclePairs-1 {
+			holdNet += support
+		}
+	}
 
 	return enterNet, holdNet, exitNet, true
 }

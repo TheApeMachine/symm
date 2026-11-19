@@ -15,7 +15,6 @@ func TestNewLearning(t *testing.T) {
 				So(learning.MinSupportedHorizon, ShouldEqual, 2)
 				So(learning.MinTaskRelativePrecision, ShouldEqual, 0.5)
 				So(learning.MinSurprise, ShouldEqual, 0.5)
-				So(learning.ResonanceBypass, ShouldBeFalse)
 				So(learning.MinEnterZ, ShouldEqual, 0.35)
 				So(learning.MaxPathLength, ShouldEqual, 8)
 				So(learning.MinPathLength, ShouldEqual, 2)
@@ -38,8 +37,7 @@ func TestApplyResonance(t *testing.T) {
 				"min_enter_z":                 0.0,
 			})
 
-			Convey("floors and bypass update", func() {
-				So(learning.ResonanceBypass, ShouldBeTrue)
+			Convey("floors update and bypass is ignored", func() {
 				So(learning.MinTaskRelativePrecision, ShouldEqual, 0.1)
 				So(learning.MinSurprise, ShouldEqual, 0.2)
 				So(learning.MinSupportedHorizon, ShouldEqual, 1)
@@ -70,7 +68,6 @@ func BenchmarkApplyResonance(b *testing.B) {
 	learning := NewLearning()
 	patch := map[string]any{
 		"type":                        "resonance",
-		"bypass":                      true,
 		"min_task_relative_precision": 0.1,
 		"min_surprise":                0.2,
 		"min_supported_horizon":       1.0,

@@ -348,13 +348,15 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 
 	name := price.normalizer.Name(trade.Symbol)
 
-	if raw, ok := price.lastPrint.Load(trade.Symbol); ok {
-		if prev, ok := raw.(time.Time); ok && !trade.Timestamp.After(prev) {
+	// Same-timestamp sweep prints must all land on the tape. Only drop
+	// strictly older stamps; lastPrint and LastPrintAt share `name`.
+	if raw, ok := price.lastPrint.Load(name); ok {
+		if prev, ok := raw.(time.Time); ok && trade.Timestamp.Before(prev) {
 			return
 		}
 	}
 
-	price.lastPrint.Store(trade.Symbol, trade.Timestamp)
+	price.lastPrint.Store(name, trade.Timestamp)
 
 	if trade.Side != market.SideBuy {
 		return
@@ -586,7 +588,7 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 }
 
 /*
-BookIntact is cash + backing + accelerating tape — Observe's book oracle.
+BookIntact is cash + backing + accelerating tape + open-drag — Observe's book oracle.
 */
 func (price *Price) BookIntact(symbol string) bool {
 	risk := system.Cfg.Risk
@@ -599,6 +601,10 @@ func (price *Price) BookIntact(symbol string) bool {
 	ratio, ok := price.BackingRatio(symbol)
 
 	if !ok || ratio < risk.MinBackingRatio {
+		return false
+	}
+
+	if !price.EntryOpenDragOK(symbol) {
 		return false
 	}
 
@@ -661,57 +667,83 @@ PnL is bid-walk proceeds, minus the exit fee and the entry fee, minus
 Entry times Qty. Incomplete walks return nil.
 */
 func (price *Price) PnL(position *Position) *decimal.Decimal {
-	if position == nil || position.Validate() != nil {
-		return nil
-	}
-
-	cost := position.Entry.Mul(*position.Qty)
-	symbol := price.normalizer.Name(position.Symbol)
-	filled, gross := price.Walk(symbol, *position.Qty, false)
-
-	if filled == nil || gross == nil || filled.Cmp(*position.Qty) < 0 || gross.Sign() <= 0 {
-		return nil
-	}
-
-	feeIn := price.Fee(symbol, &cost)
-	feeOut := price.Fee(symbol, gross)
-
-	if feeIn == nil || feeOut == nil {
-		return nil
-	}
-
-	p := gross.Sub(*feeOut).Sub(cost).Sub(*feeIn)
-	return &p
+	pnl, _ := price.markPnL(position)
+	return pnl
 }
 
 /*
 PnLPct is PnL as a percent of Entry times Qty.
 */
 func (price *Price) PnLPct(position *Position) *decimal.Decimal {
-	pnl := price.PnL(position)
+	_, pct := price.markPnL(position)
+	return pct
+}
 
-	if pnl == nil || position.Validate() != nil {
-		return nil
+/*
+markPnL snapshots Entry/Qty under position.mu then walks the book unlocked so
+ProfitableExit/Model cannot race Apply while Update holds the same mutex.
+*/
+func (price *Price) markPnL(
+	position *Position,
+) (pnl, pct *decimal.Decimal) {
+	if position == nil {
+		return nil, nil
 	}
 
-	cost := position.Entry.Mul(*position.Qty)
+	position.mu.Lock()
+	pnl, pct = price.markPnLLocked(position)
+	position.mu.Unlock()
+	return pnl, pct
+}
+
+/*
+markPnLLocked walks the bid book once and returns fee-net PnL with PnLPct.
+Caller must hold position.mu (Position.Update). One Book read so Update cannot
+pair pnl from T with pct from T+1.
+*/
+func (price *Price) markPnLLocked(
+	position *Position,
+) (pnl, pct *decimal.Decimal) {
+	if position == nil || position.validateLocked() != nil {
+		return nil, nil
+	}
+
+	entry := *position.Entry
+	qty := *position.Qty
+	symbol := position.Symbol
+	cost := entry.Mul(qty)
 
 	if cost.Sign() <= 0 {
-		return nil
+		return nil, nil
 	}
 
-	pct := pnl.Div(cost).Mul(decimalHundred)
-	return &pct
+	name := price.normalizer.Name(symbol)
+	filled, gross := price.Walk(name, qty, false)
+
+	if filled == nil || gross == nil || filled.Cmp(qty) < 0 || gross.Sign() <= 0 {
+		return nil, nil
+	}
+
+	feeIn := price.Fee(name, &cost)
+	feeOut := price.Fee(name, gross)
+
+	if feeIn == nil || feeOut == nil {
+		return nil, nil
+	}
+
+	p := gross.Sub(*feeOut).Sub(cost).Sub(*feeIn)
+	q := p.Div(cost).Mul(decimalHundred)
+	return &p, &q
 }
 
 /*
 Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
-spendableQuote is optional remaining quote cash (e.g. after in-flight enters); nil
-uses full wallet cash. Budget is MaxFraction of that; size is touch ask / TouchDivisor,
-or venue minimum when the touch cap is too small.
+Working enters spend MaxFraction of (1−ReserveFraction)×cash × conviction.
+ShortHold hint draws from the reserved slice instead — no forced rotation.
+Size starts at touch ask / TouchDivisor and lifts to QtyMin/CostMin when spend fits.
 */
 func (price *Price) Allocate(
-	symbol string, wallet *market.Balance,
+	symbol string, wallet *market.Balance, hint SizeHint,
 ) (*decimal.Decimal, error) {
 	symbol = price.normalizer.Name(symbol)
 
@@ -767,7 +799,9 @@ func (price *Price) Allocate(
 		).With("symbol", symbol, "why", "instrument limits missing")
 	}
 
-	budget := cash.Mul(decimal.NewFromFloat(system.Cfg.Risk.MaxFraction))
+	lane := price.cashLane(cash, hint.ShortHold)
+	budget := lane.Mul(decimal.NewFromFloat(system.Cfg.Risk.MaxFraction)).
+		Mul(decimal.NewFromFloat(hint.Conviction()))
 
 	if budget.Sign() <= 0 {
 		return nil, errnie.Err(
@@ -795,70 +829,36 @@ func (price *Price) Allocate(
 		).With("symbol", symbol, "why", "book not ready")
 	}
 
-	cap := touch.Div(decimal.NewFromFloat(system.Cfg.Risk.TouchDivisor))
-	sized := &cap
+	divisor := system.Cfg.Risk.TouchDivisor
 
-	if price.normalizer != nil {
-		raw, err := sdkdecimal.NewFromString(cap.String())
-
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
-
-		formatted, err := price.normalizer.FormatSize(symbol, raw)
-
-		if err != nil || formatted == nil {
-			return nil, errnie.Err(
-				errnie.UnprocessableContent,
-				"[price] allocate failed",
-				nil,
-			).With("symbol", symbol, "why", "touch cap below size step")
-		}
-
-		parsed, err := decimal.NewFromString(formatted.String())
-
-		if err != nil || parsed.Sign() <= 0 {
-			return nil, errnie.Err(
-				errnie.UnprocessableContent,
-				"[price] allocate failed",
-				nil,
-			).With("symbol", symbol, "why", "touch cap below size step")
-		}
-
-		sized = &parsed
+	if divisor <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "touch divisor invalid")
 	}
 
-	if enforceMins && pair.QtyMin != nil && sized.Cmp(*pair.QtyMin) < 0 {
-		sized = pair.QtyMin
+	cap := touch.Div(decimal.NewFromFloat(divisor))
+	sized, err := price.formatQty(symbol, cap)
 
-		if price.normalizer != nil {
-			raw, err := sdkdecimal.NewFromString(pair.QtyMin.String())
+	if err != nil || sized == nil || sized.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "touch cap below size step")
+	}
 
-			if err != nil {
-				return nil, errnie.Error(err)
-			}
+	if enforceMins {
+		minQty, err := price.venueMinQty(symbol, pair)
 
-			formatted, err := price.normalizer.FormatSize(symbol, raw)
+		if err != nil {
+			return nil, err
+		}
 
-			if err != nil || formatted == nil {
-				return nil, errnie.Err(
-					errnie.UnprocessableContent,
-					"[price] allocate failed",
-					nil,
-				).With("symbol", symbol, "why", "venue minimum below size step")
-			}
-
-			parsed, err := decimal.NewFromString(formatted.String())
-
-			if err != nil || parsed.Sign() <= 0 {
-				return nil, errnie.Err(
-					errnie.UnprocessableContent,
-					"[price] allocate failed",
-					nil,
-				).With("symbol", symbol, "why", "venue minimum below size step")
-			}
-
-			sized = &parsed
+		if sized.Cmp(*minQty) < 0 {
+			sized = minQty
 		}
 	}
 
@@ -886,16 +886,14 @@ func (price *Price) Allocate(
 		spend := gross.Add(*fee)
 
 		if spend.Cmp(budget) <= 0 {
-			if enforceMins &&
-				(filled.Cmp(*pair.QtyMin) < 0 || gross.Cmp(*pair.CostMin) < 0) {
-				return nil, errnie.Err(
-					errnie.UnprocessableContent,
-					"[price] allocate failed",
-					nil,
-				).With("symbol", symbol, "why", "size below venue minimum")
+			if !enforceMins ||
+				(filled.Cmp(*pair.QtyMin) >= 0 && gross.Cmp(*pair.CostMin) >= 0) {
+				return filled, nil
 			}
 
-			return filled, nil
+			// Touch/trim undershot venue mins but still had budget headroom —
+			// lift to QtyMin/CostMin when that spend still fits MaxFraction.
+			return price.allocateVenueMin(symbol, pair, budget)
 		}
 
 		avg := gross.Div(*filled)
@@ -926,39 +924,17 @@ func (price *Price) Allocate(
 		}
 
 		next := filled.Sub(cut)
+		formatted, err := price.formatQty(symbol, next)
 
-		if price.normalizer != nil {
-			raw, err := sdkdecimal.NewFromString(next.String())
-
-			if err != nil {
-				return nil, errnie.Error(err)
-			}
-
-			formatted, err := price.normalizer.FormatSize(symbol, raw)
-
-			if err != nil || formatted == nil {
-				return nil, errnie.Err(
-					errnie.UnprocessableContent,
-					"[price] allocate failed",
-					nil,
-				).With("symbol", symbol, "why", "cannot trim to budget")
-			}
-
-			parsed, err := decimal.NewFromString(formatted.String())
-
-			if err != nil || parsed.Sign() <= 0 || parsed.Cmp(*filled) >= 0 {
-				return nil, errnie.Err(
-					errnie.UnprocessableContent,
-					"[price] allocate failed",
-					nil,
-				).With("symbol", symbol, "why", "cannot trim to budget")
-			}
-
-			sized = &parsed
-			continue
+		if err != nil || formatted == nil || formatted.Sign() <= 0 || formatted.Cmp(*filled) >= 0 {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "cannot trim to budget")
 		}
 
-		sized = &next
+		sized = formatted
 	}
 
 	return nil, errnie.Err(
@@ -966,6 +942,294 @@ func (price *Price) Allocate(
 		"[price] allocate failed",
 		nil,
 	).With("symbol", symbol, "why", "cannot trim to budget")
+}
+
+/*
+cashLane splits quote cash into working vs reserved pools. Short-hold draws
+use the reserved slice; normal enters never spend it.
+*/
+func (price *Price) cashLane(cash decimal.Decimal, reserve bool) decimal.Decimal {
+	frac := system.Cfg.Risk.ReserveFraction
+	if frac <= 0 {
+		return cash
+	}
+	if frac >= 1 {
+		if reserve {
+			return cash
+		}
+		return decimal.Zero
+	}
+
+	reserved := cash.Mul(decimal.NewFromFloat(frac))
+	if reserve {
+		return reserved
+	}
+	return cash.Sub(reserved)
+}
+
+/*
+OpenDragPct is the fee-net close-now loss (%) of buying one touch/÷N clip and
+immediately selling it — spread + fees as positive drag. False when the book
+cannot size the probe.
+*/
+func (price *Price) OpenDragPct(symbol string) (float64, bool) {
+	symbol = price.normalizer.Name(symbol)
+
+	var touch *decimal.Decimal
+	price.Books.Book(symbol, func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+		touch = book.AskSize()
+	})
+
+	if touch == nil || touch.Sign() <= 0 {
+		return 0, false
+	}
+
+	divisor := system.Cfg.Risk.TouchDivisor
+	if divisor <= 0 {
+		return 0, false
+	}
+
+	cap := touch.Div(decimal.NewFromFloat(divisor))
+	sized, err := price.formatQty(symbol, cap)
+	if err != nil || sized == nil || sized.Sign() <= 0 {
+		return 0, false
+	}
+
+	bought, buyGross := price.Walk(symbol, *sized, true)
+	if bought == nil || buyGross == nil || bought.Sign() <= 0 || buyGross.Sign() <= 0 {
+		return 0, false
+	}
+
+	buyFee := price.Fee(symbol, buyGross)
+	if buyFee == nil {
+		return 0, false
+	}
+
+	sold, sellGross := price.Walk(symbol, *bought, false)
+	if sold == nil || sellGross == nil || sold.Sign() <= 0 {
+		return 0, false
+	}
+
+	sellFee := price.Fee(symbol, sellGross)
+	if sellFee == nil {
+		return 0, false
+	}
+
+	cost := buyGross.Add(*buyFee)
+	proceeds := sellGross.Sub(*sellFee)
+	pnl := proceeds.Sub(cost)
+	drag := pnl.Neg().Div(cost).Mul(decimalHundred).InexactFloat64()
+	if drag < 0 {
+		drag = 0
+	}
+	return drag, true
+}
+
+/*
+EntryOpenDragOK is true when close-now round-trip drag is under MaxEntryOpenDragPct.
+*/
+func (price *Price) EntryOpenDragOK(symbol string) bool {
+	cap := system.Cfg.Risk.MaxEntryOpenDragPct
+	if cap <= 0 {
+		return true
+	}
+
+	drag, ok := price.OpenDragPct(symbol)
+	return ok && drag <= cap
+}
+
+/*
+formatQty snaps qty onto the venue size grid. Nil normalizer keeps qty as-is.
+*/
+func (price *Price) formatQty(symbol string, qty decimal.Decimal) (*decimal.Decimal, error) {
+	if price.normalizer == nil {
+		out := qty
+		return &out, nil
+	}
+
+	raw, err := sdkdecimal.NewFromString(qty.String())
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	formatted, err := price.normalizer.FormatSize(symbol, raw)
+
+	if err != nil || formatted == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] format qty failed",
+			err,
+		).With("symbol", symbol)
+	}
+
+	parsed, err := decimal.NewFromString(formatted.String())
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	return &parsed, nil
+}
+
+/*
+venueMinQty is the smallest venue-legal size: at least QtyMin, and large enough
+that an ask walk clears CostMin. Walks ask levels until both mins clear — no
+linear Level-1 price extrapolation (steep books overshoot CostMin badly).
+*/
+func (price *Price) venueMinQty(
+	symbol string, pair kraken.InstrumentPair,
+) (*decimal.Decimal, error) {
+	symbol = price.normalizer.Name(symbol)
+
+	var raw decimal.Decimal
+	met := false
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if book == nil {
+			return
+		}
+
+		var got, cost decimal.Decimal
+
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			if !level.Live() || level.Price == nil || level.Quantity == nil {
+				continue
+			}
+
+			needQty := got.Cmp(*pair.QtyMin) < 0
+			needCost := cost.Cmp(*pair.CostMin) < 0
+
+			if !needQty && !needCost {
+				break
+			}
+
+			want := decimal.Zero
+
+			if needQty {
+				want = pair.QtyMin.Sub(got)
+			}
+
+			if needCost && level.Price.Sign() > 0 {
+				byCost := pair.CostMin.Sub(cost).Div(*level.Price)
+
+				if byCost.Cmp(want) > 0 {
+					want = byCost
+				}
+			}
+
+			if want.Sign() <= 0 {
+				want = *level.Quantity
+			}
+
+			take := decimal.Min(*level.Quantity, want)
+			got = got.Add(take)
+			cost = cost.Add(level.Price.Mul(take))
+		}
+
+		if got.Cmp(*pair.QtyMin) >= 0 && cost.Cmp(*pair.CostMin) >= 0 {
+			raw = got
+			met = true
+		}
+	})
+
+	if !met || raw.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "ask walk cannot clear venue mins")
+	}
+
+	if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
+		raw = raw.Div(*pair.QtyIncrement).Ceil().Mul(*pair.QtyIncrement)
+	}
+
+	formatted, err := price.formatQty(symbol, raw)
+
+	if err != nil || formatted == nil || formatted.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "venue minimum below size step")
+	}
+
+	if formatted.Cmp(*pair.QtyMin) < 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "venue minimum below size step")
+	}
+
+	filled, gross := price.Walk(symbol, *formatted, true)
+
+	if filled == nil || gross == nil ||
+		filled.Cmp(*pair.QtyMin) < 0 || gross.Cmp(*pair.CostMin) < 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "size below venue minimum")
+	}
+
+	return formatted, nil
+}
+
+/*
+allocateVenueMin walks the QtyMin/CostMin size and accepts it only when fee-gross
+spend still fits the MaxFraction cash budget.
+*/
+func (price *Price) allocateVenueMin(
+	symbol string, pair kraken.InstrumentPair, budget decimal.Decimal,
+) (*decimal.Decimal, error) {
+	minQty, err := price.venueMinQty(symbol, pair)
+
+	if err != nil {
+		return nil, err
+	}
+
+	filled, gross := price.Walk(symbol, *minQty, true)
+
+	if filled == nil || gross == nil || filled.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "ask walk produced zero size")
+	}
+
+	if filled.Cmp(*pair.QtyMin) < 0 || gross.Cmp(*pair.CostMin) < 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "size below venue minimum")
+	}
+
+	fee := price.Fee(symbol, gross)
+
+	if fee == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "fee unknown")
+	}
+
+	if gross.Add(*fee).Cmp(budget) > 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "venue minimum exceeds risk budget")
+	}
+
+	return filled, nil
 }
 
 func (price *Price) loadFees() bool {

@@ -499,8 +499,10 @@ func (hub *Hub) handleCommand(payload []byte) error {
 		}
 
 		// Aggregated envelopes for trie books and closed positions. ListPrefix
-		// warns and no-ops on unsupported prefixes.
-		hub.ListPrefix(request.Prefix)
+		// warns and no-ops on unsupported prefixes. Run off the read goroutine
+		// so large S3 listings cannot stall focus / exit / risk commands.
+		prefix := request.Prefix
+		go hub.ListPrefix(prefix)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,

@@ -221,6 +221,13 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 
 		book := lane.book
 
+		// Between Stale and the next snapshot the lane has no book. Applying
+		// a delta onto a fresh empty book fails checksum and thrashing Recover.
+		if book == nil && level3.Type != "snapshot" {
+			lane.mu.Unlock()
+			continue
+		}
+
 		// Snapshots are full state — replace so ghosts from a prior
 		// stream (or missed deletes) cannot stick around.
 		if book == nil || level3.Type == "snapshot" {

@@ -66,6 +66,25 @@ func TestBookUpdate(t *testing.T) {
 			})
 		})
 
+		Convey("When a delta arrives before any snapshot", func() {
+			bid := decimal.RequireFromString("99")
+			qty := decimal.RequireFromString("1")
+			mgr.Update(&market.Level3{
+				Type: "update",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b-delta", LimitPrice: &bid, OrderQty: &qty,
+						Timestamp: time.Unix(2, 0),
+					}},
+				}},
+			})
+
+			Convey("The lane stays empty instead of applying onto a ghost book", func() {
+				So(mgr.Get(testSymbol), ShouldBeNil)
+			})
+		})
+
 		Convey("When the book is crossed", func() {
 			var invalid sync.WaitGroup
 			invalid.Add(1)

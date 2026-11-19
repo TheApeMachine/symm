@@ -143,14 +143,14 @@ func TestUpdate(t *testing.T) {
 
 			Convey("Mark is the bid hint; PnL is exact full-qty book walk", func() {
 				// feeIn=0.40, feeOut=0.48 -> pnl=120-0.48-(100+0.40)=19.12
-				// pct=19.12/100*100
+				// pct=19.12 → ladder banks Arm/Arm+1/Arm+2 in one tick → BUSY settle
 				So(err, ShouldBeNil)
 				So(pos.Mark.String(), ShouldEqual, "120")
 				So(pos.PnL.String(), ShouldEqual, "19.12")
 				So(pos.PnLPct.String(), ShouldEqual, "19.12")
 				So(pos.Stoploss, ShouldNotBeNil)
-				So(pos.Status() == runtime.BUSY, ShouldBeFalse)
-				So(pos.Status(), ShouldEqual, runtime.READY)
+				So(pos.Stoploss.WantsExit(), ShouldBeTrue)
+				So(pos.Status(), ShouldEqual, runtime.BUSY)
 			})
 		})
 
@@ -294,7 +294,83 @@ func TestExit(t *testing.T) {
 				So(pos.ClosedAt, ShouldBeNil)
 				So(pos.Status(), ShouldEqual, runtime.BUSY)
 				So(pos.Status() == runtime.READY, ShouldBeFalse)
+				So(pos.ExitOrder.Volume, ShouldEqual, "1.00000000")
 			})
+		})
+
+		Convey("When exit wires the full fill-derived qty", func() {
+			pos.Apply(market.ExecutionData{
+				ExecID: "b2", Side: "buy",
+				LastQty: dec("0.25"), LastPrice: dec("100"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			So(pos.exit(true), ShouldBeNil)
+			So(pos.ExitOrder.Volume, ShouldEqual, "1.25000000")
+		})
+
+		Convey("When a tranche wants a quarter of BasisQty", func() {
+			pos.ExitPath = ""
+			pos.Stoploss = NewStoploss(1.0)
+			pos.Stoploss.BasisQty = 1
+			pos.Stoploss.PendingExitPct = 0.25
+			pos.Stoploss.TriggerReason = "tranche_1_arm"
+			So(pos.exit(false), ShouldBeNil)
+			So(pos.ExitOrder.Volume, ShouldEqual, "0.25000000")
+			So(pos.ExitTrigger, ShouldEqual, "tranche_1_arm")
+		})
+
+		Convey("When a tranche slice is under QtyMin", func() {
+			pos.ExitPath = ""
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = dec("0.30")
+			price.Instrument.cache.Store(testSymbol, pair)
+			pos.Stoploss = NewStoploss(1.0)
+			pos.Stoploss.BasisQty = 1
+			pos.Stoploss.PendingExitPct = 0.25
+			pos.Stoploss.TriggerReason = "tranche_1_arm"
+			So(pos.exit(false), ShouldBeNil)
+			So(pos.ExitOrder.Volume, ShouldEqual, "1.00000000")
+		})
+
+		Convey("When a tranche would leave a dust remainder under QtyMin", func() {
+			// Open 0.40; equal 0.25 would leave 0.15 dust. Shrink mid to 0.20 so
+			// the final stage keeps a venue-legal 0.20 stub.
+			pos.ExitPath = ""
+			pos.Apply(market.ExecutionData{
+				ExecID: "s-dust", Side: "sell",
+				LastQty: dec("0.60"), LastPrice: dec("110"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = dec("0.20")
+			price.Instrument.cache.Store(testSymbol, pair)
+			pos.Stoploss = NewStoploss(1.0)
+			pos.Stoploss.BasisQty = 1
+			pos.Stoploss.PendingExitPct = 0.25
+			pos.Stoploss.TriggerReason = "tranche_3_target"
+			So(pos.Qty.String(), ShouldEqual, "0.4")
+			So(pos.exit(false), ShouldBeNil)
+			So(pos.ExitOrder.Volume, ShouldEqual, "0.20000000")
+		})
+
+		Convey("When a tranche would leave a dust remainder under CostMin", func() {
+			// Mark bid 100: equal 0.25 leaves 0.15 ($15) under CostMin $20.
+			// Shrink mid to 0.20 so final keeps $20 notional.
+			pos.ExitPath = ""
+			pos.Apply(market.ExecutionData{
+				ExecID: "s-cost", Side: "sell",
+				LastQty: dec("0.60"), LastPrice: dec("110"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			pair := price.Instrument.Pair(testSymbol)
+			pair.CostMin = dec("20")
+			price.Instrument.cache.Store(testSymbol, pair)
+			pos.Stoploss = NewStoploss(1.0)
+			pos.Stoploss.BasisQty = 1
+			pos.Stoploss.PendingExitPct = 0.25
+			pos.Stoploss.TriggerReason = "tranche_3_target"
+			So(pos.exit(false), ShouldBeNil)
+			So(pos.ExitOrder.Volume, ShouldEqual, "0.20000000")
 		})
 
 		Convey("When exit is called again", func() {
@@ -382,11 +458,13 @@ func TestApply(t *testing.T) {
 				Timestamp: time.Unix(2, 0).UTC(),
 			})
 
-			Convey("ClosedAt stamps and last mark PnL is left alone", func() {
+			Convey("ClosedAt stamps and fill-realized PnL replaces the last mark", func() {
 				So(pos.Qty.String(), ShouldEqual, "0")
 				So(pos.ClosedAt, ShouldNotBeNil)
-				So(pos.PnL.String(), ShouldEqual, beforePnL)
-				So(pos.PnLPct.String(), ShouldEqual, beforePct)
+				So(beforePnL, ShouldNotBeEmpty)
+				So(beforePct, ShouldNotBeEmpty)
+				So(pos.PnL.String(), ShouldEqual, "10")
+				So(pos.PnLPct.String(), ShouldEqual, "10")
 				So(pos.Status(), ShouldEqual, runtime.DONE)
 				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})

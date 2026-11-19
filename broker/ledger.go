@@ -297,6 +297,21 @@ func (ledger *Ledger) held(open []*Position) []*Position {
 		}
 
 		qty := *cash
+		// Wallet size replaces fee-dust folded qty. Reseed fills so Apply's
+		// fillsNet matches inventory — otherwise the first partial sell
+		// subtracts from dust buys, goes negative, and closes while cash remains.
+		px := decimal.Zero
+		if position.Entry != nil {
+			px = *position.Entry
+		}
+		seed := qty
+		position.Fills = []*market.ExecutionData{{
+			Side:      "buy",
+			LastQty:   &seed,
+			LastPrice: &px,
+			ExecID:    "wallet:" + position.Symbol,
+			Timestamp: position.OpenedAt,
+		}}
 		position.Qty = &qty
 		kept = append(kept, position)
 	}

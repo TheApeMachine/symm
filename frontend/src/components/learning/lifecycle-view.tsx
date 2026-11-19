@@ -25,7 +25,7 @@ import { Flex } from "#/components/ui/flex";
 import { Grid } from "#/components/ui/grid";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { moneyText, pctMark } from "#/lib/format";
+import { moneyText, pctMark, stampMs } from "#/lib/format";
 import {
 	type Lifecycle,
 	type LifeEvent,
@@ -164,8 +164,20 @@ const trialVariant = (word: TrialWord): BadgeVariant => {
 	}
 };
 
-const time = (value?: string) =>
-	value ? new Date(value).toLocaleTimeString(undefined, { hour12: false }) : "";
+const time = (value?: string) => {
+	if (!value) return "";
+	const ms = stampMs(value);
+	if (ms <= 0) return "";
+	const at = new Date(ms);
+	const now = new Date();
+	const sameDay =
+		at.getFullYear() === now.getFullYear() &&
+		at.getMonth() === now.getMonth() &&
+		at.getDate() === now.getDate();
+	const clock = at.toLocaleTimeString(undefined, { hour12: false });
+	if (sameDay) return clock;
+	return `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${clock}`;
+};
 
 const fieldValue = (value: unknown): string => {
 	if (typeof value === "number") {
@@ -533,13 +545,12 @@ compareClosedHistorically orders settled trips by close time (newest first),
 falling back to open time then id so equal stamps stay stable.
 */
 const compareClosedHistorically = (left: Lifecycle, right: Lifecycle) => {
-	const leftClose = left.closed_at || left.opened_at;
-	const rightClose = right.closed_at || right.opened_at;
-	const byClose = rightClose.localeCompare(leftClose);
-
+	const byClose =
+		stampMs(right.closed_at || right.opened_at) -
+		stampMs(left.closed_at || left.opened_at);
 	if (byClose !== 0) return byClose;
 
-	const byOpen = right.opened_at.localeCompare(left.opened_at);
+	const byOpen = stampMs(right.opened_at) - stampMs(left.opened_at);
 	if (byOpen !== 0) return byOpen;
 
 	return left.id.localeCompare(right.id);

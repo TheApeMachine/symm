@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -48,7 +49,10 @@ type closedEntry struct {
 
 /*
 read fills one closed position from a stored JSON object.
-Missing epoch, tick, and timestamp stay zero.
+Canonical objects are {epoch,tick,timestamp,position:{…}}. Legacy bare
+*Position JSON (id/symbol/tier_key at the top level) is still accepted.
+Missing epoch, tick, and timestamp stay zero. book is filled from tier_key
+when the store row only carried the broker field.
 */
 func (entry *closedEntry) read(raw []byte) bool {
 	if len(raw) == 0 {
@@ -58,20 +62,38 @@ func (entry *closedEntry) read(raw []byte) bool {
 	row, err := data.AttributeOk[map[string]any](raw, "position")
 
 	if err != nil || len(row) == 0 {
-		return false
+		var top map[string]any
+		if uerr := sonic.Unmarshal(raw, &top); uerr != nil || len(top) == 0 {
+			return false
+		}
+		if _, wrapped := top["position"]; wrapped {
+			return false
+		}
+		id, _ := top["id"].(string)
+		if id == "" {
+			return false
+		}
+		row = top
+		entry.Epoch = 0
+		entry.Tick = 0
+		entry.Timestamp = 0
+	} else {
+		id, _ := row["id"].(string)
+		if id == "" {
+			return false
+		}
+		entry.Epoch = data.Attribute[uint64](raw, "epoch")
+		entry.Tick = data.Attribute[uint64](raw, "tick")
+		entry.Timestamp = data.Attribute[uint64](raw, "timestamp")
 	}
 
-	id, _ := row["id"].(string)
-
-	if id == "" {
-		return false
+	if book, _ := row["book"].(string); book == "" {
+		if tk, ok := row["tier_key"].(string); ok && tk != "" {
+			row["book"] = tk
+		}
 	}
 
-	entry.Epoch = data.Attribute[uint64](raw, "epoch")
-	entry.Tick = data.Attribute[uint64](raw, "tick")
-	entry.Timestamp = data.Attribute[uint64](raw, "timestamp")
 	entry.Row = row
-
 	return true
 }
 
@@ -119,18 +141,8 @@ func closedHistoryPrefix(prefix string) bool {
 func (hub *Hub) writePathsListing(prefix string, budget int) {
 	thresholds := make(map[string]float64, 256)
 
-	for key := range hub.store.ListKeys(prefix) {
-		raw, err := hub.store.Download(hub.ctx, key)
-
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[hub] error downloading path book", err,
-			))
-
-			continue
-		}
-
-		book := decodePathBook(raw)
+	for _, item := range hub.downloadPrefix(prefix) {
+		book := decodePathBook(item.raw)
 
 		if book == nil {
 			continue
@@ -140,7 +152,7 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 			continue
 		}
 
-		thresholds[policyPathKey(key, book.Action)] = book.Resistance
+		thresholds[policyPathKey(item.key, book.Action)] = book.Resistance
 	}
 
 	if len(thresholds) == 0 {
@@ -175,23 +187,64 @@ func decodePathBook(raw []byte) *pathBook {
 	return &book
 }
 
-func (hub *Hub) writeClosedListing(prefix string, budget int) {
-	entries := make([]closedEntry, 0, 64)
+type prefixObject struct {
+	key string
+	raw []byte
+}
+
+/*
+downloadPrefix lists keys then fetches bodies in parallel so a large closed/
+paths listing cannot serialize hundreds of S3 GETs on one goroutine.
+*/
+func (hub *Hub) downloadPrefix(prefix string) []prefixObject {
+	keys := make([]string, 0, 256)
 
 	for key := range hub.store.ListKeys(prefix) {
-		var entry closedEntry
+		keys = append(keys, key)
+	}
 
-		raw, err := hub.store.Download(hub.ctx, key)
+	out := make([]prefixObject, len(keys))
 
-		if err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO, "[hub] error downloading closed entry", err,
-			))
+	var wg sync.WaitGroup
 
+	for i, key := range keys {
+		wg.Go(func() {
+			raw, err := hub.store.Download(hub.ctx, key)
+
+			if err != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[hub] error downloading prefix object", err,
+				))
+
+				return
+			}
+
+			out[i] = prefixObject{key: key, raw: raw}
+		})
+	}
+
+	wg.Wait()
+
+	kept := make([]prefixObject, 0, len(out))
+
+	for _, item := range out {
+		if item.key == "" || len(item.raw) == 0 {
 			continue
 		}
 
-		if !entry.read(raw) {
+		kept = append(kept, item)
+	}
+
+	return kept
+}
+
+func (hub *Hub) writeClosedListing(prefix string, budget int) {
+	entries := make([]closedEntry, 0, 64)
+
+	for _, item := range hub.downloadPrefix(prefix) {
+		var entry closedEntry
+
+		if !entry.read(item.raw) {
 			continue
 		}
 
@@ -230,16 +283,16 @@ func listFrameBudget() int {
 }
 
 /*
-policyPathKey is the pathbook trie id. Leaves are model/paths/<radix-path>.bin;
-legacy …/<action>.bin keys pass through unchanged.
+policyPathKey is the pathbook trie id the Cognitive viz expects:
+model/paths/<tokens>/<enter|hold|exit>.bin. Storage leaves are flat
+model/paths/<tokens>.bin with Action inside the PathBook JSON — rewrite so
+terminal nodes paint ENTER/HOLD/EXIT instead of the last region token.
 */
 func policyPathKey(storageKey, action string) string {
 	switch {
 	case strings.HasSuffix(storageKey, "/enter.bin"),
 		strings.HasSuffix(storageKey, "/hold.bin"),
 		strings.HasSuffix(storageKey, "/exit.bin"):
-		return storageKey
-	case strings.HasPrefix(storageKey, "model/paths/") && strings.HasSuffix(storageKey, ".bin"):
 		return storageKey
 	}
 

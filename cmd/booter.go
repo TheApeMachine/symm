@@ -272,6 +272,10 @@ func (booter *Booter) closeTransports() error {
 		}
 	}
 
+	if booter.instrument != nil {
+		booter.instrument.CloseLevel3()
+	}
+
 	if booter.public != nil {
 		if c, ok := booter.public.(interface{ Close() error }); ok {
 			closeOne(c.Close())

@@ -5,6 +5,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/system"
 )
 
 func TestNewStoploss(t *testing.T) {
@@ -18,7 +19,7 @@ func TestNewStoploss(t *testing.T) {
 				So(sl.InitialPnLPct, ShouldEqual, 0.5)
 				So(sl.CurrentPnLPct, ShouldEqual, 0.5)
 				So(sl.PeakPnLPct, ShouldEqual, 0.5)
-				So(sl.ArmPnlPct, ShouldEqual, 0.8)
+				So(sl.ArmPnlPct, ShouldEqual, system.Cfg.Risk.StoplossArmPnLPct)
 				So(sl.Confirms, ShouldEqual, 0)
 				So(sl.MaxWindow, ShouldEqual, 20)
 				So(sl.MaxSwings, ShouldEqual, 12)
@@ -138,25 +139,27 @@ func TestStoplossUpdate(t *testing.T) {
 			sl := NewStoploss(1.0)
 			sl.Update(1.0, 0)
 			sl.Update(2.6, 0)
+			sl.CommitPending()
 			sl.Update(0.15, 0)
 
-			Convey("Disarm wins over trip", func() {
-				So(sl.State, ShouldEqual, StoplossHealthy)
+			Convey("Filled Tranche 1 keeps Armed so the floor still protects", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				So(sl.State, ShouldEqual, StoplossArmed)
 				So(sl.Triggered(), ShouldBeFalse)
 				So(sl.Regime, ShouldEqual, RegimeExplosive)
 			})
 		})
 
-		Convey("When current falls below the arm line", func() {
+		Convey("When current falls below the arm line after Tranche 1", func() {
 			sl := NewStoploss(2.0)
 			sl.Update(2.0, 0)
+			sl.CommitPending()
 			sl.Update(0.5, 0)
 
-			Convey("State disarms without triggering", func() {
-				So(sl.State, ShouldEqual, StoplossHealthy)
+			Convey("State stays Armed without a full trip", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				So(sl.State, ShouldEqual, StoplossArmed)
 				So(sl.Triggered(), ShouldBeFalse)
-				So(sl.TriggerReason, ShouldEqual, "")
-				So(sl.Confirms, ShouldEqual, 0)
 			})
 		})
 
@@ -171,6 +174,55 @@ func TestStoplossUpdate(t *testing.T) {
 				So(sl.Triggered(), ShouldBeFalse)
 			})
 		})
+
+		Convey("When an underwater chop finally arms", func() {
+			sl := NewStoploss(-1.5)
+			for _, pnl := range []float64{
+				-1.55, -1.50, -1.60, -1.45, -1.70, -1.40, -1.65, -1.35,
+			} {
+				sl.Update(pnl, 0)
+			}
+			underwaterPB := sl.TypicalPullback
+			sl.Update(1.0, 0)
+
+			Convey("onArm reseeds pullback room above underwater chop scale", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.TypicalPullback, ShouldBeGreaterThanOrEqualTo, minArmedPullbackFloor)
+				So(sl.TypicalPullback, ShouldBeGreaterThan, underwaterPB)
+				So(len(sl.Pullbacks), ShouldEqual, 0)
+				So(len(sl.Pushes), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When first profit peak is still inside the sharp-break margin", func() {
+			sl := NewStoploss(-1.5)
+			sl.Update(-1.5, 0)
+			sl.Update(1.0, 0)
+			sl.Update(1.18, 0)
+			sl.EmaDelta = -0.05
+			floor := sl.TrailingFloor
+			sl.Update(floor-0.05, 0)
+
+			Convey("trail_sharp_break is withheld; position stays armed or waits confirms", func() {
+				So(sl.TriggerReason, ShouldNotEqual, "trail_sharp_break")
+				So(sl.PeakPnLPct, ShouldBeLessThan, sl.ArmPnlPct+sharpBreakPeakMargin)
+			})
+		})
+
+		Convey("When a multi-tick climb never prints a single 0.50% delta", func() {
+			sl := NewStoploss(0.2)
+			for _, pnl := range []float64{
+				0.25, 0.30, 0.35, 0.40, 0.45, 0.55, 0.70, 0.85, 1.05, 1.25,
+			} {
+				sl.Update(pnl, 0)
+			}
+
+			Convey("Cumulative climb ignites the explosive runner path", func() {
+				So(sl.ExplosiveActive, ShouldBeTrue)
+				So(sl.Regime, ShouldEqual, RegimeExplosive)
+				So(sl.PeakPushDelta, ShouldBeGreaterThanOrEqualTo, 0.50)
+			})
+		})
 	})
 }
 
@@ -181,11 +233,89 @@ func TestTrip(t *testing.T) {
 			sl.State = StoplossArmed
 			sl.trip("trail_confirm")
 
-			Convey("State and TriggerReason stick", func() {
+			Convey("State and TriggerReason stick with a full-remainder claim", func() {
 				So(sl.State, ShouldEqual, StoplossTriggered)
 				So(sl.TriggerReason, ShouldEqual, "trail_confirm")
 				So(sl.Triggered(), ShouldBeTrue)
+				So(sl.PendingExitPct, ShouldEqual, 1)
+				So(sl.PendingTranches, ShouldEqual, totalTranches)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeTrue)
 			})
+		})
+	})
+}
+
+func TestAbortPending(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When a trip is vetoed before fill", func() {
+			sl := NewStoploss(2.0)
+			sl.State = StoplossArmed
+			sl.trip("trail_confirm")
+			sl.AbortPending()
+
+			Convey("Triggered clears and WantsExit stops without banking", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.PendingExitPct, ShouldEqual, 0)
+				So(sl.PendingTranches, ShouldEqual, 0)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeFalse)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
+
+		Convey("When Tranche 1 is vetoed before fill", func() {
+			sl := NewStoploss(0.5)
+			sl.Update(1.0, 0)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.TranchesExited, ShouldEqual, 0)
+			sl.AbortPending()
+
+			Convey("Claim rolls back so the next arm tick can re-emit Tranche 1", func() {
+				So(sl.PendingTranches, ShouldEqual, 0)
+				So(sl.PendingExitPct, ShouldEqual, 0)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeFalse)
+
+				sl.Update(1.0, 0)
+				So(sl.PendingTranches, ShouldEqual, 1)
+				So(sl.TriggerReason, ShouldEqual, "tranche_1_arm")
+			})
+		})
+	})
+}
+
+func TestTrancheLadder(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When PnL climbs Arm then Arm+step (50% early banks)", func() {
+			sl := NewStoploss(0.5)
+			sl.BasisQty = 100
+			sl.Update(1.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 0)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.PendingExitPct, ShouldEqual, 0.25)
+			So(sl.NextTargetPct, ShouldEqual, sl.ArmPnlPct+sl.trancheStep())
+			So(sl.Triggered(), ShouldBeFalse)
+			So(sl.WantsExit(), ShouldBeTrue)
+
+			sl.CommitPending()
+			So(sl.TranchesExited, ShouldEqual, 1)
+			So(sl.PendingTranches, ShouldEqual, 0)
+
+			sl.Update(2.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 1)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.PendingExitPct, ShouldEqual, 0.25)
+			So(sl.Triggered(), ShouldBeFalse)
+
+			sl.CommitPending()
+			So(sl.TranchesExited, ShouldEqual, 2)
+
+			sl.Update(3.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 2)
+			So(sl.PendingTranches, ShouldEqual, 0)
+			So(sl.PendingExitPct, ShouldEqual, 0)
+			So(sl.Triggered(), ShouldBeFalse)
 		})
 	})
 }
@@ -255,10 +385,11 @@ func TestStoplossMarshal(t *testing.T) {
 				So(got.TriggerReason, ShouldEqual, "trail_confirm")
 				So(got.PeakPnLPct, ShouldEqual, 2.0)
 				So(got.CurrentPnLPct, ShouldEqual, 1.8)
-				So(got.ArmPnlPct, ShouldEqual, 1.0)
+				So(got.ArmPnlPct, ShouldEqual, system.Cfg.Risk.StoplossArmPnLPct)
 				So(got.MaxWindow, ShouldEqual, 20)
 				So(got.MaxSwings, ShouldEqual, 12)
-				So(got.RallyStart, ShouldEqual, 1.0)
+				// onArm reseeds RallyStart to the arm-time mark (first Update above arm).
+				So(got.RallyStart, ShouldEqual, 1.5)
 				So(len(got.Deltas), ShouldBeGreaterThan, 0)
 			})
 		})

@@ -445,6 +445,16 @@ func (client *WebsocketClient) pollWatch(
 			errnie.IO, "[network.websocket] unmarshal failed", err,
 		).With("url", url))
 
+		if *backoff < time.Second {
+			*backoff = time.Second
+		} else {
+			*backoff += time.Second
+		}
+
+		if maxBackoff > 0 && *backoff > maxBackoff {
+			*backoff = maxBackoff
+		}
+
 		return client.Context().Err() == nil
 	}
 

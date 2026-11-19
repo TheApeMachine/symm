@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/theapemachine/symm/system"
 )
@@ -9,8 +10,12 @@ import (
 /*
 Sequencer wires Sequitur (grammar) and MDL (segment cuts). Step returns the
 live cut plus whether grammar/MDL state mutated.
+
+mu serializes Training.Step (Ring 3) against Model resetPath → ResetSequencer
+(Ring 4) so Tick N+1 cannot mutate grammar while Tick N still resets it.
 */
 type Sequencer struct {
+	mu            sync.Mutex
 	grammar       *Sequitur
 	mdl           *MDL
 	lastEmitted   string
@@ -32,6 +37,8 @@ Reset clears the live sentence and lastEmitted after model resetPath without
 dropping learned rules — next Step starts a new phrase using existing M-rules.
 */
 func (sequencer *Sequencer) Reset() {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
 	sequencer.lastEmitted = ""
 	sequencer.sentenceBreak = false
 	sequencer.grammar.Sentence()
@@ -50,6 +57,9 @@ StepPath appends symbols into the grammar in order. Training feeds one regime
 per call via Step; a repeated symbol only refreshes brightness (mutated=false).
 */
 func (sequencer *Sequencer) StepPath(symbols []string, brightness float64) (Tokens, bool) {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
+
 	parts := make([]string, 0, len(symbols))
 
 	for _, symbol := range symbols {
@@ -129,6 +139,8 @@ State exports grammar and MDL for GrammarCatalog — called synchronously on mut
 so queued store writes cannot reorder older snapshots ahead of newer cuts.
 */
 func (sequencer *Sequencer) State() SequencerState {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
 	return SequencerState{
 		LastEmitted: sequencer.lastEmitted,
 		Root:        sequencer.grammar.RootSequence(),
@@ -141,6 +153,8 @@ func (sequencer *Sequencer) State() SequencerState {
 Restore replays Learn/RestoreRoot instead of rediscovering rules from scratch.
 */
 func (sequencer *Sequencer) Restore(state SequencerState) {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
 	restoreGrammar(sequencer.grammar, state.Root, state.Rules)
 	sequencer.mdl.Restore(state.MDL)
 	sequencer.lastEmitted = state.LastEmitted

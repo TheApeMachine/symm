@@ -1,18 +1,18 @@
 import { useSelector } from "@tanstack/react-store";
-import { lazy, Suspense, useRef, useState } from "react";
-import { signals } from "#/collections/app";
+import { lazy, Suspense, useCallback, useRef, useState } from "react";
 import { type Book, bookAtom, isBook } from "#/collections/book";
-import type { Position } from "#/collections/types";
-import { comparePositionRows } from "#/lib/frame-position";
-import { asFinite, moneyText, pctText } from "#/lib/format";
+import { moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { trySendCommand } from "#/providers/websocket";
-import type { OpenChoiceChartApi } from "./open-choice-draw";
-import { strokeFor } from "./open-choice-stroke";
+import type {
+	OpenChoiceChartApi,
+	OpenChoiceLegendItem,
+} from "./open-choice-draw";
 
 /*
 SciChart's ESM is broken under Node SSR. Lazy-load so the route module can
-evaluate without pulling scichart-react in.
+evaluate without pulling scichart-react in. Hub marks push into series;
+React only hosts chrome (layout toggle + legend).
 */
 const OpenChoiceSciChart = lazy(() =>
 	import("./open-choice-scichart").then((module) => ({
@@ -20,45 +20,56 @@ const OpenChoiceSciChart = lazy(() =>
 	})),
 );
 
-const exitBook = (position: Position, book: Book): Book =>
-	isBook(position.tier_key) ? position.tier_key : book;
+const exitBook = (item: OpenChoiceLegendItem, selected: Book): Book =>
+	isBook(item.tier) ? item.tier : selected;
 
 export const OpenChoiceChart = () => {
 	const book = useSelector(bookAtom, (state) => state);
-	const allPositions = useSelector(
-		signals.positions,
-		(state) => state as Record<string, Position>,
-	);
-	const positions = Object.values(allPositions)
-		.filter((pos) => {
-			const tier = pos.tier_key && pos.tier_key !== "" ? pos.tier_key : "paper";
-			return !pos.closed_at && tier === book;
-		})
-		.sort(comparePositionRows);
-	const chartApi = useRef<OpenChoiceChartApi | null>(null);
 	const [isGrid, setIsGrid] = useState(false);
+	const [legend, setLegend] = useState<OpenChoiceLegendItem[]>([]);
 	const [exiting, setExiting] = useState<Record<string, boolean>>({});
+	const legendKey = useRef("");
+	const apiRef = useRef<OpenChoiceChartApi | null>(null);
+
+	const onLegend = useCallback((items: OpenChoiceLegendItem[]) => {
+		const key = items
+			.map(
+				(item) =>
+					`${item.id}:${item.pnlMoney ?? ""}:${item.grossMoney ?? ""}:${item.pnlPct ?? ""}:${item.stopRoomPct ?? ""}:${item.stopProximity ?? ""}`,
+			)
+			.join("|");
+		if (key === legendKey.current) return;
+		legendKey.current = key;
+		setLegend(items);
+		setExiting((prev) => {
+			const next: Record<string, boolean> = {};
+			for (const item of items) {
+				if (prev[item.id]) next[item.id] = true;
+			}
+			return next;
+		});
+	}, []);
 
 	const setLayout = (grid: boolean) => {
-		chartApi.current?.setIsGridLayoutMode(grid);
+		apiRef.current?.setIsGridLayoutMode(grid);
 		setIsGrid(grid);
 	};
 
-	const exitPosition = (position: Position) => {
-		if (exiting[position.id]) return;
+	const exitPosition = (item: OpenChoiceLegendItem) => {
+		if (exiting[item.id]) return;
 
-		setExiting((prev) => ({ ...prev, [position.id]: true }));
+		setExiting((prev) => ({ ...prev, [item.id]: true }));
 		const ok = trySendCommand({
 			type: "exit",
-			id: position.id,
-			symbol: position.symbol,
-			book: exitBook(position, book),
+			id: item.id,
+			symbol: item.name,
+			book: exitBook(item, book),
 		});
 
 		if (!ok) {
 			setExiting((prev) => {
 				const next = { ...prev };
-				delete next[position.id];
+				delete next[item.id];
 				return next;
 			});
 		}
@@ -72,7 +83,7 @@ export const OpenChoiceChart = () => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Full open-position snapshots → one SciChart series each. Toggle grid per position.
+						Mark path + armed stop crest (peak↔floor). Toggle grid per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
@@ -114,61 +125,80 @@ export const OpenChoiceChart = () => {
 					}
 				>
 					<OpenChoiceSciChart
-						onReady={(ready) => {
-							chartApi.current = ready;
-							ready.setIsGridLayoutMode(isGrid);
+						onLegend={onLegend}
+						onReady={(api) => {
+							apiRef.current = api;
+							api.setIsGridLayoutMode(isGrid);
 						}}
 					/>
 				</Suspense>
 			</div>
-			{positions.length > 0 ? (
+			{legend.length > 0 ? (
 				<div className="flex max-h-28 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
-					{positions.map((position) => {
-						const pnl = asFinite(position.pnl);
-						const pct = asFinite(position.pnl_pct);
+					{legend.map((item) => {
 						const title = [
-							position.entry !== undefined && position.mark !== undefined
-								? `entry ${position.entry} → bid ${position.mark}`
+							item.entry !== undefined && item.mark !== undefined
+								? `entry ${item.entry} → bid ${item.mark}`
 								: null,
-							pnl !== null ? `net ${moneyText(pnl)}` : null,
+							item.grossMoney !== undefined
+								? `gross ${moneyText(item.grossMoney)}`
+								: null,
+							item.feeMoney !== undefined
+								? `fees ${moneyText(-item.feeMoney)}`
+								: null,
+							item.pnlMoney !== undefined
+								? `net ${moneyText(item.pnlMoney)}`
+								: null,
+							item.stopRoomPct !== undefined
+								? `room ${item.stopRoomPct.toFixed(1)}pp`
+								: null,
 						]
 							.filter(Boolean)
 							.join(" · ");
 
 						return (
 							<span
-								key={position.id}
+								key={item.id}
 								title={title}
 								className="inline-flex items-center gap-1"
 							>
 								<span
 									className="inline-block h-1.5 w-3 rounded-sm"
-									style={{ background: strokeFor(position.id) }}
+									style={{ background: item.stroke }}
 								/>
-								{position.symbol}
+								{item.name}
 								<span className="tabular-nums text-(--f4)">
-									{pnl !== null ? `g${moneyText(pnl)}` : ""}
+									{item.grossMoney !== undefined
+										? `g${moneyText(item.grossMoney)}`
+										: ""}
 								</span>
 								<span className="tabular-nums text-(--f2)">
-									{pnl !== null ? moneyText(pnl) : "…"}
+									{item.pnlMoney !== undefined
+										? moneyText(item.pnlMoney)
+										: "…"}
 								</span>
 								<span className="tabular-nums text-(--f4)">
-									{pct === null ? "" : pctText(pct)}
+									{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
 								</span>
+								{item.stopRoomPct !== undefined ? (
+									<span className="tabular-nums text-(--f4)">
+										r{item.stopRoomPct.toFixed(1)}
+									</span>
+								) : null}
 								<button
 									type="button"
-									aria-label={`Exit ${position.symbol}`}
-									title={`Manually exit ${position.symbol}`}
-									disabled={Boolean(exiting[position.id])}
-									onClick={() => exitPosition(position)}
+									aria-label={`Exit ${item.name}`}
+									title={`Manually exit ${item.name}`}
+									disabled={Boolean(exiting[item.id])}
+									onClick={() => exitPosition(item)}
 									className={cn(
 										"ml-0.5 rounded border border-(--line) px-1 py-px text-[9px] uppercase tracking-wide transition-colors",
-										exiting[position.id]
+										exiting[item.id]
 											? "cursor-wait text-(--f4)"
 											: "cursor-pointer text-(--f3) hover:border-(--down) hover:text-(--down)",
 									)}
 								>
-									{exiting[position.id] ? "…" : "exit"}
+									{exiting[item.id] ? "…" : "exit"}
 								</button>
 							</span>
 						);

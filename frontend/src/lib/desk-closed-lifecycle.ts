@@ -90,28 +90,58 @@ export const lifecycleFromDeskOpen = (pos: Position): Lifecycle | null => {
 	};
 };
 
+/** Fill-realized $ / % when S3 closed rows omit pnl (flat Qty cannot re-mark). */
+const fillRealized = (
+	pos: Position,
+): { money: number; pct: number; frac: number } | null => {
+	let buyQty = 0;
+	let buyNotional = 0;
+	let sellNotional = 0;
+
+	for (const fill of pos.fills ?? []) {
+		const qty = decimal(fill.last_qty);
+		const px = decimal(fill.last_price);
+		if (qty === null || qty <= 0 || px === null) continue;
+
+		if (fill.side === "buy") {
+			buyQty += qty;
+			buyNotional += px * qty;
+		} else if (fill.side === "sell") {
+			sellNotional += px * qty;
+		}
+	}
+
+	if (buyQty <= 0 || buyNotional <= 0) return null;
+
+	const money = sellNotional - buyNotional;
+	const pct = (money / buyNotional) * 100;
+	return { money, pct, frac: pct / 100 };
+};
+
 export const lifecycleFromDeskClosed = (pos: Position): Lifecycle | null => {
 	if (!pos.id || !pos.opened_at || !isClosed(pos) || !pos.closed_at) {
 		return null;
 	}
 
-	const frac = pnlFrac(pos);
-	const pct = pnlPct(pos);
-	const money = decimal(pos.pnl);
+	const fromFills = fillRealized(pos);
+	const pct = pnlPct(pos) ?? fromFills?.pct ?? null;
+	const money = decimal(pos.pnl) ?? fromFills?.money ?? null;
+	const frac = pnlFrac(pos) ?? fromFills?.frac ?? (pct !== null ? pct / 100 : null);
 	const triggers =
 		pos.outcome_triggers?.filter((t) => typeof t === "string") ?? [];
 	const held = holdNs(pos) ?? 0;
 
-	const outcome =
-		frac !== null && pct !== null
-			? ({
-					pnl: frac,
-					pnl_pct: pct,
+	// Prefer pct/frac; fall back to money-only / fill-realized so blank S3 rows show $.
+	const outcome: LifeOutcome | null =
+		frac !== null || money !== null
+			? {
+					pnl: frac ?? 0,
+					pnl_pct: pct ?? (frac !== null ? frac * 100 : 0),
 					money,
 					hold_ns: held,
 					expected_hold_ns: null,
 					triggers: triggers.length > 0 ? triggers : (["desk settle"] as string[]),
-				} satisfies LifeOutcome)
+				}
 			: null;
 
 	const tape = tapeMarksFromDeskRow(pos);

@@ -71,32 +71,20 @@ describe("GateLab", () => {
 		});
 	});
 
-	it("toggles resonance bypass and auto-applies the draft", () => {
+	it("applies resonance draft to the hub without bypass", () => {
 		act(() => {
 			gateLabStore.setState((prev) => ({ ...prev, open: true }));
 		});
 
 		render(<GateLab />);
 
-		const bypass = document.querySelector(
-			"[data-gate-lab-rez-bypass]",
-		) as HTMLButtonElement;
-		expect(bypass.getAttribute("data-gate-lab-rez-bypass")).toBe("off");
-		fireEvent.click(bypass);
-		expect(bypass.getAttribute("data-gate-lab-rez-bypass")).toBe("on");
-
-		expect(send).toHaveBeenCalledWith({
-			type: "resonance",
-			...RESONANCE_DEFAULTS,
-			bypass: true,
-		});
+		expect(document.querySelector("[data-gate-lab-rez-bypass]")).toBeNull();
 
 		fireEvent.click(screen.getByText("Apply rez"));
 
 		expect(send).toHaveBeenCalledWith({
 			type: "resonance",
 			...RESONANCE_DEFAULTS,
-			bypass: true,
 		});
 	});
 });

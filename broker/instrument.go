@@ -360,12 +360,11 @@ func (instrument *Instrument) resubscribe(
 	defer instrument.booksMu.Unlock()
 
 	victims := instrument.level3Victims(symbols)
+	replay := uniqueSymbols(symbols)
 
-	if len(victims) == 0 {
+	if len(victims) == 0 && len(replay) == 0 {
 		return nil
 	}
-
-	replay := make([]string, 0, len(symbols))
 
 	for _, victim := range victims {
 		if stale != nil {
@@ -380,9 +379,22 @@ func (instrument *Instrument) resubscribe(
 		replay = append(replay, victim.parts...)
 	}
 
+	replay = uniqueSymbols(replay)
 	errnie.Warn("[instrument] level3 resubscribe " + strings.Join(replay, ","))
 
-	return instrument.openBooks(read, replay)
+	if err := instrument.openBooks(read, replay); err != nil {
+		// openBooks failed after Delete — schedule RecoverBooks so a later
+		// dial can recreate Level3 entries without spinning resubLoop forever.
+		syms := append([]string(nil), replay...)
+		go func() {
+			time.Sleep(time.Second)
+			instrument.RecoverBooks(read, syms, stale)
+		}()
+
+		return err
+	}
+
+	return nil
 }
 
 type level3Batch struct {
@@ -649,6 +661,24 @@ func (instrument *Instrument) SubscribeTrades() error {
 
 	instrument.Transition(runtime.READY)
 	return nil
+}
+
+/*
+CloseLevel3 closes every open book websocket so readLevel3 goroutines unblock
+on shutdown instead of sitting in ReadMessage until process exit.
+*/
+func (instrument *Instrument) CloseLevel3() {
+	if instrument == nil || instrument.Level3 == nil {
+		return
+	}
+
+	instrument.Level3.Range(func(_, value any) bool {
+		if client, ok := value.(*network.WebsocketClient); ok && client != nil {
+			_ = client.Close()
+		}
+
+		return true
+	})
 }
 
 /*

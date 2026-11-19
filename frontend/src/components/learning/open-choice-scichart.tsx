@@ -1,5 +1,4 @@
 import { useRef } from "react";
-import { FastLineRenderableSeries, XyDataSeries } from "scichart";
 import { SciChartReact } from "scichart-react";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
@@ -7,78 +6,85 @@ import type { Position } from "#/collections/types";
 import {
 	drawOpenChoiceChart,
 	type OpenChoiceChartApi,
+	type OpenChoiceLegendItem,
 } from "./open-choice-draw";
-import { strokeFor } from "./open-choice-stroke";
 
-/** Client-only SciChart surface — subscribe and append pnl_pct lines. */
+const roundLegend = (items: OpenChoiceLegendItem[]): OpenChoiceLegendItem[] =>
+	items.map((item) => ({
+		...item,
+		pnlMoney:
+			item.pnlMoney === undefined
+				? undefined
+				: Math.round(item.pnlMoney * 100) / 100,
+		grossMoney:
+			item.grossMoney === undefined
+				? undefined
+				: Math.round(item.grossMoney * 100) / 100,
+		feeMoney:
+			item.feeMoney === undefined
+				? undefined
+				: Math.round(item.feeMoney * 100) / 100,
+		pnlPct:
+			item.pnlPct === undefined
+				? undefined
+				: Math.round(item.pnlPct * 10) / 10,
+		stopRoomPct:
+			item.stopRoomPct === undefined
+				? undefined
+				: Math.round(item.stopRoomPct * 10) / 10,
+		stopProximity:
+			item.stopProximity === undefined
+				? undefined
+				: Math.round(item.stopProximity * 100) / 100,
+	}));
+
+/** Client-only SciChart surface; paints from signals.positions snapshots. */
 export const OpenChoiceSciChart = ({
+	onLegend,
 	onReady,
 }: {
+	onLegend: (items: OpenChoiceLegendItem[]) => void;
 	onReady?: (api: OpenChoiceChartApi) => void;
 }) => {
+	const onLegendRef = useRef(onLegend);
 	const onReadyRef = useRef(onReady);
+	onLegendRef.current = onLegend;
 	onReadyRef.current = onReady;
-	const tick = useRef(0);
 
 	return (
 		<SciChartReact
 			initChart={drawOpenChoiceChart}
 			onInit={(api: OpenChoiceChartApi) => {
+				api.setBook(bookAtom.get());
 				onReadyRef.current?.(api);
 
-				const updateChart = () => {
-					tick.current++;
-					const x = tick.current;
-					const seen: string[] = [];
-					const currentBook = bookAtom.get();
-					const positions = signals.positions.state;
+				let frame = 0;
+				let pending: Record<string, Position> | null = null;
 
-					for (const pos of Object.values(positions)) {
-						const position = pos as Position;
-						const id = position.id;
-						if (!id || position.closed_at) continue;
-						const tier = position.tier_key || "paper";
-						if (tier !== currentBook) continue;
-
-						let series = api.sciChartSurface.renderableSeries.getById(id);
-
-						if (!series) {
-							series = new FastLineRenderableSeries(api.wasmContext, {
-								id,
-								dataSeries: new XyDataSeries(api.wasmContext, {
-									fifoCapacity: 90,
-									containsNaN: false,
-									isSorted: true,
-								}),
-								stroke: strokeFor(id),
-								strokeThickness: 2,
-							});
-							api.sciChartSurface.renderableSeries.add(series);
-						}
-
-						const y = parseFloat(String(position.pnl_pct ?? ""));
-						if (!Number.isFinite(y)) continue;
-
-						(series.dataSeries as XyDataSeries).append(x, y);
-						seen.push(id);
-					}
-
-					for (const series of api.sciChartSurface.renderableSeries.asArray()) {
-						const id = series.id as string;
-						if (id && !seen.includes(id)) {
-							api.sciChartSurface.renderableSeries.remove(series);
-						}
-					}
-
-					api.sciChartSurface.invalidateElement();
+				const paint = (state: Record<string, Position> | null) => {
+					pending = state;
+					if (frame) return;
+					frame = requestAnimationFrame(() => {
+						frame = 0;
+						onLegendRef.current(roundLegend(api.push(pending ?? {})));
+					});
 				};
 
-				const subPositions = signals.positions.subscribe(updateChart);
-				const subBook = bookAtom.subscribe(updateChart);
+				paint(signals.positions.state as Record<string, Position>);
+
+				const posSub = signals.positions.subscribe((state) => {
+					paint(state as Record<string, Position>);
+				});
+
+				const bookSub = bookAtom.subscribe((next) => {
+					api.setBook(next);
+					paint(signals.positions.state as Record<string, Position>);
+				});
 
 				return () => {
-					subPositions.unsubscribe();
-					subBook.unsubscribe();
+					if (frame) cancelAnimationFrame(frame);
+					posSub.unsubscribe();
+					bookSub.unsubscribe();
 				};
 			}}
 			style={{ width: "100%", height: "100%" }}

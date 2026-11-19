@@ -26,9 +26,16 @@ type Selection struct {
 	WeightSpread           float64
 	WeightPeakFrac         float64
 	// WeightRotation scales calibrated resonance task_skill in board ranking.
-	WeightRotation     float64
-	HeartbeatBatch     int
-	RotationCloseBoost float64
+	WeightRotation float64
+	HeartbeatBatch int
+	// ShortHoldBoost is the board-score margin above MinBoardScore required to
+	// draw from the reserved cash pool (fast, high-conviction enters).
+	ShortHoldBoost float64
+	// ReserveExtraSlots lets short-hold reserve enters exceed MaxOpenPositions.
+	ReserveExtraSlots int
+	WeightSync        float64
+	WeightSurge       float64
+	WeightDepth       float64
 }
 
 func NewSelection() *Selection {
@@ -48,7 +55,11 @@ func NewSelection() *Selection {
 	viper.SetDefault("selection.weight_peak_frac", 0.5)
 	viper.SetDefault("selection.weight_rotation", 0.35)
 	viper.SetDefault("selection.heartbeat_batch", 48)
-	viper.SetDefault("selection.rotation_close_boost", 0.15)
+	viper.SetDefault("selection.short_hold_boost", 0.15)
+	viper.SetDefault("selection.reserve_extra_slots", 2)
+	viper.SetDefault("selection.weight_sync", 0.45)
+	viper.SetDefault("selection.weight_surge", 0.35)
+	viper.SetDefault("selection.weight_depth", 0.30)
 
 	return &Selection{
 		MaxOpenPositions:       viper.GetInt("selection.max_open_positions"),
@@ -67,6 +78,10 @@ func NewSelection() *Selection {
 		WeightPeakFrac:         viper.GetFloat64("selection.weight_peak_frac"),
 		WeightRotation:         viper.GetFloat64("selection.weight_rotation"),
 		HeartbeatBatch:         viper.GetInt("selection.heartbeat_batch"),
-		RotationCloseBoost:     viper.GetFloat64("selection.rotation_close_boost"),
+		ShortHoldBoost:         viper.GetFloat64("selection.short_hold_boost"),
+		ReserveExtraSlots:      viper.GetInt("selection.reserve_extra_slots"),
+		WeightSync:             viper.GetFloat64("selection.weight_sync"),
+		WeightSurge:            viper.GetFloat64("selection.weight_surge"),
+		WeightDepth:            viper.GetFloat64("selection.weight_depth"),
 	}
 }

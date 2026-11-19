@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,6 +113,8 @@ func (nonce *AuthNonce) Next() string {
 
 			return strconv.FormatInt(next, 10)
 		}
+
+		runtime.Gosched()
 	}
 }
 
@@ -136,6 +139,8 @@ func (nonce *AuthNonce) Bump(floor int64) {
 			nonce.persistValue(next, true)
 			return
 		}
+
+		runtime.Gosched()
 	}
 }
 
@@ -315,6 +320,7 @@ func (nonce *AuthNonce) persistValue(value int64, force bool) {
 		}
 
 		for !nonce.isPersisting.CompareAndSwap(false, true) {
+			runtime.Gosched()
 		}
 	}
 	defer nonce.isPersisting.Store(false)

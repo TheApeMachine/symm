@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
-	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
@@ -121,8 +120,7 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	stale := position.Mark != nil && hint.Equal(*position.Mark)
 
 	position.Mark = hint
-	position.PnL = position.price.PnL(position)
-	position.PnLPct = position.price.PnLPct(position)
+	position.PnL, position.PnLPct = position.price.markPnLLocked(position)
 
 	if position.PnLPct == nil {
 		position.mu.Unlock()
@@ -145,11 +143,14 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	pnlpct, _ := position.PnLPct.Float64()
 	if position.Stoploss == nil {
 		position.Stoploss = NewStoploss(pnlpct)
+		if q, _ := position.Qty.Float64(); q > 0 {
+			position.Stoploss.BasisQty = q
+		}
 	}
 
 	position.Stoploss.Update(pnlpct, friction)
 
-	if !position.Stoploss.Triggered() {
+	if !position.Stoploss.WantsExit() {
 		position.mu.Unlock()
 		return !stale, nil
 	}
@@ -218,6 +219,9 @@ func (position *Position) exit(force bool) error {
 		trigger = "manual"
 	} else if position.ExitPath != "" {
 		trigger = "policy exit match " + position.ExitPath
+	} else if position.Stoploss != nil && position.Stoploss.WantsExit() &&
+		position.Stoploss.TriggerReason != "" {
+		trigger = position.Stoploss.TriggerReason
 	}
 
 	position.mu.Lock()
@@ -231,34 +235,18 @@ func (position *Position) exit(force bool) error {
 		))
 	}
 
-	wire := *position.Qty
-
-	var pair kraken.InstrumentPair
+	wire := position.exitWireQty(force)
+	vol := wire.String()
 
 	if position.price != nil && position.price.Instrument != nil &&
 		position.price.normalizer != nil {
-		pair = position.price.Instrument.Pair(
+		pair := position.price.Instrument.Pair(
 			position.price.normalizer.Name(position.Symbol),
 		)
 
-		if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
-			inc := *pair.QtyIncrement
-			wire = wire.Div(inc).Floor().Mul(inc)
+		if pair.QtyPrecision > 0 {
+			vol = wire.StringFixed(int32(pair.QtyPrecision))
 		}
-	}
-
-	if wire.Sign() <= 0 {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[position.exit] wire qty rounds to zero",
-			nil,
-		))
-	}
-
-	vol := wire.String()
-
-	if pair.QtyPrecision > 0 {
-		vol = wire.StringFixed(int32(pair.QtyPrecision))
 	}
 
 	if position.ExitOrder == nil {
@@ -268,7 +256,8 @@ func (position *Position) exit(force bool) error {
 			Type:      "sell",
 			Volume:    vol,
 		}
-	} else if vol != "" {
+	} else {
+		position.ExitOrder.ClOrdId = uuid.NewString()
 		position.ExitOrder.Volume = vol
 	}
 
@@ -279,22 +268,124 @@ func (position *Position) exit(force bool) error {
 }
 
 /*
+exitWireQty sizes a ladder exit. Mid stages take PendingExitPct of BasisQty.
+If that equal slice would leave a remainder below QtyMin/CostMin, the dust is
+kept for the final stage: this mid sell shrinks so the stub stays venue-legal.
+If the mid slice itself is below min (or a legal mid+final split is impossible),
+this exit becomes the final stage and sells the full open.
+*/
+func (position *Position) exitWireQty(force bool) decimal.Decimal {
+	qty := *position.Qty
+
+	if force || position.Stoploss == nil || position.Stoploss.Triggered() {
+		return qty
+	}
+
+	frac := position.Stoploss.PendingExitPct
+	if frac <= stepEps || frac >= 1-stepEps {
+		return qty
+	}
+
+	basis := decimal.NewFromFloat(position.Stoploss.BasisQty)
+	if basis.Sign() <= 0 {
+		basis = qty
+	}
+
+	want := basis.Mul(decimal.NewFromFloat(frac))
+	if want.Cmp(qty) > 0 {
+		want = qty
+	}
+
+	if position.belowVenueMin(want) {
+		return qty
+	}
+
+	rem := qty.Sub(want)
+	if rem.Sign() <= 0 || !position.belowVenueMin(rem) {
+		return want
+	}
+
+	// Equal slice would leave dust — park at least venue-min for the final stage.
+	leave := position.venueMinSize()
+	if leave == nil {
+		return qty
+	}
+
+	mid := qty.Sub(*leave)
+	if mid.Sign() > 0 && !position.belowVenueMin(mid) {
+		return mid
+	}
+
+	return qty
+}
+
+/*
+belowVenueMin is true when size cannot clear the pair's QtyMin/CostMin.
+Missing instrument metadata returns false (cannot judge).
+*/
+func (position *Position) belowVenueMin(size decimal.Decimal) bool {
+	if size.Sign() <= 0 {
+		return true
+	}
+
+	min := position.venueMinSize()
+	return min != nil && size.Cmp(*min) < 0
+}
+
+/*
+venueMinSize is the smallest venue-legal base size at the current mark
+(QtyMin, and enough base to clear CostMin).
+*/
+func (position *Position) venueMinSize() *decimal.Decimal {
+	if position.price == nil || position.price.Instrument == nil ||
+		position.price.normalizer == nil {
+		return nil
+	}
+
+	symbol := position.price.normalizer.Name(position.Symbol)
+	pair := position.price.Instrument.Pair(symbol)
+
+	var min decimal.Decimal
+	have := false
+
+	if pair.QtyMin != nil && pair.QtyMin.Sign() > 0 {
+		min = *pair.QtyMin
+		have = true
+	}
+
+	if pair.CostMin != nil && pair.CostMin.Sign() > 0 {
+		if mark := position.price.Mark(symbol); mark != nil && mark.Sign() > 0 {
+			byCost := pair.CostMin.Div(*mark)
+			if !have || byCost.Cmp(min) > 0 {
+				min = byCost
+				have = true
+			}
+		}
+	}
+
+	if !have {
+		return nil
+	}
+
+	return &min
+}
+
+/*
 Validate checks the fields a live position needs to mark and exit.
 EntryPath is strategy attribution — trade recover often has none; do not require it.
 */
 func (position *Position) Validate() error {
-	return errnie.Require(map[string]any{
-		"id":                   position.ID,
-		"symbol":               position.Symbol,
-		"tier_key":             position.TierKey,
-		"qty":                  position.Qty,
-		"entry":                position.Entry,
-		"entry_order":          position.EntryOrder,
-		"entry_venue_order_id": position.EntryVenueOrderID,
-		"fills":                position.Fills,
-		"price":                position.price,
-		"on_settled":           position.onSettled,
-	})
+	if position == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[position.Validate] position is nil",
+			nil,
+		))
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+	return position.validateLocked()
 }
 
 /*
@@ -362,6 +453,9 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
 			position.ClosedAt = &execution.Timestamp
 			position.Transition(runtime.DONE)
+			// Mark PnL needs open Qty; once flat, stamp settle PnL from fills
+			// so closed/ S3 rows (and the Forward list) never ship blank.
+			position.stampFillRealizedLocked()
 		}
 
 		return
@@ -399,4 +493,46 @@ func (position *Position) fillsNet() (net, bought, notional decimal.Decimal) {
 	}
 
 	return net, bought, notional
+}
+
+/*
+stampFillRealizedLocked writes fee-agnostic settle PnL from fill notionals.
+Caller holds position.mu. Used when the book can no longer mark a flat Qty.
+*/
+func (position *Position) stampFillRealizedLocked() {
+	var buyQty, buyNotional, sellQty, sellNotional decimal.Decimal
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.LastQty == nil || fill.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		px := decimal.Zero
+
+		if fill.LastPrice != nil {
+			px = *fill.LastPrice
+		}
+
+		switch fill.Side {
+		case "buy":
+			buyQty = buyQty.Add(*fill.LastQty)
+			buyNotional = buyNotional.Add(px.Mul(*fill.LastQty))
+		case "sell":
+			sellQty = sellQty.Add(*fill.LastQty)
+			sellNotional = sellNotional.Add(px.Mul(*fill.LastQty))
+		}
+	}
+
+	if buyQty.Sign() <= 0 || buyNotional.Sign() <= 0 || sellQty.Sign() <= 0 {
+		return
+	}
+
+	pnl := sellNotional.Sub(buyNotional)
+	pct := pnl.Div(buyNotional).Mul(decimalHundred)
+	position.PnL = &pnl
+	position.PnLPct = &pct
+	sold := sellQty
+	position.Sold = &sold
+	vwap := sellNotional.Div(sellQty)
+	position.ExitVWAP = &vwap
 }

@@ -218,49 +218,16 @@ func (tier *Tier) Hello() map[string]any {
 	unrealized := decimal.Zero
 
 	for _, position := range open {
-		if position == nil || len(position.Fills) == 0 || position.ClosedAt != nil {
+		snap := position.SnapshotHello()
+		if snap == nil {
 			continue
 		}
 
-		id := position.ID
-		pnl := position.PnL
-
-		if id == "" {
-			continue
+		if snap.PnL != nil {
+			unrealized = unrealized.Add(*snap.PnL)
 		}
 
-		if pnl != nil {
-			unrealized = unrealized.Add(*pnl)
-		}
-
-		positions[id] = &Position{
-			ID:        position.ID,
-			Symbol:    position.Symbol,
-			TierKey:   position.TierKey,
-			OpenedAt:  position.OpenedAt,
-			ClosedAt:  position.ClosedAt,
-			EntryPath: position.EntryPath,
-			Qty:       position.Qty,
-			Entry:     position.Entry,
-			Mark:      position.Mark,
-			PnL:       position.PnL,
-			PnLPct:    position.PnLPct,
-		}
-
-		if position.Stoploss != nil {
-			positions[id].Stoploss = &Stoploss{
-				State:           position.Stoploss.State,
-				Regime:          position.Stoploss.Regime,
-				InitialPnLPct:   position.Stoploss.InitialPnLPct,
-				CurrentPnLPct:   position.Stoploss.CurrentPnLPct,
-				PeakPnLPct:      position.Stoploss.PeakPnLPct,
-				ArmPnlPct:       position.Stoploss.ArmPnlPct,
-				TrailingFloor:   position.Stoploss.TrailingFloor,
-				TypicalPullback: position.Stoploss.TypicalPullback,
-				Confirms:        position.Stoploss.Confirms,
-				ExhaustScore:    position.Stoploss.ExhaustScore,
-			}
-		}
+		positions[snap.ID] = snap
 	}
 
 	tier.balance.Unrealized = &unrealized
@@ -272,36 +239,30 @@ func (tier *Tier) Hello() map[string]any {
 }
 
 /*
-Update marks READY positions for the symbol. Desk.Update owns Hello — one full
-open-universe snapshot per Level3/trade batch, not a per-symbol touch gate.
+Update marks READY positions for the symbol. Desk.Update owns coalesced Hello —
+open-universe snapshots are rate-limited, not a per-symbol touch gate.
 */
 func (tier *Tier) Update(symbol string, mark *decimal.Decimal) {
-	if tier.Status() != runtime.READY {
+	if tier.Status() != runtime.READY || tier.positions == nil {
 		return
 	}
 
-	for _, position := range tier.positions.Open() {
-		if position == nil {
-			continue
-		}
+	position := tier.positions.Get(symbol)
 
-		switch position.Status() {
-		case runtime.READY, runtime.WAITING:
-		default:
-			continue
-		}
+	if position == nil {
+		return
+	}
 
-		posSymbol := tier.price.normalizer.Name(position.Symbol)
+	switch position.Status() {
+	case runtime.READY, runtime.WAITING:
+	default:
+		return
+	}
 
-		if posSymbol != symbol {
-			continue
-		}
-
-		if dirty, err := position.Update(mark); err != nil {
-			errnie.Error(err)
-		} else if dirty {
-			errnie.Error(tier.positions.Save(position))
-		}
+	if dirty, err := position.Update(mark); err != nil {
+		errnie.Error(err)
+	} else if dirty {
+		errnie.Error(tier.positions.Save(position))
 	}
 }
 
@@ -344,7 +305,7 @@ Enter binds spot wallet to Allocate so mins and cash match what Send will spend.
 Cache keys use the normalized symbol so desk mark Hellos hit the same position.
 */
 func (tier *Tier) Enter(
-	symbol string, path string, pathFound bool,
+	symbol string, path string, pathFound bool, hint SizeHint,
 ) error {
 	if tier.price != nil && tier.price.normalizer != nil {
 		symbol = tier.price.normalizer.Name(symbol)
@@ -366,7 +327,7 @@ func (tier *Tier) Enter(
 		)
 	}
 
-	qty, err := tier.price.Allocate(symbol, tier.balance)
+	qty, err := tier.price.Allocate(symbol, tier.balance, hint)
 
 	if err != nil || qty == nil || qty.Sign() <= 0 {
 		if err != nil {
@@ -397,6 +358,16 @@ func (tier *Tier) Enter(
 	tier.positions.Add(symbol, position, true)
 
 	if err := tier.Send(position, "enter"); err != nil {
+		// Local / pre-ack failure: no venue order_id yet — Drop so Has(symbol)
+		// cannot permanently block re-entry (rejectOrder does the same on ack).
+		position.mu.Lock()
+		acked := position.EntryVenueOrderID != ""
+		position.mu.Unlock()
+
+		if !acked {
+			tier.positions.Drop(symbol)
+		}
+
 		return errnie.Error(err)
 	}
 
@@ -438,9 +409,7 @@ func (tier *Tier) Exit(
 		}
 	}
 
-	err := position.exit(force)
-
-	if err != nil {
+	if err := position.exit(force); err != nil {
 		return errnie.Error(err)
 	}
 
@@ -458,8 +427,9 @@ func (tier *Tier) Exit(
 }
 
 /*
-abortExit clears pending, resets Stoploss, and returns BUSY → READY so the
-position holds instead of selling into a loss.
+abortExit clears pending and returns BUSY → READY so the position holds
+instead of selling into a loss. AbortPending rolls back unfilled tranche
+claims / StoplossTriggered; only a zero-fill abort Disarms.
 */
 func (tier *Tier) abortExit(position *Position) {
 	if position == nil {
@@ -471,7 +441,10 @@ func (tier *Tier) abortExit(position *Position) {
 	position.mu.Lock()
 
 	if position.Stoploss != nil {
-		position.Stoploss.Disarm()
+		position.Stoploss.AbortPending()
+		if position.Stoploss.TranchesExited == 0 {
+			position.Stoploss.Disarm()
+		}
 	}
 
 	position.ExitPath = ""
@@ -527,7 +500,27 @@ func (tier *Tier) apply(execution *market.Execution) {
 		position.Apply(*data)
 
 		if position.ClosedAt == nil {
+			// Partial scale-out fill: commit banked slices, clear exit, resume marks.
+			if data.Side == "sell" && position.Status() == runtime.BUSY {
+				position.mu.Lock()
+				position.ExitOrder = nil
+				position.ExitVenueOrderID = ""
+				position.ExitTrigger = ""
+				if position.Stoploss != nil {
+					position.Stoploss.CommitPending()
+				}
+				position.Transition(runtime.READY)
+				position.mu.Unlock()
+
+				if err := tier.positions.Save(position); err != nil {
+					errnie.Error(err)
+				}
+			}
 			continue
+		}
+
+		if position.Stoploss != nil {
+			position.Stoploss.CommitPending()
 		}
 
 		tier.positions.Remove(position.Symbol)

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"iter"
 	"maps"
+	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -26,6 +28,13 @@ never blocks the public reader; L3 instead blocks because gaps corrupt books.
 const tradeQueueFrames = 256
 
 /*
+helloMinInterval coalesces mark-driven Hello to roughly one positions_snapshot
+per display frame (60Hz). Level3/trade floods still collapse; open/close still
+call Hello() immediately via onBook.
+*/
+const helloMinInterval = time.Second / 60
+
+/*
 Desk fans work across the armed tiers. Live-only (market.model real) builds
 the real book alone; paper mode keeps virtual + paper + disarmed real.
 */
@@ -37,9 +46,16 @@ type Desk struct {
 	tiers     map[TierType]*Tier
 	live      bool
 	onTrade   func(*market.Trade)
-	level3Ch  chan *market.Level3
-	tradeCh   chan *market.Trade
-	l3Symbols []string
+	level3Ch chan *market.Level3
+	tradeCh  chan *market.Trade
+
+	helloMu      sync.Mutex
+	helloLast    time.Time
+	helloPending bool
+
+	// updateMu serializes pumpLevel3 and pumpTrade mark paths so the same
+	// position cannot be Update'd on both rings at once.
+	updateMu sync.Mutex
 }
 
 /*
@@ -172,13 +188,10 @@ func (desk *Desk) pumpLevel3() {
 				desk.price.Books.Update(book)
 			}
 
-			desk.l3Symbols = desk.l3Symbols[:0]
 			trades := make([]*market.TradeData, 0)
 
 			for _, row := range book.Data {
 				if row != nil && row.Symbol != "" {
-					desk.l3Symbols = append(desk.l3Symbols, row.Symbol)
-
 					trades = append(trades, &market.TradeData{
 						Symbol: row.Symbol,
 					})
@@ -338,6 +351,10 @@ Hello is the operator-facing book: balance changes and history sync call it so
 the hub stays consistent without every tier mutating UI directly.
 */
 func (desk *Desk) Hello() {
+	desk.helloMu.Lock()
+	desk.helloLast = time.Now()
+	desk.helloMu.Unlock()
+
 	desk.publishModes()
 
 	positions := make(map[string]*Position)
@@ -359,6 +376,37 @@ func (desk *Desk) Hello() {
 		"positions":          positions,
 		"balances":           balances,
 		"positions_snapshot": true,
+	})
+}
+
+/*
+scheduleHello coalesces mark-path snapshots. Immediate when the last Hello is
+older than helloMinInterval; otherwise one trailing flush after the wait.
+*/
+func (desk *Desk) scheduleHello() {
+	desk.helloMu.Lock()
+
+	if desk.helloPending {
+		desk.helloMu.Unlock()
+		return
+	}
+
+	wait := helloMinInterval - time.Since(desk.helloLast)
+
+	if wait <= 0 {
+		desk.helloMu.Unlock()
+		desk.Hello()
+		return
+	}
+
+	desk.helloPending = true
+	desk.helloMu.Unlock()
+
+	time.AfterFunc(wait, func() {
+		desk.helloMu.Lock()
+		desk.helloPending = false
+		desk.helloMu.Unlock()
+		desk.Hello()
 	})
 }
 
@@ -417,11 +465,15 @@ func (desk *Desk) Flush() error {
 
 /*
 Update records tape flow and marks open positions from the executable bid.
-Level3 and public trades both land here — after the batch is marked, Hello
-ships one full open-universe positions_snapshot so the chart consolidates
-every tick, not only when the touched symbol already held a READY row.
+Level3 and public trades both land here — after the batch is marked,
+scheduleHello coalesces the open-universe positions_snapshot so the dashboard
+is not rebuilt on every book frame. updateMu keeps the two pumps from marking
+the same open row concurrently.
 */
 func (desk *Desk) Update(trades []*market.TradeData) {
+	desk.updateMu.Lock()
+	defer desk.updateMu.Unlock()
+
 	for _, trade := range trades {
 		if trade == nil {
 			continue
@@ -445,7 +497,7 @@ func (desk *Desk) Update(trades []*market.TradeData) {
 		}
 	}
 
-	desk.Hello()
+	desk.scheduleHello()
 }
 
 /*
@@ -484,7 +536,7 @@ Enter is the desk entrypoint so strategy does not pick transports or Unlocked
 logic — wrong tier wiring would send real orders without paper proof.
 */
 func (desk *Desk) Enter(
-	symbol string, path string, tt TierType, pathFound bool,
+	symbol string, path string, tt TierType, pathFound bool, hint SizeHint,
 ) error {
 	tier := desk.tiers[tt]
 
@@ -496,7 +548,7 @@ func (desk *Desk) Enter(
 		))
 	}
 
-	return errnie.Error(tier.Enter(symbol, path, pathFound))
+	return errnie.Error(tier.Enter(symbol, path, pathFound, hint))
 }
 
 /*

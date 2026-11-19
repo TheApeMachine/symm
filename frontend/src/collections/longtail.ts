@@ -24,7 +24,7 @@ import {
 	isPathBookKey,
 } from "#/components/learning/explore-path";
 import { closedListingFromEnvelope } from "#/hub/s3-prefix-compact";
-import { asFinite } from "#/lib/format";
+import { asFinite, stampMs } from "#/lib/format";
 import {
 	deskRowsForStats,
 	ingestDeskClosedPositions,
@@ -1006,10 +1006,7 @@ export const seedFromClosedPositions = () => {
 	if (rows.length < 2) return false;
 
 	const dated = rows
-		.map((row) => {
-			const at = row.closed_at ? Date.parse(row.closed_at) : Number.NaN;
-			return { row, at: Number.isFinite(at) ? at : 0 };
-		})
+		.map((row) => ({ row, at: stampMs(row.closed_at) }))
 		.sort((a, b) => a.at - b.at);
 
 	const step = Math.max(1, Math.ceil(dated.length / CHART_SAMPLES));

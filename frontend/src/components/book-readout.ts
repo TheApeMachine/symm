@@ -1,5 +1,6 @@
 import type { Book } from "#/collections/book";
 import type { Position } from "#/collections/types";
+import { stampMs } from "#/lib/format";
 
 const decimalPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
@@ -29,9 +30,9 @@ export const pnlFrac = (pos: Position) => {
 export const holdNs = (pos: Position) => {
 	if (!isClosed(pos) || !pos.opened_at || !pos.closed_at) return null;
 
-	const opened = Date.parse(pos.opened_at);
-	const closed = Date.parse(pos.closed_at);
-	if (!Number.isFinite(opened) || !Number.isFinite(closed)) return null;
+	const opened = stampMs(pos.opened_at);
+	const closed = stampMs(pos.closed_at);
+	if (opened <= 0 || closed <= 0) return null;
 
 	return (closed - opened) * 1e6;
 };

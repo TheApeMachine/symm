@@ -25,10 +25,10 @@ type Learning struct {
 	MinSupportedHorizon      int
 	// MinTaskRelativePrecision is absolute task precision or min empirical rank when warm.
 	MinTaskRelativePrecision float64
-	// MinSurprise is the minimum adaptive surprise regime z once resonance is warm.
+	// MinSurprise is the minimum adaptive surprise once resonance is warm.
 	MinSurprise float64
-	ResonanceBypass          bool
-	MinEnterZ                float64
+	// MinEnterZ is the minimum surprise_regime_z for enter (preferred over raw surprise).
+	MinEnterZ float64
 }
 
 func NewLearning() *Learning {
@@ -45,7 +45,6 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.min_supported_horizon", 2)
 	viper.SetDefault("learning.min_task_relative_precision", 0.5)
 	viper.SetDefault("learning.min_surprise", 0.5)
-	viper.SetDefault("learning.resonance_bypass", false)
 	viper.SetDefault("learning.min_enter_z", 0.35)
 
 	return &Learning{
@@ -62,7 +61,6 @@ func NewLearning() *Learning {
 		MinSupportedHorizon:       viper.GetInt("learning.min_supported_horizon"),
 		MinTaskRelativePrecision:  viper.GetFloat64("learning.min_task_relative_precision"),
 		MinSurprise:               viper.GetFloat64("learning.min_surprise"),
-		ResonanceBypass:           viper.GetBool("learning.resonance_bypass"),
 		MinEnterZ:                 viper.GetFloat64("learning.min_enter_z"),
 	}
 }
@@ -108,15 +106,6 @@ func (learning *Learning) ApplyResonance(patch map[string]any) {
 			*dst = value
 		case int64:
 			*dst = int(value)
-		}
-	}
-
-	if raw, ok := patch["bypass"]; ok {
-		switch value := raw.(type) {
-		case bool:
-			learning.ResonanceBypass = value
-		case float64:
-			learning.ResonanceBypass = value != 0
 		}
 	}
 

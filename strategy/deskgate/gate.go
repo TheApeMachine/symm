@@ -119,6 +119,7 @@ func (gate *Gate) Features(
 		"backing":      gate.backingRatio(price, symbol),
 		"peak_frac":    gate.peakFrac(price, symbol),
 		"volume_usd":   gate.volumeUSD(price, symbol),
+		"open_drag":    gate.openDrag(price, symbol),
 	}
 
 	gate.mu.Lock()
@@ -157,7 +158,11 @@ func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.Ig
 	case "spread":
 		return -out["spread_pct"]
 	case "book":
-		return out["touch_cash"] + out["backing"] + out["tape_ratio"]
+		drag := out["open_drag"]
+		if drag < 0 {
+			drag = 0
+		}
+		return out["touch_cash"] + out["backing"] + out["tape_ratio"] - drag
 	case "peak":
 		frac := out["peak_frac"]
 		if frac < 0 {
@@ -223,11 +228,15 @@ func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
 		return false
 	}
 
-	// Restored cuts keep empty Standardizers until Learn warms them. Hard-veto
-	// while !ready() painted every Day/Vol lamp red after boot even when the
-	// tape and session move were real — use risk floors until the track is live.
+	// Risk floors never drop out — a 3-sample Standardizer must not replace
+	// MinMoverVolumeUSD / MaxEntrySpreadPct / … with cuts fit only on entered
+	// trades. Cold track: static only. Warm track: static AND learned cut.
+	if !gate.staticPass(name, feat) {
+		return false
+	}
+
 	if !axis.ready() {
-		return gate.staticPass(name, feat)
+		return true
 	}
 
 	score := feat["axis_"+name]
@@ -262,8 +271,14 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 		return spread > 0 && spread <= risk.MaxEntrySpreadPct
 	case "book":
 		// touch_cash in Features is Log1p(USD) for the learned axis.
-		return feat["touch_cash"] >= math.Log1p(risk.MinTouchBidCash) &&
-			feat["backing"] >= risk.MinBackingRatio
+		if feat["touch_cash"] < math.Log1p(risk.MinTouchBidCash) ||
+			feat["backing"] < risk.MinBackingRatio {
+			return false
+		}
+		if risk.MaxEntryOpenDragPct > 0 && feat["open_drag"] > risk.MaxEntryOpenDragPct {
+			return false
+		}
+		return true
 	case "peak":
 		if risk.MaxEntryPeakFrac <= 0 || risk.MaxEntryPeakFrac >= 1 {
 			return true
@@ -486,4 +501,12 @@ func (gate *Gate) volumeUSD(price *broker.Price, symbol string) float64 {
 	}
 
 	return price.VolumeUSD(symbol)
+}
+
+func (gate *Gate) openDrag(price *broker.Price, symbol string) float64 {
+	drag, ok := price.OpenDragPct(symbol)
+	if !ok {
+		return -1
+	}
+	return drag
 }

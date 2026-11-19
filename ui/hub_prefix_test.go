@@ -66,6 +66,20 @@ func TestRead(t *testing.T) {
 				So(missing.read([]byte(`{"position":{"qty":1}}`)), ShouldBeFalse)
 			})
 		})
+
+		Convey("When legacy bare Position JSON is stored", func() {
+			var legacy closedEntry
+			ok := legacy.read([]byte(
+				`{"id":"abc","symbol":"AKE/USD","tier_key":"paper","qty":"1"}`,
+			))
+
+			Convey("Row is accepted and book is derived from tier_key", func() {
+				So(ok, ShouldBeTrue)
+				So(legacy.Row["id"], ShouldEqual, "abc")
+				So(legacy.Row["book"], ShouldEqual, "paper")
+				So(legacy.Epoch, ShouldEqual, uint64(0))
+			})
+		})
 	})
 }
 
@@ -113,11 +127,11 @@ func TestPolicyPathKey(t *testing.T) {
 			})
 		})
 
-		Convey("When the storage key is a radix leaf", func() {
+		Convey("When the storage key is a flat radix leaf", func() {
 			key := policyPathKey("model/paths/R01/R02.bin", "enter")
 
-			Convey("The key is unchanged", func() {
-				So(key, ShouldEqual, "model/paths/R01/R02.bin")
+			Convey("The trie key gains the action suffix", func() {
+				So(key, ShouldEqual, "model/paths/R01/R02/enter.bin")
 			})
 		})
 	})

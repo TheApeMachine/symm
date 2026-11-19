@@ -92,6 +92,7 @@ func TestPositionView(t *testing.T) {
 				So(sql, ShouldStartWith, `CREATE OR REPLACE VIEW warehouse.main."open_paper" AS SELECT `)
 				So(sql, ShouldContainSubstring, "FROM read_json('s3://symm/paper/open/**'")
 				So(sql, ShouldContainSubstring, "json_extract_string(position, '$.id') AS id")
+				So(sql, ShouldContainSubstring, "coalesce(json_extract_string(position, '$.book'), json_extract_string(position, '$.tier_key')) AS book")
 				So(sql, ShouldContainSubstring, "'position': 'JSON'")
 			})
 		})

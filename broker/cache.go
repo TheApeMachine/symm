@@ -210,15 +210,17 @@ func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
 }
 
 /*
-Save writes the full position (orders, fills, mark, pnl, stoploss) to S3.
+Save writes the position store envelope to S3 (epoch/tick/timestamp + nested
+position with book). Hub closed-history and DuckDB open/closed views read that
+shape; bare Position JSON leaves them empty.
 
 Positions already under closed/ (or settled and no longer open) update the closed
-object and retire any open/ orphan — exit fills after Remove must not recreate
+object and retire any open/ orphan; exit fills after Remove must not recreate
 an open key with a second mark pass.
 */
 func (cache *Cache) Save(position *Position) error {
 	position.mu.Lock()
-	body, err := sonic.Marshal(position)
+	body, err := encodePositionDoc(position, cache.tierKey)
 	symbol := position.Symbol
 	id := position.ID
 	closedAt := position.ClosedAt
@@ -307,14 +309,18 @@ func (cache *Cache) move(position *Position) error {
 		return nil
 	}
 
-	body, err := sonic.Marshal(position)
+	position.mu.Lock()
+	body, err := encodePositionDoc(position, cache.tierKey)
+	symbol := position.Symbol
+	id := position.ID
+	position.mu.Unlock()
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, position.Symbol, position.ID)
-	open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, position.Symbol, position.ID)
+	closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, symbol, id)
+	open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, symbol, id)
 
 	if _, err := cache.store.WriteAtPrefix(closed, body); err != nil {
 		return err

@@ -23,6 +23,14 @@ func PumpMoveOK(pump *equation.IgnitionOutput) bool {
 		return false
 	}
 
+	if sel.IgnitionCompressionMin > 0 && pump.Compression < sel.IgnitionCompressionMin {
+		return false
+	}
+
+	if sel.IgnitionIgnitionMin > 0 && pump.Ignition < sel.IgnitionIgnitionMin {
+		return false
+	}
+
 	if pump.RVOL <= 0 {
 		return false
 	}

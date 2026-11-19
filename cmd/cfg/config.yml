@@ -214,6 +214,8 @@ risk:
   # take at most one third of what the touch can carry, so a touch exit
   # still has margin if the book thins. Below instrument minimum → no entry.
   touch_divisor: 3
+  # Fraction of quote cash held for short-hold reserve enters (board+ignition).
+  reserve_fraction: 0.25
   # 24h quote-volume floor for the mover pre-filter (USD).
   min_mover_volume_usd: 10000
   # Feature scaling for desk SNM (oracles learn cuts in model/parameters/deskgate.bin).
@@ -268,7 +270,13 @@ selection:
   weight_peak_frac: 0.5
   weight_rotation: 0.35
   heartbeat_batch: 48
-  rotation_close_boost: 0.15
+  # Short-hold reserve: board margin + ignition floors to spend reserved cash
+  # without rotating cold books at a loss.
+  short_hold_boost: 0.15
+  reserve_extra_slots: 2
+  weight_sync: 0.45
+  weight_surge: 0.35
+  weight_depth: 0.30
 
 learning:
   threshold_start: 0.5

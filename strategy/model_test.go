@@ -50,7 +50,7 @@ func TestGateReason(t *testing.T) {
 
 		Convey("When resonance is not calibrated", func() {
 			rez := map[string]float64{"calibrated": 0}
-			So(model.gateReason(rez, 2, true, 1, 1), ShouldEqual, "resonance not calibrated")
+			So(model.gateReason(rez, 2, true, 1, 1, 0.35), ShouldEqual, "resonance not calibrated")
 		})
 
 		Convey("When supported horizon is cold", func() {
@@ -58,7 +58,7 @@ func TestGateReason(t *testing.T) {
 				"calibrated":        1,
 				"supported_horizon": 0,
 			}
-			So(model.gateReason(rez, 0, true, 1, 1),
+			So(model.gateReason(rez, 0, true, 1, 1, 0.35),
 				ShouldEqual, "supported horizon below minimum")
 		})
 
@@ -67,21 +67,21 @@ func TestGateReason(t *testing.T) {
 				"calibrated":        1,
 				"supported_horizon": float64(learn.MinSupportedHorizon),
 			}
-			So(model.gateReason(rez, learn.MinSupportedHorizon, false, 0, 1),
+			So(model.gateReason(rez, learn.MinSupportedHorizon, false, 0, 1, 0.35),
 				ShouldEqual, "task-relative precision not ready")
 		})
 
 		Convey("When precision is below floor", func() {
 			rez := map[string]float64{"calibrated": 1}
 			floor := learn.MinTaskRelativePrecision
-			So(model.gateReason(rez, learn.MinSupportedHorizon, true, floor-0.1, 1),
+			So(model.gateReason(rez, learn.MinSupportedHorizon, true, floor-0.1, 1, 0.35),
 				ShouldEqual, "task-relative precision below threshold")
 		})
 
 		Convey("When surprise is below floor", func() {
 			rez := map[string]float64{"calibrated": 1}
-			floor := learn.MinSurprise
-			So(model.gateReason(rez, learn.MinSupportedHorizon, true, 1, floor-0.1),
+			floor := learn.MinEnterZ
+			So(model.gateReason(rez, learn.MinSupportedHorizon, true, 1, floor-0.1, floor),
 				ShouldEqual, "surprise below threshold")
 		})
 	})
@@ -91,7 +91,11 @@ func TestExit(t *testing.T) {
 	Convey("Setup", t, func() {
 		tree := emptyTree()
 		exitPath := "R06.R00/R07.R01"
+		enterPath := "R06.R00/R07.R01/R08.R02"
+		holdPath := "R06.R00/R07.R01/R08.R03"
 		put(tree, exitPath, leaf(ActionExit, seedResistance()))
+		put(tree, enterPath, leaf(ActionEnter, seedResistance()))
+		put(tree, holdPath, leaf(ActionHold, seedResistance()))
 
 		model := &Model{tree: &atomic.Pointer[Tree]{}}
 		model.tree.Store(tree)
@@ -117,16 +121,29 @@ func TestExit(t *testing.T) {
 
 		Convey("When an open position arms an exit path", func() {
 			position := &broker.Position{
-				System: runtime.NewSystem(context.Background(), "position"),
-				Symbol: "AKE/USD",
+				System:    runtime.NewSystem(context.Background(), "position"),
+				Symbol:    "AKE/USD",
+				EntryPath: enterPath,
+				HoldPaths: []string{holdPath, holdPath},
 			}
 			model.Exit(position, exitPath)
 
-			Convey("ExitPath is stamped and resistance nudges", func() {
+			Convey("Entry, hold, and exit leaves all nudge once", func() {
 				So(position.ExitPath, ShouldEqual, exitPath)
-				leaf, ok := get(tree, exitPath)
+				So(position.TreeApplied, ShouldBeTrue)
+				want := seedResistance() + learnStep()
+				enter, ok := get(tree, enterPath)
 				So(ok, ShouldBeTrue)
-				So(leaf.Resistance, ShouldEqual, seedResistance()+learnStep())
+				So(enter.Resistance, ShouldEqual, want)
+				hold, ok := get(tree, holdPath)
+				So(ok, ShouldBeTrue)
+				So(hold.Resistance, ShouldEqual, want)
+				exit, ok := get(tree, exitPath)
+				So(ok, ShouldBeTrue)
+				So(exit.Resistance, ShouldEqual, want)
+
+				model.creditExit(position)
+				So(enter.Resistance, ShouldEqual, want)
 			})
 		})
 	})
@@ -291,6 +308,144 @@ func TestStep(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestOpenPosition(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx := context.Background()
+		price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
+		desk := broker.NewDesk(ctx, map[string]network.Client{
+			"public":  &modelTransportStub{},
+			"private": &modelTransportStub{},
+			"paper":   &modelTransportStub{},
+			"virtual": &modelTransportStub{},
+		}, price, nil)
+		model := &Model{desk: desk}
+
+		Convey("When no tier holds the symbol", func() {
+			So(model.openPosition(""), ShouldBeNil)
+			So(model.openPosition("BTC/USD"), ShouldBeNil)
+			So(model.openTierKey("BTC/USD"), ShouldEqual, "")
+		})
+
+		Convey("When routeTier would pick paper but nothing is open", func() {
+			So(model.routeTier(0.0), ShouldEqual, broker.TierTypePaper)
+			So(model.decisionTier("BTC/USD", 0.0), ShouldEqual, "paper")
+			So(desk.Position(broker.TierTypeVirtual, "BTC/USD"), ShouldBeNil)
+			So(desk.Position(broker.TierTypePaper, "BTC/USD"), ShouldBeNil)
+		})
+
+		Convey("When the model has no desk", func() {
+			So((&Model{}).openPosition("BTC/USD"), ShouldBeNil)
+		})
+	})
+}
+
+func TestStepSkipsIdleMatchedActions(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx := context.Background()
+		price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
+		desk := broker.NewDesk(ctx, map[string]network.Client{
+			"public":  &modelTransportStub{},
+			"private": &modelTransportStub{},
+			"paper":   &modelTransportStub{},
+			"virtual": &modelTransportStub{},
+		}, price, nil)
+
+		tree := emptyTree()
+		put(tree, "R06.R00/R07.R01/R08.R02", leaf(ActionHold, 0.15))
+		resets := 0
+		model := &Model{
+			desk: desk,
+			tree: &atomic.Pointer[Tree]{},
+			resetPath: func(string) {
+				resets++
+			},
+		}
+		model.tree.Store(tree)
+
+		Convey("When ActionHold matches on a flat book", func() {
+			cut := tokensAt("R06.R00/R07.R01/R08.R02", 1)
+			envelope := calibratedEnvelope("ETH/USD", &cut)
+			out := model.Step(envelope)
+
+			Convey("No decision and no sequencer reset", func() {
+				So(out.Decisions["ETH/USD/virtual"], ShouldBeNil)
+				So(out.Decisions["ETH/USD/paper"], ShouldBeNil)
+				So(resets, ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestExitSkipsUnprofitable(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx := context.Background()
+		price := broker.NewPrice(ctx, nil, &broker.Instrument{}, nil, nil, nil)
+		desk := broker.NewDesk(ctx, map[string]network.Client{
+			"public":  &modelTransportStub{},
+			"private": &modelTransportStub{},
+			"paper":   &modelTransportStub{},
+			"virtual": &modelTransportStub{},
+		}, price, nil)
+		resets := 0
+		model := &Model{
+			desk: desk,
+			tree: &atomic.Pointer[Tree]{},
+			resetPath: func(string) { resets++ },
+		}
+		model.tree.Store(emptyTree())
+
+		Convey("When ProfitableExit is false", func() {
+			position := broker.NewPosition(
+				ctx, "ETH/USD", "virtual", "enter", price, nil, func(*broker.Position) {},
+			)
+			ok := model.Exit(position, "R06.R00/R07.R01")
+
+			Convey("Exit returns false and does not reset the path", func() {
+				So(ok, ShouldBeFalse)
+				So(resets, ShouldEqual, 0)
+				So(position.ExitPath, ShouldEqual, "")
+			})
+		})
+	})
+}
+
+func calibratedEnvelope(symbol string, cut *runtime.Tokens) *runtime.Envelope {
+	learn := system.Cfg.Learning
+	envelope := runtime.NewEnvelope(nil)
+	envelope.Paths[symbol] = cut
+	envelope.Regions[symbol] = []*runtime.Region{
+		{Key: 10, Brightness: 1},
+		{Key: 12, Brightness: 1},
+		{Key: 14, Brightness: 1},
+		{Key: 16, Brightness: 1},
+		{Key: 17, Brightness: 0},
+	}
+	rez := map[string]float64{
+		"calibrated":              1,
+		"supported_horizon":       float64(learn.MinSupportedHorizon),
+		"task_relative_precision": learn.MinTaskRelativePrecision,
+		"surprise":                learn.MinSurprise + 1,
+		"surprise_regime_z":       learn.MinEnterZ + 1,
+		"forward_curve_0":         1,
+		"forward_curve_1":         1,
+		"forward_curve_2":         0,
+		"forward_curve_3":         0,
+		"forward_curve_4":         0,
+		"forward_curve_5":         0,
+		"forward_curve_6":         0.5,
+		"forward_curve_7":         0.5,
+		"forward_curve_8":         0,
+		"forward_curve_9":         0,
+		"forward_curve_10":        0,
+		"forward_curve_11":        0,
+		"forward_curve_12":        0,
+		"forward_curve_13":        0,
+		"forward_curve_14":        0,
+	}
+	envelope.Resonance[symbol] = rez
+	return envelope
 }
 
 func TestPredictIntegration(t *testing.T) {

@@ -7,6 +7,7 @@ import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
+import { stampMs } from "#/lib/format";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
 import { trySendCommand } from "#/providers/websocket";
 
@@ -195,11 +196,12 @@ let snapshot: Snapshot = { report: summarize([]) };
 const publish = () => {
 	// Newest close first for settled trips; open positions by opened_at.
 	const all = [...lives.values()].sort((a, b) => {
-		const aClose = a.closed_at || a.opened_at;
-		const bClose = b.closed_at || b.opened_at;
-		const byClose = bClose.localeCompare(aClose);
+		const byClose =
+			stampMs(b.closed_at || b.opened_at) - stampMs(a.closed_at || a.opened_at);
 		if (byClose !== 0) return byClose;
-		return b.opened_at.localeCompare(a.opened_at);
+		const byOpen = stampMs(b.opened_at) - stampMs(a.opened_at);
+		if (byOpen !== 0) return byOpen;
+		return a.id.localeCompare(b.id);
 	});
 	snapshot = { report: summarize(all) };
 	syncOpenPositionCount();

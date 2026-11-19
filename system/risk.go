@@ -7,14 +7,17 @@ import (
 )
 
 type Risk struct {
-	MaxFraction       float64
-	TouchDivisor      float64
+	MaxFraction  float64
+	TouchDivisor float64
+	// ReserveFraction of quote cash is held back for short-hold SizeHint draws.
+	ReserveFraction   float64
 	MinMoverVolumeUSD float64
 	MinMoverChangePct float64
 	MaxEntrySpreadPct float64
 	// MaxEntryPeakFrac is the highest allowed last/24h-range position (0–1).
 	// At or above this fraction of (high−low) vetoes entry. <=0 or >=1 disables.
-	MaxEntryPeakFrac    float64
+	MaxEntryPeakFrac float64
+	// MaxEntryOpenDragPct is max fee-net close-now round-trip drag (%) at entry.
 	MaxEntryOpenDragPct float64
 	MinTouchBidCash     float64
 	// TapeWindow is one half of the entry tape comparison.
@@ -40,6 +43,7 @@ type Risk struct {
 func NewRisk() *Risk {
 	viper.SetDefault("risk.max_fraction", 0.20)
 	viper.SetDefault("risk.touch_divisor", 3)
+	viper.SetDefault("risk.reserve_fraction", 0.25)
 	viper.SetDefault("risk.min_mover_volume_usd", 10_000.0)
 	viper.SetDefault("risk.min_mover_change_pct", 0.5)
 	viper.SetDefault("risk.max_entry_spread_pct", 2.0)
@@ -58,24 +62,25 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.min_tape_accel_ratio", 1.15)
 
 	return &Risk{
-		MaxFraction:         viper.GetFloat64("risk.max_fraction"),
-		TouchDivisor:        float64(viper.GetInt("risk.touch_divisor")),
-		MinMoverVolumeUSD:   viper.GetFloat64("risk.min_mover_volume_usd"),
-		MinMoverChangePct:   viper.GetFloat64("risk.min_mover_change_pct"),
-		MaxEntrySpreadPct:   viper.GetFloat64("risk.max_entry_spread_pct"),
-		MaxEntryPeakFrac:    viper.GetFloat64("risk.max_entry_peak_frac"),
-		MaxEntryOpenDragPct: viper.GetFloat64("risk.max_entry_open_drag_pct"),
-		MinTouchBidCash:     viper.GetFloat64("risk.min_touch_bid_cash"),
-		TapeWindow:          viper.GetDuration("risk.tape_window"),
-		MinTapeNotionalUSD:  viper.GetFloat64("risk.min_tape_notional_usd"),
-		BackingBandFrac:     viper.GetFloat64("risk.backing_band_frac"),
-		MinBackingRatio:     viper.GetFloat64("risk.min_backing_ratio"),
-		StoplossArmPnLPct:     viper.GetFloat64("risk.stoploss_arm_pnl_pct"),
-		MinImpulseChangePct:   viper.GetFloat64("risk.min_impulse_change_pct"),
-		ImpulseWindow:          viper.GetDuration("risk.impulse_window"),
-		ImpulseShortWindow:     viper.GetDuration("risk.impulse_short_window"),
-		MinImpulseAccelRatio:   viper.GetFloat64("risk.min_impulse_accel_ratio"),
-		MinTapeAccelRatio:      viper.GetFloat64("risk.min_tape_accel_ratio"),
+		MaxFraction:          viper.GetFloat64("risk.max_fraction"),
+		TouchDivisor:         viper.GetFloat64("risk.touch_divisor"),
+		ReserveFraction:      viper.GetFloat64("risk.reserve_fraction"),
+		MinMoverVolumeUSD:    viper.GetFloat64("risk.min_mover_volume_usd"),
+		MinMoverChangePct:    viper.GetFloat64("risk.min_mover_change_pct"),
+		MaxEntrySpreadPct:    viper.GetFloat64("risk.max_entry_spread_pct"),
+		MaxEntryPeakFrac:     viper.GetFloat64("risk.max_entry_peak_frac"),
+		MaxEntryOpenDragPct:  viper.GetFloat64("risk.max_entry_open_drag_pct"),
+		MinTouchBidCash:      viper.GetFloat64("risk.min_touch_bid_cash"),
+		TapeWindow:           viper.GetDuration("risk.tape_window"),
+		MinTapeNotionalUSD:   viper.GetFloat64("risk.min_tape_notional_usd"),
+		BackingBandFrac:      viper.GetFloat64("risk.backing_band_frac"),
+		MinBackingRatio:      viper.GetFloat64("risk.min_backing_ratio"),
+		StoplossArmPnLPct:    viper.GetFloat64("risk.stoploss_arm_pnl_pct"),
+		MinImpulseChangePct:  viper.GetFloat64("risk.min_impulse_change_pct"),
+		ImpulseWindow:        viper.GetDuration("risk.impulse_window"),
+		ImpulseShortWindow:   viper.GetDuration("risk.impulse_short_window"),
+		MinImpulseAccelRatio: viper.GetFloat64("risk.min_impulse_accel_ratio"),
+		MinTapeAccelRatio:    viper.GetFloat64("risk.min_tape_accel_ratio"),
 	}
 }
 
@@ -106,6 +111,9 @@ func (risk *Risk) Apply(patch map[string]any) {
 		}
 	}
 
+	setFloat(&risk.MaxFraction, "max_fraction")
+	setFloat(&risk.TouchDivisor, "touch_divisor")
+	setFloat(&risk.ReserveFraction, "reserve_fraction")
 	setFloat(&risk.MinMoverVolumeUSD, "min_mover_volume_usd")
 	setFloat(&risk.MinMoverChangePct, "min_mover_change_pct")
 	setFloat(&risk.MaxEntrySpreadPct, "max_entry_spread_pct")
