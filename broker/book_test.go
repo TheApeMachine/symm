@@ -138,6 +138,18 @@ func TestPending(t *testing.T) {
 
 func TestWait(t *testing.T) {
 	Convey("Setup", t, withBookManager(func(mgr *BookManager) {
+		Convey("When an expected symbol gets a crossed snapshot", func() {
+			mgr.Expect([]string{testSymbol})
+			mgr.Update(level3Snapshot(testSymbol, "101", "100"))
+
+			Convey("Pending stays set so Wait does not succeed with a nil book", func() {
+				So(mgr.Pending(), ShouldResemble, []string{testSymbol})
+				So(mgr.Get(testSymbol), ShouldBeNil)
+				err := mgr.Wait(30 * time.Millisecond)
+				So(err, ShouldNotBeNil)
+			})
+		})
+
 		Convey("When every expected symbol seeds", func() {
 			mgr.Expect([]string{testSymbol})
 			go func() {

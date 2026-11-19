@@ -306,10 +306,12 @@ func (booter *Booter) initTransports() error {
 
 	// Live-only: no virtual wallet or paper CLI — they race the main key's
 	// nonce stream and open shadow books we do not want armed.
+	// Non-live: Virtual and Paper both shell `kraken paper` against one ledger
+	// today — separate Client instances are still required (tier.Run Read races)
+	// until the CLI gains isolated accounts.
 	if !booter.live {
 		booter.virtual = network.NewVirtual(ctx)
 		booter.paper = kraken.NewPaper(ctx)
-		// Disarmed real tier private — same websocket-shaped emulator, not live Kraken.
 		booter.private = network.NewVirtual(ctx)
 	} else {
 		booter.private = network.NewWebsocketClient(ctx, system.Cfg.WebSocket.Endpoints.Private)
@@ -508,12 +510,19 @@ func (booter *Booter) seedBooks() error {
 				return errnie.Err(errnie.IO, "[booter] level3 seed canceled", err)
 			}
 
+			pending := booter.book.Pending()
 			errnie.Warn("[booter] level3 books still seeding, retrying: " + err.Error())
 
 			select {
 			case <-booter.Context().Done():
 				return booter.Context().Err()
 			case <-time.After(seedRetry):
+			}
+
+			// Kraken may have dropped a subscribe frame — re-arm only the
+			// symbols that never cleared pending instead of sleeping forever.
+			if len(pending) > 0 {
+				booter.instrument.RecoverBooks(read, pending, booter.book.Stale)
 			}
 
 			continue

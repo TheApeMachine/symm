@@ -28,10 +28,10 @@ type Selection struct {
 	// WeightRotation scales calibrated resonance task_skill in board ranking.
 	WeightRotation float64
 	HeartbeatBatch int
-	// ShortHoldBoost is the board-score margin above MinBoardScore required to
-	// draw from the reserved cash pool (fast, high-conviction enters).
+	// ShortHoldBoost is the board-score margin above MinBoardScore required for
+	// favored short-hold enters (full-cash budget + extra open slots).
 	ShortHoldBoost float64
-	// ReserveExtraSlots lets short-hold reserve enters exceed MaxOpenPositions.
+	// ReserveExtraSlots lets short-hold enters exceed MaxOpenPositions.
 	ReserveExtraSlots int
 	WeightSync        float64
 	WeightSurge       float64

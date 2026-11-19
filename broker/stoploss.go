@@ -598,7 +598,8 @@ func (stoploss *Stoploss) evaluateRegimeExit(delta, avgStep float64) {
 				stoploss.trip("trail_sharp_break")
 				return
 			}
-			if delta <= stepEps && stoploss.EmaDelta <= 0 {
+			// Require a real down tick — flat books must not accumulate confirms.
+			if delta < -stepEps && stoploss.EmaDelta <= 0 {
 				stoploss.Confirms++
 				if stoploss.Confirms >= 2 {
 					stoploss.trip("trail_confirm")

@@ -131,6 +131,13 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 		position.Transition(runtime.READY)
 	}
 
+	// Unchanged bid mark (ask-only L3, etc.): do not feed zero-delta ticks into
+	// stoploss confirms / ExplosiveTTL — trail_confirm would trip on flat books.
+	if stale && position.Stoploss != nil {
+		position.mu.Unlock()
+		return false, nil
+	}
+
 	qty := *position.Qty
 	friction := position.price.ExhaustionReading(position.Symbol)
 

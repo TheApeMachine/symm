@@ -214,7 +214,8 @@ risk:
   # take at most one third of what the touch can carry, so a touch exit
   # still has margin if the book thins. Below instrument minimum → no entry.
   touch_divisor: 3
-  # Fraction of quote cash held for short-hold reserve enters (board+ignition).
+  # Caps slow enters at (1−f)×free cash. ShortHold budgets against the full
+  # balance — nothing is parked idle in a separate pool.
   reserve_fraction: 0.25
   # 24h quote-volume floor for the mover pre-filter (USD).
   min_mover_volume_usd: 10000

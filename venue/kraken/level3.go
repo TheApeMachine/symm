@@ -264,3 +264,19 @@ func NewLevel3Subscription(symbols []string, token string, depth int) Level3Subs
 	}
 }
 
+/*
+NewLevel3Unsubscription drops symbols from an existing level3 socket without
+tearing down the connection — checksum recovery peels only the failed symbols.
+*/
+func NewLevel3Unsubscription(symbols []string, token string, depth int) Level3Subscription {
+	return Level3Subscription{
+		Method: "unsubscribe",
+		Params: Level3SubscriptionParams{
+			Channel: "level3",
+			Symbol:  symbols,
+			Depth:   depth,
+			Token:   token,
+		},
+	}
+}
+

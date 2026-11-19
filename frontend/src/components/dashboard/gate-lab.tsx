@@ -27,7 +27,7 @@ const RISK_FIELDS: Array<{
 		key: "max_fraction",
 		label: "frac",
 		step: "0.01",
-		hint: "Max fraction of the working/reserve cash lane one enter may spend.",
+		hint: "Max fraction of the entry cash base one enter may spend.",
 	},
 	{
 		key: "touch_divisor",
@@ -39,7 +39,7 @@ const RISK_FIELDS: Array<{
 		key: "reserve_fraction",
 		label: "rsv",
 		step: "0.05",
-		hint: "Fraction of quote cash reserved for short-hold (fast) enters — not spent by normal books.",
+		hint: "Caps slow enters at (1−f)×free cash. Short-hold (fast) enters budget against the full balance.",
 	},
 	{
 		key: "min_mover_volume_usd",

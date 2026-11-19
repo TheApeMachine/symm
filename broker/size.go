@@ -7,8 +7,8 @@ import (
 )
 
 /*
-SizeHint steers Allocate: conviction scales the risk budget, ShortHold draws from
-the reserved cash pool instead of working capital.
+SizeHint steers Allocate: conviction scales the risk budget. ShortHold budgets
+against full free cash; slow enters are capped by ReserveFraction.
 */
 type SizeHint struct {
 	Score      float64

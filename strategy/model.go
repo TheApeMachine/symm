@@ -92,7 +92,9 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		broker.TierTypeVirtual, broker.TierTypePaper, broker.TierTypeReal,
 	} {
 		for position := range model.desk.Pending(tier) {
+			// Settled rows train once ClosedAt exists — never on the send tick.
 			if position.ClosedAt != nil {
+				model.creditExit(position)
 				model.desk.ClearPending(tier, position.Symbol)
 				continue
 			}
@@ -126,7 +128,8 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				continue
 			}
 
-			model.creditExit(position)
+			// Drop the pre-fill park so the next tick does not re-Send. The
+			// fill path re-queues into pending with ClosedAt for creditExit.
 			model.desk.ClearPending(tier, position.Symbol)
 		}
 	}
@@ -276,6 +279,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				}
 
 				acted := false
+				consumePath := false
 
 				switch action {
 				case ActionNone:
@@ -304,6 +308,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 						})
 						candMu.Unlock()
 						acted = true
+						consumePath = true
 					}
 				case ActionHold:
 					if open {
@@ -315,6 +320,8 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 							Path:   path,
 							Tier:   model.decisionTier(symbol, resistance),
 						})
+						// Keep the sequencer phrase — resetting on every hold
+						// forces 2+ regime flips before exit can even evaluate.
 						acted = true
 					}
 				case ActionExit:
@@ -330,11 +337,11 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 							Tier:   model.decisionTier(symbol, resistance),
 						})
 						acted = true
+						consumePath = true
 					}
 				}
 
-				// Only consume the phrase when this tick actually held/exited/queued enter.
-				if acted && model.resetPath != nil {
+				if acted && consumePath && model.resetPath != nil {
 					model.resetPath(symbol)
 				}
 
@@ -358,6 +365,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 			// Open book, unmatched path: seed hold/exit leaves from the story.
 			acted := false
+			consumePath := false
 
 			switch {
 			case bullish < 0:
@@ -374,6 +382,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 						Tier:   model.decisionTier(symbol, resistance),
 					})
 					acted = true
+					consumePath = true
 				}
 			case bullish == 0:
 				tree.Ensure(path, ActionHold)
@@ -388,7 +397,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				acted = true
 			}
 
-			if acted && model.resetPath != nil {
+			if acted && consumePath && model.resetPath != nil {
 				model.resetPath(symbol)
 			}
 		})
@@ -583,9 +592,9 @@ func (model *Model) gateReason(
 }
 
 /*
-Exit arms broker sells before tree Update on pending positions — resistance moves
-only after ClosedAt so rejects and repeated marks cannot train on ghost exits.
-True when the exit was armed and credited (caller may Decide/resetPath).
+Exit arms broker sells and stamps ExitPath. Resistance / deskgate Learn run only
+after ClosedAt (creditExit from pending) so rejects and tranche scale-outs cannot
+train on ghost or partial exits. True when the exit was armed (caller may Decide).
 */
 func (model *Model) Exit(position *broker.Position, path string) bool {
 	if position == nil {
@@ -619,7 +628,6 @@ func (model *Model) Exit(position *broker.Position, path string) bool {
 	}
 
 	position.SetExitPath(path)
-	model.creditExit(position)
 
 	if model.resetPath != nil {
 		model.resetPath(position.Symbol)
@@ -629,13 +637,13 @@ func (model *Model) Exit(position *broker.Position, path string) bool {
 }
 
 /*
-creditExit trains path resistance and deskgate from a settled (or settling) exit —
-shared by policy Exit and stoploss pending settles so ladder exits are not silent.
+creditExit trains path resistance and deskgate from a fully settled exit
+(ClosedAt set). Shared by pending settle after flat fills — never on send.
 EntryPath must Update here: Ensure alone leaves ActionEnter leaves at
 ThresholdStart forever, so virtual→paper promotion and prune never move.
 */
 func (model *Model) creditExit(position *broker.Position) {
-	if position == nil {
+	if position == nil || position.ClosedAt == nil {
 		return
 	}
 

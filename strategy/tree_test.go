@@ -193,9 +193,9 @@ func TestUpdate(t *testing.T) {
 
 			decision, ok := get(tree, path)
 
-			Convey("Resistance drops to 0.45", func() {
+			Convey("Resistance drops by the delta", func() {
 				So(ok, ShouldBeTrue)
-				So(decision.Resistance, ShouldEqual, 0.45)
+				So(decision.Resistance, ShouldEqual, start-0.05)
 			})
 		})
 
@@ -206,9 +206,9 @@ func TestUpdate(t *testing.T) {
 
 			decision, ok := get(tree, path)
 
-			Convey("Resistance rises to 0.55", func() {
+			Convey("Resistance rises by the delta", func() {
 				So(ok, ShouldBeTrue)
-				So(decision.Resistance, ShouldEqual, 0.55)
+				So(decision.Resistance, ShouldEqual, start+0.05)
 			})
 		})
 

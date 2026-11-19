@@ -9,7 +9,8 @@ import (
 type Risk struct {
 	MaxFraction  float64
 	TouchDivisor float64
-	// ReserveFraction of quote cash is held back for short-hold SizeHint draws.
+	// ReserveFraction caps slow enters at (1−f)×cash. ShortHold budgets against
+	// the full free balance — nothing is parked idle for a separate pool.
 	ReserveFraction   float64
 	MinMoverVolumeUSD float64
 	MinMoverChangePct float64

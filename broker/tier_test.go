@@ -514,6 +514,51 @@ func TestTierApply(t *testing.T) {
 			})
 		})
 
+		Convey("When a scale-out exit fills in two partials", func() {
+			pos.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("1"), LastPrice: dec("100"),
+				Timestamp: time.Unix(1, 0).UTC(),
+			})
+			So(pos.exit(false), ShouldBeNil)
+			cl := pos.ExitOrder.ClOrdId
+			pos.ExitOrder.Volume = "1"
+
+			tier.apply(&market.Execution{
+				Data: []*market.ExecutionData{{
+					ExecID: "s1", Side: "sell", Symbol: testSymbol,
+					ClientOrderID: cl,
+					LastQty:       dec("0.4"), LastPrice: dec("120"),
+					CumQty:        dec("0.4"),
+					OrderStatus:   "partially_filled",
+					Timestamp:     time.Unix(2, 0).UTC(),
+				}},
+			})
+
+			Convey("First partial keeps ExitOrder armed and BUSY", func() {
+				So(pos.Status(), ShouldEqual, runtime.BUSY)
+				So(pos.ExitOrder, ShouldNotBeNil)
+				So(pos.ExitOrder.ClOrdId, ShouldEqual, cl)
+				So(pos.ClosedAt, ShouldBeNil)
+			})
+
+			tier.apply(&market.Execution{
+				Data: []*market.ExecutionData{{
+					ExecID: "s2", Side: "sell", Symbol: testSymbol,
+					ClientOrderID: cl,
+					LastQty:       dec("0.6"), LastPrice: dec("120"),
+					CumQty:        dec("1"),
+					OrderStatus:   "filled",
+					Timestamp:     time.Unix(3, 0).UTC(),
+				}},
+			})
+
+			Convey("Second partial flats and parks pending", func() {
+				So(pos.ClosedAt, ShouldNotBeNil)
+				So(tier.positions.Has(testSymbol), ShouldBeFalse)
+			})
+		})
+
 	}))
 }
 

@@ -123,20 +123,25 @@ func NewTier(
 	}
 
 	if tier.private != nil && host != nil {
-		balance := host.Balance()
-		tradeBalance := host.TradeBalance()
+		// Dedicated Watch targets — do not share host.Balance() with the WS
+		// decode path or REST and websocket frames race on Result.
+		// Use(normalizer) is required so REST ledger codes (ZUSD) collapse to
+		// desk quote names; without it Hello cash stays 0 while equity still
+		// updates from TradeBalance.
+		watchBal := kraken.NewBalance().Use(tier.normalizer)
+		watchTB := kraken.NewTradeBalance()
 
 		tier.private.Watch(
 			system.Cfg.WebSocket.Endpoints.Balance,
-			balance.Request(),
-			balance,
-			func() { tier.ingest(balance) },
+			watchBal.Request(),
+			watchBal,
+			func() { tier.ingest(watchBal) },
 		)
 		tier.private.Watch(
 			system.Cfg.WebSocket.Endpoints.TradeBalance,
-			tradeBalance.Request(),
-			tradeBalance,
-			func() { tier.ingest(tradeBalance) },
+			watchTB.Request(),
+			watchTB,
+			func() { tier.ingest(watchTB) },
 		)
 	}
 
@@ -500,8 +505,12 @@ func (tier *Tier) apply(execution *market.Execution) {
 		position.Apply(*data)
 
 		if position.ClosedAt == nil {
-			// Partial scale-out fill: commit banked slices, clear exit, resume marks.
-			if data.Side == "sell" && position.Status() == runtime.BUSY {
+			// Partial scale-out: only release BUSY once this ExitOrder is fully
+			// filled. Mid-order partials must keep ExitOrder armed or the next
+			// tick re-fires a second market sell against the working remainder.
+			if data.Side == "sell" &&
+				position.Status() == runtime.BUSY &&
+				exitOrderFilled(position, data) {
 				position.mu.Lock()
 				position.ExitOrder = nil
 				position.ExitVenueOrderID = ""
@@ -530,6 +539,57 @@ func (tier *Tier) apply(execution *market.Execution) {
 			errnie.Error(err)
 		}
 	}
+}
+
+/*
+exitOrderFilled is true when the working ExitOrder has fully matched — by
+venue status, CumQty, or summed sell fills on its ClOrdId.
+*/
+func exitOrderFilled(position *Position, data *market.ExecutionData) bool {
+	if position == nil || data == nil {
+		return false
+	}
+
+	switch data.OrderStatus {
+	case "filled", "closed":
+		return true
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ExitOrder == nil || position.ExitOrder.Volume == "" {
+		return false
+	}
+
+	want, err := decimal.NewFromString(position.ExitOrder.Volume)
+	if err != nil || want.Sign() <= 0 {
+		return false
+	}
+
+	if data.CumQty != nil && data.CumQty.Cmp(want) >= 0 {
+		return true
+	}
+
+	clOrdID := position.ExitOrder.ClOrdId
+	venueID := position.ExitVenueOrderID
+	filled := decimal.Zero
+
+	for _, fill := range position.Fills {
+		if fill == nil || fill.Side != "sell" || fill.LastQty == nil {
+			continue
+		}
+		switch {
+		case clOrdID != "" && fill.ClientOrderID == clOrdID:
+		case venueID != "" && fill.OrderID == venueID:
+		case clOrdID == "" && venueID == "":
+		default:
+			continue
+		}
+		filled = filled.Add(*fill.LastQty)
+	}
+
+	return filled.Cmp(want) >= 0
 }
 
 /*

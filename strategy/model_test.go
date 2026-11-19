@@ -128,8 +128,32 @@ func TestExit(t *testing.T) {
 			}
 			model.Exit(position, exitPath)
 
-			Convey("Entry, hold, and exit leaves all nudge once", func() {
+			Convey("ExitPath stamps but tree waits for ClosedAt", func() {
 				So(position.ExitPath, ShouldEqual, exitPath)
+				So(position.TreeApplied, ShouldBeFalse)
+				enter, ok := get(tree, enterPath)
+				So(ok, ShouldBeTrue)
+				So(enter.Resistance, ShouldEqual, seedResistance())
+
+				model.creditExit(position)
+				So(position.TreeApplied, ShouldBeFalse)
+				So(enter.Resistance, ShouldEqual, seedResistance())
+			})
+		})
+
+		Convey("When creditExit runs after ClosedAt", func() {
+			closed := time.Now().UTC()
+			position := &broker.Position{
+				System:    runtime.NewSystem(context.Background(), "position"),
+				Symbol:    "AKE/USD",
+				EntryPath: enterPath,
+				HoldPaths: []string{holdPath, holdPath},
+				ExitPath:  exitPath,
+				ClosedAt:  &closed,
+			}
+			model.creditExit(position)
+
+			Convey("Entry, hold, and exit leaves all nudge once", func() {
 				So(position.TreeApplied, ShouldBeTrue)
 				want := seedResistance() + learnStep()
 				enter, ok := get(tree, enterPath)

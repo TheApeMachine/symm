@@ -359,33 +359,81 @@ func (instrument *Instrument) resubscribe(
 	instrument.booksMu.Lock()
 	defer instrument.booksMu.Unlock()
 
-	victims := instrument.level3Victims(symbols)
-	replay := uniqueSymbols(symbols)
-
-	if len(victims) == 0 && len(replay) == 0 {
+	failed := uniqueSymbols(symbols)
+	if len(failed) == 0 {
 		return nil
 	}
 
-	for _, victim := range victims {
-		if stale != nil {
-			stale(victim.parts)
+	// Only the checksum-failed symbols go blind — not every peer on the batch
+	// socket. Peel them off existing connections, then openBooks just those.
+	if stale != nil {
+		stale(failed)
+	}
+
+	want := instrument.symbolSet(failed)
+	depth := system.Cfg.Market.Level3.Depth
+	token, tokenErr := instrument.auth.Token(instrument.Context())
+
+	for _, victim := range instrument.level3Victims(failed) {
+		keep := make([]string, 0, len(victim.parts))
+		drop := make([]string, 0, len(victim.parts))
+
+		for _, part := range victim.parts {
+			if instrument.batchWanted([]string{part}, want) {
+				drop = append(drop, part)
+			} else {
+				keep = append(keep, part)
+			}
 		}
 
-		if victim.client != nil {
-			_ = victim.client.Close()
+		if len(drop) == 0 {
+			continue
 		}
 
 		instrument.Level3.Delete(victim.key)
-		replay = append(replay, victim.parts...)
+
+		if victim.client != nil && tokenErr == nil {
+			_ = instrument.writeLevel3Unsub(victim.client, drop, token, depth)
+		}
+
+		if len(keep) == 0 {
+			if victim.client != nil {
+				_ = victim.client.Close()
+			}
+			continue
+		}
+
+		newKey := strings.Join(keep, "|")
+		instrument.Level3.Store(newKey, victim.client)
+
+		if victim.client != nil {
+			kept := slices.Clone(keep)
+			victim.client.Callback(func() error {
+				fresh, err := instrument.auth.Token(instrument.Context())
+				if err != nil {
+					return errnie.Err(
+						errnie.Forbidden,
+						"[instrument] level3 reconnect token unavailable",
+						err,
+					)
+				}
+				frame := system.Cfg.Market.Level3.RateLimit / 5
+				batch := system.Cfg.Market.Subscribe.Batch
+				if frame <= 0 {
+					frame = batch
+				}
+				if frame > batch {
+					frame = batch
+				}
+				return instrument.writeLevel3(victim.client, kept, fresh, depth, frame)
+			})
+		}
 	}
 
-	replay = uniqueSymbols(replay)
-	errnie.Warn("[instrument] level3 resubscribe " + strings.Join(replay, ","))
+	errnie.Warn("[instrument] level3 resubscribe " + strings.Join(failed, ","))
 
-	if err := instrument.openBooks(read, replay); err != nil {
-		// openBooks failed after Delete — schedule RecoverBooks so a later
-		// dial can recreate Level3 entries without spinning resubLoop forever.
-		syms := append([]string(nil), replay...)
+	if err := instrument.openBooks(read, failed); err != nil {
+		syms := append([]string(nil), failed...)
 		go func() {
 			time.Sleep(time.Second)
 			instrument.RecoverBooks(read, syms, stale)
@@ -395,6 +443,28 @@ func (instrument *Instrument) resubscribe(
 	}
 
 	return nil
+}
+
+func (instrument *Instrument) writeLevel3Unsub(
+	client *network.WebsocketClient,
+	symbols []string,
+	token string,
+	depth int,
+) error {
+	if client == nil || len(symbols) == 0 {
+		return nil
+	}
+
+	msg, err := sonic.Marshal(kraken.NewLevel3Unsubscription(symbols, token, depth))
+	if err != nil {
+		return errnie.Err(
+			errnie.IO,
+			"[instrument] level3 unsubscribe marshal failed",
+			err,
+		)
+	}
+
+	return client.Write(msg)
 }
 
 type level3Batch struct {

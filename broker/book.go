@@ -239,6 +239,11 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 			lane.book = book
 		}
 
+		// Apply the whole frame before depth trim so mid-message EnforceDepth
+		// cannot evict a level that a later delete in the same frame would remove.
+		prevDepth := book.EnableMaxDepth
+		book.EnableMaxDepth = false
+
 		for _, order := range data.Bids {
 			manager.applyOrder(book, market.SideBid, order)
 		}
@@ -247,14 +252,22 @@ func (manager *BookManager) Update(level3 *market.Level3) {
 			manager.applyOrder(book, market.SideAsk, order)
 		}
 
+		book.EnableMaxDepth = prevDepth
+		if book.EnableMaxDepth {
+			book.EnforceDepth()
+		}
+
 		lane.stale = manager.diverged(book, data.Checksum)
 
 		if lane.stale {
 			invalid = append(invalid, data.Symbol)
 			lane.book = nil
+			// Keep pending so Wait does not succeed with a nil book after a
+			// bad initial snapshot; recovery must re-seed before clearPending.
+		} else {
+			manager.clearPending(lane)
 		}
 
-		manager.clearPending(lane)
 		lane.mu.Unlock()
 	}
 
@@ -330,13 +343,20 @@ func (manager *BookManager) applyOrder(
 		return
 	}
 
-	book.Update(&market.Delta{
+	delta := &market.Delta{
 		Direction: side,
 		ID:        order.OrderID,
 		Price:     order.LimitPrice,
 		Quantity:  qty,
 		Timestamp: order.Timestamp,
-	})
+	}
+
+	if book.EnableMaxDepth {
+		book.Update(delta)
+		return
+	}
+
+	book.ApplyDelta(delta)
 }
 
 /*

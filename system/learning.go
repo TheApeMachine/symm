@@ -32,7 +32,9 @@ type Learning struct {
 }
 
 func NewLearning() *Learning {
-	viper.SetDefault("learning.threshold_start", 0.5)
+	// Seed below typical single-tick Brightness (~0.15–0.40 with pins=8) so new
+	// leaves can re-fire after explore instead of deadlocking at 0.50 forever.
+	viper.SetDefault("learning.threshold_start", 0.25)
 	viper.SetDefault("learning.threshold_step", 0.05)
 	viper.SetDefault("learning.threshold_floor", 0.05)
 	viper.SetDefault("learning.threshold_ceil", 0.95)

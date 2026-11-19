@@ -275,6 +275,10 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 			feat["backing"] < risk.MinBackingRatio {
 			return false
 		}
+		// open_drag == -1 means OpenDragPct failed — never treat as free pass.
+		if feat["open_drag"] < 0 {
+			return false
+		}
 		if risk.MaxEntryOpenDragPct > 0 && feat["open_drag"] > risk.MaxEntryOpenDragPct {
 			return false
 		}
@@ -343,12 +347,16 @@ func (gate *Gate) Learn(features map[string]float64, developed bool) {
 			}
 		}
 
+		axis.Sample++
+
 		score := features["axis_"+name]
 		if score == 0 {
+			// Cold tracks score 0 — never drag Cut toward that ghost zero.
+			if !axis.ready() {
+				continue
+			}
 			score = axis.score(raw)
 		}
-
-		axis.Sample++
 
 		if developed {
 			axis.Cut = axis.Cut + step*(score-axis.Cut)

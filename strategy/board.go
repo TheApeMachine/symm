@@ -137,7 +137,8 @@ func (board *Board) Score(
 
 /*
 ShortHold is true when the candidate clears the short-hold board margin and
-live ignition floors — those enters may spend reserved cash.
+live ignition floors — those enters budget against full free cash (and may use
+ReserveExtraSlots past MaxOpenPositions).
 */
 func (board *Board) ShortHold(
 	symbol string,

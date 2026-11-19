@@ -699,6 +699,29 @@ func TestPnLPct(t *testing.T) {
 	}))
 }
 
+func TestEntryCash(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		prev := system.Cfg.Risk.ReserveFraction
+		system.Cfg.Risk.ReserveFraction = 0.25
+		defer func() { system.Cfg.Risk.ReserveFraction = prev }()
+		cash := decimal.NewFromInt(31)
+
+		Convey("ShortHold budgets against the full free balance", func() {
+			So(price.entryCash(cash, true).String(), ShouldEqual, "31")
+		})
+
+		Convey("Slow enters are capped at (1−ReserveFraction)×cash", func() {
+			So(price.entryCash(cash, false).String(), ShouldEqual, "23.25")
+		})
+
+		Convey("ReserveFraction 0 leaves both lanes on full cash", func() {
+			system.Cfg.Risk.ReserveFraction = 0
+			So(price.entryCash(cash, false).String(), ShouldEqual, "31")
+			So(price.entryCash(cash, true).String(), ShouldEqual, "31")
+		})
+	}))
+}
+
 func TestAllocate(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		prevReserve := system.Cfg.Risk.ReserveFraction

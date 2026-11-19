@@ -704,7 +704,12 @@ pair pnl from T with pct from T+1.
 func (price *Price) markPnLLocked(
 	position *Position,
 ) (pnl, pct *decimal.Decimal) {
-	if position == nil || position.validateLocked() != nil {
+	// Marking needs fill-derived Qty/Entry and a wired Price — not EntryOrder.
+	// Restored opens (paper QueryOrders miss, wallet seed) stay WAITING forever
+	// if we require venue order metadata that Fold could not attach.
+	if position == nil ||
+		position.Qty == nil || position.Qty.Sign() <= 0 ||
+		position.Entry == nil || position.price == nil {
 		return nil, nil
 	}
 
@@ -738,9 +743,15 @@ func (price *Price) markPnLLocked(
 
 /*
 Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
-Working enters spend MaxFraction of (1−ReserveFraction)×cash × conviction.
-ShortHold hint draws from the reserved slice instead — no forced rotation.
-Size starts at touch ask / TouchDivisor and lifts to QtyMin/CostMin when spend fits.
+
+All free cash is allocatable — nothing is parked idle. ShortHold (favored,
+faster-to-profit) budgets against the full cash balance. Slow enters are capped
+at (1−ReserveFraction)×cash so they cannot monopolize the book; they never
+lock a slice that ShortHold cannot spend. Exits return cash to the wallet and
+the next Allocate sees it — no rebalancing ledger.
+
+Budget = lane × MaxFraction × conviction. Size starts at touch ask /
+TouchDivisor and lifts to QtyMin/CostMin when spend fits.
 */
 func (price *Price) Allocate(
 	symbol string, wallet *market.Balance, hint SizeHint,
@@ -799,7 +810,7 @@ func (price *Price) Allocate(
 		).With("symbol", symbol, "why", "instrument limits missing")
 	}
 
-	lane := price.cashLane(cash, hint.ShortHold)
+	lane := price.entryCash(cash, hint.ShortHold)
 	budget := lane.Mul(decimal.NewFromFloat(system.Cfg.Risk.MaxFraction)).
 		Mul(decimal.NewFromFloat(hint.Conviction()))
 
@@ -945,26 +956,24 @@ func (price *Price) Allocate(
 }
 
 /*
-cashLane splits quote cash into working vs reserved pools. Short-hold draws
-use the reserved slice; normal enters never spend it.
+entryCash is the quote base Allocate may budget against. ShortHold sees the full
+free balance. Slow enters see at most (1−ReserveFraction)×cash — a spend-rate
+cap, not an idle pool. Cash freed by exits is visible on the next call.
 */
-func (price *Price) cashLane(cash decimal.Decimal, reserve bool) decimal.Decimal {
+func (price *Price) entryCash(cash decimal.Decimal, shortHold bool) decimal.Decimal {
+	if shortHold {
+		return cash
+	}
+
 	frac := system.Cfg.Risk.ReserveFraction
 	if frac <= 0 {
 		return cash
 	}
 	if frac >= 1 {
-		if reserve {
-			return cash
-		}
 		return decimal.Zero
 	}
 
-	reserved := cash.Mul(decimal.NewFromFloat(frac))
-	if reserve {
-		return reserved
-	}
-	return cash.Sub(reserved)
+	return cash.Mul(decimal.NewFromFloat(1 - frac))
 }
 
 /*
