@@ -94,6 +94,42 @@ func TestStaticPassPeakMissing(t *testing.T) {
 			})
 			So(volume, ShouldBeFalse)
 		})
+
+		Convey("Steady tape (ratio ≥ 1) passes volume once notional clears", func() {
+			volume, _, _, _, _ := gate.OracleFrom(map[string]float64{
+				"volume_usd":    system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"tape_known":    1,
+				"tape_notional": system.Cfg.Risk.MinTapeNotionalUSD + 1,
+				"tape_ratio":    1.0,
+			})
+			So(volume, ShouldBeTrue)
+		})
+
+		Convey("Day-high peak passes when tape is accelerating", func() {
+			_, _, _, _, peak := gate.OracleFrom(map[string]float64{
+				"session_move": system.Cfg.Risk.MinMoverChangePct + 1,
+				"volume_usd":   system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"spread_pct":   0.5,
+				"touch_cash":   5,
+				"backing":      system.Cfg.Risk.MinBackingRatio + 0.1,
+				"peak_frac":    0.99,
+				"tape_ratio":   system.Cfg.Risk.MinTapeAccelRatio,
+			})
+			So(peak, ShouldBeTrue)
+		})
+
+		Convey("Day-high peak still fails when tape is decelerating", func() {
+			_, _, _, _, peak := gate.OracleFrom(map[string]float64{
+				"session_move": system.Cfg.Risk.MinMoverChangePct + 1,
+				"volume_usd":   system.Cfg.Risk.MinMoverVolumeUSD + 1,
+				"spread_pct":   0.5,
+				"touch_cash":   5,
+				"backing":      system.Cfg.Risk.MinBackingRatio + 0.1,
+				"peak_frac":    0.99,
+				"tape_ratio":   0.5,
+			})
+			So(peak, ShouldBeFalse)
+		})
 	})
 }
 

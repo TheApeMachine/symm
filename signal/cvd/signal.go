@@ -61,25 +61,20 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					continue
 				}
 
-				var mid float64
+				var response float64
 
 				signal.books.Book(data.Symbol, func(book *market.Book) {
-					midDec := book.Midpoint()
-					if midDec == nil {
-						return
-					}
-
-					mid = midDec.InexactFloat64()
+					response = microPriceFromBook(book)
 				})
 
-				if mid <= 0 {
+				if response <= 0 {
 					continue
 				}
 
 				input, ok, err := signal.sample.Measure(algorithm.TradeFlowInput{
 					Symbol:        data.Symbol,
 					Price:         price,
-					ResponsePrice: mid,
+					ResponsePrice: response,
 					Quantity:      qty,
 					Side:          data.Side.String(),
 				})
@@ -114,4 +109,37 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	}
 
 	return envelope
+}
+
+/*
+microPriceFromBook is Stoikov micro-price from touch queues; falls back to mid.
+*/
+func microPriceFromBook(book *market.Book) float64 {
+	if book == nil || !book.Tradable() {
+		return 0
+	}
+
+	bid := book.BestBid()
+	ask := book.BestAsk()
+	if bid == nil || ask == nil ||
+		bid.Price == nil || ask.Price == nil ||
+		bid.Quantity == nil || ask.Quantity == nil {
+		if mid := book.Midpoint(); mid != nil {
+			return mid.InexactFloat64()
+		}
+		return 0
+	}
+
+	bidPx := bid.Price.InexactFloat64()
+	askPx := ask.Price.InexactFloat64()
+	bidQty := bid.Quantity.InexactFloat64()
+	askQty := ask.Quantity.InexactFloat64()
+	if bidPx <= 0 || askPx <= bidPx || bidQty <= 0 || askQty <= 0 {
+		if mid := book.Midpoint(); mid != nil {
+			return mid.InexactFloat64()
+		}
+		return 0
+	}
+
+	return (askQty*bidPx + bidQty*askPx) / (bidQty + askQty)
 }

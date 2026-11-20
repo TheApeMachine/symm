@@ -199,24 +199,43 @@ type TradesHistoryResult struct {
 }
 
 func NewTradesHistoryResult(data []byte) *TradesHistoryResult {
-	var envelope TradesHistory
-
-	if err := sonic.Unmarshal(data, &envelope); err != nil {
+	var probe map[string]json.RawMessage
+	if err := sonic.Unmarshal(data, &probe); err != nil {
 		errnie.Debug("[tradeshistory] unmarshal failed", "err", err, "bytes", len(data))
 		return nil
 	}
 
-	if len(envelope.Error) > 0 {
-		errnie.Debug("[tradeshistory] venue error", "error", envelope.Error)
+	// Live REST wraps trades under result. Paper/virtual Post marshals a bare
+	// TradesHistoryResult — accept both so Restore can fold simulator history.
+	if raw, ok := probe["result"]; ok {
+		var envelope TradesHistory
+		if err := sonic.Unmarshal(data, &envelope); err != nil {
+			errnie.Debug("[tradeshistory] envelope unmarshal failed", "err", err)
+			return nil
+		}
+		if len(envelope.Error) > 0 {
+			errnie.Debug("[tradeshistory] venue error", "error", envelope.Error)
+			return nil
+		}
+		if envelope.Result.Trades == nil {
+			// Empty result object still counts as the live envelope shape.
+			_ = raw
+			envelope.Result.Trades = make(map[string]HistoryTrade)
+		}
+		errnie.Debug("[tradeshistory] parsed", "trades", len(envelope.Result.Trades), "count", envelope.Result.Count)
+		return &envelope.Result
+	}
+
+	var bare TradesHistoryResult
+	if err := sonic.Unmarshal(data, &bare); err != nil {
+		errnie.Debug("[tradeshistory] bare unmarshal failed", "err", err, "bytes", len(data))
 		return nil
 	}
-
-	if envelope.Result.Trades == nil {
-		envelope.Result.Trades = make(map[string]HistoryTrade)
+	if bare.Trades == nil {
+		bare.Trades = make(map[string]HistoryTrade)
 	}
-
-	errnie.Debug("[tradeshistory] parsed", "trades", len(envelope.Result.Trades), "count", envelope.Result.Count)
-	return &envelope.Result
+	errnie.Debug("[tradeshistory] parsed bare", "trades", len(bare.Trades), "count", bare.Count)
+	return &bare
 }
 
 /*

@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
+	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/venue/kraken"
@@ -82,7 +84,7 @@ must not Fold that partial slice into opens.
 */
 func (ledger *Ledger) history() (fills []kraken.HistoryTrade, complete bool) {
 	if ledger == nil || ledger.transport == nil {
-		return nil, true
+		return nil, false
 	}
 
 	seen := make(map[string]struct{})
@@ -181,11 +183,10 @@ func (ledger *Ledger) Fold(
 		byOrder[id] = rows
 	}
 
+	// Fold from fill sides first — QueryOrders is only needed to bind
+	// EntryOrder on leftovers. Fetching every historical txid burned N/50
+	// REST calls at boot for closed cycles that never need the order row.
 	book := map[string]kraken.HistoryOrder{}
-
-	if ledger.orders != nil {
-		book = ledger.orders.Fetch(ids)
-	}
 
 	steps := make([]orderStep, 0, len(ids))
 
@@ -197,22 +198,10 @@ func (ledger *Ledger) Fold(
 		}
 
 		side := rows[0].Type
+		// First fill time — never opentm. Resting limits submit early and would
+		// reorder cycles / stamp OpenedAt before the print that actually opened.
 		at := rows[0].Time
 		symbol := ledger.symbol(rows[0].Pair)
-
-		if order, ok := book[id]; ok {
-			if order.Descr.Type != "" {
-				side = order.Descr.Type
-			}
-
-			if order.Descr.Pair != "" {
-				symbol = ledger.symbol(order.Descr.Pair)
-			}
-
-			if tm := openTm(order); !tm.IsZero() {
-				at = tm
-			}
-		}
 
 		if !ledger.tradable(symbol) {
 			continue
@@ -235,8 +224,11 @@ func (ledger *Ledger) Fold(
 		grouped[s.symbol] = append(grouped[s.symbol], s)
 	}
 
-	for pair, rows := range grouped {
-		holding, done := ledger.cycle(ctx, pair, rows, byOrder, book)
+	pairs := slices.Collect(maps.Keys(grouped))
+	slices.Sort(pairs)
+
+	for _, pair := range pairs {
+		holding, done := ledger.cycle(ctx, pair, grouped[pair], byOrder, book)
 		closed = append(closed, done...)
 
 		if holding != nil {
@@ -244,15 +236,64 @@ func (ledger *Ledger) Fold(
 		}
 	}
 
+	if ledger.orders != nil {
+		ledger.bindOpenOrders(open)
+	}
+
 	return open, closed
 }
 
 /*
-held drops folded opens the spot wallet does not carry. History leftovers after
-a flat wallet are not positions. Open Qty is the spendable wallet size for that
-base — folded net can be fee-dust while the wallet still holds a real pile
-(DOGE/XDG is the usual case), and venue qty_min must judge the wallet, not the
-history residue.
+bindOpenOrders QueryOrders only the leftover opens' venue ids and stamps
+EntryOrder. Closed cycles keep fill-derived VenueOrderIDs without the REST cost.
+*/
+func (ledger *Ledger) bindOpenOrders(open []*Position) {
+	ids := make([]string, 0, len(open))
+	seen := make(map[string]struct{}, len(open))
+
+	for _, position := range open {
+		if position == nil {
+			continue
+		}
+
+		for _, id := range []string{position.EntryVenueOrderID, position.ExitVenueOrderID} {
+			if id == "" {
+				continue
+			}
+
+			if _, ok := seen[id]; ok {
+				continue
+			}
+
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+
+	if len(ids) == 0 {
+		return
+	}
+
+	book := ledger.orders.Fetch(ids)
+
+	for _, position := range open {
+		if position == nil || position.EntryVenueOrderID == "" {
+			continue
+		}
+
+		order, ok := book[position.EntryVenueOrderID]
+		if !ok {
+			continue
+		}
+
+		position.EntryOrder = order.Request()
+	}
+}
+
+/*
+held drops folded opens the spot wallet does not carry. Cycles that already
+had an exit are closed in cycle — only unmatched leftovers are candidates.
+Open Qty is the spendable wallet size for that base; venue qty_min judges it.
 */
 func (ledger *Ledger) held(open []*Position) []*Position {
 	if len(open) == 0 {
@@ -280,7 +321,7 @@ func (ledger *Ledger) held(open []*Position) []*Position {
 
 		cash := ledger.cash(wallet, position.Symbol)
 
-		if cash == nil {
+		if cash == nil || cash.Sign() <= 0 {
 			continue
 		}
 
@@ -290,13 +331,23 @@ func (ledger *Ledger) held(open []*Position) []*Position {
 		}
 
 		qty := *cash
-		// Wallet size replaces fee-dust folded qty. Reseed fills so Apply's
-		// fillsNet matches inventory — otherwise the first partial sell
-		// subtracts from dust buys, goes negative, and closes while cash remains.
+		// Wallet size is source of truth for leftover qty. Reseed fills so
+		// Apply's fillsNet matches inventory. Cost basis stays this leftover's
+		// Entry — a prior closed cycle must never supply Entry/OpenedAt here.
 		px := decimal.Zero
 		if position.Entry != nil {
 			px = *position.Entry
 		}
+		if px.Sign() <= 0 {
+			continue
+		}
+		position.PnL = nil
+		position.PnLPct = nil
+		position.Stoploss = nil
+		position.ExitPath = ""
+		position.ExitTrigger = ""
+		position.ExitVenueOrderID = ""
+		position.ExitOrder = nil
 		seed := qty
 		position.Fills = []*market.ExecutionData{{
 			Side:      "buy",
@@ -478,6 +529,16 @@ func (ledger *Ledger) cycle(
 			current.Apply(ledger.execution(pair, trade))
 		}
 
+		// Exit fills close the cycle when almost all size is sold. A prior
+		// closed round must never stay "open" and hand its Entry to a later buy.
+		if step.side == "sell" && current.ClosedAt == nil {
+			closedAt := step.at
+			if last := fills[len(fills)-1].Time; !last.IsZero() {
+				closedAt = last
+			}
+			ledger.finishClosedCycle(current, closedAt)
+		}
+
 		if current.ClosedAt != nil {
 			if current.ExitVenueOrderID == "" {
 				current.ExitVenueOrderID = step.id
@@ -498,6 +559,57 @@ func (ledger *Ledger) cycle(
 	current.ExitOrder = nil
 
 	return current, closed
+}
+
+/*
+finishClosedCycle stamps ClosedAt when an exit has effectively flattened the
+cycle (under qty_min, or ≤1% of buys left from fee/rounding). Historical
+buy+sell rounds stay closed; the next buy opens a new position.
+*/
+func (ledger *Ledger) finishClosedCycle(position *Position, at time.Time) {
+	if position == nil {
+		return
+	}
+
+	position.mu.Lock()
+	defer position.mu.Unlock()
+
+	if position.ClosedAt != nil || position.Qty == nil || position.Qty.Sign() <= 0 {
+		return
+	}
+
+	if !ledger.exitFlattenedLocked(position) {
+		return
+	}
+
+	zero := decimal.Zero
+	position.Qty = &zero
+	closedAt := at
+	position.ClosedAt = &closedAt
+	position.Transition(runtime.DONE)
+	position.stampFillRealizedLocked()
+}
+
+/*
+exitFlattenedLocked is true when remaining qty after an exit is not an open
+hold: under qty_min, or ≤1% of cycle buys. Caller holds position.mu.
+*/
+func (ledger *Ledger) exitFlattenedLocked(position *Position) bool {
+	rem := *position.Qty
+	if rem.Sign() <= 0 {
+		return true
+	}
+
+	if min := ledger.qtyMin(position.Symbol); min != nil && rem.LessThan(*min) {
+		return true
+	}
+
+	_, bought, _ := position.fillsNet()
+	if bought.Sign() <= 0 {
+		return false
+	}
+
+	return rem.Div(bought).LessThanOrEqual(decimal.NewFromFloat(0.01))
 }
 
 func (ledger *Ledger) symbol(pair string) string {

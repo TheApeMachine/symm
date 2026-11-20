@@ -24,6 +24,10 @@ var (
 	exitRoomLevels = 5
 )
 
+// bandRatioClear is the finite stand-in for "no opposing cash in band"
+// (was +Inf). Threshold gates still pass; Standardizer tracks stay finite.
+const bandRatioClear = 10.0
+
 /*
 Price answers book questions with fills. A last trade is not a price.
 */
@@ -37,8 +41,10 @@ type Price struct {
 	public     network.Client
 	balance    *market.Balance
 	normalizer *spot.Normalizer
-	exhaustion sync.Map // symbol → float64 pumpdump reading
-	lastPrint  sync.Map // symbol → time.Time latest aggressive print
+	exhaustion  sync.Map // symbol → float64 pumpdump reading
+	excitation  sync.Map // symbol → float64 Hawkes spectral radius
+	ofi         sync.Map // symbol → float64 Cont event OFI
+	lastPrint   sync.Map // symbol → time.Time latest aggressive print
 }
 
 /*
@@ -337,9 +343,10 @@ func (price *Price) ExhaustionReading(symbol string) float64 {
 }
 
 /*
-NoteTrade feeds tape uptake from aggressive buy notional only. Sell prints on a
-quiet pair must not keep BookIntact true for the rest of the tape window.
-Every print (buy or sell) still stamps LastPrintAt for correlation heartbeats.
+NoteTrade feeds tape uptake from every aggressive print. Buys and sells both
+update net pressure, rush splits, and flip churn; LastPrintAt still stamps for
+correlation heartbeats. Same-timestamp sweeps all land — only strictly older
+stamps are dropped.
 */
 func (price *Price) NoteTrade(trade *market.TradeData) {
 	if trade == nil || trade.Price.Sign() <= 0 || trade.Qty.Sign() <= 0 {
@@ -348,8 +355,6 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 
 	name := price.normalizer.Name(trade.Symbol)
 
-	// Same-timestamp sweep prints must all land on the tape. Only drop
-	// strictly older stamps; lastPrint and LastPrintAt share `name`.
 	if raw, ok := price.lastPrint.Load(name); ok {
 		if prev, ok := raw.(time.Time); ok && trade.Timestamp.Before(prev) {
 			return
@@ -357,13 +362,10 @@ func (price *Price) NoteTrade(trade *market.TradeData) {
 	}
 
 	price.lastPrint.Store(name, trade.Timestamp)
-
-	if trade.Side != market.SideBuy {
-		return
-	}
-
-	price.tape.Note(
+	price.tape.Observe(
 		name,
+		trade.Side,
+		trade.OrderType,
 		trade.Price.Mul(trade.Qty).InexactFloat64(),
 		trade.Timestamp,
 	)
@@ -389,10 +391,18 @@ func (price *Price) LastPrintAt(symbol string) time.Time {
 }
 
 /*
-TapeUptake is recent vs prior quote-flow windows for board and BookIntact.
+TapeUptake is recent vs prior buy-tape windows for board and BookIntact.
 */
 func (price *Price) TapeUptake(symbol string, now time.Time) (recent, prior float64) {
 	return price.tape.Uptake(price.normalizer.Name(symbol), now)
+}
+
+/*
+TapeFlow is the conditioned tape reading (net, rush, flip, double-ratio, rhythm).
+*/
+func (price *Price) TapeFlow(symbol string, now time.Time) TapeReading {
+	name := price.normalizer.Name(symbol)
+	return price.tape.Reading(name, now, price.VolumeUSD(name))
 }
 
 /*
@@ -471,25 +481,56 @@ func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
 }
 
 /*
-TapeAccelOK is rising buy-tape vs the prior window against configured floors.
+TapeAccelOK is rising buy-tape under double-conditioning, net buy pressure,
+and flip-churn caps — dormant wake-ups and wash churn fail closed.
 */
 func (price *Price) TapeAccelOK(symbol string) bool {
 	risk := system.Cfg.Risk
-	recent, prior := price.TapeUptake(symbol, time.Now())
-
 	if risk.MinTapeNotionalUSD <= 0 || risk.MinTapeAccelRatio <= 0 {
 		return false
 	}
 
-	if recent < risk.MinTapeNotionalUSD {
+	flow := price.TapeFlow(symbol, time.Now())
+	if flow.BuyRecent < risk.MinTapeNotionalUSD {
 		return false
 	}
 
-	if prior <= 0 {
-		return recent >= risk.MinTapeNotionalUSD*risk.MinTapeAccelRatio
+	if risk.MinNetBuyFraction > 0 && flow.NetFraction < risk.MinNetBuyFraction {
+		return false
 	}
 
-	return recent/prior >= risk.MinTapeAccelRatio
+	if risk.MaxFlipChurn > 0 && flow.FlipChurn > risk.MaxFlipChurn {
+		return false
+	}
+
+	return flow.ConditionedRatio >= risk.MinTapeAccelRatio
+}
+
+/*
+SellRushSpike is true when sell market-order notional dominates the window —
+dump/panic phase that should abort short-hold ignition.
+*/
+func (price *Price) SellRushSpike(symbol string) bool {
+	risk := system.Cfg.Risk
+	flow := price.TapeFlow(symbol, time.Now())
+	if flow.RushSell <= 0 {
+		return false
+	}
+
+	floor := risk.MinTapeNotionalUSD
+	if floor <= 0 {
+		floor = 1
+	}
+
+	if flow.RushSell < floor {
+		return false
+	}
+
+	if flow.RushBuy <= 0 {
+		return true
+	}
+
+	return flow.RushSell/flow.RushBuy >= risk.MinTapeAccelRatio
 }
 
 /*
@@ -533,6 +574,26 @@ BackingRatio is near-mid bid cash over ask cash.
 */
 func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 	band := system.Cfg.Risk.BackingBandFrac
+	return price.bandRatio(symbol, 1-band, 1+band)
+}
+
+/*
+OverheadRatio is bid cash near touch over ask cash stacked +lo..+hi above mid
+(insider sell walls waiting for FOMO). Lower means heavier overhead resistance.
+*/
+func (price *Price) OverheadRatio(symbol string) (ratio float64, ok bool) {
+	risk := system.Cfg.Risk
+	lo := risk.OverheadBandLo
+	hi := risk.OverheadBandHi
+	if lo <= 0 {
+		lo = 0.05
+	}
+	if hi <= lo {
+		hi = 0.15
+	}
+
+	var bidCash, askCash float64
+	var found bool
 
 	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
 		if !book.Tradable() {
@@ -540,24 +601,22 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 		}
 
 		mid := book.Midpoint()
-
 		if mid == nil || mid.Sign() <= 0 {
 			return
 		}
 
-		lo := mid.Mul(decimal.NewFromFloat(1 - band))
-		hi := mid.Mul(decimal.NewFromFloat(1 + band))
-		bidCash, askCash := 0.0, 0.0
+		touchLo := mid.Mul(decimal.NewFromFloat(1 - risk.BackingBandFrac))
+		askLo := mid.Mul(decimal.NewFromFloat(1 + lo))
+		askHi := mid.Mul(decimal.NewFromFloat(1 + hi))
+		found = true
 
 		for level := book.BestBid(); level != nil; level = level.Lower {
 			if !level.Live() {
 				continue
 			}
-
-			if level.Price.Cmp(lo) < 0 {
+			if level.Price.Cmp(touchLo) < 0 {
 				break
 			}
-
 			bidCash += level.Notional().InexactFloat64()
 		}
 
@@ -565,11 +624,61 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 			if !level.Live() {
 				continue
 			}
+			if level.Price.Cmp(askHi) > 0 {
+				break
+			}
+			if level.Price.Cmp(askLo) < 0 {
+				continue
+			}
+			askCash += level.Notional().InexactFloat64()
+		}
+	})
 
+	if !found {
+		return 0, false
+	}
+	if askCash > 0 {
+		return bidCash / askCash, true
+	}
+	if bidCash > 0 {
+		// No opposing ask cash in-band — clear, but keep Features/Standardizer finite.
+		return bandRatioClear, true
+	}
+	return 0, false
+}
+
+func (price *Price) bandRatio(symbol string, loFrac, hiFrac float64) (ratio float64, ok bool) {
+	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+
+		mid := book.Midpoint()
+		if mid == nil || mid.Sign() <= 0 {
+			return
+		}
+
+		lo := mid.Mul(decimal.NewFromFloat(loFrac))
+		hi := mid.Mul(decimal.NewFromFloat(hiFrac))
+		bidCash, askCash := 0.0, 0.0
+
+		for level := book.BestBid(); level != nil; level = level.Lower {
+			if !level.Live() {
+				continue
+			}
+			if level.Price.Cmp(lo) < 0 {
+				break
+			}
+			bidCash += level.Notional().InexactFloat64()
+		}
+
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			if !level.Live() {
+				continue
+			}
 			if level.Price.Cmp(hi) > 0 {
 				break
 			}
-
 			askCash += level.Notional().InexactFloat64()
 		}
 
@@ -577,9 +686,8 @@ func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
 			ratio, ok = bidCash/askCash, true
 			return
 		}
-
 		if bidCash > 0 {
-			ratio, ok = math.Inf(1), true
+			ratio, ok = bandRatioClear, true
 			return
 		}
 	})
@@ -762,16 +870,15 @@ func (price *Price) SpendableCash() float64 {
 /*
 Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
 
-All free cash is allocatable — nothing is parked idle. ShortHold (favored,
-faster-to-profit) budgets against the full cash balance. Slow enters are capped
-at (1−ReserveFraction)×cash so they cannot monopolize the book; they never
-lock a slice that ShortHold cannot spend. Exits return cash to the wallet and
-the next Allocate sees it — no rebalancing ledger.
+ReserveFraction is a keep-back: every enter budgets against at most
+(1−f)×cash so the desk never spends to zero. MaxFraction × conviction then
+sizes inside that lane. Exits return cash on the next Allocate — no
+rebalancing ledger.
 
 Budget = lane × MaxFraction × conviction. Size starts at touch ask /
-TouchDivisor. If that slice is below QtyMin/CostMin, reject — never lift
-past the touch cap (that would walk the ask book as the market event
-touch_divisor exists to prevent).
+TouchDivisor. If that slice is below QtyMin but the full ask touch clears
+the minimum and fits the budget, lift to the full touch — never walk deeper
+ask levels past the top.
 */
 func (price *Price) Allocate(
 	symbol string, wallet *market.Balance, hint SizeHint,
@@ -830,7 +937,7 @@ func (price *Price) Allocate(
 		).With("symbol", symbol, "why", "instrument limits missing")
 	}
 
-	lane := price.entryCash(cash, hint.ShortHold)
+	lane := price.entryCash(cash)
 	budget := lane.Mul(decimal.NewFromFloat(system.Cfg.Risk.MaxFraction)).
 		Mul(decimal.NewFromFloat(hint.Conviction()))
 
@@ -888,13 +995,19 @@ func (price *Price) Allocate(
 			return nil, err
 		}
 
-		// Below instrument minimum → no entry (config: touch slice or nothing).
+		// Below instrument minimum on the /divisor slice: lift to the full
+		// ask touch when that size is legal. Still reject if the top itself
+		// is dust — never walk deeper asks to manufacture a fill.
 		if sized.Cmp(*minQty) < 0 {
-			return nil, errnie.Err(
-				errnie.UnprocessableContent,
-				"[price] allocate failed",
-				nil,
-			).With("symbol", symbol, "why", "touch slice below venue minimum")
+			full, ferr := price.formatQty(symbol, *touch)
+			if ferr != nil || full == nil || full.Sign() <= 0 || full.Cmp(*minQty) < 0 {
+				return nil, errnie.Err(
+					errnie.UnprocessableContent,
+					"[price] allocate failed",
+					nil,
+				).With("symbol", symbol, "why", "touch slice below venue minimum")
+			}
+			sized = full
 		}
 	}
 
@@ -983,15 +1096,11 @@ func (price *Price) Allocate(
 }
 
 /*
-entryCash is the quote base Allocate may budget against. ShortHold sees the full
-free balance. Slow enters see at most (1−ReserveFraction)×cash — a spend-rate
-cap, not an idle pool. Cash freed by exits is visible on the next call.
+entryCash is the quote base Allocate may budget against: (1−ReserveFraction)×cash
+so a keep-back always stays unspent. Cash freed by exits is visible on the next
+call.
 */
-func (price *Price) entryCash(cash decimal.Decimal, shortHold bool) decimal.Decimal {
-	if shortHold {
-		return cash
-	}
-
+func (price *Price) entryCash(cash decimal.Decimal) decimal.Decimal {
 	frac := system.Cfg.Risk.ReserveFraction
 	if frac <= 0 {
 		return cash

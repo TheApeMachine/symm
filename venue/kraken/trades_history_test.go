@@ -171,6 +171,21 @@ func TestNewTradesHistoryResult(t *testing.T) {
 				So(ids["T2"], ShouldBeTrue)
 			})
 		})
+
+		Convey("When paper/virtual posts a bare result", func() {
+			bare := []byte(`{
+				"count":"1",
+				"trades":{"T9":{"pair":"BTC/USD","time":9,"ordertxid":"O9"}}
+			}`)
+			result := NewTradesHistoryResult(bare)
+
+			Convey("trades parse without the error/result wrapper", func() {
+				So(result, ShouldNotBeNil)
+				So(len(result.Trades), ShouldEqual, 1)
+				So(result.Trades["T9"].Pair, ShouldEqual, "BTC/USD")
+				So(result.Trades["T9"].OrderID, ShouldEqual, "O9")
+			})
+		})
 	})
 }
 

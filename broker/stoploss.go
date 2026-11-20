@@ -29,8 +29,8 @@ const (
 )
 
 /*
-exitProfitFloor is PolicyExitMinProfitPct — first exits must not flatten into a
-+0.01% "win". Runners that already banked a tranche may trail to break-even.
+exitProfitFloor is PolicyExitMinProfitPct — every exit must clear this floor.
+Never break-even, never loss.
 */
 func exitProfitFloor() float64 {
 	if system.Cfg == nil || system.Cfg.Learning == nil {
@@ -46,11 +46,8 @@ func exitProfitFloor() float64 {
 }
 
 func (stoploss *Stoploss) trailFloorMin() float64 {
-	if stoploss != nil &&
-		(stoploss.TranchesExited > 0 || stoploss.PendingTranches > 0) {
-		return 0
-	}
-
+	// Never trail to break-even or a loss — every exit must clear the
+	// policy profit floor, including after banked tranches.
 	return exitProfitFloor()
 }
 
@@ -94,6 +91,10 @@ type Stoploss struct {
 	// sticking StoplossTriggered in a BUSY↔READY loop.
 	TranchesExited  int     `json:"TranchesExited"`            // 0..4 filled tranches
 	PendingTranches int     `json:"PendingTranches,omitempty"` // in-flight cake slices (not filled)
+	// Excitation is Hawkes spectral radius — paces profitable tranche banks only.
+	Excitation float64 `json:"Excitation,omitempty"`
+	// FlowOFI is Cont event order-flow imbalance — negative = bid withdrawal.
+	FlowOFI float64 `json:"FlowOFI,omitempty"`
 	PendingExitPct  float64 `json:"PendingExitPct,omitempty"`  // Fraction of BasisQty to sell this tick
 	NextTargetPct   float64 `json:"NextTargetPct"`             // PnL% line for the next mid tranche
 	BasisQty        float64 `json:"BasisQty,omitempty"`        // Qty when the stop was first armed for sizing
@@ -258,11 +259,13 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 	}
 
 	// 5. Arming & Disarming
-	// Once Tranche 1 has been banked, keep StoplossArmed active even if PnL dips
-	// below ArmPnlPct so TrailingFloor continues protecting the remaining 75%.
+	// Once a tranche has been banked, keep StoplossArmed active even if PnL dips
+	// below ArmPnlPct so TrailingFloor continues protecting the runner. An
+	// unfilled arm claim is aborted with the disarm — same as abortExit.
 	if stoploss.State == StoplossArmed &&
 		stoploss.TranchesExited == 0 &&
 		stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
+		stoploss.AbortPending()
 		stoploss.Disarm()
 	} else if stoploss.State == StoplossHealthy &&
 		stoploss.CurrentPnLPct >= stoploss.ArmPnlPct {
@@ -279,21 +282,9 @@ func (stoploss *Stoploss) Update(pnlPct float64, friction float64) {
 	}
 	stoploss.updateFloorAndExhaustion(stepForFloor, avgDownStep, chaosRatio, delta)
 
-	// First exit must clear the policy floor. After a tranche is banked, the
-	// runner may trail down to break-even (never a fee-net loss).
+	// Every exit must clear the policy profit floor — never break-even, never loss.
 	underFloor := stoploss.CurrentPnLPct < exitProfitFloor()
-	if underFloor &&
-		stoploss.TranchesExited == 0 &&
-		stoploss.PendingTranches == 0 {
-		stoploss.Confirms = 0
-		if stoploss.ExplosiveActive && delta < -stepEps {
-			stoploss.ExplosiveActive = false
-			stoploss.ExplosivePushes = 0
-			stoploss.PeakPushDelta = 0
-		}
-		return
-	}
-	if stoploss.CurrentPnLPct <= stepEps {
+	if underFloor {
 		stoploss.Confirms = 0
 		if stoploss.ExplosiveActive && delta < -stepEps {
 			stoploss.ExplosiveActive = false
@@ -362,6 +353,30 @@ func (stoploss *Stoploss) trancheStep() float64 {
 	if step < 1.0 {
 		step = 1.0
 	}
+
+	// Alfonsi/Blanc + Cont: when flow is critically self-excited or bid OFI
+	// flips negative (liquidity fleeing), bank earlier into remaining demand.
+	// Never shrink below the profit floor — no break-even/loss exits.
+	floor := exitProfitFloor()
+	if stoploss.CurrentPnLPct < floor {
+		return step
+	}
+
+	if stoploss.Excitation > 0.55 {
+		tight := 1.0 - 0.40*math.Min(stoploss.Excitation, 1)
+		step *= tight
+	}
+
+	// Bid withdrawal: FlowOFI < -0.25 means net touch liquidity leaving the bid.
+	if stoploss.FlowOFI < -0.25 {
+		flee := math.Min(1, -stoploss.FlowOFI)
+		step *= 1.0 - 0.35*flee
+	}
+
+	if step < floor {
+		step = floor
+	}
+
 	return step
 }
 
@@ -418,17 +433,16 @@ func (stoploss *Stoploss) emitTranche(reason string) {
 trip sells whatever is still open when the trailing floor / peak exhaustion
 fires — the final cake slice (and any unsold earlier stages). Claims the
 remainder; CommitPending advances TranchesExited only after the fill.
+Never trips at break-even or a loss — PolicyExitMinProfitPct is absolute.
 */
 func (stoploss *Stoploss) trip(reason string) {
+	if stoploss.CurrentPnLPct < exitProfitFloor() {
+		return
+	}
 	if stoploss.TranchesExited == 0 && stoploss.PendingTranches == 0 {
-		if stoploss.CurrentPnLPct < exitProfitFloor() {
-			return
-		}
 		if stoploss.CurrentPnLPct < stoploss.ArmPnlPct-stepEps {
 			return
 		}
-	} else if stoploss.CurrentPnLPct <= stepEps {
-		return
 	}
 	remaining := totalTranches - stoploss.TranchesExited
 	if remaining < 1 {

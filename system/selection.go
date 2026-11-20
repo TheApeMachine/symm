@@ -28,14 +28,13 @@ type Selection struct {
 	// WeightRotation scales calibrated resonance task_skill in board ranking.
 	WeightRotation float64
 	HeartbeatBatch int
-	// ShortHoldBoost is the board-score margin above MinBoardScore required for
-	// favored short-hold enters (full-cash budget + extra open slots).
-	ShortHoldBoost float64
-	// ReserveExtraSlots lets short-hold enters exceed MaxOpenPositions.
-	ReserveExtraSlots int
-	WeightSync        float64
-	WeightSurge       float64
-	WeightDepth       float64
+	WeightSync     float64
+	WeightSurge    float64
+	WeightDepth    float64
+	// WeightRushBuy scales buy market-order rush in board scoring.
+	WeightRushBuy float64
+	// WeightRhythm scales organic vs mechanical tape rhythm in board scoring.
+	WeightRhythm float64
 }
 
 func NewSelection() *Selection {
@@ -55,11 +54,11 @@ func NewSelection() *Selection {
 	viper.SetDefault("selection.weight_peak_frac", 0.5)
 	viper.SetDefault("selection.weight_rotation", 0.35)
 	viper.SetDefault("selection.heartbeat_batch", 48)
-	viper.SetDefault("selection.short_hold_boost", 0.15)
-	viper.SetDefault("selection.reserve_extra_slots", 2)
 	viper.SetDefault("selection.weight_sync", 0.45)
 	viper.SetDefault("selection.weight_surge", 0.35)
 	viper.SetDefault("selection.weight_depth", 0.30)
+	viper.SetDefault("selection.weight_rush_buy", 0.55)
+	viper.SetDefault("selection.weight_rhythm", 0.25)
 
 	return &Selection{
 		MaxOpenPositions:       viper.GetInt("selection.max_open_positions"),
@@ -78,10 +77,10 @@ func NewSelection() *Selection {
 		WeightPeakFrac:         viper.GetFloat64("selection.weight_peak_frac"),
 		WeightRotation:         viper.GetFloat64("selection.weight_rotation"),
 		HeartbeatBatch:         viper.GetInt("selection.heartbeat_batch"),
-		ShortHoldBoost:         viper.GetFloat64("selection.short_hold_boost"),
-		ReserveExtraSlots:      viper.GetInt("selection.reserve_extra_slots"),
 		WeightSync:             viper.GetFloat64("selection.weight_sync"),
 		WeightSurge:            viper.GetFloat64("selection.weight_surge"),
 		WeightDepth:            viper.GetFloat64("selection.weight_depth"),
+		WeightRushBuy:          viper.GetFloat64("selection.weight_rush_buy"),
+		WeightRhythm:           viper.GetFloat64("selection.weight_rhythm"),
 	}
 }

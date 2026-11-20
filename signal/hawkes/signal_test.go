@@ -15,7 +15,7 @@ import (
 func TestNewSignal(t *testing.T) {
 	Convey("Setup", t, func() {
 		Convey("When NewSignal is called", func() {
-			signal := hawkes.NewSignal(context.Background())
+			signal := hawkes.NewSignal(context.Background(), nil)
 
 			Convey("It returns a usable signal", func() {
 				So(signal, ShouldNotBeNil)
@@ -26,7 +26,7 @@ func TestNewSignal(t *testing.T) {
 
 func TestStep(t *testing.T) {
 	Convey("Setup", t, func() {
-		signal := hawkes.NewSignal(context.Background())
+		signal := hawkes.NewSignal(context.Background(), nil)
 		envelope := runtime.NewEnvelope(nil)
 		symbol := "HWK/USD"
 		at := time.Unix(1_700_000_000, 0).UTC()
@@ -67,12 +67,12 @@ func BenchmarkNewSignal(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = hawkes.NewSignal(context.Background())
+		_ = hawkes.NewSignal(context.Background(), nil)
 	}
 }
 
 func BenchmarkStep(b *testing.B) {
-	signal := hawkes.NewSignal(context.Background())
+	signal := hawkes.NewSignal(context.Background(), nil)
 	envelope := runtime.NewEnvelope(nil)
 	symbol := "HWK/USD"
 	at := time.Unix(1_700_000_000, 0).UTC()

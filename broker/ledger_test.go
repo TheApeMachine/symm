@@ -30,6 +30,14 @@ func (c *pagingHistoryClient) Post(url string, _ any) ([]byte, error) {
 		return []byte(`{"error":[],"result":{}}`), nil
 	}
 
+	if strings.Contains(url, "OpenOrders") {
+		return []byte(`{"error":[],"result":{"open":{}}}`), nil
+	}
+
+	if strings.Contains(url, "CancelOrder") {
+		return []byte(`{"error":[],"result":{"count":1}}`), nil
+	}
+
 	if strings.Contains(url, "Balance") && !strings.Contains(url, "TradeBalance") {
 		if len(c.balance) == 0 {
 			return []byte(`{"error":[],"result":{}}`), nil
@@ -132,6 +140,37 @@ func TestLedgerFold(t *testing.T) {
 				So(open[0].ClosedAt, ShouldBeNil)
 				So(open[0].ExitVenueOrderID, ShouldEqual, "")
 				So(open[0].ExitOrder, ShouldBeNil)
+			})
+		})
+
+		Convey("When a sell effectively flattens the cycle", func() {
+			open, closed := ledger.Fold(context.Background(), []kraken.HistoryTrade{
+				historyTrade("t1", "o1", "XBTUSD", "buy", "1", 1),
+				historyTrade("t2", "o2", "XBTUSD", "sell", "0.999", 2),
+			})
+
+			Convey("The cycle is closed — exit fills do not leave it open", func() {
+				So(len(open), ShouldEqual, 0)
+				So(len(closed), ShouldEqual, 1)
+				So(closed[0].ClosedAt, ShouldNotBeNil)
+				So(closed[0].Qty.String(), ShouldEqual, "0")
+			})
+		})
+
+		Convey("When a flattened close is followed by a new buy", func() {
+			open, closed := ledger.Fold(context.Background(), []kraken.HistoryTrade{
+				historyTrade("t1", "o1", "XBTUSD", "buy", "1", 1),
+				historyTrade("t2", "o2", "XBTUSD", "sell", "0.999", 2),
+				historyTrade("t3", "o3", "XBTUSD", "buy", "1", 3),
+			})
+
+			Convey("The new buy is a new open with that buy's OpenedAt", func() {
+				So(len(closed), ShouldEqual, 1)
+				So(len(open), ShouldEqual, 1)
+				So(open[0].EntryVenueOrderID, ShouldEqual, "o3")
+				So(open[0].OpenedAt.Unix(), ShouldEqual, int64(3))
+				So(open[0].Qty.String(), ShouldEqual, "1")
+				So(len(open[0].Fills), ShouldEqual, 1)
 			})
 		})
 
@@ -270,7 +309,7 @@ func TestLedgerRestore(t *testing.T) {
 			})
 		})
 
-		Convey("When history residue is tiny but the wallet still holds the base", func() {
+		Convey("When history already has an exit but the wallet still holds the base", func() {
 			complete := []byte(`{
 				"error": [],
 				"result": {
@@ -305,15 +344,12 @@ func TestLedgerRestore(t *testing.T) {
 				pages:   [][]byte{complete},
 				balance: []byte(`{"error":[],"result":{"DOGE":"500"}}`),
 			}, nil)
-			open, _ := ledger.Restore(t.Context())
+			open, closed := ledger.Restore(t.Context())
 
-			Convey("Open qty follows the wallet, not the history dust", func() {
-				So(len(open), ShouldEqual, 1)
-				So(open[0].Symbol, ShouldEqual, "DOGEUSD")
-				So(open[0].Qty.String(), ShouldEqual, "500")
-				So(len(open[0].Fills), ShouldEqual, 1)
-				So(open[0].Fills[0].ExecID, ShouldEqual, "wallet:DOGEUSD")
-				So(open[0].Fills[0].LastQty.String(), ShouldEqual, "500")
+			Convey("Closed history stays closed — wallet size does not reopen it", func() {
+				So(len(closed), ShouldEqual, 1)
+				So(closed[0].ClosedAt, ShouldNotBeNil)
+				So(len(open), ShouldEqual, 0)
 			})
 		})
 	})

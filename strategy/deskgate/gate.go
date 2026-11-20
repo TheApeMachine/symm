@@ -108,8 +108,8 @@ func (gate *Gate) Features(
 		return nil
 	}
 
-	now := time.Now()
-	recent, prior := price.TapeUptake(symbol, now)
+	now := time.Now().UTC()
+	flow := price.TapeFlow(symbol, now)
 	spread := gate.spreadPct(price, symbol)
 	peakFrac := gate.peakFrac(price, symbol)
 	peakRoom := 0.0
@@ -117,26 +117,45 @@ func (gate *Gate) Features(
 		peakRoom = 1 - peakFrac
 	}
 	tapeKnown := 0.0
-	if recent > 0 || prior > 0 {
+	if flow.BuyRecent > 0 || flow.BuyPrior > 0 || flow.SellRecent > 0 {
 		tapeKnown = 1
 	}
 
+	hour := float64(now.Hour()) + float64(now.Minute())/60
+	minute := float64(now.Minute())
+	roundClock := 0.0
+	if minute < 2 || minute > 58 || (minute >= 28 && minute <= 32) {
+		roundClock = 1
+	}
+
 	out := map[string]float64{
-		"tape_recent":   gate.tapeRecent(price, symbol, now),
-		"tape_ratio":    gate.tapeRatio(price, symbol, now),
-		"tape_notional": math.Max(recent, 0),
+		"tape_recent":   gate.tapeRecent(flow),
+		"tape_ratio":    flow.ConditionedRatio,
+		"tape_notional": math.Max(flow.BuyRecent, 0),
 		"tape_known":    tapeKnown,
+		"tape_net":      flow.NetFraction,
+		"tape_flip":     flow.FlipChurn,
+		"rush_buy":      math.Log1p(math.Max(flow.RushBuy, 0)),
+		"rush_sell":     math.Log1p(math.Max(flow.RushSell, 0)),
+		"tape_rhythm":   flow.Rhythm,
 		"session_move":  math.Max(price.ChangePct(symbol), 0),
 		"impulse":       gate.impulseLevel(pump),
+		"vpin":          gate.vpin(pump),
 		"spread_pct":    spread,
 		// Polarity-correct approve metrics for Catalog pinMove (rising = good).
 		"spread_tight": -spread,
 		"touch_cash":   gate.touchCash(price, symbol),
 		"backing":      gate.backingRatio(price, symbol),
+		"overhead":     gate.overheadRatio(price, symbol),
 		"peak_frac":    peakFrac,
 		"peak_room":    peakRoom,
 		"volume_usd":   gate.volumeUSD(price, symbol),
 		"open_drag":    gate.openDrag(price, symbol),
+		"hour_sin":     math.Sin(2 * math.Pi * hour / 24),
+		"hour_cos":     math.Cos(2 * math.Pi * hour / 24),
+		"minute_sin":   math.Sin(2 * math.Pi * minute / 60),
+		"minute_cos":   math.Cos(2 * math.Pi * minute / 60),
+		"round_clock":  roundClock,
 	}
 
 	gate.mu.Lock()
@@ -148,10 +167,12 @@ func (gate *Gate) Features(
 		raw := gate.rawAxis(name, out, pump)
 		// Measure every scored candidate so the track mean is the universe,
 		// not only entered trades (selection-bias drift after ~3 settles).
-		if raw != 0 {
+		if raw != 0 && !math.IsNaN(raw) && !math.IsInf(raw, 0) {
 			if _, err := axis.track.Measure(raw); err != nil {
 				errnie.Error(err)
 			}
+		} else if math.IsNaN(raw) || math.IsInf(raw, 0) {
+			raw = 0
 		}
 		out["axis_"+name] = axis.score(raw)
 		out["axis_"+name+"_raw"] = raw
@@ -166,19 +187,22 @@ func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.Ig
 	case "volume":
 		recent := out["tape_recent"]
 		ratio := out["tape_ratio"]
+		net := out["tape_net"]
+		rush := out["rush_buy"] - out["rush_sell"]
+		base := recent
 		if ratio > 0 {
-			return recent + math.Log1p(ratio)
+			base += math.Log1p(ratio)
 		}
-		return recent
+		return base + net + rush + 0.25*out["round_clock"]
 	case "day":
 		move := out["session_move"]
 		if move <= 0 {
-			return out["impulse"]
+			return out["impulse"] + 0.15*out["hour_sin"]
 		}
 		if pump != nil && out["impulse"] > 0 {
-			return move + out["impulse"]
+			return move + out["impulse"] + 0.15*out["hour_sin"]
 		}
-		return move
+		return move + 0.15*out["hour_sin"]
 	case "spread":
 		return -out["spread_pct"]
 	case "book":
@@ -186,7 +210,8 @@ func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.Ig
 		if drag < 0 {
 			drag = 0
 		}
-		return out["touch_cash"] + out["backing"] + out["tape_ratio"] - drag
+		return out["touch_cash"] + out["backing"] + out["overhead"] +
+			out["tape_ratio"] + out["tape_rhythm"] - drag
 	case "peak":
 		frac := out["peak_frac"]
 		if frac < 0 {
@@ -254,18 +279,17 @@ func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
 
 	// Risk floors never drop out — a 3-sample Standardizer must not replace
 	// MinMoverVolumeUSD / MaxEntrySpreadPct / … with cuts fit only on entered
-	// trades. Cold track: static only. Learned cut only after Learn evidence
-	// (Sample>0); restored Cuts ANDed with warm tracks sealed every desk.
+	// trades. Day / peak / volume stay static-only: five learned Higher cuts
+	// ANDed mid-session sealed the universe after the first settles.
 	if !gate.staticPass(name, feat) {
 		return false
 	}
 
-	if !axis.ready() || axis.Sample <= 0 {
+	if name != "spread" && name != "book" {
 		return true
 	}
 
-	// Missing ticker: zero axis_peak must not veto once the track is warm.
-	if name == "peak" && feat["peak_frac"] < 0 {
+	if !axis.ready() || axis.Sample <= 0 {
 		return true
 	}
 
@@ -301,13 +325,23 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 			feat["tape_notional"] < risk.MinTapeNotionalUSD {
 			return false
 		}
+		// Net/flip only when Features stamped them (OracleFrom partial maps
+		// omit keys — zero must not seal every legacy fixture).
+		if _, ok := feat["tape_net"]; ok &&
+			risk.MinNetBuyFraction > 0 &&
+			feat["tape_net"] < risk.MinNetBuyFraction {
+			return false
+		}
+		if _, ok := feat["tape_flip"]; ok &&
+			risk.MaxFlipChurn > 0 &&
+			feat["tape_flip"] > risk.MaxFlipChurn {
+			return false
+		}
 		if risk.MinTapeAccelRatio > 0 {
 			ratio := feat["tape_ratio"]
-			if ratio > 0 && ratio < risk.MinTapeAccelRatio {
+			if ratio > 0 && ratio < 1 {
 				return false
 			}
-			// Nascent tape (no prior window): absolute floor is enough —
-			// requiring MinTape×Accel sealed first prints on a quiet prior.
 			if ratio <= 0 {
 				return true
 			}
@@ -323,13 +357,15 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 		spread := feat["spread_pct"]
 		return spread > 0 && spread <= risk.MaxEntrySpreadPct
 	case "book":
-		// touch_cash in Features is Log1p(USD) for the learned axis.
 		if feat["touch_cash"] < math.Log1p(risk.MinTouchBidCash) ||
 			feat["backing"] < risk.MinBackingRatio {
 			return false
 		}
-		// open_drag < 0 means OpenDragPct failed (book/fee gap) — skip the
-		// drag cap rather than hard-veto; known-too-high still fails.
+		if risk.MinOverheadRatio > 0 &&
+			feat["overhead"] > 0 &&
+			feat["overhead"] < risk.MinOverheadRatio {
+			return false
+		}
 		if feat["open_drag"] >= 0 && risk.MaxEntryOpenDragPct > 0 &&
 			feat["open_drag"] > risk.MaxEntryOpenDragPct {
 			return false
@@ -341,13 +377,19 @@ func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
 		}
 
 		frac := feat["peak_frac"]
-		// Unknown peak (Ticker REST gap): do not static-fail — Grid skips the
-		// forced peak desk lamp when peak_frac < 0. Known-too-high still fails.
 		if frac < 0 {
 			return true
 		}
 
-		return frac < risk.MaxEntryPeakFrac
+		if frac < risk.MaxEntryPeakFrac {
+			return true
+		}
+
+		accel := risk.MinTapeAccelRatio
+		if accel <= 0 {
+			accel = 1
+		}
+		return feat["tape_ratio"] >= accel
 	default:
 		return false
 	}
@@ -517,30 +559,47 @@ func (gate *Gate) restore() {
 	}
 }
 
-func (gate *Gate) tapeRecent(price *broker.Price, symbol string, at time.Time) float64 {
-	recent, _ := price.TapeUptake(symbol, at)
-	if recent <= 0 {
+func (gate *Gate) tapeRecent(flow broker.TapeReading) float64 {
+	if flow.BuyRecent <= 0 {
 		return 0
 	}
-	return math.Log1p(recent)
+	return math.Log1p(flow.BuyRecent)
 }
 
-func (gate *Gate) tapeRatio(price *broker.Price, symbol string, at time.Time) float64 {
-	recent, prior := price.TapeUptake(symbol, at)
-	if recent <= 0 || prior <= 0 {
+func (gate *Gate) overheadRatio(price *broker.Price, symbol string) float64 {
+	ratio, ok := price.OverheadRatio(symbol)
+	if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
 		return 0
 	}
-	return recent / prior
+	return ratio
 }
 
 func (gate *Gate) impulseLevel(pump *equation.IgnitionOutput) float64 {
 	if pump == nil {
 		return 0
 	}
-	return math.Log1p(pump.Precursor) +
-		math.Log1p(pump.Ignition) +
-		math.Log1p(pump.Compression) +
-		math.Log1p(pump.RVOL)
+	return gate.log1pFinite(pump.Precursor) +
+		gate.log1pFinite(pump.Ignition) +
+		gate.log1pFinite(pump.Compression) +
+		gate.log1pFinite(pump.RVOL) +
+		gate.log1pFinite(pump.VPIN)
+}
+
+func (gate *Gate) log1pFinite(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return math.Log1p(v)
+}
+
+func (gate *Gate) vpin(pump *equation.IgnitionOutput) float64 {
+	if pump == nil {
+		return 0
+	}
+	if math.IsNaN(pump.VPIN) || math.IsInf(pump.VPIN, 0) {
+		return 0
+	}
+	return pump.VPIN
 }
 
 func (gate *Gate) spreadPct(price *broker.Price, symbol string) float64 {
@@ -561,7 +620,7 @@ func (gate *Gate) touchCash(price *broker.Price, symbol string) float64 {
 
 func (gate *Gate) backingRatio(price *broker.Price, symbol string) float64 {
 	ratio, ok := price.BackingRatio(symbol)
-	if !ok {
+	if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
 		return 0
 	}
 	return ratio

@@ -20,13 +20,16 @@ func seedBook(books *broker.BookManager, symbol string) {
 	askQty := decimal.NewFromInt(6)
 
 	books.Update(&market.Level3{
+		Type: "snapshot",
 		Data: []*market.Level3Data{{
 			Symbol: symbol,
 			Bids: []*market.Level3Order{{
+				OrderID:    "b1",
 				LimitPrice: &bidPx,
 				OrderQty:   &bidQty,
 			}},
 			Asks: []*market.Level3Order{{
+				OrderID:    "a1",
 				LimitPrice: &askPx,
 				OrderQty:   &askQty,
 			}},

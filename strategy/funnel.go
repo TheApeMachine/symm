@@ -7,14 +7,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 )
 
 const (
-	funnelLogEvery     = 500
-	funnelLogMinGap    = 10 * time.Second
-	funnelTopReasons   = 12
+	funnelLogEvery   = 500
+	funnelLogMinGap  = 10 * time.Second
+	funnelTopReasons = 12
 )
 
 /*
@@ -133,16 +132,6 @@ func (funnel *funnel) emitLocked(cash float64, open int) {
 	for _, row := range fails {
 		failParts = append(failParts, fmt.Sprintf("%s=%d", row.Key, row.N))
 	}
-
-	errnie.Info("[strategy.funnel] entry seals",
-		"ticks", funnel.ticks,
-		"candidates", funnel.cands,
-		"enters", funnel.enters,
-		"open", open,
-		"cash", cash,
-		"skips", strings.Join(skipParts, " | "),
-		"enter_fail", strings.Join(failParts, " | "),
-	)
 
 	clear(funnel.skips)
 	clear(funnel.enterFail)

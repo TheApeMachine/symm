@@ -10,6 +10,7 @@ import (
 	"github.com/bytedance/sonic"
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/system"
@@ -238,6 +239,105 @@ func (tree *Tree) Update(path string, delta float64) {
 	tree.root.Store(root)
 	tree.mu.Unlock()
 	tree.persist(path, &published)
+}
+
+/*
+Observe records one settled PnL% into the leaf's Welford evidence so paper
+promotion can require sample size and t-stat, not a single lucky resistance dip.
+*/
+func (tree *Tree) Observe(path string, pnlPct float64, win bool) {
+	if path == "" || strings.Count(path, "/")+1 < system.Cfg.Learning.MinPathLength {
+		return
+	}
+
+	tree.mu.Lock()
+	root := tree.root.Load()
+	decision, ok := root.Get([]byte(path))
+	if !ok || decision == nil {
+		tree.mu.Unlock()
+		return
+	}
+
+	next := *decision
+	next.Count++
+	if win {
+		next.Wins++
+	}
+
+	delta := pnlPct - next.MeanPnLPct
+	next.MeanPnLPct += delta / float64(next.Count)
+	next.M2 += delta * (pnlPct - next.MeanPnLPct)
+
+	published := next
+	root, _, _ = root.Insert([]byte(path), &published)
+	tree.root.Store(root)
+	tree.mu.Unlock()
+	tree.persist(path, &published)
+}
+
+/*
+PaperEligible is true when resistance clears the paper floor and leaf evidence
+clears sample count plus t-stat / Beta-Bernoulli win probability.
+*/
+func (tree *Tree) PaperEligible(path string, resistance float64) bool {
+	learn := system.Cfg.Learning
+	if resistance > learn.PaperEligibleResistance {
+		return false
+	}
+
+	if path == "" || tree == nil {
+		return false
+	}
+
+	decision, ok := tree.root.Load().Get([]byte(path))
+	if !ok || decision == nil {
+		return false
+	}
+
+	minN := learn.PaperMinSamples
+	if minN <= 0 {
+		minN = 5
+	}
+	if decision.Count < minN {
+		return false
+	}
+
+	if learn.PaperMinTStat > 0 {
+		if decision.MeanPnLPct <= 0 {
+			return false
+		}
+		// Identical wins leave M2=0 — treat positive mean as clearing the bar.
+		if decision.Count >= 2 && decision.M2 > 0 {
+			std := math.Sqrt(decision.M2 / float64(decision.Count-1))
+			if std > 0 {
+				tStat := decision.MeanPnLPct /
+					(std / math.Sqrt(float64(decision.Count)))
+				if tStat < learn.PaperMinTStat {
+					return false
+				}
+			}
+		}
+	}
+
+	if learn.PaperMinWinProb > 0 {
+		beta := probability.NewBernoulli()
+		for i := 0; i < decision.Wins; i++ {
+			if _, err := beta.Measure(1); err != nil {
+				return false
+			}
+		}
+		for i := decision.Wins; i < decision.Count; i++ {
+			if _, err := beta.Measure(0); err != nil {
+				return false
+			}
+		}
+		prob, err := beta.ProbabilityAbove(0.5)
+		if err != nil || prob < learn.PaperMinWinProb {
+			return false
+		}
+	}
+
+	return true
 }
 
 /*

@@ -6,6 +6,7 @@ import (
 
 	"github.com/theapemachine/nomagique/algorithm/excitation"
 	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
@@ -16,17 +17,19 @@ Map() feeds logic/resonance Features (spectral_radius) for Model story gates.
 */
 type Signal struct {
 	*runtime.System
+	price   *broker.Price
 	sample  *excitation.Sample
 	process *excitation.Process
 }
 
 /*
-NewSignal is tape-only — Hawkes builds cross-symbol or print statistics without
-a book callback on the hot path.
+NewSignal scores tape arrivals; optional price caches spectral radius for
+profit-only tranche pacing (never loss exits).
 */
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, price *broker.Price) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "hawkes"),
+		price:   price,
 		sample:  excitation.NewSample(),
 		process: excitation.NewProcess(),
 	}
@@ -69,6 +72,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 
 				if !ready {
 					continue
+				}
+
+				if signal.price != nil {
+					signal.price.NoteExcitation(data.Symbol, outcome.Fit.SpectralRadius)
 				}
 
 				mu.Lock()

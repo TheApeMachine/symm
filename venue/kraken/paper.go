@@ -349,7 +349,19 @@ Balance polls return the venue Balance observation for Client.Watch.
 func (paper *Paper) Post(url string, body any) ([]byte, error) {
 	_ = body
 
-	entity, ok := restMap[RestPath(url)]
+	path := RestPath(url)
+	// Fold QueryOrders / OpenOrders / CancelOrder — paper CLI has no txid
+	// lookup. Empty/success envelopes let Restore and clearRestingSells proceed.
+	switch path {
+	case "/0/private/QueryOrders":
+		return []byte(`{"error":[],"result":{}}`), nil
+	case "/0/private/OpenOrders":
+		return []byte(`{"error":[],"result":{"open":{}}}`), nil
+	case "/0/private/CancelOrder":
+		return []byte(`{"error":[],"result":{"count":1}}`), nil
+	}
+
+	entity, ok := restMap[path]
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(

@@ -53,17 +53,55 @@ func NewCache(
 	// Apply never READY/PnL before Price/Level3 can mark.
 	open, closed := cache.ledger.Restore(ctx)
 
+	kept := make(map[string]string, len(open))
+
 	for _, position := range open {
+		if position == nil {
+			continue
+		}
 		cache.Add(position.Symbol, position, true)
+		kept[position.Symbol] = position.ID
+		cache.retireStaleOpen(position.Symbol, position.ID)
 	}
 
 	for _, position := range closed {
+		if position == nil {
+			continue
+		}
 		cache.archive(position)
+		// Closed on venue while we were down — drop ghost open/ rows for that
+		// symbol so workbench open_* does not keep the prior UUID forever.
+		if _, live := kept[position.Symbol]; !live {
+			cache.retireStaleOpen(position.Symbol, "")
+		}
 	}
 
 	cache.Transition(runtime.WAITING)
 
 	return cache
+}
+
+/*
+retireStaleOpen deletes {tier}/open/{symbol}/ objects that are not keepID.
+Empty keepID clears the whole symbol prefix (no live restore for that pair).
+*/
+func (cache *Cache) retireStaleOpen(symbol, keepID string) {
+	if cache == nil || cache.store == nil || symbol == "" {
+		return
+	}
+
+	prefix := fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol)
+
+	if keepID == "" {
+		if err := cache.store.DeletePrefix(prefix); err != nil {
+			errnie.Error(err)
+		}
+		return
+	}
+
+	if err := cache.store.DeleteOtherKeys(prefix, prefix+keepID); err != nil {
+		errnie.Error(err)
+	}
 }
 
 /*

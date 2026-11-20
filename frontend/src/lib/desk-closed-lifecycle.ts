@@ -97,23 +97,28 @@ const fillRealized = (
 	let buyQty = 0;
 	let buyNotional = 0;
 	let sellNotional = 0;
+	let fees = 0;
 
 	for (const fill of pos.fills ?? []) {
 		const qty = decimal(fill.last_qty);
 		const px = decimal(fill.last_price);
 		if (qty === null || qty <= 0 || px === null) continue;
 
+		const notional = px * qty;
+		const fee = decimal(fill.fee_usd_equiv);
+		if (fee !== null && fee > 0) fees += fee;
+
 		if (fill.side === "buy") {
 			buyQty += qty;
-			buyNotional += px * qty;
+			buyNotional += notional;
 		} else if (fill.side === "sell") {
-			sellNotional += px * qty;
+			sellNotional += notional;
 		}
 	}
 
 	if (buyQty <= 0 || buyNotional <= 0) return null;
 
-	const money = sellNotional - buyNotional;
+	const money = sellNotional - buyNotional - fees;
 	const pct = (money / buyNotional) * 100;
 	return { money, pct, frac: pct / 100 };
 };
@@ -124,9 +129,14 @@ export const lifecycleFromDeskClosed = (pos: Position): Lifecycle | null => {
 	}
 
 	const fromFills = fillRealized(pos);
-	const pct = pnlPct(pos) ?? fromFills?.pct ?? null;
-	const money = decimal(pos.pnl) ?? fromFills?.money ?? null;
-	const frac = pnlFrac(pos) ?? fromFills?.frac ?? (pct !== null ? pct / 100 : null);
+	// Prefer fill-realized over stored pnl_pct — a stale mark crest on the
+	// row (peak left after a flat reopen) must not show as a +35% win.
+	const pct = fromFills?.pct ?? pnlPct(pos) ?? null;
+	const money = fromFills?.money ?? decimal(pos.pnl) ?? null;
+	const frac =
+		fromFills?.frac ??
+		pnlFrac(pos) ??
+		(pct !== null ? pct / 100 : null);
 	const triggers =
 		pos.outcome_triggers?.filter((t) => typeof t === "string") ?? [];
 	const held = holdNs(pos) ?? 0;

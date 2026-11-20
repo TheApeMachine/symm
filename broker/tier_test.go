@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,7 +32,16 @@ func (c *captureClient) Write(msg []byte) error {
 	c.writes = append(c.writes, append([]byte(nil), msg...))
 	return nil
 }
-func (c *captureClient) Post(string, any) ([]byte, error) {
+func (c *captureClient) Post(url string, _ any) ([]byte, error) {
+	if strings.Contains(url, "OpenOrders") {
+		return []byte(`{"error":[],"result":{"open":{}}}`), nil
+	}
+	if strings.Contains(url, "CancelOrder") {
+		return []byte(`{"error":[],"result":{"count":1}}`), nil
+	}
+	if strings.Contains(url, "QueryOrders") {
+		return []byte(`{"error":[],"result":{}}`), nil
+	}
 	return []byte(`{"error":[],"result":{"trades":{}}}`), nil
 }
 func (c *captureClient) Watch(string, any, json.Unmarshaler, func()) {}
@@ -114,6 +124,7 @@ func TestNewTierExecutionsSubscribe(t *testing.T) {
 			system.Cfg.Market.Model = prevModel
 			So(tier, ShouldNotBeNil)
 			So(tier.Status(), ShouldEqual, runtime.READY)
+			So(tier.OpenPrivate(), ShouldBeNil)
 
 			var found bool
 

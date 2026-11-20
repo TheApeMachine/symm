@@ -7,23 +7,21 @@ import (
 )
 
 /*
-SizeHint steers Allocate: conviction scales the risk budget. ShortHold budgets
-against full free cash; slow enters are capped by ReserveFraction.
+SizeHint steers Allocate: conviction scales the risk budget on the keep-back
+lane. Matched paths, higher board scores, and lower resistance size up;
+explore stays smaller. A zero-value hint keeps the full MaxFraction budget.
 */
 type SizeHint struct {
 	Score      float64
 	Resistance float64
 	PathFound  bool
-	ShortHold  bool
 }
 
 /*
-Conviction is the fraction of the lane budget to spend (0.35–1.0). Matched paths,
-higher board scores, and lower resistance size up; explore stays smaller.
-A zero-value hint keeps the full lane budget (call sites that omit scoring).
+Conviction is the fraction of the MaxFraction lane budget to spend (0.35–1.0).
 */
 func (hint SizeHint) Conviction() float64 {
-	if hint.Score == 0 && hint.Resistance == 0 && !hint.ShortHold {
+	if hint.Score == 0 && hint.Resistance == 0 {
 		return 1
 	}
 

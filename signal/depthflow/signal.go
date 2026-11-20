@@ -29,6 +29,7 @@ type Signal struct {
 	*runtime.System
 	books      *broker.Book
 	instrument *broker.Instrument
+	price      *broker.Price
 	sample     *flow.Sample
 	process    *equation.Bookflow
 }
@@ -36,11 +37,13 @@ type Signal struct {
 /*
 NewSignal needs L3 books and instrument ticks so depth snapshots align with
 venue qty steps — without both, depthflow cannot publish the labels resonance expects.
+Optional price caches Cont event OFI for profit-only tranche pacing.
 */
 func NewSignal(
 	ctx context.Context,
 	books *broker.Book,
 	instrument *broker.Instrument,
+	price *broker.Price,
 ) *Signal {
 	sample, err := flow.NewSample(bookflowHistory)
 
@@ -48,6 +51,7 @@ func NewSignal(
 		System:     runtime.NewSystem(ctx, "depthflow"),
 		books:      books,
 		instrument: instrument,
+		price:      price,
 		sample:     sample,
 		process:    equation.NewBookflow(),
 	}
@@ -174,6 +178,10 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				if err != nil {
 					signal.Error(err)
 					continue
+				}
+
+				if signal.price != nil {
+					signal.price.NoteOFI(data.Symbol, outcome.EventOFI)
 				}
 
 				// Publish not-ready/zero readings too — resonance holds until every

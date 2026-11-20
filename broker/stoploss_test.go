@@ -135,18 +135,33 @@ func TestStoplossUpdate(t *testing.T) {
 			})
 		})
 
-		Convey("When an explosive runner collapses below the arm line", func() {
+		Convey("When an explosive runner collapses under the profit floor", func() {
 			sl := NewStoploss(1.0)
 			sl.Update(1.0, 0)
 			sl.Update(2.6, 0)
 			sl.CommitPending()
 			sl.Update(0.15, 0)
 
-			Convey("Crash tick trips explosive_floor_break without avgStep self-widen", func() {
+			Convey("It refuses to trip below PolicyExitMinProfitPct", func() {
 				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
-				So(sl.Triggered(), ShouldBeTrue)
-				So(sl.TriggerReason, ShouldEqual, "explosive_floor_break")
-				So(sl.Regime, ShouldEqual, RegimeExplosive)
+				So(sl.Triggered(), ShouldBeFalse)
+				So(sl.WantsExit(), ShouldBeFalse)
+			})
+		})
+
+		Convey("When an explosive runner collapses but stays above the profit floor", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(1.0, 0)
+			sl.Update(2.6, 0)
+			sl.CommitPending()
+			sl.Update(0.6, 0)
+
+			Convey("Crash tick may trip only while fee-net PnL stays profitable", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				if sl.Triggered() {
+					So(sl.CurrentPnLPct, ShouldBeGreaterThanOrEqualTo, exitProfitFloor())
+					So(sl.TriggerReason, ShouldEqual, "explosive_floor_break")
+				}
 			})
 		})
 
@@ -166,7 +181,10 @@ func TestStoplossUpdate(t *testing.T) {
 		Convey("When price re-enters above the arm line after disarm", func() {
 			sl := NewStoploss(1.0)
 			sl.Update(2.0, 0)
-			sl.Update(0.5, 0)
+			// Slip clearly under Arm so AbortPending+Disarm fire (0.5 == Arm
+			// does not disarm under the < Arm-eps check).
+			sl.Update(0.2, 0)
+			So(sl.State, ShouldEqual, StoplossHealthy)
 			sl.Update(2.0, 0)
 
 			Convey("Stoploss re-arms", func() {
@@ -197,8 +215,11 @@ func TestStoplossUpdate(t *testing.T) {
 		Convey("When first profit peak is still inside the sharp-break margin", func() {
 			sl := NewStoploss(-1.5)
 			sl.Update(-1.5, 0)
-			sl.Update(1.0, 0)
-			sl.Update(1.18, 0)
+			// Arm at policy floor; peak must stay under Arm+sharpBreakPeakMargin.
+			sl.Update(sl.ArmPnlPct, 0)
+			sl.AbortPending()
+			peak := sl.ArmPnlPct + sharpBreakPeakMargin - 0.05
+			sl.Update(peak, 0)
 			sl.EmaDelta = -0.05
 			floor := sl.TrailingFloor
 			sl.Update(floor-0.05, 0)
@@ -392,6 +413,40 @@ func TestStoplossMarshal(t *testing.T) {
 				So(got.RallyStart, ShouldEqual, 1.5)
 				So(len(got.Deltas), ShouldBeGreaterThan, 0)
 			})
+		})
+	})
+}
+
+func TestTrancheStepProfitOnlyPacing(t *testing.T) {
+	Convey("Setup", t, func() {
+		sl := NewStoploss(0.5)
+		sl.TypicalPush = 2.0
+		sl.ArmPnlPct = 1.0
+		floor := exitProfitFloor()
+
+		Convey("When below the profit floor, excitation and OFI do not shrink the step", func() {
+			sl.CurrentPnLPct = floor - 0.01
+			sl.Excitation = 0.9
+			sl.FlowOFI = -1.0
+			So(sl.trancheStep(), ShouldEqual, 2.0)
+		})
+
+		Convey("When green with high excitation, step tightens but stays at or above the floor", func() {
+			sl.CurrentPnLPct = floor + 1
+			sl.Excitation = 1.0
+			sl.FlowOFI = 0
+			step := sl.trancheStep()
+			So(step, ShouldBeLessThan, 2.0)
+			So(step, ShouldBeGreaterThanOrEqualTo, floor)
+		})
+
+		Convey("When green with bid OFI fleeing, step tightens but stays at or above the floor", func() {
+			sl.CurrentPnLPct = floor + 1
+			sl.Excitation = 0
+			sl.FlowOFI = -1.0
+			step := sl.trancheStep()
+			So(step, ShouldBeLessThan, 2.0)
+			So(step, ShouldBeGreaterThanOrEqualTo, floor)
 		})
 	})
 }

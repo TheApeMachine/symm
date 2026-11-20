@@ -470,6 +470,77 @@ func TestApply(t *testing.T) {
 				So(pos.Status() == runtime.READY, ShouldBeFalse)
 			})
 		})
+
+		Convey("When a sell exceeds open qty, settle clamps to remaining", func() {
+			pos.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("1"), LastPrice: dec("100"),
+				Timestamp: time.Unix(1, 0).UTC(),
+			})
+			pos.Apply(market.ExecutionData{
+				ExecID: "s1", Side: "sell",
+				LastQty: dec("2"), LastPrice: dec("100"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+
+			Convey("Qty flats at zero without negative inventory or double notional", func() {
+				So(pos.Qty.String(), ShouldEqual, "0")
+				So(pos.ClosedAt, ShouldNotBeNil)
+				So(pos.Sold.String(), ShouldEqual, "1")
+				So(pos.PnLPct.InexactFloat64(), ShouldBeLessThan, 1)
+			})
+
+			pos.Apply(market.ExecutionData{
+				ExecID: "s2", Side: "sell",
+				LastQty: dec("1"), LastPrice: dec("100"),
+				Timestamp: time.Unix(3, 0).UTC(),
+			})
+			Convey("Further sells on the closed cycle are ignored", func() {
+				So(pos.Qty.String(), ShouldEqual, "0")
+				So(len(pos.Fills), ShouldEqual, 2)
+			})
+		})
+
+		Convey("When a closed row reopens, prior peak/mark PnL dies", func() {
+			setBook(price, "100", "101", "30")
+			pos.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("1"), LastPrice: dec("100"),
+				Timestamp: time.Unix(1, 0).UTC(),
+			})
+			setBook(price, "135", "136", "30")
+			_, _ = pos.Update(dec("135"))
+			So(pos.Stoploss, ShouldNotBeNil)
+			So(pos.PnLPct, ShouldNotBeNil)
+			peak := pos.Stoploss.PeakPnLPct
+			So(peak, ShouldBeGreaterThan, 30)
+
+			pos.Apply(market.ExecutionData{
+				ExecID: "s1", Side: "sell",
+				LastQty: dec("1"), LastPrice: dec("135"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			So(pos.Status(), ShouldEqual, runtime.DONE)
+
+			// Flat reopen — must not inherit the +35% crest.
+			pos.Apply(market.ExecutionData{
+				ExecID: "b2", Side: "buy",
+				LastQty: dec("1"), LastPrice: dec("100"),
+				Timestamp: time.Unix(3, 0).UTC(),
+			})
+			So(pos.Stoploss, ShouldBeNil)
+			So(pos.PnL, ShouldBeNil)
+			So(pos.PnLPct, ShouldBeNil)
+			So(pos.ClosedAt, ShouldBeNil)
+
+			pos.Apply(market.ExecutionData{
+				ExecID: "s2", Side: "sell",
+				LastQty: dec("1"), LastPrice: dec("100.01"),
+				Timestamp: time.Unix(4, 0).UTC(),
+			})
+			So(pos.PnLPct, ShouldNotBeNil)
+			So(pos.PnLPct.InexactFloat64(), ShouldBeLessThan, 1)
+		})
 	}))
 }
 

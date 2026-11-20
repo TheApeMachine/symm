@@ -9,8 +9,8 @@ import (
 type Risk struct {
 	MaxFraction  float64
 	TouchDivisor float64
-	// ReserveFraction caps slow enters at (1−f)×cash. ShortHold budgets against
-	// the full free balance — nothing is parked idle for a separate pool.
+	// ReserveFraction is a keep-back: every enter budgets against at most
+	// (1−f)×cash; MaxFraction × conviction sizes inside that lane.
 	ReserveFraction   float64
 	MinMoverVolumeUSD float64
 	MinMoverChangePct float64
@@ -39,12 +39,21 @@ type Risk struct {
 	MinImpulseAccelRatio float64
 	// MinTapeAccelRatio is recent/prior buy-tape; <=0 disables acceleration.
 	MinTapeAccelRatio float64
+	// MinNetBuyFraction is (buy−sell)/(buy+sell) floor for TapeAccelOK.
+	MinNetBuyFraction float64
+	// MaxFlipChurn caps opposing near-equal-size flips / (|net|+ε).
+	MaxFlipChurn float64
+	// OverheadBandLo/Hi are mid-relative ask bands for OverheadRatio.
+	OverheadBandLo float64
+	OverheadBandHi float64
+	// MinOverheadRatio is bid-touch / overhead-ask cash floor (insider walls).
+	MinOverheadRatio float64
 }
 
 func NewRisk() *Risk {
 	viper.SetDefault("risk.max_fraction", 0.20)
 	viper.SetDefault("risk.touch_divisor", 3)
-	viper.SetDefault("risk.reserve_fraction", 0.25)
+	viper.SetDefault("risk.reserve_fraction", 0.10)
 	viper.SetDefault("risk.min_mover_volume_usd", 10_000.0)
 	viper.SetDefault("risk.min_mover_change_pct", 0.5)
 	viper.SetDefault("risk.max_entry_spread_pct", 2.0)
@@ -61,6 +70,11 @@ func NewRisk() *Risk {
 	viper.SetDefault("risk.impulse_short_window", 5*time.Minute)
 	viper.SetDefault("risk.min_impulse_accel_ratio", 1.15)
 	viper.SetDefault("risk.min_tape_accel_ratio", 1.15)
+	viper.SetDefault("risk.min_net_buy_fraction", 0.15)
+	viper.SetDefault("risk.max_flip_churn", 50.0)
+	viper.SetDefault("risk.overhead_band_lo", 0.05)
+	viper.SetDefault("risk.overhead_band_hi", 0.15)
+	viper.SetDefault("risk.min_overhead_ratio", 0.35)
 
 	return &Risk{
 		MaxFraction:          viper.GetFloat64("risk.max_fraction"),
@@ -82,6 +96,11 @@ func NewRisk() *Risk {
 		ImpulseShortWindow:   viper.GetDuration("risk.impulse_short_window"),
 		MinImpulseAccelRatio: viper.GetFloat64("risk.min_impulse_accel_ratio"),
 		MinTapeAccelRatio:    viper.GetFloat64("risk.min_tape_accel_ratio"),
+		MinNetBuyFraction:    viper.GetFloat64("risk.min_net_buy_fraction"),
+		MaxFlipChurn:         viper.GetFloat64("risk.max_flip_churn"),
+		OverheadBandLo:       viper.GetFloat64("risk.overhead_band_lo"),
+		OverheadBandHi:       viper.GetFloat64("risk.overhead_band_hi"),
+		MinOverheadRatio:     viper.GetFloat64("risk.min_overhead_ratio"),
 	}
 }
 
@@ -127,4 +146,9 @@ func (risk *Risk) Apply(patch map[string]any) {
 	setFloat(&risk.MinImpulseChangePct, "min_impulse_change_pct")
 	setFloat(&risk.MinImpulseAccelRatio, "min_impulse_accel_ratio")
 	setFloat(&risk.MinTapeAccelRatio, "min_tape_accel_ratio")
+	setFloat(&risk.MinNetBuyFraction, "min_net_buy_fraction")
+	setFloat(&risk.MaxFlipChurn, "max_flip_churn")
+	setFloat(&risk.OverheadBandLo, "overhead_band_lo")
+	setFloat(&risk.OverheadBandHi, "overhead_band_hi")
+	setFloat(&risk.MinOverheadRatio, "min_overhead_ratio")
 }

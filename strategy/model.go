@@ -111,12 +111,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				continue
 			}
 
-			errnie.Info("[strategy.model] pending stoploss exit",
-				"tier", tier.String(),
-				"symbol", position.Symbol,
-				"exit_path", position.ExitPath,
-			)
-
 			// Do not SetExitPath before Exit — that overwrote Stoploss.TriggerReason
 			// with "policy exit match". Attribution path stamps after arming.
 			if err := model.desk.Exit(position, false); err != nil {
@@ -447,7 +441,7 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	live := system.Cfg.Market.Model == "real"
 	model.board.Place(candidates, envelope, model.price, model.desk, live,
 		func(cand EnterCandidate) {
-			tier := model.routeTier(cand.Resistance, cand.PathFound)
+			tier := model.routeTier(cand.Path, cand.Resistance, cand.PathFound)
 
 			if !cand.PathFound {
 				model.tree.Load().Ensure(cand.Path, ActionEnter)
@@ -457,7 +451,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 				Score:      cand.Score,
 				Resistance: cand.Resistance,
 				PathFound:  cand.PathFound,
-				ShortHold:  cand.ShortHold,
 			}
 
 			if err := model.desk.Enter(
@@ -492,9 +485,6 @@ func (model *Model) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			}
 
 			reason := map[bool]string{true: "path matched", false: "explore"}[cand.PathFound]
-			if cand.ShortHold {
-				reason += " (reserve)"
-			}
 
 			cand.Decide(&runtime.Decision{
 				Symbol: cand.Symbol,
@@ -552,7 +542,7 @@ func (model *Model) openPosition(symbol string) *broker.Position {
 	return nil
 }
 
-func (model *Model) routeTier(resistance float64, pathFound bool) broker.TierType {
+func (model *Model) routeTier(path string, resistance float64, pathFound bool) broker.TierType {
 	if system.Cfg.Market.Model == "real" {
 		return broker.TierTypeReal
 	}
@@ -563,8 +553,10 @@ func (model *Model) routeTier(resistance float64, pathFound bool) broker.TierTyp
 		return broker.TierTypeVirtual
 	}
 
-	if resistance <= system.Cfg.Learning.PaperEligibleResistance {
-		return broker.TierTypePaper
+	if model.tree != nil {
+		if tree := model.tree.Load(); tree != nil && tree.PaperEligible(path, resistance) {
+			return broker.TierTypePaper
+		}
 	}
 
 	return broker.TierTypeVirtual
@@ -575,7 +567,12 @@ func (model *Model) decisionTier(symbol string, resistance float64) string {
 		return key
 	}
 
-	return model.routeTier(resistance, true).String()
+	path := ""
+	if position := model.openPosition(symbol); position != nil {
+		path = position.EntryPath
+	}
+
+	return model.routeTier(path, resistance, true).String()
 }
 
 /*
@@ -685,13 +682,6 @@ func (model *Model) Exit(position *broker.Position, path string) bool {
 			return false
 		}
 
-		errnie.Info("[strategy.model] policy exit",
-			"symbol", position.Symbol,
-			"tier", position.TierKey,
-			"path", path,
-			"pos_stage", position.Status().String(),
-		)
-
 		if err := model.desk.Exit(position, false); err != nil {
 			if errnie.IsForbidden(err) {
 				return false
@@ -730,11 +720,17 @@ func (model *Model) creditExit(position *broker.Position) {
 
 	delta := model.resistanceDeltaView(view)
 	tree := model.tree.Load()
+	pnlPct := 0.0
+	win := view.PnL != nil && view.PnL.Sign() > 0
+	if view.PnLPct != nil {
+		pnlPct = view.PnLPct.InexactFloat64()
+	}
 
 	if tree != nil {
 		if view.EntryPath != "" {
 			tree.Ensure(view.EntryPath, ActionEnter)
 			tree.Update(view.EntryPath, delta)
+			tree.Observe(view.EntryPath, pnlPct, win)
 		}
 
 		seen := make(map[string]struct{}, len(view.HoldPaths))
@@ -748,11 +744,13 @@ func (model *Model) creditExit(position *broker.Position) {
 			seen[path] = struct{}{}
 			tree.Ensure(path, ActionHold)
 			tree.Update(path, delta)
+			tree.Observe(path, pnlPct, win)
 		}
 
 		if view.ExitPath != "" {
 			tree.Ensure(view.ExitPath, ActionExit)
 			tree.Update(view.ExitPath, delta)
+			tree.Observe(view.ExitPath, pnlPct, win)
 		}
 	}
 

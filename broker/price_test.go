@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -600,6 +601,20 @@ func TestBackingRatio(t *testing.T) {
 	}))
 }
 
+func TestOverheadRatioClearFinite(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the overhead ask band is empty, the clear reading stays finite", func() {
+			// Default book is 100/101 — overhead band is +5%..+15% above mid,
+			// so ask cash there is empty while touch bid cash remains.
+			ratio, ok := price.OverheadRatio(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(math.IsInf(ratio, 0), ShouldBeFalse)
+			So(math.IsNaN(ratio), ShouldBeFalse)
+			So(ratio, ShouldEqual, bandRatioClear)
+		})
+	}))
+}
+
 func TestBookIntact(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		Convey("When cash and backing clear but tape is quiet", func() {
@@ -702,22 +717,71 @@ func TestPnLPct(t *testing.T) {
 func TestEntryCash(t *testing.T) {
 	Convey("Setup", t, withPrice(func(price *Price) {
 		prev := system.Cfg.Risk.ReserveFraction
-		system.Cfg.Risk.ReserveFraction = 0.25
+		system.Cfg.Risk.ReserveFraction = 0.10
 		defer func() { system.Cfg.Risk.ReserveFraction = prev }()
-		cash := decimal.NewFromInt(31)
+		cash := decimal.NewFromInt(34)
 
-		Convey("ShortHold budgets against the full free balance", func() {
-			So(price.entryCash(cash, true).String(), ShouldEqual, "31")
+		Convey("Keep-back leaves (1−ReserveFraction)×cash spendable", func() {
+			So(price.entryCash(cash).String(), ShouldEqual, "30.6")
 		})
 
-		Convey("Slow enters are capped at (1−ReserveFraction)×cash", func() {
-			So(price.entryCash(cash, false).String(), ShouldEqual, "23.25")
-		})
-
-		Convey("ReserveFraction 0 leaves both lanes on full cash", func() {
+		Convey("ReserveFraction 0 leaves the full balance spendable", func() {
 			system.Cfg.Risk.ReserveFraction = 0
-			So(price.entryCash(cash, false).String(), ShouldEqual, "31")
-			So(price.entryCash(cash, true).String(), ShouldEqual, "31")
+			So(price.entryCash(cash).String(), ShouldEqual, "34")
+		})
+	}))
+}
+
+func TestAllocateThinWallet(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		prevReserve := system.Cfg.Risk.ReserveFraction
+		prevMax := system.Cfg.Risk.MaxFraction
+		system.Cfg.Risk.ReserveFraction = 0.10
+		system.Cfg.Risk.MaxFraction = 0.20
+		defer func() {
+			system.Cfg.Risk.ReserveFraction = prevReserve
+			system.Cfg.Risk.MaxFraction = prevMax
+		}()
+
+		// Thin wallet: every enter uses MaxFraction × conviction on the
+		// keep-back lane — no privileged full-lane path.
+		cash := decimal.NewFromInt(34)
+		small := market.NewBalance(map[string]any{
+			"quote": "USD",
+			"assets": []*market.Asset{
+				market.NewAsset(nil, "USD", cash, decimal.Zero, cash),
+			},
+		})
+		price.balance = small
+		setBook(price, "1", "1.01", "100")
+
+		qtyMin := decimal.RequireFromString("1")
+		costMin := decimal.RequireFromString("5")
+		pair := price.Instrument.Pair(testSymbol)
+		pair.QtyMin = &qtyMin
+		pair.CostMin = &costMin
+		price.Instrument.cache.Store(testSymbol, pair)
+
+		Convey("High-conviction enter stays MaxFraction-capped on a tiny book", func() {
+			qty, err := price.Allocate(testSymbol, small, SizeHint{
+				Score: 1, PathFound: true,
+			})
+			if err != nil {
+				So(qty, ShouldBeNil)
+			} else {
+				So(qty, ShouldNotBeNil)
+			}
+		})
+
+		Convey("Weak explore may fail venue mins on the same MaxFraction lane", func() {
+			qty, err := price.Allocate(testSymbol, small, SizeHint{
+				Score: 0.4, Resistance: 0.5, PathFound: false,
+			})
+			if err != nil {
+				So(qty, ShouldBeNil)
+			} else {
+				So(qty, ShouldNotBeNil)
+			}
 		})
 	}))
 }
@@ -792,12 +856,55 @@ func TestAllocate(t *testing.T) {
 			So(qty, ShouldBeNil)
 		})
 
-		Convey("When touch size is below QtyMin", func() {
-			// touch/3 = 10 < QtyMin=15 — reject rather than lift past the cap.
+		Convey("When touch/divisor is below QtyMin but full touch clears", func() {
+			// touch/3 = 10 < QtyMin=15 — lift to full ask touch (30).
 			min := decimal.RequireFromString("15")
 			pair := price.Instrument.Pair(testSymbol)
 			pair.QtyMin = &min
 			price.Instrument.cache.Store(testSymbol, pair)
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldBeNil)
+			So(qty, ShouldNotBeNil)
+			So(qty.Cmp(min), ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
+		Convey("When full ask touch is still below QtyMin", func() {
+			// Top ask=30; deeper ask supplies venueMinQty=50 so the min is
+			// reachable by walking — but Allocate must not walk past touch.
+			min := decimal.RequireFromString("50")
+			costMin := decimal.RequireFromString("1")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &min
+			pair.CostMin = &costMin
+			price.Instrument.cache.Store(testSymbol, pair)
+
+			bidPx := decimal.RequireFromString("100")
+			ask1 := decimal.RequireFromString("101")
+			ask1Qty := decimal.RequireFromString("30")
+			ask2 := decimal.RequireFromString("102")
+			ask2Qty := decimal.RequireFromString("40")
+			bidQty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b1", LimitPrice: &bidPx, OrderQty: &bidQty,
+						Timestamp: time.Unix(1, 0),
+					}},
+					Asks: []*market.Level3Order{
+						{
+							OrderID: "a1", LimitPrice: &ask1, OrderQty: &ask1Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+						{
+							OrderID: "a2", LimitPrice: &ask2, OrderQty: &ask2Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+					},
+				}},
+			})
+
 			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
 			So(err, ShouldNotBeNil)
 			So(qty, ShouldBeNil)

@@ -54,8 +54,17 @@ func TestWrite(t *testing.T) {
 
 func TestPost(t *testing.T) {
 	Convey("Setup", t, withPaper(func(paper *Paper) {
-		Convey("When Post targets an unknown path", func() {
+		Convey("When Post targets OpenOrders", func() {
 			raw, err := paper.Post("/0/private/OpenOrders", nil)
+
+			Convey("Empty open map is returned", func() {
+				So(err, ShouldBeNil)
+				So(string(raw), ShouldContainSubstring, `"open"`)
+			})
+		})
+
+		Convey("When Post targets an unknown path", func() {
+			raw, err := paper.Post("/0/private/DoesNotExist", nil)
 
 			Convey("Post is rejected", func() {
 				So(err, ShouldNotBeNil)

@@ -464,8 +464,8 @@ func (booter *Booter) initPipeline() error {
 			{Group: "signal", Nodes: []nmruntime.Node{
 				correlation.NewSignal(ctx, booter.price),
 				cvd.NewSignal(ctx, booter.book),
-				depthflow.NewSignal(ctx, booter.book, booter.instrument),
-				hawkes.NewSignal(ctx),
+				depthflow.NewSignal(ctx, booter.book, booter.instrument, booter.price),
+				hawkes.NewSignal(ctx, booter.price),
 				leadlag.NewSignal(ctx),
 				liquidity.NewSignal(ctx, booter.book),
 				morphology.NewSignal(ctx, booter.book),

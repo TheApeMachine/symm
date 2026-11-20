@@ -214,9 +214,9 @@ risk:
   # take at most one third of what the touch can carry, so a touch exit
   # still has margin if the book thins. Below instrument minimum → no entry.
   touch_divisor: 3
-  # Caps slow enters at (1−f)×free cash. ShortHold budgets against the full
-  # balance — nothing is parked idle in a separate pool.
-  reserve_fraction: 0.25
+  # Keep-back: no enter budgets against more than (1−f)×free cash, so the
+  # desk always retains dry powder. max_fraction × conviction sizes inside.
+  reserve_fraction: 0.10
   # 24h quote-volume floor for the mover pre-filter (USD).
   min_mover_volume_usd: 10000
   # Feature scaling for desk SNM (oracles learn cuts in model/parameters/deskgate.bin).
@@ -230,7 +230,7 @@ risk:
   max_entry_open_drag_pct: 2.5
   # Quote notional that must rest on the top bids at entry (USD).
   min_touch_bid_cash: 100
-  # Each half of the tape comparison (board ranking uses recent/prior ratio).
+  # Each half of the tape comparison (board ranking uses conditioned ratio).
   tape_window: 5m
   # Quote dollars the latest buy-tape window must clear for vol/day/bok lamps.
   min_tape_notional_usd: 250
@@ -238,7 +238,17 @@ risk:
   backing_band_frac: 0.01
   # Minimum bidCash/askCash inside that band (thin bids fail).
   min_backing_ratio: 0.6
+  # Net buy pressure floor (buy−sell)/(buy+sell) — wash/bump bots fail.
+  min_net_buy_fraction: 0.15
+  # Cap on opposing near-equal-size flips / (|net|+ε) (Luo bump-bot ≥50).
+  max_flip_churn: 50
+  # Overhead ask wall band above mid (insider sell limits waiting for FOMO).
+  overhead_band_lo: 0.05
+  overhead_band_hi: 0.15
+  min_overhead_ratio: 0.35
   # Fee-net PnL% floor before stoploss path memory may arm (not break-even).
+  # Keep above policy_exit_min_profit_pct so mark optimism cannot arm/sell
+  # inside taker+slippage of a flat tape.
   stoploss_arm_pnl_pct: 1.0
   # Desk feature windows (cuts adapt from settle outcomes — not daily tuning).
   min_impulse_change_pct: 0.20
@@ -249,7 +259,8 @@ risk:
 selection:
   # Cross-sectional enter: only the top ranks per tick receive real capital.
   # Wider book so flat holds do not crowd out new movers — exits stay profit-only.
-  max_open_positions: 18
+  # One open-cap for every enter; hold duration is an outcome, not a lane.
+  max_open_positions: 20
   max_enters_per_tick: 2
   # Lone 1-of-1 trade frames must still clear this board floor.
   # 1.5 was unreachable for typical peak/precursor readings; peer cut still ranks.
@@ -257,8 +268,7 @@ selection:
   # Recent peer scores compete across single-symbol trade frames.
   board_peer_window: 2s
   # Accumulation vs ignition range caps (dual peak oracles in training).
-  # Same band: day-move ≥ 0.5% and PeakFrac < 0.5 cancelled each other; pk only
-  # vetoes the top 15% of the 24h range now.
+  # Live peak lamp: top 15% vetoes unless tape is accelerating (see deskgate).
   max_accum_peak_frac: 0.85
   max_ignition_peak_frac: 0.85
   ignition_precursor_min: 0.55
@@ -267,14 +277,12 @@ selection:
   weight_peak_score: 1.25
   weight_precursor: 1.0
   weight_tape_uptake: 0.75
+  weight_rush_buy: 0.55
+  weight_rhythm: 0.25
   weight_spread: 1.0
   weight_peak_frac: 0.5
   weight_rotation: 0.35
   heartbeat_batch: 48
-  # Short-hold reserve: board margin + ignition floors to spend reserved cash
-  # without rotating cold books at a loss.
-  short_hold_boost: 0.15
-  reserve_extra_slots: 2
   weight_sync: 0.45
   weight_surge: 0.35
   weight_depth: 0.30
@@ -290,9 +298,12 @@ learning:
   # lastEmitted dedupe will not grow past Len=1 — requiring 2 sealed enters.
   max_path_length: 8
   min_path_length: 1
-  # Virtual → paper promotion floor on path resistance.
+  # Virtual → paper: resistance floor plus sample evidence (Luo et al.).
   paper_eligible_resistance: 0.2
-  # Fee-net PnL% floor before a tree exit leaf may settle a position.
+  paper_min_samples: 5
+  paper_min_t_stat: 1.645
+  paper_min_win_prob: 0.60
+  # Fee-net PnL% floor before any exit may settle — never break-even, never loss.
   policy_exit_min_profit_pct: 0.5
   # Win resistance credit: shorter holds and higher PnL% lower more, capped
   # at threshold_step so paths still need multiple proofs. Half-life is in

@@ -126,6 +126,10 @@ func NewTier(
 		errnie.Error(position.Validate())
 	}
 
+	// Resting venue sells hold the base — Exit would Insufficient funds. Clear
+	// them for restored opens before the desk can arm (REST; no private WS yet).
+	tier.clearRestingSells()
+
 	if tier.private != nil && host != nil {
 		// Dedicated Watch targets — do not share host.Balance() with the WS
 		// decode path or REST and websocket frames race on Result.
@@ -149,12 +153,8 @@ func NewTier(
 		)
 	}
 
-	if client, ok := tier.private.(*network.WebsocketClient); ok {
-		client.Callback(func() error { return tier.subscribeExecutions() })
-		errnie.Error(client.Open())
-	} else if host != nil {
-		errnie.Error(tier.subscribeExecutions())
-	}
+	// Private WS Open + executions subscribe wait for Desk.Start / OpenPrivate
+	// so seedBooks can finish without an unread private socket timing out.
 
 	if err := errnie.Require(map[string]any{
 		"price":      tier.price,
@@ -174,6 +174,96 @@ func NewTier(
 	}
 
 	return tier
+}
+
+/*
+OpenPrivate opens the private websocket (or paper subscribe) after books are
+seeded. Boot must not call this during NewTier — an unread private socket
+times out while seedBooks waits on Level3.
+*/
+func (tier *Tier) OpenPrivate() error {
+	if tier == nil || tier.private == nil {
+		return nil
+	}
+
+	if client, ok := tier.private.(*network.WebsocketClient); ok {
+		client.Callback(func() error { return tier.subscribeExecutions() })
+		return errnie.Error(client.Open())
+	}
+
+	if tier.venue != nil {
+		return tier.subscribeExecutions()
+	}
+
+	return nil
+}
+
+/*
+clearRestingSells cancels open venue sells for restored open symbols so Exit
+can spend the base. Buys are left alone.
+*/
+func (tier *Tier) clearRestingSells() {
+	if tier == nil || tier.private == nil || tier.positions == nil {
+		return
+	}
+
+	open := tier.positions.Open()
+	if len(open) == 0 {
+		return
+	}
+
+	symbols := make(map[string]struct{}, len(open)*2)
+
+	for _, position := range open {
+		if position == nil || position.Symbol == "" {
+			continue
+		}
+
+		symbols[position.Symbol] = struct{}{}
+		if tier.normalizer != nil {
+			if name := tier.normalizer.Name(position.Symbol); name != "" {
+				symbols[name] = struct{}{}
+			}
+		}
+	}
+
+	orders := NewOrders(tier.private)
+	resting := orders.ListOpen()
+	if len(resting) == 0 {
+		return
+	}
+
+	for txid, order := range resting {
+		if order.Descr.Type != "sell" {
+			continue
+		}
+
+		pair := order.Descr.Pair
+		if pair == "" {
+			continue
+		}
+
+		symbol := pair
+		if tier.normalizer != nil {
+			if name := tier.normalizer.Name(pair); name != "" {
+				symbol = name
+			}
+		}
+
+		if _, ok := symbols[symbol]; !ok {
+			if _, ok := symbols[pair]; !ok {
+				continue
+			}
+		}
+
+		if !orders.Cancel(txid) {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"[broker.Tier] failed to cancel resting sell "+txid,
+				nil,
+			))
+		}
+	}
 }
 
 /*
@@ -301,7 +391,8 @@ func (tier *Tier) ClearPending(symbol string) {
 
 /*
 ProfitableExit is true when fee-net mark PnL% clears PolicyExitMinProfitPct.
-Sign()>0 alone let policy/tree exits flatten at +0.01% "break-even" wins.
+Also requires the live bid to clear that floor above the last buy print —
+a poisoned Entry (ledger seed / stale VWAP) must not authorize a flat sell.
 */
 func (tier *Tier) ProfitableExit(position *Position) bool {
 	if tier == nil || tier.price == nil || position == nil {
@@ -309,11 +400,22 @@ func (tier *Tier) ProfitableExit(position *Position) bool {
 	}
 
 	pct := tier.price.PnLPct(position)
-	if pct == nil {
+	if pct == nil || !clearsExitProfitFloor(pct.InexactFloat64()) {
 		return false
 	}
 
-	return clearsExitProfitFloor(pct.InexactFloat64())
+	buy := position.lastBuyPrice()
+	if buy == nil || buy.Sign() <= 0 {
+		return false
+	}
+
+	mark := tier.price.Mark(position.Symbol)
+	if mark == nil || mark.Sign() <= 0 {
+		return false
+	}
+
+	move := mark.Sub(*buy).Div(*buy).Mul(decimal.NewFromInt(100))
+	return clearsExitProfitFloor(move.InexactFloat64())
 }
 
 func clearsExitProfitFloor(pnlPct float64) bool {
@@ -389,7 +491,6 @@ func (tier *Tier) Enter(
 		tier.private,
 		tier.settle,
 	)
-
 	if err := position.Enter(path, qty, tier.balance); err != nil {
 		tier.releaseReserved(symbol, quote)
 		return errnie.Error(err)

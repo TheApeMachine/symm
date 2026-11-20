@@ -19,11 +19,8 @@ Board is cross-sectional enter capacity on top of per-symbol gates (oracle,
 resonance, story, tree). It ranks candidates from the tick envelope — grid
 pipeline outputs — and the shared price book, then applies MaxEntersPerTick
 and real open caps. Peer memory lets single-symbol frames compete with recent
-movers instead of auto-winning a 1-of-1 slice.
-
-Short-hold winners budget against full free cash and may use reserve extra
-slots so hot micro-moves are not blocked by capital locked in slow books —
-without forcing lossy rotation.
+movers instead of auto-winning a 1-of-1 slice. Every enter uses the same
+sizing and slot rules — hold duration is an outcome, not a lane.
 */
 type Board struct {
 	*runtime.System
@@ -46,7 +43,6 @@ type EnterCandidate struct {
 	Resistance float64
 	PathFound  bool
 	Score      float64
-	ShortHold  bool
 	Tier       string
 }
 
@@ -62,8 +58,8 @@ func NewBoard(ctx context.Context) *Board {
 
 /*
 Score ranks one symbol from envelope readings and price tape/spread/peak.
-Tape credit uses recent/prior ratio only — log1p(recent) on a dormant prior
-favors sleepy wake-ups over real accelerations.
+Tape credit uses double-conditioned ratio, net buy pressure, rush, and rhythm
+so dormant wake-ups and wash churn cannot outrank real accelerations.
 */
 func (board *Board) Score(
 	symbol string,
@@ -103,25 +99,80 @@ func (board *Board) Score(
 		score -= sel.WeightDepth * 0.5 * liq.ScarcityScore
 	}
 
-	if price != nil {
-		recent, prior := price.TapeUptake(symbol, time.Now())
-		risk := system.Cfg.Risk
+	if cvd := envelope.CVD[symbol]; cvd != nil {
+		score += sel.WeightDepth * 0.35 * cvd.NetFraction
+		score -= sel.WeightDepth * 0.25 * cvd.Balance
+	}
 
-		if prior > 0 {
-			ratio := recent / prior
-			floor := risk.MinTapeAccelRatio
-			if floor <= 0 {
-				floor = 1
+	if depth := envelope.DepthFlow[symbol]; depth != nil {
+		// Bolz: book-pressure z ahead of trade spike.
+		score += sel.WeightDepth * 0.40 * math.Tanh(depth.PressureZ/2)
+		// Cont OFI: contemporaneous liquidity shift — soft entry cue only;
+		// exit pacing consumes the same reading when already green.
+		score += sel.WeightDepth * 0.15 * math.Tanh(depth.EventOFI)
+	}
+
+	if hawkes := envelope.Hawkes[symbol]; hawkes != nil {
+		// Filimonov branching ratio: subcritical heat lifts score; near-critical
+		// is entry caution (exit pacing consumes the same reading when green).
+		radius := hawkes.Fit.SpectralRadius
+		if radius > 0 && radius < 0.95 {
+			score += sel.WeightRotation * 0.5 * radius
+		} else if radius >= 0.95 {
+			score -= sel.WeightRotation * (radius - 0.9)
+		}
+	}
+
+	if price != nil {
+		risk := system.Cfg.Risk
+		flow := price.TapeFlow(symbol, time.Now())
+		floor := risk.MinTapeAccelRatio
+		if floor <= 0 {
+			floor = 1
+		}
+
+		ratio := flow.ConditionedRatio
+		if ratio >= floor {
+			score += sel.WeightTapeUptake * math.Log1p(ratio)
+		} else if ratio > 0 {
+			score -= sel.WeightTapeUptake * (floor - ratio)
+		}
+
+		if flow.NetFraction < 0 {
+			score += sel.WeightTapeUptake * flow.NetFraction
+		}
+
+		if risk.MaxFlipChurn > 0 && flow.FlipChurn > risk.MaxFlipChurn {
+			score -= sel.WeightTapeUptake * math.Log1p(flow.FlipChurn/risk.MaxFlipChurn)
+		}
+
+		if sel.WeightRushBuy > 0 && flow.RushBuy > 0 {
+			rush := flow.RushBuy
+			if flow.RushSell > 0 {
+				rush -= flow.RushSell
 			}
-			if ratio >= floor {
-				score += sel.WeightTapeUptake * math.Log1p(ratio)
+			if rush > 0 {
+				score += sel.WeightRushBuy * math.Log1p(rush/
+					math.Max(risk.MinTapeNotionalUSD, 1))
 			} else {
-				score -= sel.WeightTapeUptake * (floor - ratio)
+				score += sel.WeightRushBuy * rush /
+					math.Max(risk.MinTapeNotionalUSD, 1)
+			}
+		}
+
+		if sel.WeightRhythm > 0 {
+			score += sel.WeightRhythm * (flow.Rhythm - 0.5)
+		}
+
+		if overhead, ok := price.OverheadRatio(symbol); ok {
+			minOver := risk.MinOverheadRatio
+			if minOver > 0 && overhead < minOver {
+				score -= sel.WeightDepth * (minOver - overhead)
 			}
 		}
 
 		if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
-			score -= sel.WeightSpread * spread.InexactFloat64()
+			score -= sel.WeightSpread * (spread.InexactFloat64() / 100)
 		}
 
 		if frac, ok := price.PeakFrac(symbol); ok {
@@ -134,46 +185,6 @@ func (board *Board) Score(
 	}
 
 	return score
-}
-
-/*
-ShortHold is true when the candidate clears the short-hold board margin and
-live ignition floors — those enters budget against full free cash (and may use
-ReserveExtraSlots past MaxOpenPositions).
-*/
-func (board *Board) ShortHold(
-	symbol string,
-	envelope *runtime.Envelope,
-	score float64,
-) bool {
-	if board == nil || envelope == nil {
-		return false
-	}
-
-	sel := system.Cfg.Selection
-	need := sel.MinBoardScore + sel.ShortHoldBoost
-	if score < need {
-		return false
-	}
-
-	pump := envelope.Pumpdump[symbol]
-	if pump == nil {
-		return false
-	}
-
-	if sel.IgnitionCompressionMin > 0 && pump.Compression < sel.IgnitionCompressionMin {
-		return false
-	}
-
-	if sel.IgnitionIgnitionMin > 0 && pump.Ignition < sel.IgnitionIgnitionMin {
-		return false
-	}
-
-	if sel.IgnitionPrecursorMin > 0 && pump.Precursor < sel.IgnitionPrecursorMin {
-		return false
-	}
-
-	return true
 }
 
 /*
@@ -198,9 +209,6 @@ func (board *Board) Place(
 
 	for i := range candidates {
 		candidates[i].Score = board.Score(candidates[i].Symbol, envelope, price)
-		candidates[i].ShortHold = board.ShortHold(
-			candidates[i].Symbol, envelope, candidates[i].Score,
-		)
 	}
 
 	board.remember(candidates, now)
@@ -228,18 +236,12 @@ func (board *Board) Place(
 	}
 
 	allowed := limit
-	reserveAllowed := limit
 
 	if live && desk != nil && sel.MaxOpenPositions > 0 {
 		open := desk.OpenCount(broker.TierTypeReal)
-		extra := sel.ReserveExtraSlots
-		// Absolute ceiling — never reopen ShortHold past Max+Reserve once open
-		// already sits at or above Max (clamping slots to 0 first reset the
-		// reserve budget to `extra` every tick).
-		reserveSlots := sel.MaxOpenPositions + extra - open
 		workingSlots := sel.MaxOpenPositions - open
 
-		if reserveSlots <= 0 {
+		if workingSlots <= 0 {
 			for _, cand := range candidates {
 				if cand.Decide == nil {
 					continue
@@ -258,37 +260,20 @@ func (board *Board) Place(
 			return
 		}
 
-		if workingSlots < 0 {
-			workingSlots = 0
-		}
-
 		if workingSlots < allowed {
 			allowed = workingSlots
-		}
-
-		if reserveSlots < reserveAllowed {
-			reserveAllowed = reserveSlots
 		}
 	}
 
 	floor := sel.MinBoardScore
 	cut := board.peerCut(now, limit)
 	entered := 0
-	reserveEntered := 0
 
 	for _, cand := range candidates {
 		room := entered < allowed
-		reserveRoom := cand.ShortHold && (entered+reserveEntered) < reserveAllowed
 
-		if (room || reserveRoom) &&
-			cand.Score >= floor &&
-			cand.Score >= cut {
-			if !room && reserveRoom {
-				cand.ShortHold = true
-				reserveEntered++
-			} else {
-				entered++
-			}
+		if room && cand.Score >= floor && cand.Score >= cut {
+			entered++
 			enter(cand)
 			continue
 		}
@@ -304,10 +289,8 @@ func (board *Board) Place(
 			reason = "board score below floor"
 		case cand.Score < cut:
 			reason = "board below recent peer cut"
-		case !room && !cand.ShortHold:
-			reason = "board cap — working slots full"
-		case !room && !reserveRoom:
-			reason = "board cap — reserve slots full"
+		case !room:
+			reason = "board cap — open slots full"
 		}
 
 		cand.Decide(&runtime.Decision{

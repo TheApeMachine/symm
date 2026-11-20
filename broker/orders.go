@@ -3,9 +3,7 @@ package broker
 import (
 	"maps"
 	"slices"
-	"time"
 
-	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
@@ -13,15 +11,15 @@ import (
 )
 
 /*
-Orders is QueryOrders: fetch venue order rows by txid so restore can bind
-EntryOrder / ExitOrder the same way live enter/exit does — order first, fills after.
+Orders is QueryOrders / OpenOrders / CancelOrder against the private transport
+so restore can bind EntryOrder and clear resting sells that would block Exit.
 */
 type Orders struct {
 	transport network.Client
 }
 
 /*
-NewOrders wires the private transport used for QueryOrders.
+NewOrders wires the private transport used for order REST.
 */
 func NewOrders(transport network.Client) *Orders {
 	if transport == nil {
@@ -70,17 +68,51 @@ func (orders *Orders) Fetch(ids []string) map[string]kraken.HistoryOrder {
 }
 
 /*
-openTm is the order's venue open time, or zero when the row has none.
+ListOpen loads resting venue orders. Nil/empty on transport failure.
 */
-func openTm(order kraken.HistoryOrder) time.Time {
-	if order.OpenTm == nil {
-		return time.Time{}
+func (orders *Orders) ListOpen() map[string]kraken.HistoryOrder {
+	if orders == nil || orders.transport == nil {
+		return nil
 	}
 
-	// Stay in decimal — float64 loses sub-ms at ~1.7e9 epoch scale.
-	whole := order.OpenTm.IntPart()
-	frac := order.OpenTm.Sub(decimal.NewFromInt(whole))
-	nsec := frac.Mul(decimal.NewFromInt(1e9)).IntPart()
+	if system.Cfg == nil || system.Cfg.WebSocket == nil {
+		return nil
+	}
 
-	return time.Unix(whole, nsec).UTC()
+	raw, err := orders.transport.Post(
+		system.Cfg.WebSocket.Endpoints.OpenOrders,
+		map[string]any{},
+	)
+
+	if err != nil {
+		errnie.Error(err)
+		return nil
+	}
+
+	return kraken.NewOpenOrdersResult(raw)
+}
+
+/*
+Cancel cancels one resting venue order by txid.
+*/
+func (orders *Orders) Cancel(txid string) bool {
+	if orders == nil || orders.transport == nil || txid == "" {
+		return false
+	}
+
+	if system.Cfg == nil || system.Cfg.WebSocket == nil {
+		return false
+	}
+
+	raw, err := orders.transport.Post(
+		system.Cfg.WebSocket.Endpoints.CancelOrder,
+		kraken.NewCancelOrderRequest(txid),
+	)
+
+	if err != nil {
+		errnie.Error(err)
+		return false
+	}
+
+	return kraken.CancelOrderResult(raw)
 }

@@ -138,3 +138,56 @@ func NewQueryOrdersResult(data []byte) map[string]HistoryOrder {
 
 	return envelope.Result
 }
+
+/*
+NewOpenOrdersResult parses Get Open Orders into the txid map.
+*/
+func NewOpenOrdersResult(data []byte) map[string]HistoryOrder {
+	var envelope OpenOrders
+
+	if err := sonic.Unmarshal(data, &envelope); err != nil || len(envelope.Error) > 0 {
+		errnie.Error(errnie.Err(errnie.IO, "[kraken.OpenOrders] decode failed", err).
+			With("error", envelope.Error))
+		return nil
+	}
+
+	if envelope.Result.Open == nil {
+		return map[string]HistoryOrder{}
+	}
+
+	return envelope.Result.Open
+}
+
+/*
+CancelOrderRequest cancels one venue order by txid.
+*/
+type CancelOrderRequest struct {
+	Txid string `json:"txid"`
+}
+
+/*
+NewCancelOrderRequest builds a CancelOrder body for one txid.
+*/
+func NewCancelOrderRequest(txid string) *CancelOrderRequest {
+	return &CancelOrderRequest{Txid: txid}
+}
+
+/*
+CancelOrderResult is true when the venue accepted the cancel.
+*/
+func CancelOrderResult(data []byte) bool {
+	var envelope struct {
+		Error  []any `json:"error"`
+		Result struct {
+			Count int `json:"count"`
+		} `json:"result"`
+	}
+
+	if err := sonic.Unmarshal(data, &envelope); err != nil || len(envelope.Error) > 0 {
+		errnie.Error(errnie.Err(errnie.IO, "[kraken.CancelOrder] decode failed", err).
+			With("error", envelope.Error))
+		return false
+	}
+
+	return envelope.Result.Count > 0
+}

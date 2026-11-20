@@ -56,8 +56,8 @@ type Position struct {
 	PnL               *decimal.Decimal        `json:"pnl,omitempty"`
 	PnLPct            *decimal.Decimal        `json:"pnl_pct,omitempty"`
 	ExitWireStale     bool                    `json:"exit_wire_stale,omitempty"`
-	EntryDesk         map[string]float64      `json:"entry_desk,omitempty"`
-	TreeApplied       bool                    `json:"-"`
+	EntryDesk   map[string]float64 `json:"entry_desk,omitempty"`
+	TreeApplied bool               `json:"-"`
 }
 
 /*
@@ -142,6 +142,7 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 	friction := position.price.ExhaustionReading(position.Symbol)
 
 	if room := position.price.ExitRoom(position.Symbol, &qty); room != nil {
+		position.ExitRoom = room
 		if r, _ := room.Float64(); r > 0 {
 			friction = math.Max(friction, 1/(1+r))
 		}
@@ -155,6 +156,8 @@ func (position *Position) Update(hint *decimal.Decimal) (bool, error) {
 		}
 	}
 
+	position.Stoploss.Excitation = position.price.ExcitationReading(position.Symbol)
+	position.Stoploss.FlowOFI = position.price.OFIReading(position.Symbol)
 	position.Stoploss.Update(pnlpct, friction)
 
 	if !position.Stoploss.WantsExit() {
@@ -445,14 +448,39 @@ func (position *Position) Apply(execution market.ExecutionData) {
 
 	closed := position.ClosedAt != nil || position.Status() == runtime.DONE
 
+	if position.ClosedAt != nil && execution.Side == "sell" {
+		// Oversell / external-deposit excess after flat — never append onto a
+		// closed cycle (negative Qty, fake stampFillRealized profit).
+		// ClosedAt only: Status may still be DONE while a reopen buy clears
+		// ClosedAt and before WAITING sticks.
+		return
+	}
+
 	if closed && execution.Side == "buy" {
 		if position.ClosedAt != nil &&
 			!execution.Timestamp.After(*position.ClosedAt) {
 			return
 		}
 
+		// New cycle — wipe the prior settle/mark/stop. Leaving PeakPnLPct or
+		// mark PnLPct from the last run makes the next flat round-trip look
+		// like a +35% win and can trail-trip off a stale crest.
 		position.Fills = make([]*market.ExecutionData, 0)
 		position.ClosedAt = nil
+		position.OpenedAt = execution.Timestamp
+		position.Stoploss = nil
+		position.PnL = nil
+		position.PnLPct = nil
+		position.Mark = nil
+		position.Sold = nil
+		position.ExitVWAP = nil
+		position.Exit = nil
+		position.ExitTrigger = ""
+		position.ExitPath = ""
+		position.ExitOrder = nil
+		position.ExitVenueOrderID = ""
+		position.ExitWireStale = false
+		position.TreeApplied = false
 
 		if position.Status() == runtime.DONE {
 			position.Transition(runtime.WAITING)
@@ -461,7 +489,24 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		closed = false
 	}
 
-	position.Fills = append(position.Fills, &execution)
+	fill := execution
+	if fill.Side == "sell" {
+		rem := decimal.Zero
+		if position.Qty != nil {
+			rem = *position.Qty
+		}
+		if rem.Sign() <= 0 {
+			return
+		}
+		if fill.LastQty.GreaterThan(rem) {
+			// Clamp to open size so deposit/external excess cannot inflate
+			// settle PnL or drive Qty negative inside one print.
+			clamped := rem
+			fill.LastQty = &clamped
+		}
+	}
+
+	position.Fills = append(position.Fills, &fill)
 	net, bought, notional := position.fillsNet()
 	position.Qty = &net
 
@@ -470,9 +515,9 @@ func (position *Position) Apply(execution market.ExecutionData) {
 		position.Entry = &vwap
 	}
 
-	if execution.Side == "sell" {
+	if fill.Side == "sell" {
 		if position.ClosedAt == nil && position.Qty.Sign() <= 0 {
-			position.ClosedAt = &execution.Timestamp
+			position.ClosedAt = &fill.Timestamp
 			position.Transition(runtime.DONE)
 			// Mark PnL needs open Qty; once flat, stamp settle PnL from fills
 			// so closed/ S3 rows (and the Forward list) never ship blank.
@@ -489,6 +534,30 @@ func (position *Position) Apply(execution market.ExecutionData) {
 			position.Transition(runtime.WAITING)
 		}
 	}
+}
+
+/*
+lastBuyPrice is the most recent buy fill print. ProfitableExit uses this so a
+stale Entry cannot clear the floor while the last buy sits flat to the bid.
+*/
+func (position *Position) lastBuyPrice() *decimal.Decimal {
+	if position == nil {
+		return nil
+	}
+
+	for i := len(position.Fills) - 1; i >= 0; i-- {
+		fill := position.Fills[i]
+		if fill == nil || fill.Side != "buy" {
+			continue
+		}
+		if fill.LastPrice == nil || fill.LastPrice.Sign() <= 0 {
+			continue
+		}
+		px := *fill.LastPrice
+		return &px
+	}
+
+	return nil
 }
 
 func (position *Position) fillsNet() (net, bought, notional decimal.Decimal) {
@@ -560,6 +629,10 @@ func (position *Position) stampFillRealizedLocked() {
 	}
 
 	if buyQty.Sign() <= 0 || buyNotional.Sign() <= 0 || sellQty.Sign() <= 0 {
+		// Never keep the last mark PnL on a flat row — that is how a peak
+		// crest (+35%) survives a fee-flat round trip in Forward learning.
+		position.PnL = nil
+		position.PnLPct = nil
 		return
 	}
 

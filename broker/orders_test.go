@@ -123,18 +123,14 @@ func TestOrdersRestoreViaLedger(t *testing.T) {
 			first := byEntry["o1"]
 			second := byEntry["o3"]
 
-			Convey("Entry and exit orders stamp from QueryOrders", func() {
+			Convey("Closed cycles keep venue order ids from fills without QueryOrders", func() {
 				So(first, ShouldNotBeNil)
 				So(first.ExitVenueOrderID, ShouldEqual, "o2")
-				So(first.EntryOrder, ShouldNotBeNil)
-				So(first.EntryOrder.ClOrdId, ShouldEqual, "enter-1")
-				So(first.ExitOrder, ShouldNotBeNil)
-				So(first.ExitOrder.ClOrdId, ShouldEqual, "exit-1")
+				So(first.EntryVenueOrderID, ShouldEqual, "o1")
 
 				So(second, ShouldNotBeNil)
 				So(second.ExitVenueOrderID, ShouldEqual, "o4")
-				So(second.EntryOrder, ShouldNotBeNil)
-				So(second.ExitOrder, ShouldNotBeNil)
+				So(second.EntryVenueOrderID, ShouldEqual, "o3")
 			})
 		})
 

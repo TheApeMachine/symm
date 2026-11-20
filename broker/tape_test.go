@@ -110,7 +110,7 @@ func TestLane(t *testing.T) {
 			Convey("Lane exists with cfg bucket count", func() {
 				So(ok, ShouldBeTrue)
 				lane := tape.lane(testSymbol)
-				So(len(lane.buckets), ShouldEqual, buckets)
+				So(len(lane.buyBuckets), ShouldEqual, buckets)
 				So(len(lane.bucketMinute), ShouldEqual, buckets)
 			})
 		})

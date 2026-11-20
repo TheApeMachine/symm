@@ -48,18 +48,28 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	measure := func(symbol string, at time.Time, last, bid, ask, vol float64) {
+	measure := func(symbol string, at time.Time, last, bid, ask, vol float64, side market.Side) {
 		if symbol == "" || vol <= 0 {
 			return
 		}
 
+		buyVol, sellVol := 0.0, 0.0
+		switch side {
+		case market.SideBuy:
+			buyVol = vol
+		case market.SideSell:
+			sellVol = vol
+		}
+
 		output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
-			At:     at,
-			Symbol: symbol,
-			Last:   last,
-			Volume: vol,
-			Ask:    ask,
-			Bid:    bid,
+			At:         at,
+			Symbol:     symbol,
+			Last:       last,
+			Volume:     vol,
+			BuyVolume:  buyVol,
+			SellVolume: sellVol,
+			Ask:        ask,
+			Bid:        bid,
 		})
 
 		if err != nil {
@@ -114,6 +124,7 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					data.Symbol, data.Timestamp,
 					data.Price.InexactFloat64(), bid, ask,
 					data.Qty.InexactFloat64(),
+					data.Side,
 				)
 			}
 		})

@@ -315,7 +315,18 @@ Balance polls return the venue Balance observation for Client.Watch.
 func (virtual *Virtual) Post(url string, body any) ([]byte, error) {
 	_ = body
 
-	entity, ok := restMap[RestPath(url)]
+	path := RestPath(url)
+	// Same as Paper: order REST without CLI txid lookup.
+	switch path {
+	case "/0/private/QueryOrders":
+		return []byte(`{"error":[],"result":{}}`), nil
+	case "/0/private/OpenOrders":
+		return []byte(`{"error":[],"result":{"open":{}}}`), nil
+	case "/0/private/CancelOrder":
+		return []byte(`{"error":[],"result":{"count":1}}`), nil
+	}
+
+	entity, ok := restMap[path]
 
 	if !ok {
 		return nil, errnie.Error(errnie.Err(

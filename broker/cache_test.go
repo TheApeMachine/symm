@@ -27,6 +27,14 @@ func (c *historyClient) Post(url string, _ any) ([]byte, error) {
 		return c.orders, nil
 	}
 
+	if strings.Contains(url, "OpenOrders") {
+		return []byte(`{"error":[],"result":{"open":{}}}`), nil
+	}
+
+	if strings.Contains(url, "CancelOrder") {
+		return []byte(`{"error":[],"result":{"count":1}}`), nil
+	}
+
 	if strings.Contains(url, "TradeBalance") {
 		return []byte(`{"error":[],"result":{}}`), nil
 	}

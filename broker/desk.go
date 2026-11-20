@@ -279,10 +279,18 @@ func (desk *Desk) Feed(buf []byte) {
 }
 
 /*
-Start launches Run in the background after OpenPrivate wired sockets — boot
-calls Flush/Hello synchronously before ingress goroutines race fills.
+Start opens private sockets (after seedBooks) then launches Run. Boot must not
+OpenPrivate during NewDesk — an unread private WS dies while Level3 seeds.
 */
 func (desk *Desk) Start() {
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
+		errnie.Error(tier.OpenPrivate())
+	}
+
 	go desk.Run()
 }
 

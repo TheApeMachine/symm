@@ -21,8 +21,14 @@ type Learning struct {
 	ResistanceHoldHalfLifeSec float64
 	// ResistancePnLRefPct is the fee-net PnL% that earns full win credit.
 	ResistancePnLRefPct      float64
-	PaperEligibleResistance  float64
-	MinSupportedHorizon      int
+	PaperEligibleResistance float64
+	// PaperMinSamples is the minimum settled outcomes before Virtual→Paper.
+	PaperMinSamples int
+	// PaperMinTStat is the one-sided t-stat floor on mean fee-net PnL% (≈1.645).
+	PaperMinTStat float64
+	// PaperMinWinProb is Beta-Bernoulli P(p > 0.5) floor when samples warm.
+	PaperMinWinProb     float64
+	MinSupportedHorizon int
 	// MinTaskRelativePrecision is absolute task precision or min empirical rank when warm.
 	MinTaskRelativePrecision float64
 	// MinSurprise is the minimum adaptive surprise once resonance is warm.
@@ -44,6 +50,9 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.resistance_hold_half_life_sec", 14400)
 	viper.SetDefault("learning.resistance_pnl_ref_pct", 1.0)
 	viper.SetDefault("learning.paper_eligible_resistance", 0.2)
+	viper.SetDefault("learning.paper_min_samples", 5)
+	viper.SetDefault("learning.paper_min_t_stat", 1.645)
+	viper.SetDefault("learning.paper_min_win_prob", 0.60)
 	viper.SetDefault("learning.min_supported_horizon", 2)
 	viper.SetDefault("learning.min_task_relative_precision", 0.5)
 	viper.SetDefault("learning.min_surprise", 0.5)
@@ -60,6 +69,9 @@ func NewLearning() *Learning {
 		ResistanceHoldHalfLifeSec: viper.GetFloat64("learning.resistance_hold_half_life_sec"),
 		ResistancePnLRefPct:       viper.GetFloat64("learning.resistance_pnl_ref_pct"),
 		PaperEligibleResistance:   viper.GetFloat64("learning.paper_eligible_resistance"),
+		PaperMinSamples:           viper.GetInt("learning.paper_min_samples"),
+		PaperMinTStat:             viper.GetFloat64("learning.paper_min_t_stat"),
+		PaperMinWinProb:           viper.GetFloat64("learning.paper_min_win_prob"),
 		MinSupportedHorizon:       viper.GetInt("learning.min_supported_horizon"),
 		MinTaskRelativePrecision:  viper.GetFloat64("learning.min_task_relative_precision"),
 		MinSurprise:               viper.GetFloat64("learning.min_surprise"),

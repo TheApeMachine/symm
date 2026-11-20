@@ -46,7 +46,7 @@ func TestNewSignal(t *testing.T) {
 		books := broker.NewBookManager(nil)
 
 		Convey("When NewSignal is called", func() {
-			signal := depthflow.NewSignal(context.Background(), books, instrument)
+			signal := depthflow.NewSignal(context.Background(), books, instrument, nil)
 
 			Convey("It returns a usable signal", func() {
 				So(signal, ShouldNotBeNil)
@@ -71,7 +71,7 @@ func TestStep(t *testing.T) {
 		instrument := broker.NewInstrument(context.Background(), &depthSnapClient{frame: frame}, nil)
 		books := broker.NewBookManager(nil)
 
-		signal := depthflow.NewSignal(context.Background(), books, instrument)
+		signal := depthflow.NewSignal(context.Background(), books, instrument, nil)
 		envelope := runtime.NewEnvelope(nil)
 		at := time.Unix(1_700_000_000, 0).UTC()
 
@@ -189,14 +189,14 @@ func BenchmarkNewSignal(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = depthflow.NewSignal(context.Background(), books, instrument)
+		_ = depthflow.NewSignal(context.Background(), books, instrument, nil)
 	}
 }
 
 func BenchmarkStep(b *testing.B) {
 	symbol := "DF/USD"
 	books := broker.NewBookManager(nil)
-	signal := depthflow.NewSignal(context.Background(), books, depthflowInstrument(b))
+	signal := depthflow.NewSignal(context.Background(), books, depthflowInstrument(b), nil)
 	envelope := runtime.NewEnvelope(nil)
 	at := time.Unix(1_700_000_000, 0).UTC()
 

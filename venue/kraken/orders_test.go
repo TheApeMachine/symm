@@ -8,20 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func openOrdersFromWire(data []byte) map[string]HistoryOrder {
-	var envelope OpenOrders
-
-	if err := sonic.Unmarshal(data, &envelope); err != nil || len(envelope.Error) > 0 {
-		return nil
-	}
-
-	if envelope.Result.Open == nil {
-		return map[string]HistoryOrder{}
-	}
-
-	return envelope.Result.Open
-}
-
 func closedOrdersFromWire(data []byte) map[string]HistoryOrder {
 	var envelope ClosedOrders
 
@@ -174,8 +160,8 @@ func TestNewOpenOrdersResult(t *testing.T) {
 			}
 		}`)
 
-		Convey("When openOrdersFromWire parses the sample envelope", func() {
-			orders := openOrdersFromWire(raw)
+		Convey("When NewOpenOrdersResult parses the sample envelope", func() {
+			orders := NewOpenOrdersResult(raw)
 
 			Convey("Both open orders decode with decimal fields", func() {
 				So(orders, ShouldNotBeNil)
