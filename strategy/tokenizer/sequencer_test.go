@@ -6,52 +6,225 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestSequencerStep(t *testing.T) {
-	Convey("Given a sequencer", t, func() {
-		seq := NewSequencer()
+func TestNewSequencer(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewSequencer is called", func() {
+			seq := NewSequencer()
 
-		Convey("State survives Restore", func() {
-			_ = seq.Step("R02", 0.4)
-			saved := seq.State()
-			restored := NewSequencer()
-			restored.Restore(saved)
-
-			next := restored.Step("R00", 0.5)
-			So(next.Last().String(), ShouldNotBeBlank)
-			So(len(restored.State().Root), ShouldBeGreaterThan, 0)
-		})
-
-		Convey("duplicate regime refreshes cut brightness without growing grammar", func() {
-			first := seq.Step("R00", 0.3)
-			second := seq.Step("R00", 0.5)
-
-			So(first.String(), ShouldEqual, "R00")
-			So(second.Len(), ShouldBeGreaterThan, 0)
-			So(second.Last().Brightness, ShouldEqual, 0.5)
-		})
-
-		Convey("repeat regime does not append to grammar", func() {
-			_ = seq.Step("R00", 0.3)
-			before := len(seq.grammar.RootSequence())
-			_ = seq.Step("R00", 0.3)
-			So(len(seq.grammar.RootSequence()), ShouldEqual, before)
-		})
-
-		Convey("Step builds a multi-tick precursor sequence", func() {
-			_ = seq.Step("R02", 0.5)
-			_ = seq.Step("R00", 0.7)
-			cut := seq.Step("R06", 0.8)
-			So(cut.String(), ShouldEqual, "R02/R00/R06")
-			So(cut.Len(), ShouldEqual, 3)
-		})
-
-		Convey("oscillating symbols compress via sequitur", func() {
-			for range 6 {
-				_ = seq.Step("R07", 0.5)
-				_ = seq.Step("R08", 0.5)
-			}
-
-			So(len(seq.grammar.Tail(8)), ShouldBeLessThanOrEqualTo, 4)
+			Convey("Sequencer starts with empty grammar", func() {
+				So(seq, ShouldNotBeNil)
+				So(len(seq.State().Root), ShouldEqual, 0)
+			})
 		})
 	})
+}
+
+func TestSequencerConcurrentResetStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+		done := make(chan struct{})
+
+		Convey("When Reset and Step race across rings", func() {
+			go func() {
+				for i := 0; i < 200; i++ {
+					_, _ = seq.Step("R01", 0.5)
+					_ = seq.State()
+				}
+				close(done)
+			}()
+
+			for i := 0; i < 200; i++ {
+				seq.Reset()
+			}
+			<-done
+
+			Convey("Mutex keeps grammar mutations from overlapping", func() {
+				So(func() { _, _ = seq.Step("R02", 0.4) }, ShouldNotPanic)
+			})
+		})
+	})
+}
+
+func TestReset(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When Reset follows a stepped sentence", func() {
+			_, _ = seq.Step("R01", 0.5)
+			So(seq.State().LastEmitted, ShouldNotEqual, "")
+
+			seq.Reset()
+
+			Convey("lastEmitted clears while rules remain", func() {
+				So(seq.State().LastEmitted, ShouldEqual, "")
+				So(len(seq.State().Root), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When duplicate regime refreshes brightness", func() {
+			first, firstMutated := seq.Step("R00", 0.3)
+			second, secondMutated := seq.Step("R00", 0.5)
+
+			Convey("Cut string stays R00 with tail brightness 0.5", func() {
+				So(first.String(), ShouldEqual, "R00")
+				So(firstMutated, ShouldBeTrue)
+				So(second.Last().Brightness, ShouldEqual, 0.5)
+				So(secondMutated, ShouldBeFalse)
+			})
+		})
+
+		Convey("When three regimes step in sequence", func() {
+			_, _ = seq.Step("R02", 0.5)
+			_, _ = seq.Step("R00", 0.7)
+			cut, mutated := seq.Step("R06", 0.8)
+
+			Convey("Cut is R02/R00/R06", func() {
+				So(cut.String(), ShouldEqual, "R02/R00/R06")
+				So(cut.Len(), ShouldEqual, 3)
+				So(mutated, ShouldBeTrue)
+			})
+		})
+
+		Convey("When a digram collapses into an M-rule", func() {
+			_, _ = seq.Step("R01", 0.5)
+			_, _ = seq.Step("R02", 0.5)
+			_, _ = seq.Step("R01", 0.5)
+			cut, _ := seq.Step("R02", 0.6)
+
+			Convey("Cut expands M1 to terminals for the global Tree", func() {
+				So(cut.String(), ShouldNotContainSubstring, "M1")
+				So(cut.String(), ShouldContainSubstring, "R01")
+				So(cut.String(), ShouldContainSubstring, "R02")
+			})
+		})
+	})
+}
+
+func TestStepPath(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When StepPath receives empty symbols", func() {
+			cut, mutated := seq.StepPath([]string{}, 0.5)
+
+			Convey("Cut is empty", func() {
+				So(cut.Len(), ShouldEqual, 0)
+				So(mutated, ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func TestState(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+
+		Convey("When State is called after Step", func() {
+			_, _ = seq.Step("R02", 0.4)
+			state := seq.State()
+
+			Convey("LastEmitted matches the stepped key", func() {
+				So(state.LastEmitted, ShouldEqual, "R02")
+				So(len(state.Root), ShouldEqual, 1)
+			})
+		})
+	})
+}
+
+func TestRestore(t *testing.T) {
+	Convey("Setup", t, func() {
+		seq := NewSequencer()
+		_, _ = seq.Step("R02", 0.4)
+		saved := seq.State()
+
+		restored := NewSequencer()
+		restored.Restore(saved)
+
+		Convey("When Restore replays saved grammar", func() {
+			next, mutated := restored.Step("R00", 0.5)
+
+			Convey("Next cut extends the restored root", func() {
+				So(mutated, ShouldBeTrue)
+				So(next.String(), ShouldEqual, "R02/R00")
+				So(len(restored.State().Root), ShouldEqual, 2)
+			})
+		})
+	})
+}
+
+func BenchmarkNewSequencer(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewSequencer()
+	}
+}
+
+func BenchmarkReset(b *testing.B) {
+	seq := NewSequencer()
+	_, _ = seq.Step("R01", 0.5)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.Reset()
+		seq.Step("R01", 0.5)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq := NewSequencer()
+		seq.Step("R02", 0.5)
+		seq.Step("R00", 0.7)
+		seq.Step("R06", 0.8)
+	}
+}
+
+func BenchmarkStepPath(b *testing.B) {
+	seq := NewSequencer()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq.StepPath([]string{}, 0.5)
+	}
+}
+
+func BenchmarkState(b *testing.B) {
+	seq := NewSequencer()
+	_, _ = seq.Step("R02", 0.4)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = seq.State()
+	}
+}
+
+func BenchmarkRestore(b *testing.B) {
+	saved := func() SequencerState {
+		seq := NewSequencer()
+		_, _ = seq.Step("R02", 0.4)
+		return seq.State()
+	}()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		seq := NewSequencer()
+		seq.Restore(saved)
+	}
 }

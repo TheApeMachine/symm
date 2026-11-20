@@ -29,9 +29,9 @@ describe("Decisions", () => {
 		signals.decisions.setState(() => ({
 			"virtual:BTC/USD": {
 				symbol: "BTC/USD",
-				action: "blocked",
-				reason: "blown-out spread: bid-ask spread exceeds 0.5%",
-				gate: "physical",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				gate: "oracle",
 				tier: "virtual",
 				confidence: 0.82,
 			},
@@ -55,9 +55,9 @@ describe("Decisions", () => {
 		const markup = renderToStaticMarkup(<Decisions />);
 
 		expect(markup).toContain("BTC/USD");
-		expect(markup).toContain("blocked");
-		expect(markup).toContain("physical:");
-		expect(markup).toContain("blown-out spread");
+		expect(markup).toContain("skip");
+		expect(markup).toContain("oracle:");
+		expect(markup).toContain("oracle veto lit");
 		expect(markup).toContain("ETH/USD");
 		expect(markup).toContain("enter");
 		expect(markup).toContain("virtual sample");
@@ -90,6 +90,25 @@ describe("Decisions", () => {
 		expect(markup).not.toContain("virtual sample");
 	});
 
+	it("shows gate skips for the decision tier book", () => {
+		bookAtom.set("real");
+		signals.decisions.setState(() => ({
+			"real:BTC/USD": {
+				symbol: "BTC/USD",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				gate: "oracle",
+				tier: "real",
+			},
+		}));
+
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toContain("BTC/USD");
+		expect(markup).toContain("skip");
+		expect(markup).toContain("oracle veto lit");
+	});
+
 	it("paints oracle veto/approve lamps from region brightness", () => {
 		signals.decisions.setState(() => ({
 			"virtual:AAVE/USD": {
@@ -118,6 +137,64 @@ describe("Decisions", () => {
 		expect(markup).toContain('data-oracle-gate="day"');
 		expect(markup).toMatch(
 			/data-oracle-gate="day"[^>]*data-oracle-side="approve"|data-oracle-side="approve"[^>]*data-oracle-gate="day"/,
+		);
+	});
+
+	it("paints lamps from sparse grid frames (one side per oracle pair)", () => {
+		signals.decisions.setState(() => ({
+			"virtual:SOL/USD": {
+				symbol: "SOL/USD",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				path: "R06.R00/R07.R01",
+				gate: "oracle",
+				tier: "virtual",
+			},
+		}));
+
+		// Grid Observe emits only the winning side of each pair.
+		signals.regions.setState(() => ({
+			"SOL/USD": [
+				{ symbol: "SOL/USD", key: 6, brightness: 0.4, deformation: 1, counts: 1 },
+				{ symbol: "SOL/USD", key: 7, brightness: 0.2, deformation: 1, counts: 1 },
+				{ symbol: "SOL/USD", key: 8, brightness: 0.1, deformation: 1, counts: 1 },
+				{ symbol: "SOL/USD", key: 9, brightness: 1, deformation: 0, counts: 0 },
+				{ symbol: "SOL/USD", key: 12, brightness: 1, deformation: 0, counts: 0 },
+			],
+		}));
+
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toContain("oracle veto lit");
+		expect(markup).toContain('data-oracle-gate="vol"');
+		expect(markup).toContain('data-oracle-side="veto"');
+		expect(markup).toContain('data-oracle-gate="day"');
+		expect(markup).toMatch(
+			/data-oracle-gate="day"[^>]*data-oracle-side="approve"|data-oracle-side="approve"[^>]*data-oracle-gate="day"/,
+		);
+	});
+
+	it("treats brightness 0 as off even when the key is present", () => {
+		signals.decisions.setState(() => ({
+			"virtual:DOT/USD": {
+				symbol: "DOT/USD",
+				action: "skip",
+				reason: "oracle veto lit — not tradable",
+				gate: "oracle",
+				tier: "virtual",
+			},
+		}));
+
+		signals.regions.setState(() => ({
+			"DOT/USD": [
+				{ symbol: "DOT/USD", key: 18, brightness: 0, deformation: 0, counts: 0 },
+			],
+		}));
+
+		const markup = renderToStaticMarkup(<Decisions />);
+
+		expect(markup).toMatch(
+			/data-oracle-gate="brd"[^>]*data-oracle-side="dark"|data-oracle-side="dark"[^>]*data-oracle-gate="brd"/,
 		);
 	});
 });

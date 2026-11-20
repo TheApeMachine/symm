@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { explorePathKept, filterExploreKeys } from "./explore-path";
+import {
+	explorePathKept,
+	filterExploreKeys,
+	pathBookPolicyKey,
+} from "./explore-path";
+
+describe("pathBookPolicyKey", () => {
+	it("rewrites Decision .bin keys into action suffixes", () => {
+		expect(pathBookPolicyKey("model/paths/R01/R02.bin", "enter")).toBe(
+			"model/paths/R01/R02/enter.bin",
+		);
+		expect(pathBookPolicyKey("model/paths/M2/R00.bin", "exit")).toBe(
+			"model/paths/M2/R00/exit.bin",
+		);
+		expect(pathBookPolicyKey("model/paths/R01/enter.bin", "enter")).toBe(
+			"model/paths/R01/enter.bin",
+		);
+	});
+});
 
 describe("explorePathKept", () => {
 	it("drops explore paths above the desk prune cutoff", () => {

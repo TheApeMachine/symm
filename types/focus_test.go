@@ -6,23 +6,94 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestFocus(t *testing.T) {
-	Convey("Focus gates wire symbols", t, func() {
+func TestSetFocus(t *testing.T) {
+	Convey("Setup", t, func() {
 		prev := Focus()
 		Reset(func() { SetFocus(prev) })
 
-		Convey("default Allows matches stored focus", func() {
+		Convey("When SetFocus records BTC/USD", func() {
 			SetFocus("BTC/USD")
-			So(Focus(), ShouldEqual, "BTC/USD")
-			So(Allows("BTC/USD"), ShouldBeTrue)
-			So(Allows("ETH/USD"), ShouldBeFalse)
-		})
 
-		Convey("empty focus suppresses every symbol", func() {
-			SetFocus("")
-			So(Focus(), ShouldEqual, "")
-			So(Allows("BTC/USD"), ShouldBeFalse)
-			So(Allows(""), ShouldBeFalse)
+			Convey("Focus returns BTC/USD", func() {
+				So(Focus(), ShouldEqual, "BTC/USD")
+			})
 		})
 	})
+}
+
+func TestFocus(t *testing.T) {
+	Convey("Setup", t, func() {
+		prev := Focus()
+		Reset(func() { SetFocus(prev) })
+
+		Convey("When SetFocus records ETH/USD", func() {
+			SetFocus("ETH/USD")
+
+			Convey("Focus returns ETH/USD", func() {
+				So(Focus(), ShouldEqual, "ETH/USD")
+			})
+		})
+	})
+}
+
+func TestAllows(t *testing.T) {
+	Convey("Setup", t, func() {
+		prev := Focus()
+		Reset(func() { SetFocus(prev) })
+
+		Convey("When focus is BTC/USD", func() {
+			SetFocus("BTC/USD")
+
+			Convey("only the focused symbol is allowed", func() {
+				So(Allows("BTC/USD"), ShouldBeTrue)
+				So(Allows("ETH/USD"), ShouldBeFalse)
+			})
+		})
+
+		Convey("When focus is empty", func() {
+			SetFocus("")
+
+			Convey("every symbol is suppressed", func() {
+				So(Allows("BTC/USD"), ShouldBeFalse)
+				So(Allows(""), ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func BenchmarkSetFocus(b *testing.B) {
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		SetFocus("BTC/USD")
+	}
+}
+
+func BenchmarkFocus(b *testing.B) {
+	SetFocus("ETH/USD")
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Focus()
+	}
+}
+
+func BenchmarkAllows(b *testing.B) {
+	SetFocus("BTC/USD")
+	prev := Focus()
+	b.Cleanup(func() { SetFocus(prev) })
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Allows("BTC/USD")
+	}
 }

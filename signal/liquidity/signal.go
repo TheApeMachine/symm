@@ -4,16 +4,19 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Liquidity disruptor stage — outcomes land on envelope.Liquidity and
+Map() feeds logic/resonance Features (scarcity_score, depth_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -21,6 +24,10 @@ type Signal struct {
 	process *equation.Depth
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Liquidity labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "liquidity"),
@@ -30,76 +37,74 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
+	for _, batch := range envelope.Trade.Batches() {
+		wg.Go(func() {
+			for _, data := range batch {
+				var (
+					bid, ask, bidQty, askQty float64
+					ok                       bool
+				)
 
-		task := func() {
-			defer wg.Done()
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					bestBid := book.BestBid()
+					bestAsk := book.BestAsk()
 
-			var (
-				bid, ask, bidQty, askQty float64
-				ok                       bool
-			)
+					if bestBid == nil || bestAsk == nil ||
+						bestBid.Price == nil || bestAsk.Price == nil ||
+						bestBid.Quantity == nil || bestAsk.Quantity == nil {
+						return
+					}
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
-				bestBid := book.BestBid()
-				bestAsk := book.BestAsk()
+					bid = bestBid.Price.InexactFloat64()
+					ask = bestAsk.Price.InexactFloat64()
+					bidQty = bestBid.Quantity.InexactFloat64()
+					askQty = bestAsk.Quantity.InexactFloat64()
+					ok = true
+				})
 
-				if bestBid == nil || bestAsk == nil ||
-					bestBid.Price == nil || bestAsk.Price == nil ||
-					bestBid.Quantity == nil || bestAsk.Quantity == nil {
-					return
+				if !ok {
+					continue
 				}
 
-				bid = bestBid.Price.Float64()
-				ask = bestAsk.Price.Float64()
-				bidQty = bestBid.Quantity.Float64()
-				askQty = bestAsk.Quantity.Float64()
-				ok = true
-			})
+				input, ready, err := signal.sample.Measure(algorithm.DepthSampleInput{
+					Symbol: data.Symbol,
+					Bid:    bid,
+					Ask:    ask,
+					BidQty: bidQty,
+					AskQty: askQty,
+					At:     data.Timestamp,
+				})
 
-			if !ok {
-				return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.Liquidity[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			input, ready, err := signal.sample.Measure(algorithm.DepthSampleInput{
-				Symbol: data.Symbol,
-				Bid:    bid,
-				Ask:    ask,
-				BidQty: bidQty,
-				AskQty: askQty,
-				At:     data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.Liquidity[data.Symbol] = &outcome
-			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

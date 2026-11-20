@@ -6,6 +6,9 @@ describe("SURFACE_ITEMS", () => {
 		expect(SURFACE_ITEMS.find((item) => item.key === "dashboard")?.to).toBe(
 			"/",
 		);
+		expect(SURFACE_ITEMS.find((item) => item.key === "diagnostics")?.to).toBe(
+			"/diagnostics",
+		);
 		expect(SURFACE_ITEMS.find((item) => item.key === "learning")?.to).toBe(
 			"/learning",
 		);

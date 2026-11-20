@@ -242,9 +242,9 @@ describe("ImpulseMapViz", () => {
 		const hudRegionEl = container.querySelector('[data-l="hud-region-count"]');
 
 		expect(metricCountEl?.textContent).toBe("5");
-		expect(regionCountEl?.textContent).toBe("23");
+		expect(regionCountEl?.textContent).toBe("25");
 		expect(hudMetricEl?.textContent).toBe("5");
-		expect(hudRegionEl?.textContent).toBe("23");
+		expect(hudRegionEl?.textContent).toBe("25");
 	});
 
 	it("renders canonical grid regions and cells when no data prop is provided", () => {
@@ -262,7 +262,7 @@ describe("ImpulseMapViz", () => {
 		);
 		const circles = container.querySelectorAll(".nodes circle");
 		expect(metricCountEl?.textContent).toBe(String(circles.length));
-		expect(regionCountEl?.textContent).toBe("23");
+		expect(regionCountEl?.textContent).toBe("25");
 		expect(circles.length).toBeGreaterThan(0);
 	});
 
@@ -313,7 +313,7 @@ describe("ImpulseMapViz", () => {
 		expect(panel?.textContent).toContain("0.92");
 		expect(panel?.textContent).toContain("0.85");
 		expect(container.querySelectorAll('[data-l^="region-row-R"]').length).toBe(
-			23,
+			25,
 		);
 
 		// Highly active nodes have golden stroke (region brightness lifts pins)

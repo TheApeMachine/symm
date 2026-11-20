@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { SciChartReact } from "scichart-react";
 import { signals } from "#/collections/app";
 import { bookAtom } from "#/collections/book";
@@ -9,7 +9,36 @@ import {
 	type OpenChoiceLegendItem,
 } from "./open-choice-draw";
 
-/** Client-only SciChart surface; store → series, no React trail buffers. */
+const roundLegend = (items: OpenChoiceLegendItem[]): OpenChoiceLegendItem[] =>
+	items.map((item) => ({
+		...item,
+		pnlMoney:
+			item.pnlMoney === undefined
+				? undefined
+				: Math.round(item.pnlMoney * 100) / 100,
+		grossMoney:
+			item.grossMoney === undefined
+				? undefined
+				: Math.round(item.grossMoney * 100) / 100,
+		feeMoney:
+			item.feeMoney === undefined
+				? undefined
+				: Math.round(item.feeMoney * 100) / 100,
+		pnlPct:
+			item.pnlPct === undefined
+				? undefined
+				: Math.round(item.pnlPct * 10) / 10,
+		stopRoomPct:
+			item.stopRoomPct === undefined
+				? undefined
+				: Math.round(item.stopRoomPct * 10) / 10,
+		stopProximity:
+			item.stopProximity === undefined
+				? undefined
+				: Math.round(item.stopProximity * 100) / 100,
+	}));
+
+/** Client-only SciChart surface; paints from signals.positions snapshots. */
 export const OpenChoiceSciChart = ({
 	onLegend,
 	onReady,
@@ -17,57 +46,47 @@ export const OpenChoiceSciChart = ({
 	onLegend: (items: OpenChoiceLegendItem[]) => void;
 	onReady?: (api: OpenChoiceChartApi) => void;
 }) => {
-	const apiRef = useRef<OpenChoiceChartApi | null>(null);
 	const onLegendRef = useRef(onLegend);
 	const onReadyRef = useRef(onReady);
 	onLegendRef.current = onLegend;
 	onReadyRef.current = onReady;
-	const [ready, setReady] = useState(false);
-
-	useEffect(() => {
-		if (!ready || !apiRef.current) return;
-
-		const push = () => {
-			const api = apiRef.current;
-			if (!api) return;
-			onLegendRef.current(
-				api.sync(
-					signals.positions.state as Record<string, Position>,
-					bookAtom.get(),
-				),
-			);
-		};
-
-		push();
-
-		const positionsSub = signals.positions.subscribe(push);
-		const bookSub = bookAtom.subscribe(push);
-
-		return () => {
-			positionsSub.unsubscribe();
-			bookSub.unsubscribe();
-		};
-	}, [ready]);
 
 	return (
 		<SciChartReact
 			initChart={drawOpenChoiceChart}
 			onInit={(api: OpenChoiceChartApi) => {
-				apiRef.current = api;
+				api.setBook(bookAtom.get());
 				onReadyRef.current?.(api);
-				onLegendRef.current(
-					api.sync(
-						signals.positions.state as Record<string, Position>,
-						bookAtom.get(),
-					),
-				);
-				setReady(true);
+
+				let frame = 0;
+				let pending: Record<string, Position> | null = null;
+
+				const paint = (state: Record<string, Position> | null) => {
+					pending = state;
+					if (frame) return;
+					frame = requestAnimationFrame(() => {
+						frame = 0;
+						onLegendRef.current(roundLegend(api.push(pending ?? {})));
+					});
+				};
+
+				paint(signals.positions.state as Record<string, Position>);
+
+				const posSub = signals.positions.subscribe((state) => {
+					paint(state as Record<string, Position>);
+				});
+
+				const bookSub = bookAtom.subscribe((next) => {
+					api.setBook(next);
+					paint(signals.positions.state as Record<string, Position>);
+				});
+
 				return () => {
-					apiRef.current = null;
-					setReady(false);
+					if (frame) cancelAnimationFrame(frame);
+					posSub.unsubscribe();
+					bookSub.unsubscribe();
 				};
 			}}
-			onInitError={() => setReady(false)}
 			style={{ width: "100%", height: "100%" }}
 			fallback={
 				<div className="flex h-full w-full items-center justify-center text-[11px] text-(--f4)">

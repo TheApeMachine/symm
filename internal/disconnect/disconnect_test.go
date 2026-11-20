@@ -2,19 +2,69 @@ package disconnect
 
 import (
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/gorilla/websocket"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestExpected(t *testing.T) {
-	t.Parallel()
+	Convey("Setup", t, func() {
+		Convey("When err is an abnormal websocket close", func() {
+			err := &websocket.CloseError{Code: websocket.CloseAbnormalClosure}
 
-	if !Expected(&websocket.CloseError{Code: websocket.CloseAbnormalClosure}) {
-		t.Fatal("abnormal closure should be expected")
-	}
+			Convey("Expected is true", func() {
+				So(Expected(err), ShouldBeTrue)
+			})
+		})
 
-	if Expected(errors.New("json: invalid")) {
-		t.Fatal("unrelated errors should not be expected")
+		Convey("When err is net.ErrClosed", func() {
+			Convey("Expected is true", func() {
+				So(Expected(net.ErrClosed), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is a net.OpError", func() {
+			err := &net.OpError{Op: "read", Err: errors.New("reset")}
+
+			Convey("Expected is true", func() {
+				So(Expected(err), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is an unrelated application error", func() {
+			Convey("Expected is false", func() {
+				So(Expected(errors.New("json: invalid")), ShouldBeFalse)
+			})
+		})
+
+		Convey("When err is websocket close sent", func() {
+			Convey("Expected is true", func() {
+				So(Expected(errors.New("websocket: close sent")), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is a nil fiber conn", func() {
+			Convey("Expected is true", func() {
+				So(Expected(errors.New("nil *Conn")), ShouldBeTrue)
+			})
+		})
+
+		Convey("When err is nil", func() {
+			Convey("Expected is false", func() {
+				So(Expected(nil), ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func BenchmarkExpected(b *testing.B) {
+	err := &websocket.CloseError{Code: websocket.CloseAbnormalClosure}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = Expected(err)
 	}
 }

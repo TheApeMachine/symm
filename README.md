@@ -12,7 +12,7 @@ projects those measurements into a shared **confluence grid**, compresses live
 regimes into **Sequitur token paths**, and matches those paths against policies
 stored in object storage. Authorized **enter** and **exit** actions go through
 **`broker.Desk`**, which sizes from the book, tracks fills, and persists open and
-closed lots. Every aggregate workspace tick is a **`data.Value`** whose layers hold
+closed positions. Every aggregate workspace tick is a **`data.Value`** whose layers hold
 the full pipeline state; the process **`io.Copy`**s that value to SeaweedFS (S3)
 and the dashboard hub replays the latest frame on connect.
 
@@ -62,7 +62,7 @@ The live process runs one **LMAX-style pipeline** per aggregate trade tick:
    virtual excursions, and venue entries through the desk).
 3. **Sinks** persist the tick (`store.Client` → S3) and stream it (`ui.Hub` → WebSocket).
 
-Venue lots open and close only through **`Model` → `Desk`**.
+Venue positions open and close only through **`Model` → `Desk`**.
 
 Stored tape supports offline **detect** (excursion labels), **train** (policy
 `enter.bin` / `exit.bin` from detections), and **audit** (metric health on active
@@ -135,7 +135,7 @@ For each symbol with lit grid regions at or above the brightness midpoint:
 - Regions become **tokens**; **Sequitur** proposes regime boundaries.
 - A **chord token** (cross-symbol agreement) triggers **`Model.Evaluate`**.
 - The model walks the longest matching **policy prefix** (`enter` / `exit` / virtual excursion).
-- Closed virtual lots **`Settle`** into path scores; venue lots reconcile through **`Desk`**.
+- Closed virtual positions **`Settle`** into path scores; venue positions reconcile through **`Desk`**.
 
 Sale price and return for decisions come from **`broker/price.go`** (`Price.Exit` and the book).
 
@@ -185,7 +185,7 @@ region. Live tokens use regions at or above the brightness midpoint.
   `RequireIgnitionRegime`).
 
 Precursor (A→B) and holding (B→C) are **separate trie walks**: opening a sample or
-venue lot resets the symbol path so exit keys are holding fragments only.
+venue position resets the symbol path so exit keys are holding fragments only.
 
 **`Model.Train`** inserts labelled paths into the policy tree and persists them for
 offline **train** and live promotion.
@@ -193,8 +193,8 @@ offline **train** and live promotion.
 ### Desk and positions
 
 - **`broker.Desk`** sizes entries from cash budget, touch carry divisor, and ask walk; exits use held inventory.
-- **`broker.History`** persists open lots under `position/open/<symbol>/…` and closed
-  lots under `position/closed/<id>/…` (loaded at desk construction).
+- **`broker.History`** persists open positions under `position/open/<symbol>/…` and closed
+  positions under `position/closed/<id>/…` (loaded at desk construction).
 - Paper mode uses the native **`kraken paper`** CLI transport; **`market.model: paper`**
   selects it at boot.
 
@@ -215,7 +215,7 @@ startup; there is no fallback between roles.
 |--------------------------------------|----------------------------------------------------------|
 | Workspace tape                       | Aggregate ticks written by `store.Client` as `io.Writer` |
 | `model/current/` (configurable)      | Learned enter/exit policy blobs                          |
-| `position/open/`, `position/closed/` | Open and closed lots                                     |
+| `position/open/`, `position/closed/` | Open and closed positions                                     |
 | `detections/`                        | Committed labelled excursions                            |
 | Hindsight drafts                     | Per-run A/B/C/D working markers                          |
 
@@ -227,7 +227,7 @@ prefix on a client safe to share across goroutines.
 
 - The dashboard **`/hindsight`** surface edits draft markers on stored tape.
 - **`POST /hindsight/commit`** (`hindsight.Commit`) writes a **`detections/…`**
-  object from a closed **virtual** lot and tape ticks A–D.
+  object from a closed **virtual** position and tape ticks A–D.
 - **`hindsight.StoreDrafts`** and **`hindsight.Annotate`** prepare and adjust drafts
   when scanning tape offline.
 
@@ -266,7 +266,7 @@ The frontend is **React 19 / TanStack Start / Vite** on port **3000**
 | `/influence`   | Metric influence graph                                 |
 | `/hindsight`   | Tape review and commit                                 |
 | `/diagnostics` | Pipeline topology and latency                          |
-| `/workbench`   | Perspective over S3 lots + Level3 tape (`make workbench`) |
+| `/workbench`   | Perspective over S3 positions + Level3 tape (`make workbench`) |
 
 The hub starts in **`ui` package `init`** when the backend binary links `ui`.
 

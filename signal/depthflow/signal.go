@@ -2,33 +2,48 @@ package depthflow
 
 import (
 	"context"
+	"math"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+bookflowHistory is the Bookflow sample depth — long enough for thin/loaded to
+see pressure shift across ticks without unbounded allocator growth per symbol.
+*/
 const bookflowHistory = 128
 
+/*
+Signal is the DepthFlow disruptor stage — outcomes land on envelope.DepthFlow and
+Map() feeds logic/resonance Features (thin_score, loaded_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books      *broker.Book
 	instrument *broker.Instrument
+	price      *broker.Price
 	sample     *flow.Sample
 	process    *equation.Bookflow
 }
 
+/*
+NewSignal needs L3 books and instrument ticks so depth snapshots align with
+venue qty steps — without both, depthflow cannot publish the labels resonance expects.
+Optional price caches Cont event OFI for profit-only tranche pacing.
+*/
 func NewSignal(
 	ctx context.Context,
 	books *broker.Book,
 	instrument *broker.Instrument,
+	price *broker.Price,
 ) *Signal {
 	sample, err := flow.NewSample(bookflowHistory)
 
@@ -36,6 +51,7 @@ func NewSignal(
 		System:     runtime.NewSystem(ctx, "depthflow"),
 		books:      books,
 		instrument: instrument,
+		price:      price,
 		sample:     sample,
 		process:    equation.NewBookflow(),
 	}
@@ -52,8 +68,8 @@ func NewSignal(
 }
 
 /*
-Step processes every trade entry of the tick's frame; book and trade pressure
-feed Bookflow, and each ready outcome lands on the envelope.
+Step snapshots full depth per print then folds trades — thin vs loaded are hold
+features; partial publishes keep resonance from waiting on a quiet symbol.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -61,73 +77,83 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
-			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
-			}
-
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
-
-			if price <= 0 || qty <= 0 {
-				return
-			}
-
-			var (
-				input equation.BookflowInput
-				ready bool
-				err   error
-			)
-
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
-				pair := signal.instrument.Pair(data.Symbol)
-
-				if pair.TickSize == nil {
-					return
+	for _, batch := range envelope.Trade.Batches() {
+		wg.Go(func() {
+			for _, data := range batch {
+				if data.Price.IsZero() || data.Qty.IsZero() {
+					continue
 				}
 
-				tickSize, _ := pair.TickSize.Float64()
+				price := data.Price.InexactFloat64()
+				qty := data.Qty.InexactFloat64()
 
-				if tickSize <= 0 {
-					return
+				if price <= 0 || qty <= 0 {
+					continue
 				}
 
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
+				var (
+					bids     []flow.BookLevel
+					asks     []flow.BookLevel
+					tickSize float64
+					haveBook bool
+				)
 
-				for _, level := range book.Bids.Levels {
-					levelPrice := level.Price.Float64()
-					bids = append(bids, flow.BookLevel{
-						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
-						Ticks:    int64(levelPrice / tickSize),
-					})
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					pair := signal.instrument.Pair(data.Symbol)
+
+					if pair.TickSize == nil {
+						return
+					}
+
+					tickSize = pair.TickSize.InexactFloat64()
+
+					if tickSize <= 0 {
+						return
+					}
+
+					bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
+
+					for _, level := range book.Bids.Levels {
+						levelPrice := level.Price.InexactFloat64()
+						bids = append(bids, flow.BookLevel{
+							Price:    levelPrice,
+							Quantity: level.Quantity.InexactFloat64(),
+							Ticks:    int64(math.Round(levelPrice / tickSize)),
+						})
+					}
+
+					asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
+
+					for _, level := range book.Asks.Levels {
+						levelPrice := level.Price.InexactFloat64()
+						asks = append(asks, flow.BookLevel{
+							Price:    levelPrice,
+							Quantity: level.Quantity.InexactFloat64(),
+							Ticks:    int64(math.Round(levelPrice / tickSize)),
+						})
+					}
+
+					haveBook = true
+				})
+
+				if !haveBook {
+					continue
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
-
-				for _, level := range book.Asks.Levels {
-					levelPrice := level.Price.Float64()
-					asks = append(asks, flow.BookLevel{
-						Price:    levelPrice,
-						Quantity: level.Quantity.Float64(),
-						Ticks:    int64(levelPrice / tickSize),
-					})
-				}
-
-				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
+				input, ready, _, err := signal.sample.MeasureBook(flow.BookInput{
 					Symbol:   data.Symbol,
 					TickSize: tickSize,
 					Bids:     bids,
 					Asks:     asks,
 				})
 
-				if err != nil || !ready {
-					return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
 				}
 
 				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
@@ -137,36 +163,34 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 					Side:     flow.TradeSide(data.Side.String()),
 					At:       data.Timestamp,
 				})
-			})
 
-			if err != nil {
-				signal.Error(err)
-				return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if signal.price != nil {
+					signal.price.NoteOFI(data.Symbol, outcome.EventOFI)
+				}
+
+				// Publish not-ready/zero readings too — resonance holds until every
+				// Map() label has been seen (thin_score / loaded_score).
+				mu.Lock()
+				envelope.DepthFlow[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !outcome.Ready {
-				return
-			}
-
-			mu.Lock()
-			envelope.DepthFlow[data.Symbol] = &outcome
-			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

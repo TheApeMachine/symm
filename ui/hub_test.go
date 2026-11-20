@@ -2,128 +2,183 @@ package ui
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gofiber/contrib/v3/websocket"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/system"
 )
 
-func TestWriteDropOldest(t *testing.T) {
-	Convey("Write never blocks and drops the oldest frame", t, func() {
-		hub := &Hub{frameCh: make(chan []byte, 2)}
-		hub.connected.Store(true)
-		hub.conn.Store(&websocket.Conn{})
+func TestWrite(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When the hub is connected with a two-slot queue", func() {
+			hub := &Hub{frameCh: make(chan []byte, 2)}
+			hub.connected.Store(true)
+			hub.conn.Store(&websocket.Conn{})
 
-		n, err := hub.Write([]byte("a"))
-		So(err, ShouldBeNil)
-		So(n, ShouldEqual, 1)
+			Convey("When three frames are written", func() {
+				n, err := hub.Write([]byte("a"))
+				So(err, ShouldBeNil)
+				So(n, ShouldEqual, 1)
 
-		_, err = hub.Write([]byte("bb"))
-		So(err, ShouldBeNil)
-		_, err = hub.Write([]byte("ccc"))
-		So(err, ShouldBeNil)
+				_, err = hub.Write([]byte("bb"))
+				So(err, ShouldBeNil)
+				_, err = hub.Write([]byte("ccc"))
+				So(err, ShouldBeNil)
 
-		So(string(<-hub.frameCh), ShouldEqual, "bb")
-		So(string(<-hub.frameCh), ShouldEqual, "ccc")
-		So(len(hub.frameCh), ShouldEqual, 0)
+				Convey("The oldest frame is dropped and the queue holds the last two", func() {
+					So(string(<-hub.frameCh), ShouldEqual, "bb")
+					So(string(<-hub.frameCh), ShouldEqual, "ccc")
+					So(len(hub.frameCh), ShouldEqual, 0)
+				})
+			})
 
-		done := make(chan struct{})
+			Convey("When many frames are written concurrently", func() {
+				done := make(chan struct{})
 
-		go func() {
-			defer close(done)
+				go func() {
+					defer close(done)
 
-			for i := 0; i < 10000; i++ {
-				hub.Write([]byte("x"))
-			}
-		}()
+					for range 10000 {
+						hub.Write([]byte("x"))
+					}
+				}()
 
-		finished := false
+				finished := false
 
-		select {
-		case <-done:
-			finished = true
-		case <-time.After(2 * time.Second):
-		}
+				select {
+				case <-done:
+					finished = true
+				case <-time.After(2 * time.Second):
+				}
 
-		So(finished, ShouldBeTrue)
-	})
-}
+				Convey("Write never blocks the caller", func() {
+					So(finished, ShouldBeTrue)
+				})
+			})
+		})
 
-func TestWriteSkipsWhenIdle(t *testing.T) {
-	Convey("Write drops empty and detached frames", t, func() {
-		hub := &Hub{frameCh: make(chan []byte, 1)}
+		Convey("When the hub is detached", func() {
+			hub := &Hub{frameCh: make(chan []byte, 1)}
 
-		n, err := hub.Write(nil)
-		So(err, ShouldBeNil)
-		So(n, ShouldEqual, 0)
+			Convey("When empty or non-active writes are enqueued", func() {
+				n, err := hub.Write(nil)
+				So(err, ShouldBeNil)
+				So(n, ShouldEqual, 0)
 
-		n, err = hub.Write([]byte("a"))
-		So(err, ShouldBeNil)
-		So(n, ShouldEqual, 1)
-		So(len(hub.frameCh), ShouldEqual, 0)
+				n, err = hub.Write([]byte("a"))
+				So(err, ShouldBeNil)
+				So(n, ShouldEqual, 1)
+
+				Convey("Nothing is queued", func() {
+					So(len(hub.frameCh), ShouldEqual, 0)
+				})
+			})
+		})
 	})
 }
 
 func TestDrainFrames(t *testing.T) {
-	Convey("drainFrames clears leftovers without blocking", t, func() {
+	Convey("Setup", t, func() {
 		hub := &Hub{frameCh: make(chan []byte, 2)}
 		hub.frameCh <- []byte("stale")
 		hub.frameCh <- []byte("older")
 
+		Convey("When drainFrames is called", func() {
+			hub.drainFrames()
+
+			Convey("The channel is empty", func() {
+				So(len(hub.frameCh), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestNewHub(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When newHub is called with queue depth 64", func() {
+			hub := newHub(context.Background(), 64)
+
+			Convey("frameCh capacity matches the argument", func() {
+				So(cap(hub.frameCh), ShouldEqual, 64)
+			})
+		})
+	})
+}
+
+func TestActive(t *testing.T) {
+	Convey("Setup", t, func() {
+		hub := &Hub{frameCh: make(chan []byte, 1)}
+
+		Convey("When a socket is connected", func() {
+			hub.connected.Store(true)
+			hub.conn.Store(&websocket.Conn{})
+
+			Convey("Active is true", func() {
+				So(hub.Active(), ShouldBeTrue)
+			})
+		})
+
+		Convey("When connectedSince is within the grace window", func() {
+			hub.connectedSince.Store(time.Now().UnixNano())
+
+			Convey("Active is true within grace", func() {
+				So(hub.Active(), ShouldBeTrue)
+			})
+		})
+
+		Convey("When neither connected nor graced", func() {
+			Convey("Active is false", func() {
+				So(hub.Active(), ShouldBeFalse)
+			})
+		})
+	})
+}
+
+func BenchmarkWrite(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 2)}
+	hub.connected.Store(true)
+	hub.conn.Store(&websocket.Conn{})
+	frame := []byte("tick")
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = hub.Write(frame)
+	}
+}
+
+func BenchmarkDrainFrames(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 2)}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		hub.frameCh <- []byte("stale")
+		hub.frameCh <- []byte("older")
 		hub.drainFrames()
-
-		So(len(hub.frameCh), ShouldEqual, 0)
-	})
+	}
 }
 
-func TestQueueFramesDefault(t *testing.T) {
-	Convey("NewHub sizes frameCh from config and falls back to 256", t, func() {
-		prev := system.Cfg.UI.WebSocket.QueueFrames
-		system.Cfg.UI.WebSocket.QueueFrames = 0
+func BenchmarkNewHub(b *testing.B) {
+	ctx := context.Background()
 
-		hub := NewHub(context.Background())
+	b.ReportAllocs()
 
-		system.Cfg.UI.WebSocket.QueueFrames = prev
-
-		So(cap(hub.frameCh), ShouldEqual, 256)
-	})
+	for b.Loop() {
+		_ = newHub(ctx, 64)
+	}
 }
 
-func TestStreamMaps(t *testing.T) {
-	Convey("stream maps survive concurrent start and cancel", t, func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		hub := &Hub{
-			ctx:       ctx,
-			streams:   make(map[string]context.CancelFunc),
-			streamGen: make(map[string]uint64),
-		}
+func BenchmarkActive(b *testing.B) {
+	hub := &Hub{frameCh: make(chan []byte, 1)}
+	hub.connected.Store(true)
+	hub.conn.Store(&websocket.Conn{})
 
-		var wg sync.WaitGroup
+	b.ReportAllocs()
 
-		for i := 0; i < 32; i++ {
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				hub.startStream("s3", func(ctx context.Context) {
-					<-ctx.Done()
-				})
-			}()
-
-			go func() {
-				defer wg.Done()
-				hub.cancelStream("s3")
-			}()
-		}
-
-		wg.Wait()
-		cancel()
-
-		hub.streamMu.Lock()
-		So(hub.streams, ShouldNotBeNil)
-		hub.streamMu.Unlock()
-	})
+	for b.Loop() {
+		_ = hub.Active()
+	}
 }
+

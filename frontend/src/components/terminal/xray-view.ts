@@ -1,23 +1,8 @@
-const symbolScopeAliases = (symbol: string): string[] => {
-	if (!symbol) return [];
-	const aliases = new Set<string>([symbol]);
-	if (symbol.includes("/")) {
-		aliases.add(symbol.replace(/\//g, "-"));
-	} else {
-		const dash = symbol.indexOf("-");
-		if (dash > 0) {
-			aliases.add(`${symbol.slice(0, dash)}/${symbol.slice(dash + 1)}`);
-		}
-	}
-	return [...aliases];
-};
-
-import {
-	parseResonanceData,
-	type ResonanceData,
-} from "#/components/charts/prediction";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { requirePositiveLength } from "#/lib/domain";
+import { asFinite } from "#/lib/format";
+import { parseResonanceData } from "#/lib/resonance";
+import { symbolScopeAliases } from "#/lib/symbol-scope";
 import { type Value as ResonanceFrame, Value } from "#/types/value";
 
 export type HawkesMetrics = {
@@ -45,9 +30,6 @@ export type XrayLayer = {
 	prediction: number[];
 	error_norm: number | null;
 };
-
-const finite = (value: unknown): number | null =>
-	typeof value === "number" && Number.isFinite(value) ? value : null;
 
 const stringValue = (value: unknown): string =>
 	typeof value === "string" ? value.trim() : "";
@@ -121,20 +103,25 @@ export const xrayLayersFromResonance = (
 	A wire reading carries its hierarchy as layer_<i>_* scalar layers:
 	parseResonanceData folds them into the layer rows the panel paints.
 	*/
-	const parsed = parseResonanceData(frame as unknown as Value);
-	const layers = parsed
-		? (parsed.layers as unknown as Array<Record<string, unknown>>)
-		: (((frame as Record<string, unknown>).layers as
-				| Array<Record<string, unknown>>
-				| undefined) ?? []);
+	const row =
+		frame instanceof Value ? null : (frame as Record<string, unknown>);
+	const parsed = row ? parseResonanceData(row) : undefined;
+
+	const layers: Array<Record<string, unknown>> =
+		parsed && parsed.layers.length > 0
+			? (parsed.layers as unknown as Array<Record<string, unknown>>)
+			: Array.isArray(row?.layers)
+				? (row.layers as Array<Record<string, unknown>>)
+				: [];
+
 	const surprise =
 		parsed?.surprise ??
-		((frame as Record<string, unknown>).surprise as number | undefined);
+		(typeof row?.surprise === "number" ? row.surprise : undefined);
 
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
 		const prediction = numberArray(layer.prediction);
-		const reported = finite(layer.errorNorm ?? layer.error_norm);
+		const reported = asFinite(layer.errorNorm ?? layer.error_norm);
 
 		return {
 			index,
@@ -276,9 +263,9 @@ export const latentPointsFromFrames = (
 		the leading two components place the symbol in the universe
 		cross-section.
 		*/
-		const parsed = frame instanceof Value ? parseResonanceData(frame) : null;
 		const row = frame as Record<string, unknown>;
-		const position = parsed?.latent
+		const parsed = frame instanceof Value ? null : parseResonanceData(row);
+		const position = parsed?.latent?.length
 			? parsed.latent.slice(0, 2)
 			: numberArray(row.latent ?? row.embedding);
 
@@ -303,80 +290,6 @@ export const latentPointsFromFrames = (
 	});
 };
 
-export const cascadeLabel = (
-	branching: number | null,
-): { label: string; color: string } => {
-	if (branching === null) {
-		return { label: "—", color: "var(--f4)" };
-	}
-
-	if (branching > 0.85) {
-		return { label: "critical", color: "var(--down)" };
-	}
-
-	if (branching > 0.6) {
-		return { label: "elevated", color: "var(--warn)" };
-	}
-
-	return { label: "stable", color: "var(--up)" };
-};
-
-export const formatMetric = (value: number | null, digits = 3): string =>
-	value === null ? "—" : value.toFixed(digits);
-
-export const signedMetric = (value: number | null, digits = 3): string => {
-	if (value === null) {
-		return "—";
-	}
-
-	return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(digits)}`;
-};
-
-export const manifoldReading = (
-	frame: Record<string, unknown> | null | undefined,
-): Record<string, unknown> | null => {
-	if (frame === null || frame === undefined) {
-		return null;
-	}
-
-	const reading = frame.reading;
-
-	if (
-		reading !== null &&
-		typeof reading === "object" &&
-		!Array.isArray(reading)
-	) {
-		return reading as Record<string, unknown>;
-	}
-
-	return frame;
-};
-
-export const finiteMetric = finite;
-export const stringMetric = stringValue;
-
-/*
-Retained universe maps across sparse telemetry updates.
-*/
-const retainedResonance = new Map<string, Record<string, unknown>>();
-const retainedHawkes = new Map<string, Record<string, number>>();
-
-const keepScalar = (
-	next: number | undefined,
-	prev: number | undefined,
-): number | undefined => {
-	if (next === undefined) return prev;
-	if (
-		next === 0 &&
-		prev !== undefined &&
-		Number.isFinite(prev) &&
-		Math.abs(prev) > 1e-9
-	) {
-		return prev;
-	}
-	return next;
-};
-
 export const carrierScope = (
 	frame: ResonanceFrame | Record<string, unknown> | Value,
 ): string => {
@@ -387,7 +300,7 @@ export const carrierScope = (
 
 /*
 resolveXrayCarrier picks the focus symbol's row when it has hierarchy layers,
-otherwise the best available carrier in the retained universe.
+otherwise the best available carrier in the live universe.
 */
 export const resolveXrayCarrier = (
 	frames: Array<ResonanceFrame | Record<string, unknown> | Value>,
@@ -409,153 +322,4 @@ export const resolveXrayCarrier = (
 	}
 
 	return direct ?? frames[0];
-};
-
-export const valueFromRetainedRow = (
-	symbol: string,
-	row: Record<string, unknown> | null | undefined,
-): Value | undefined => {
-	if (!row) return undefined;
-
-	const prefix = `resonance/reading/${symbol.replace(/\//g, "-")}`;
-	const value = new Value({
-		scope: symbol,
-		prefix,
-		origin: "resonance",
-		role: "reading",
-	});
-	const enc = new TextEncoder();
-
-	const pushScalar = (key: string, raw: unknown) => {
-		if (raw === undefined || raw === null) return;
-		const num = Array.isArray(raw) ? raw[0] : raw;
-		if (typeof num !== "number" || !Number.isFinite(num)) return;
-		value.index.push(`${prefix}/${key}`);
-		value.layers.push(enc.encode(JSON.stringify([num])));
-	};
-
-	pushScalar("energy", row.energy);
-	pushScalar("surprise", row.surprise);
-	pushScalar("confidence", row.confidence);
-	pushScalar("supported_horizon", row.supportedHorizon);
-	pushScalar("resolved_steps", row.resolvedSteps);
-	pushScalar("maturity", row.maturity);
-
-	if (value.index.length === 0) return undefined;
-	return value;
-};
-
-export const retainResonanceRow = (
-	symbol: string,
-	row: Record<string, unknown> | Value,
-) => {
-	if (!symbol) return;
-	const existing = retainedResonance.get(symbol) ?? {};
-	let parsedData: Record<string, unknown> = {};
-
-	/*
-	A wire reading parses through its scalar layers; a legacy row with an
-	array-shaped metrics block goes through the same decoder.
-	*/
-	const decodable =
-		row instanceof Value ||
-		("metrics" in row && Array.isArray((row as { metrics?: unknown }).metrics));
-
-	if (decodable) {
-		const parsed = parseResonanceData(row as unknown as Value);
-		if (parsed) {
-			parsedData = {
-				latent: parsed.latent,
-				embedding: parsed.latent?.slice(0, 2) ?? [],
-				layers: parsed.layers,
-				surprise: parsed.surprise,
-				energy: parsed.energy,
-				confidence: parsed.confidence,
-				forwardCurve: parsed.forwardCurve,
-				dynamics: parsed.dynamics,
-				supportedHorizon: parsed.supportedHorizon,
-				resolvedSteps: parsed.resolvedSteps,
-				taskSkill: parsed.taskSkill,
-				taskRelativePrecision: parsed.taskRelativePrecision,
-			};
-		}
-	}
-
-	const rowEmbedding = (row as { embedding?: unknown }).embedding;
-	const embedding =
-		Array.isArray(rowEmbedding) && rowEmbedding.length >= 2
-			? rowEmbedding
-			: Array.isArray(parsedData.embedding) &&
-					(parsedData.embedding as number[]).length >= 2
-				? parsedData.embedding
-				: (existing.embedding ?? existing.latent ?? []);
-
-	const plain = row instanceof Value ? {} : (row as Record<string, unknown>);
-	const incomingLayers = (parsedData.layers ??
-		plain.layers) as ResonanceData["layers"];
-	const existingLayers = existing.layers as ResonanceData["layers"];
-	const layers =
-		incomingLayers &&
-		incomingLayers.length > 0 &&
-		xrayLayersFromResonance({ layers: incomingLayers }).length > 0
-			? incomingLayers
-			: existingLayers;
-
-	const incomingLatent = (parsedData.latent ?? plain.latent) as
-		| number[]
-		| undefined;
-	const existingLatent = existing.latent as number[] | undefined;
-
-	retainedResonance.set(symbol, {
-		...existing,
-		...plain,
-		...parsedData,
-		layers,
-		latent:
-			incomingLatent && incomingLatent.length > 0
-				? incomingLatent
-				: existingLatent,
-		surprise: keepScalar(
-			(parsedData.surprise ?? plain.surprise) as number | undefined,
-			existing.surprise as number | undefined,
-		),
-		energy: keepScalar(
-			(parsedData.energy ?? plain.energy) as number | undefined,
-			existing.energy as number | undefined,
-		),
-		embedding,
-		symbol,
-	});
-};
-
-export const getRetainedResonance = (
-	symbol?: string,
-): Record<string, unknown> | null => {
-	if (!symbol) return null;
-	return retainedResonance.get(symbol) ?? null;
-};
-
-export const getAllRetainedResonance = (): Array<Record<string, unknown>> => [
-	...retainedResonance.values(),
-];
-
-export const retainHawkesMetric = (
-	symbol: string,
-	metric: string,
-	raw: number,
-) => {
-	if (!symbol || !metric || !Number.isFinite(raw)) return;
-	const current = retainedHawkes.get(symbol) ?? {};
-	current[metric] = raw;
-	retainedHawkes.set(symbol, current);
-};
-
-export const getRetainedHawkes = (symbol?: string): Record<string, number> => {
-	if (!symbol) return {};
-	return retainedHawkes.get(symbol) ?? {};
-};
-
-export const clearRetainedTelemetry = () => {
-	retainedResonance.clear();
-	retainedHawkes.clear();
 };

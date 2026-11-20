@@ -2,51 +2,31 @@ package broker
 
 import (
 	"context"
-	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
 	"github.com/theapemachine/symm/system"
-)
-
-type Direction string
-
-const (
-	BUY  Direction = "buy"
-	SELL Direction = "sell"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 var (
-	decimalZero        = decimal.NewFromInt(0)
-	decimalOne         = decimal.NewFromInt(1)
-	decimalHundred     = decimal.NewFromInt(100)
-	decimalNegativeOne = decimal.NewFromInt(-1)
-	decimalPercent     = decimalOne.Div(decimalHundred)
-	decimalTwo         = decimal.NewFromInt(2)
-	decimalThree       = decimal.NewFromInt(3)
+	decimalHundred = decimal.NewFromInt(100)
+	exitRoomLevels = 5
 )
 
-// defaultTakerFeePercent is used when the account schedule has no fee for a pair.
-const defaultTakerFeePercent = 0.8
-
-const tickerRefresh = time.Minute
-
-/*
-EntryFill is a complete buy against the ask book at admission time.
-*/
-type EntryFill struct {
-	EntryPrice *decimal.Decimal
-	EntryFee   *decimal.Decimal
-}
+// bandRatioClear is the finite stand-in for "no opposing cash in band"
+// (was +Inf). Threshold gates still pass; Standardizer tracks stay finite.
+const bandRatioClear = 10.0
 
 /*
 Price answers book questions with fills. A last trade is not a price.
@@ -54,22 +34,30 @@ Price answers book questions with fills. A last trade is not a price.
 type Price struct {
 	*runtime.System
 	Instrument *Instrument
-	Books      *Book
-	ticker     sync.Map
+	Books      *BookManager
+	ticker     *market.Ticker
+	tape       *Tape
+	venue      market.Venue
+	public     network.Client
 	balance    *market.Balance
 	normalizer *spot.Normalizer
+	exhaustion  sync.Map // symbol → float64 pumpdump reading
+	excitation  sync.Map // symbol → float64 Hawkes spectral radius
+	ofi         sync.Map // symbol → float64 Cont event OFI
+	lastPrint   sync.Map // symbol → time.Time latest aggressive print
 }
 
-type tickerSnap struct {
-	volumeUSD float64
-	changePct float64
-}
-
+/*
+NewPrice loads taker fees before READY. Fee load failure leaves ERROR status
+so callers can check Status without a nil Price.
+*/
 func NewPrice(
 	ctx context.Context,
-	books *Book,
+	books *BookManager,
 	instrument *Instrument,
 	normalizer *spot.Normalizer,
+	host market.Venue,
+	public network.Client,
 ) *Price {
 	if normalizer == nil {
 		normalizer = spot.NewNormalizer()
@@ -79,148 +67,238 @@ func NewPrice(
 		System:     runtime.NewSystem(ctx, "price"),
 		Instrument: instrument,
 		Books:      books,
+		ticker:     market.NewTicker(nil),
+		tape:       NewTape(),
+		venue:      host,
+		public:     public,
 		normalizer: normalizer,
 	}
 
 	if !price.loadFees() {
-		return nil
+		return price
 	}
 
-	price.refreshTicker()
-	price.pollTicker()
+	if public != nil && host != nil {
+		batch := system.Cfg.WebSocket.TickerBatchSize
+
+		if batch <= 0 {
+			batch = 32
+		}
+
+		cursor := 0
+		ticker := host.Ticker()
+
+		public.Watch(
+			system.Cfg.WebSocket.Endpoints.Ticker,
+			func() map[string]any {
+				symbols, next := price.PulseSymbols(batch, cursor)
+				cursor = next
+
+				if len(symbols) == 0 {
+					return nil
+				}
+
+				return map[string]any{
+					"pair":         strings.Join(symbols, ","),
+					"assetVersion": "1",
+				}
+			},
+			ticker,
+			func() { price.applyTicker(ticker) },
+		)
+	}
+
 	price.Transition(runtime.READY)
 
 	return price
 }
 
-func (price *Price) SetTicker(symbol string, volumeUSD, changePct float64) {
-	price.ticker.Store(symbol, tickerSnap{volumeUSD, changePct})
-}
-
-func (price *Price) tickerOf(symbol string) tickerSnap {
-	raw, ok := price.ticker.Load(symbol)
-	if !ok {
-		return tickerSnap{}
-	}
-
-	return raw.(tickerSnap)
-}
-
-func (price *Price) VolumeUSD(symbol string) float64 { return price.tickerOf(symbol).volumeUSD }
-func (price *Price) ChangePct(symbol string) float64 { return price.tickerOf(symbol).changePct }
-
-func (price *Price) refreshTicker() {
-	response, err := network.NewREST().Get(
-		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.Ticker,
-		map[string]string{"assetVersion": "1"},
-	)
-	if err != nil {
-		errnie.Warn("[price] ticker poll failed", "err", err)
+/*
+applyTicker folds a decoded venue ticker frame into the live reference book.
+*/
+func (price *Price) applyTicker(frame market.MarketType) {
+	if frame == nil {
 		return
 	}
 
-	rows, err := kraken.ParseTicker(response.Body())
-	if err != nil {
-		errnie.Warn("[price] ticker parse failed", "err", err)
-		return
-	}
+	batch := market.NewTicker(nil)
+	frame.ToMarket(batch)
 
-	for pair, row := range rows {
-		symbol := pair
-
-		if name := price.normalizer.Name(pair); name != "" {
-			symbol = name
-		}
-
-		price.SetTicker(symbol, row.QuoteVolume24h(), row.ChangePct())
-	}
-}
-
-func (price *Price) pollTicker() {
-	go func() {
-		ticker := time.NewTicker(tickerRefresh)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-price.Context().Done():
-				return
-			case <-ticker.C:
-				price.refreshTicker()
-			}
-		}
-	}()
-}
-
-func (price *Price) loadFees() bool {
-	symbols := price.Instrument.Symbols()
-	if len(symbols) == 0 {
-		price.Error(errnie.Err(
-			errnie.Internal, "trade volume fees need a non-empty symbol list", nil,
-		))
-		return false
-	}
-
-	response, err := network.NewREST().Post(
-		"https://api.kraken.com"+system.Cfg.WebSocket.Endpoints.TradeVolume,
-		kraken.NewTradeVolumeRequest(symbols),
-	)
-	if err != nil {
-		price.Error(errnie.Err(errnie.IO, "failed to get trade volume fees", err))
-		return false
-	}
-
-	volume, err := kraken.ParseTradeVolume(response.Body())
-	if err != nil {
-		price.Error(err)
-		return false
-	}
-
-	n := 0
-	for pair, fee := range volume.Fees {
-		if fee.Fee == nil {
+	for pair, row := range batch.Rows {
+		if row == nil {
 			continue
 		}
 
-		price.Instrument.RememberFee(price.normalizer.Name(pair), fee.Fee)
-		n++
+		price.ticker.Set(price.normalizer.Name(pair), row)
 	}
-
-	if n == 0 {
-		price.Error(errnie.Err(
-			errnie.UnprocessableContent, "trade volume returned no usable taker fees", nil,
-		))
-		return false
-	}
-
-	return true
-}
-
-// Fee is the taker fee in percent (0.40 means 0.40%). Nil means unknown.
-func (price *Price) Fee(symbol string) *decimal.Decimal {
-	return price.Instrument.TakerFee(price.normalizer.Name(symbol))
 }
 
 /*
-ExitRoom is best-bid size divided by quantity (1.0 = the touch absorbs the lot
-once).
+VolumeUSD is the latest ticker 24h quote turnover for mover floors.
+*/
+func (price *Price) VolumeUSD(symbol string) float64 {
+	if price == nil || price.ticker == nil {
+		return 0
+	}
+
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
+
+	return price.ticker.VolumeUSD(symbol)
+}
+
+/*
+ChangePct is session open → live mark when both exist, else the REST open→last
+reading. Mark keeps day-move oracles current between ticker batches.
+*/
+func (price *Price) ChangePct(symbol string) float64 {
+	name := price.normalizer.Name(symbol)
+	row := price.ticker.Of(name)
+
+	if row == nil {
+		return 0
+	}
+
+	open := row.Open
+
+	if open <= 0 {
+		return row.ChangePct
+	}
+
+	last := row.Last
+
+	if mark := price.Mark(name); mark != nil && mark.Sign() > 0 {
+		last = mark.InexactFloat64()
+	}
+
+	if last <= 0 {
+		return row.ChangePct
+	}
+
+	return (last - open) / open * 100
+}
+
+/*
+Mark is the best bid — what a long can hit now.
+*/
+func (price *Price) Mark(symbol string) (bid *decimal.Decimal) {
+	if price == nil || price.Books == nil {
+		return nil
+	}
+
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		bid = book.BidPrice()
+	})
+
+	return bid
+}
+
+/*
+Walk fills qty against the book. buy walks asks; sell walks bids.
+Returns filled base size and gross quote notional.
+*/
+func (price *Price) Walk(
+	symbol string, qty decimal.Decimal, buy bool,
+) (filled, gross *decimal.Decimal) {
+	if price == nil || qty.Sign() <= 0 {
+		return nil, nil
+	}
+
+	symbol = price.normalizer.Name(symbol)
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if book == nil {
+			return
+		}
+
+		var got, cost decimal.Decimal
+
+		level := book.BestBid()
+
+		if buy {
+			level = book.BestAsk()
+		}
+
+		for level != nil && qty.Sign() > 0 {
+			cur := level
+
+			if buy {
+				level = level.Higher
+			} else {
+				level = level.Lower
+			}
+
+			if !cur.Live() {
+				continue
+			}
+
+			take := decimal.Min(*cur.Quantity, qty)
+			got = got.Add(take)
+			cost = cost.Add(cur.Price.Mul(take))
+			qty = qty.Sub(take)
+		}
+
+		if got.Sign() <= 0 {
+			return
+		}
+
+		filled = &got
+		gross = &cost
+	})
+
+	return filled, gross
+}
+
+/*
+Fee is taker cut on amount (rate percent of notional).
+*/
+func (price *Price) Fee(symbol string, amount *decimal.Decimal) *decimal.Decimal {
+	if amount == nil || amount.Sign() <= 0 {
+		return nil
+	}
+
+	rate := price.Instrument.TakerFee(price.normalizer.Name(symbol))
+
+	if rate == nil {
+		return nil
+	}
+
+	out := amount.Mul(rate.Div(decimalHundred))
+	return &out
+}
+
+/*
+ExitRoom is cumulative bid depth over the top levels / quantity.
+Touch-only depth flickers; summing a few levels is the absorbable room.
 */
 func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
 	if quantity == nil || quantity.Sign() <= 0 {
 		return nil
 	}
 
-	var depth *decimal.Decimal
+	symbol = price.normalizer.Name(symbol)
 
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if managed == nil || managed.BestBid() == nil {
-			return
+	var depth decimal.Decimal
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		count := 0
+
+		for level := book.BestBid(); level != nil && count < exitRoomLevels; level = level.Lower {
+			if !level.Live() {
+				continue
+			}
+
+			depth = depth.Add(*level.Quantity)
+			count++
 		}
-
-		depth = toSymm(managed.BestBid().Quantity)
 	})
 
-	if depth == nil || depth.Sign() <= 0 {
+	if depth.Sign() <= 0 {
 		return nil
 	}
 
@@ -229,57 +307,122 @@ func (price *Price) ExitRoom(symbol string, quantity *decimal.Decimal) *decimal.
 }
 
 /*
-TouchBidCash is quote notional on the top three bid levels.
+NoteExhaustion caches pumpdump exhaustion for stoploss friction.
 */
-func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
-	if symbol == "" {
-		return nil, false
+func (price *Price) NoteExhaustion(symbol string, value float64) {
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
 	}
 
-	var cash *decimal.Decimal
-
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if managed == nil || managed.BestBid() == nil {
-			return
-		}
-
-		total := decimalZero
-
-		for n, level := 0, managed.BestBid(); n < 3 && level != nil; n, level = n+1, level.Lower {
-			px, qty := toSymm(level.Price), toSymm(level.Quantity)
-			if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
-				continue
-			}
-
-			total = total.Add(px.Mul(*qty))
-		}
-
-		if total.Sign() > 0 {
-			c := total
-			cash = &c
-		}
-	})
-
-	if cash == nil {
-		return nil, false
+	if symbol == "" || value < 0 {
+		return
 	}
 
-	return cash, true
+	price.exhaustion.Store(symbol, value)
 }
 
-// SpreadPct is the book's own relative bid-ask spread in percent.
+/*
+ExhaustionReading is the last NoteExhaustion for symbol, or 0 when never seen.
+*/
+func (price *Price) ExhaustionReading(symbol string) float64 {
+	if price.normalizer != nil {
+		symbol = price.normalizer.Name(symbol)
+	}
+
+	if symbol == "" {
+		return 0
+	}
+
+	raw, ok := price.exhaustion.Load(symbol)
+
+	if !ok {
+		return 0
+	}
+
+	return raw.(float64)
+}
+
+/*
+NoteTrade feeds tape uptake from every aggressive print. Buys and sells both
+update net pressure, rush splits, and flip churn; LastPrintAt still stamps for
+correlation heartbeats. Same-timestamp sweeps all land — only strictly older
+stamps are dropped.
+*/
+func (price *Price) NoteTrade(trade *market.TradeData) {
+	if trade == nil || trade.Price.Sign() <= 0 || trade.Qty.Sign() <= 0 {
+		return
+	}
+
+	name := price.normalizer.Name(trade.Symbol)
+
+	if raw, ok := price.lastPrint.Load(name); ok {
+		if prev, ok := raw.(time.Time); ok && trade.Timestamp.Before(prev) {
+			return
+		}
+	}
+
+	price.lastPrint.Store(name, trade.Timestamp)
+	price.tape.Observe(
+		name,
+		trade.Side,
+		trade.OrderType,
+		trade.Price.Mul(trade.Qty).InexactFloat64(),
+		trade.Timestamp,
+	)
+}
+
+/*
+LastPrintAt is the newest trade timestamp for a symbol — correlation heartbeats
+prefer this over a frozen resting touch order time.
+*/
+func (price *Price) LastPrintAt(symbol string) time.Time {
+	if price == nil {
+		return time.Time{}
+	}
+
+	raw, ok := price.lastPrint.Load(price.normalizer.Name(symbol))
+
+	if !ok {
+		return time.Time{}
+	}
+
+	at, _ := raw.(time.Time)
+	return at
+}
+
+/*
+TapeUptake is recent vs prior buy-tape windows for board and BookIntact.
+*/
+func (price *Price) TapeUptake(symbol string, now time.Time) (recent, prior float64) {
+	return price.tape.Uptake(price.normalizer.Name(symbol), now)
+}
+
+/*
+TapeFlow is the conditioned tape reading (net, rush, flip, double-ratio, rhythm).
+*/
+func (price *Price) TapeFlow(symbol string, now time.Time) TapeReading {
+	name := price.normalizer.Name(symbol)
+	return price.tape.Reading(name, now, price.VolumeUSD(name))
+}
+
+/*
+SpreadPct is touch spread percent from the live book.
+*/
 func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 	var spread *decimal.Decimal
 
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
+	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
+		if !book.Tradable() {
 			return
 		}
 
-		spread = toSymm(managed.Spread())
+		bid, ask := *book.BidPrice(), *book.AskPrice()
+		// Ask-relative percent — mid-based book.Spread() is not the desk gate.
+		pct := ask.Sub(bid).Div(ask).Mul(decimal.NewFromInt(100))
+		spread = &pct
 	})
 
-	if spread == nil || spread.Sign() <= 0 {
+	if spread == nil {
 		return nil, false
 	}
 
@@ -287,616 +430,950 @@ func (price *Price) SpreadPct(symbol string) (*decimal.Decimal, bool) {
 }
 
 /*
-Friction is relative spread plus both taker fee legs, as a fraction.
+PeakFrac is mark's place in the 24h high–low range (0 at low, 1 at high).
+Live bid marks beat stale REST Last so peak vetoes track the tape, not the
+last ticker batch from ~20 minutes ago.
 */
-func (price *Price) Friction(symbol string) (*decimal.Decimal, bool) {
-	spreadPct, ok := price.SpreadPct(symbol)
-	if !ok || spreadPct == nil {
-		return nil, false
-	}
-
-	fee := price.Fee(symbol)
-
-	if fee.Sign() < 0 {
-		return nil, false
-	}
-
-	hurdle := spreadPct.Div(decimalHundred).Add(fee.Mul(decimalPercent).Mul(decimalTwo))
-
-	if hurdle.Sign() <= 0 {
-		return nil, false
-	}
-
-	return &hurdle, true
-}
-
-/*
-OpenDragBudgetPct is three times Friction, in percent — the most negative
-close-now PnLPct still allowed at entry.
-*/
-func (price *Price) OpenDragBudgetPct(symbol string) (*decimal.Decimal, bool) {
-	friction, ok := price.Friction(symbol)
-	if !ok || friction == nil {
-		return nil, false
-	}
-
-	r := friction.Mul(decimalThree).Mul(decimalHundred)
-	return &r, true
-}
-
-/*
-EntryCloseNowPnLPct is fee-net percent PnL of opening the desk lot at the ask
-walk and closing immediately into the bids.
-*/
-func (price *Price) EntryCloseNowPnLPct(symbol string) (*decimal.Decimal, bool) {
-	qty, _ := price.Allocate(symbol, nil)
-
-	if qty == nil || qty.Sign() <= 0 {
-		return nil, false
-	}
-
-	fill, err := price.EntryCost(symbol, qty)
-
-	if err != nil || fill == nil || fill.EntryPrice == nil || fill.EntryPrice.Sign() <= 0 {
-		return nil, false
-	}
-
-	pct := price.PnLPct(symbol, qty, fill.EntryPrice, price.Fee(symbol))
-
-	if pct == nil {
-		return nil, false
-	}
-
-	return pct, true
-}
-
-// PnLPct is fee-net round-trip profit as a percent of entry cost.
-func (price *Price) PnLPct(
-	symbol string,
-	quantity, entry, fee *decimal.Decimal,
-) *decimal.Decimal {
-	if fee == nil {
-		fee = price.Fee(symbol)
-	}
-
-	return price.roundTripPct(symbol, quantity, entry, fee, fee)
-}
-
-func (price *Price) ExitVWAP(symbol string, quantity *decimal.Decimal) *decimal.Decimal {
-	if quantity == nil || quantity.Sign() <= 0 {
-		return nil
-	}
-
-	var vwap *decimal.Decimal
-
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
-			return
-		}
-
-		filled, gross, err := price.consume(managed, quantity, nil, SELL)
-
-		if err != nil || filled == nil || gross == nil || filled.Sign() <= 0 {
-			return
-		}
-
-		v := gross.Div(*filled)
-		vwap = &v
-	})
-
-	return vwap
-}
-
-// EntryCost walks the asks for quantity and returns fill VWAP plus entry fee.
-func (price *Price) EntryCost(
-	symbol string,
-	quantity *decimal.Decimal,
-) (*EntryFill, error) {
-	if quantity == nil || quantity.Sign() <= 0 {
-		return nil, errnie.Err(
-			errnie.Validation, "entry cost: positive quantity required", nil,
-		)
-	}
-
-	fee := price.Fee(symbol)
-
-	var fill *EntryFill
-	var err error
-
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
-			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
-			return
-		}
-
-		filled, gross, walkErr := price.consume(managed, quantity, nil, BUY)
-
-		if walkErr != nil {
-			err = errnie.Err(
-				errnie.UnprocessableContent, "entry cost: book cannot fill "+symbol, walkErr,
-			)
-			return
-		}
-
-		total := price.afterFee(gross, fee, BUY)
-
-		if total == nil {
-			err = errnie.Err(errnie.NotFound, "entry cost: fee unavailable for "+symbol, nil)
-			return
-		}
-
-		entryPx := gross.Div(*filled)
-		entryFee := total.Sub(*gross)
-
-		fill = &EntryFill{
-			EntryPrice: &entryPx,
-			EntryFee:   &entryFee,
-		}
-	})
-
-	if fill == nil && err == nil {
-		err = errnie.Err(
-			errnie.UnprocessableContent,
-			"entry cost: complete executable book required for "+symbol,
-			nil,
-		)
-	}
-
-	return fill, err
-}
-
-/*
-Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
-Quantity is at most best-bid / TouchDivisor and at most risk.max_fraction of
-cash after fees. Below QtyMin/CostMin it fails — those mins cannot be met by
-"bumping" without breaking a cap that already bound the preferred size.
-*/
-func (price *Price) Allocate(
-	symbol string,
-	wallet *market.Balance,
-) (*decimal.Decimal, string) {
-	if wallet == nil {
-		wallet = price.balance
-	}
-
-	if wallet == nil {
-		return nil, "balance is not wired"
-	}
-
-	pair := price.Instrument.Pair(symbol)
-	raw := wallet.Cash(pair.Quote)
-
-	if raw == nil {
-		raw = wallet.Cash(wallet.Quote)
-	}
-
-	if raw == nil {
-		return nil, fmt.Sprintf(
-			"quote cash unknown (pair quote %q, desk quote %q)",
-			pair.Quote,
-			wallet.Quote,
-		)
-	}
-
-	cash, err := decimal.NewFromString(raw.String())
-	if err != nil {
-		return nil, "quote cash is not a decimal"
-	}
-
-	if pair.QtyMin == nil || pair.CostMin == nil {
-		return nil, "instrument limits missing (QtyMin or CostMin unset)"
-	}
-
-	fee := price.Fee(symbol)
-
-	budget := cash.Mul(
-		decimal.NewFromFloat(system.Cfg.Risk.MaxFraction),
-	)
-
-	if budget.Sign() <= 0 {
-		return nil, fmt.Sprintf(
-			"risk budget is zero (cash=%s max_fraction=%v)",
-			cash.String(),
-			system.Cfg.Risk.MaxFraction,
-		)
-	}
-
-	feeRate := fee.Mul(decimalPercent)
-	grossBudgetVal := budget.Div(decimalOne.Add(feeRate))
-	budgetPtr, grossBudgetPtr := &budget, &grossBudgetVal
-
-	var (
-		quantity *decimal.Decimal
-		reason   string
-	)
-
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
-			reason = "level3 book not ready (missing bid/ask or book crossed)"
-			return
-		}
-
-		touchBid := toSymm(managed.BestBid().Quantity)
-		if touchBid == nil || touchBid.Sign() <= 0 {
-			reason = "best bid quantity missing or zero"
-			return
-		}
-
-		touchCapQty := touchBid.Div(
-			decimal.NewFromFloat(system.Cfg.Risk.TouchDivisor),
-		)
-		touchCap := &touchCapQty
-
-		filled, gross, why := price.sizeBuy(
-			managed, symbol, pair, fee, budgetPtr, grossBudgetPtr, touchCap,
-		)
-		if filled == nil {
-			reason = why
-			return
-		}
-
-		avgPx := gross.Div(*filled)
-		cost := avgPx.Mul(*filled)
-		underMin := filled.Cmp(*pair.QtyMin) < 0 || cost.Cmp(*pair.CostMin) < 0
-
-		if underMin && wallet != nil {
-			reason = fmt.Sprintf(
-				"size %s below venue minimum (qty_min=%s cost_min=%s touch_cap=%s)",
-				filled.String(),
-				pair.QtyMin.String(),
-				pair.CostMin.String(),
-				touchCap.String(),
-			)
-			return
-		}
-
-		quantity = filled
-	})
-
-	if quantity != nil {
-		return quantity, ""
-	}
-
-	if reason == "" {
-		if why := price.Books.BlockReason(symbol); why != "" {
-			reason = why
-		} else {
-			reason = "book callback did not size"
-		}
-	}
-
-	return nil, reason
-}
-
-// sizeBuy lifts asks under touchCap and grossBudget, then trims until fees fit budget.
-func (price *Price) sizeBuy(
-	managed *book.Book,
-	symbol string,
-	pair kraken.InstrumentPair,
-	fee, budget, grossBudget, touchCap *decimal.Decimal,
-) (filled, gross *decimal.Decimal, why string) {
-	if touchCap == nil || touchCap.Sign() <= 0 {
-		return nil, nil, "touch-bid carry cap is non-positive"
-	}
-
-	qty := touchCap
-	if sized, err := price.formatSize(symbol, qty); err == nil {
-		qty = sized
-	}
-
-	filled, gross, _ = price.consume(managed, qty, grossBudget, BUY)
-	if filled == nil || filled.Sign() <= 0 {
-		return nil, nil, fmt.Sprintf(
-			"ask walk produced zero size (gross_budget=%s touch_cap=%s)",
-			grossBudget.String(), touchCap.String(),
-		)
-	}
-
-	askPx := toSymm(managed.BestAsk().Price)
-	fail := fmt.Sprintf(
-		"cannot trim fill to fee-inclusive budget %s (filled=%s)",
-		budget.String(), filled.String(),
-	)
-
-	for range 8 {
-		total := price.afterFee(gross, fee, BUY)
-		if total == nil {
-			return nil, nil, "fee-inclusive cost unknown"
-		}
-		if total.Cmp(*budget) <= 0 {
-			return filled, gross, ""
-		}
-		if askPx == nil || askPx.Sign() <= 0 {
-			return nil, nil, fail
-		}
-
-		cut := total.Sub(*budget).Div(*askPx)
-		if step := pair.QtyIncrement; step != nil && step.Sign() > 0 && cut.Cmp(*step) < 0 {
-			cut = *step
-		}
-		if cut.Sign() <= 0 || filled.Cmp(cut) <= 0 {
-			return nil, nil, fail
-		}
-
-		next := filled.Sub(cut)
-		nextPtr := &next
-		if sized, err := price.formatSize(symbol, nextPtr); err == nil {
-			nextPtr = sized
-		}
-		if nextPtr.Cmp(*filled) >= 0 {
-			return nil, nil, fail
-		}
-
-		var err error
-		filled, gross, err = price.consume(managed, nextPtr, nil, BUY)
-		if err != nil || filled == nil || filled.Sign() <= 0 {
-			if err != nil {
-				return nil, nil, "budget trim walk failed: " + err.Error()
-			}
-			return nil, nil, "budget trim walk failed"
-		}
-	}
-
-	return nil, nil, fail
-}
-
-func (price *Price) roundTrip(
-	symbol string,
-	quantity, entry, entryFee, exitFee *decimal.Decimal,
-) (profit, cost *decimal.Decimal) {
-	if quantity == nil || entry == nil ||
-		quantity.Sign() <= 0 || entry.Sign() <= 0 ||
-		entryFee == nil || exitFee == nil {
-		return nil, nil
-	}
-
-	var grossExit *decimal.Decimal
-
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
-			return
-		}
-
-		filled, gross, err := price.consume(managed, quantity, nil, SELL)
-		if err != nil || filled == nil || gross == nil {
-			return
-		}
-
-		grossExit = gross
-	})
-
-	if grossExit == nil {
-		return nil, nil
-	}
-
-	entryCost := entry.Mul(*quantity)
-	cost = price.afterFee(&entryCost, entryFee, BUY)
-	netExit := price.afterFee(grossExit, exitFee, SELL)
-	if cost == nil || netExit == nil {
-		return nil, nil
-	}
-
-	p := netExit.Sub(*cost)
-	return &p, cost
-}
-
-func (price *Price) roundTripPct(
-	symbol string,
-	quantity, entry, entryFee, exitFee *decimal.Decimal,
-) *decimal.Decimal {
-	profit, cost := price.roundTrip(symbol, quantity, entry, entryFee, exitFee)
-	if profit == nil || cost == nil || cost.Sign() <= 0 {
-		return nil
-	}
-
-	pct := profit.Div(*cost).Mul(decimalHundred)
-	return &pct
-}
-
-// consume fills maxQty from the book; maxGross (if set) also caps quote spent.
-func (price *Price) consume(
-	managed *book.Book,
-	maxQty, maxGross *decimal.Decimal,
-	side Direction,
-) (*decimal.Decimal, *decimal.Decimal, error) {
-	if managed == nil || maxQty == nil || maxQty.Sign() <= 0 {
-		return nil, nil, errnie.Err(
-			errnie.Validation, "[price] valid book and positive quantity required", nil,
-		)
-	}
-
-	need := *maxQty
-	capped := maxGross != nil
-	cash := decimalZero
-
-	if capped {
-		cash = *maxGross
-	}
-
-	level := managed.BestBid()
-
-	if side == BUY {
-		level = managed.BestAsk()
-	}
-
-	var filled, gross decimal.Decimal
-
-	for level != nil && need.Sign() > 0 && (!capped || cash.Sign() > 0) {
-		px, qty := toSymm(level.Price), toSymm(level.Quantity)
-
-		if side == BUY {
-			level = level.Higher
-		} else {
-			level = level.Lower
-		}
-
-		if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
-			continue
-		}
-
-		take := decimal.Min(*qty, need)
-
-		if capped {
-			take = decimal.Min(take, cash.Div(*px))
-		}
-
-		if take.Sign() <= 0 {
-			break
-		}
-
-		cost := px.Mul(take)
-		filled, gross, need = filled.Add(take), gross.Add(cost), need.Sub(take)
-
-		if capped {
-			cash = cash.Sub(cost)
-		}
-	}
-
-	if !capped && filled.Cmp(*maxQty) < 0 {
-		return &filled, &gross, errnie.Err(
-			errnie.UnprocessableContent, "[price] insufficient book depth", nil,
-		)
-	}
-
-	return &filled, &gross, nil
-}
-
-func (price *Price) afterFee(
-	amount, fee *decimal.Decimal,
-	direction Direction,
-) *decimal.Decimal {
-	if amount == nil || amount.Sign() <= 0 || fee == nil {
-		return nil
-	}
-
-	rate := decimalPercent.Mul(*fee)
-
-	if direction == SELL {
-		rate = rate.Mul(decimalNegativeOne)
-	}
-
-	r := amount.Mul(decimalOne.Add(rate))
-	return &r
-}
-
-/*
-BackingRatio is bidCash/askCash inside the configured mid band.
-*/
-func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
-	if symbol == "" {
+func (price *Price) PeakFrac(symbol string) (float64, bool) {
+	name := price.normalizer.Name(symbol)
+	row := price.ticker.Of(name)
+
+	if row == nil {
 		return 0, false
 	}
 
-	band := system.Cfg.Risk.BackingBandFrac
+	span := row.High24h - row.Low24h
 
-	price.Books.Book(symbol, func(managed *book.Book) {
-		if !bookReady(managed) {
+	if span <= 0 {
+		return 0, false
+	}
+
+	last := row.Last
+
+	if mark := price.Mark(name); mark != nil && mark.Sign() > 0 {
+		last = mark.InexactFloat64()
+	}
+
+	if last <= 0 {
+		return 0, false
+	}
+
+	return (last - row.Low24h) / span, true
+}
+
+/*
+EntryPeakOK is true when PeakFrac is under the accum/ignition selection cap.
+*/
+func (price *Price) EntryPeakOK(symbol string, ignition bool) bool {
+	cap := system.Cfg.Selection.MaxAccumPeakFrac
+
+	if ignition {
+		cap = system.Cfg.Selection.MaxIgnitionPeakFrac
+	}
+
+	if cap <= 0 || cap >= 1 {
+		return false
+	}
+
+	frac, ok := price.PeakFrac(symbol)
+
+	return ok && frac < cap
+}
+
+/*
+TapeAccelOK is rising buy-tape under double-conditioning, net buy pressure,
+and flip-churn caps — dormant wake-ups and wash churn fail closed.
+*/
+func (price *Price) TapeAccelOK(symbol string) bool {
+	risk := system.Cfg.Risk
+	if risk.MinTapeNotionalUSD <= 0 || risk.MinTapeAccelRatio <= 0 {
+		return false
+	}
+
+	flow := price.TapeFlow(symbol, time.Now())
+	if flow.BuyRecent < risk.MinTapeNotionalUSD {
+		return false
+	}
+
+	if risk.MinNetBuyFraction > 0 && flow.NetFraction < risk.MinNetBuyFraction {
+		return false
+	}
+
+	if risk.MaxFlipChurn > 0 && flow.FlipChurn > risk.MaxFlipChurn {
+		return false
+	}
+
+	return flow.ConditionedRatio >= risk.MinTapeAccelRatio
+}
+
+/*
+SellRushSpike is true when sell market-order notional dominates the window —
+dump/panic phase that should abort short-hold ignition.
+*/
+func (price *Price) SellRushSpike(symbol string) bool {
+	risk := system.Cfg.Risk
+	flow := price.TapeFlow(symbol, time.Now())
+	if flow.RushSell <= 0 {
+		return false
+	}
+
+	floor := risk.MinTapeNotionalUSD
+	if floor <= 0 {
+		floor = 1
+	}
+
+	if flow.RushSell < floor {
+		return false
+	}
+
+	if flow.RushBuy <= 0 {
+		return true
+	}
+
+	return flow.RushSell/flow.RushBuy >= risk.MinTapeAccelRatio
+}
+
+/*
+SessionMoveOK is session open→mark plus live tape and volume-clock pumpdump impulse.
+*/
+func (price *Price) SessionMoveOK(symbol string, pump *equation.IgnitionOutput) bool {
+	risk := system.Cfg.Risk
+
+	if price.ChangePct(symbol) < risk.MinMoverChangePct {
+		return false
+	}
+
+	if !price.TapeAccelOK(symbol) {
+		return false
+	}
+
+	return PumpMoveOK(pump)
+}
+
+/*
+TouchBidCash is quote notional on the top three bids.
+*/
+func (price *Price) TouchBidCash(symbol string) (*decimal.Decimal, bool) {
+	var cash decimal.Decimal
+
+	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
+		for n, level := 0, book.BestBid(); n < 3 && level != nil; n, level = n+1, level.Lower {
+			cash = cash.Add(level.Notional())
+		}
+	})
+
+	if cash.Sign() <= 0 {
+		return nil, false
+	}
+
+	return &cash, true
+}
+
+/*
+BackingRatio is near-mid bid cash over ask cash.
+*/
+func (price *Price) BackingRatio(symbol string) (ratio float64, ok bool) {
+	band := system.Cfg.Risk.BackingBandFrac
+	return price.bandRatio(symbol, 1-band, 1+band)
+}
+
+/*
+OverheadRatio is bid cash near touch over ask cash stacked +lo..+hi above mid
+(insider sell walls waiting for FOMO). Lower means heavier overhead resistance.
+*/
+func (price *Price) OverheadRatio(symbol string) (ratio float64, ok bool) {
+	risk := system.Cfg.Risk
+	lo := risk.OverheadBandLo
+	hi := risk.OverheadBandHi
+	if lo <= 0 {
+		lo = 0.05
+	}
+	if hi <= lo {
+		hi = 0.15
+	}
+
+	var bidCash, askCash float64
+	var found bool
+
+	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
+		if !book.Tradable() {
 			return
 		}
 
-		mid := toSymm(managed.Midpoint())
+		mid := book.Midpoint()
 		if mid == nil || mid.Sign() <= 0 {
 			return
 		}
 
-		loVal := mid.Mul(decimal.NewFromFloat(1 - band))
-		hiVal := mid.Mul(decimal.NewFromFloat(1 + band))
-		lo, hi := &loVal, &hiVal
+		touchLo := mid.Mul(decimal.NewFromFloat(1 - risk.BackingBandFrac))
+		askLo := mid.Mul(decimal.NewFromFloat(1 + lo))
+		askHi := mid.Mul(decimal.NewFromFloat(1 + hi))
+		found = true
 
-		bidCash := sideCash(managed.BestBid(), true, lo, hi)
-		askCash := sideCash(managed.BestAsk(), false, lo, hi)
+		for level := book.BestBid(); level != nil; level = level.Lower {
+			if !level.Live() {
+				continue
+			}
+			if level.Price.Cmp(touchLo) < 0 {
+				break
+			}
+			bidCash += level.Notional().InexactFloat64()
+		}
+
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			if !level.Live() {
+				continue
+			}
+			if level.Price.Cmp(askHi) > 0 {
+				break
+			}
+			if level.Price.Cmp(askLo) < 0 {
+				continue
+			}
+			askCash += level.Notional().InexactFloat64()
+		}
+	})
+
+	if !found {
+		return 0, false
+	}
+	if askCash > 0 {
+		return bidCash / askCash, true
+	}
+	if bidCash > 0 {
+		// No opposing ask cash in-band — clear, but keep Features/Standardizer finite.
+		return bandRatioClear, true
+	}
+	return 0, false
+}
+
+func (price *Price) bandRatio(symbol string, loFrac, hiFrac float64) (ratio float64, ok bool) {
+	price.Books.Book(price.normalizer.Name(symbol), func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+
+		mid := book.Midpoint()
+		if mid == nil || mid.Sign() <= 0 {
+			return
+		}
+
+		lo := mid.Mul(decimal.NewFromFloat(loFrac))
+		hi := mid.Mul(decimal.NewFromFloat(hiFrac))
+		bidCash, askCash := 0.0, 0.0
+
+		for level := book.BestBid(); level != nil; level = level.Lower {
+			if !level.Live() {
+				continue
+			}
+			if level.Price.Cmp(lo) < 0 {
+				break
+			}
+			bidCash += level.Notional().InexactFloat64()
+		}
+
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			if !level.Live() {
+				continue
+			}
+			if level.Price.Cmp(hi) > 0 {
+				break
+			}
+			askCash += level.Notional().InexactFloat64()
+		}
 
 		if askCash > 0 {
 			ratio, ok = bidCash/askCash, true
+			return
+		}
+		if bidCash > 0 {
+			ratio, ok = bandRatioClear, true
+			return
 		}
 	})
 
 	return ratio, ok
 }
 
-// sideCash sums quote notional along one book side inside [lo, hi].
-func sideCash(
-	start *book.Level,
-	bids bool,
-	lo, hi *decimal.Decimal,
-) float64 {
-	var total float64
+/*
+BookIntact is cash + backing + accelerating tape + open-drag — Observe's book oracle.
+*/
+func (price *Price) BookIntact(symbol string) bool {
+	risk := system.Cfg.Risk
+	cash, ok := price.TouchBidCash(symbol)
 
-	for level := start; level != nil; {
-		px, qty := toSymm(level.Price), toSymm(level.Quantity)
-
-		if bids {
-			level = level.Lower
-		} else {
-			level = level.Higher
-		}
-
-		if px == nil || qty == nil || px.Sign() <= 0 || qty.Sign() <= 0 {
-			continue
-		}
-
-		if bids && px.Cmp(*lo) < 0 {
-			break
-		}
-
-		if !bids && px.Cmp(*hi) > 0 {
-			break
-		}
-
-		total += px.Mul(*qty).InexactFloat64()
-	}
-
-	return total
-}
-
-func bookReady(managed *book.Book) bool {
-	if managed == nil {
+	if !ok || cash.InexactFloat64() < risk.MinTouchBidCash {
 		return false
 	}
 
-	bid, ask := managed.BestBid(), managed.BestAsk()
-	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+	ratio, ok := price.BackingRatio(symbol)
+
+	if !ok || ratio < risk.MinBackingRatio {
 		return false
 	}
 
-	return bid.Price.Cmp(ask.Price) < 0
-}
-
-func toSymm(raw *sdkdecimal.Decimal) *decimal.Decimal {
-	if raw == nil {
-		return nil
+	if !price.EntryOpenDragOK(symbol) {
+		return false
 	}
 
-	parsed, err := decimal.NewFromString(raw.String())
-	if err != nil {
-		return nil
-	}
-
-	return &parsed
+	return price.TapeAccelOK(symbol)
 }
 
-func toSDK(value *decimal.Decimal) (*sdkdecimal.Decimal, error) {
-	if value == nil {
+/*
+PulseSymbols rotates through the instrument universe for quiet-symbol heartbeats.
+*/
+func (price *Price) PulseSymbols(batch, start int) ([]string, int) {
+	if price.Instrument == nil {
+		return nil, start
+	}
+
+	all := price.Instrument.Symbols()
+
+	if len(all) == 0 || batch <= 0 {
+		return nil, start
+	}
+
+	if batch > len(all) {
+		batch = len(all)
+	}
+
+	start = max(0, start) % len(all)
+	out := make([]string, 0, batch)
+
+	for i := range batch {
+		out = append(out, all[(start+i)%len(all)])
+	}
+
+	return out, (start + batch) % len(all)
+}
+
+/*
+PulseQuote is last plus touch bid/ask for heartbeat ignition inputs.
+*/
+func (price *Price) PulseQuote(symbol string) (last, bid, ask float64, ok bool) {
+	symbol = price.normalizer.Name(symbol)
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+
+		bid = book.BidPrice().InexactFloat64()
+		ask = book.AskPrice().InexactFloat64()
+		ok = bid > 0 && ask > bid
+	})
+
+	if !ok {
+		return 0, 0, 0, false
+	}
+
+	return bid, bid, ask, true
+}
+
+/*
+PnL is bid-walk proceeds, minus the exit fee and the entry fee, minus
+Entry times Qty. Incomplete walks return nil.
+*/
+func (price *Price) PnL(position *Position) *decimal.Decimal {
+	pnl, _ := price.markPnL(position)
+	return pnl
+}
+
+/*
+PnLPct is PnL as a percent of Entry times Qty.
+*/
+func (price *Price) PnLPct(position *Position) *decimal.Decimal {
+	_, pct := price.markPnL(position)
+	return pct
+}
+
+/*
+markPnL snapshots Entry/Qty under position.mu then walks the book unlocked so
+ProfitableExit/Model cannot race Apply while Update holds the same mutex.
+*/
+func (price *Price) markPnL(
+	position *Position,
+) (pnl, pct *decimal.Decimal) {
+	if position == nil {
 		return nil, nil
 	}
 
-	return sdkdecimal.NewFromString(value.String())
+	position.mu.Lock()
+	pnl, pct = price.markPnLLocked(position)
+	position.mu.Unlock()
+	return pnl, pct
 }
 
-func (price *Price) formatSize(symbol string, value *decimal.Decimal) (*decimal.Decimal, error) {
-	if price.normalizer == nil || value == nil {
-		return value, nil
+/*
+markPnLLocked walks the bid book once and returns fee-net PnL with PnLPct.
+Caller must hold position.mu (Position.Update). One Book read so Update cannot
+pair pnl from T with pct from T+1.
+*/
+func (price *Price) markPnLLocked(
+	position *Position,
+) (pnl, pct *decimal.Decimal) {
+	// Marking needs fill-derived Qty/Entry and a wired Price — not EntryOrder.
+	// Restored opens (paper QueryOrders miss, wallet seed) stay WAITING forever
+	// if we require venue order metadata that Fold could not attach.
+	if position == nil ||
+		position.Qty == nil || position.Qty.Sign() <= 0 ||
+		position.Entry == nil || position.price == nil {
+		return nil, nil
 	}
 
-	raw, err := toSDK(value)
+	entry := *position.Entry
+	qty := *position.Qty
+	symbol := position.Symbol
+	cost := entry.Mul(qty)
+
+	if cost.Sign() <= 0 {
+		return nil, nil
+	}
+
+	name := price.normalizer.Name(symbol)
+	filled, gross := price.Walk(name, qty, false)
+
+	if filled == nil || gross == nil || filled.Cmp(qty) < 0 || gross.Sign() <= 0 {
+		return nil, nil
+	}
+
+	feeIn := price.Fee(name, &cost)
+	feeOut := price.Fee(name, gross)
+
+	if feeIn == nil || feeOut == nil {
+		return nil, nil
+	}
+
+	p := gross.Sub(*feeOut).Sub(cost).Sub(*feeIn)
+	q := p.Div(cost).Mul(decimalHundred)
+	return &p, &q
+}
+
+/*
+SpendableCash is quote free cash after in-flight Enter reservations — the same
+number Allocate budgets against. NaN when the wallet is unwired.
+*/
+func (price *Price) SpendableCash() float64 {
+	if price == nil || price.balance == nil ||
+		system.Cfg == nil || system.Cfg.Market == nil {
+		return math.NaN()
+	}
+
+	raw := price.balance.Cash(system.Cfg.Market.QuoteCurrency)
+	if raw == nil {
+		return math.NaN()
+	}
+
+	return raw.InexactFloat64()
+}
+
+/*
+Allocate sizes a venue-legal long from wallet (nil = wired desk balance).
+
+ReserveFraction is a keep-back: every enter budgets against at most
+(1−f)×cash so the desk never spends to zero. MaxFraction × conviction then
+sizes inside that lane. Exits return cash on the next Allocate — no
+rebalancing ledger.
+
+Budget = lane × MaxFraction × conviction. Size starts at touch ask /
+TouchDivisor. If that slice is below QtyMin but the full ask touch clears
+the minimum and fits the budget, lift to the full touch — never walk deeper
+ask levels past the top.
+*/
+func (price *Price) Allocate(
+	symbol string, wallet *market.Balance, hint SizeHint,
+) (*decimal.Decimal, error) {
+	symbol = price.normalizer.Name(symbol)
+
+	// Nil wallet → desk balance, skip venue mins (observe). Callers pass a wallet to enforce.
+	enforceMins := wallet != nil
+
+	if wallet == nil {
+		wallet = price.balance
+	}
+
+	if price.Instrument == nil || !price.Instrument.Has(symbol) {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "symbol not in instrument universe")
+	}
+
+	if wallet == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "balance is not wired")
+	}
+
+	pair := price.Instrument.Pair(symbol)
+	raw := wallet.Cash(pair.Quote)
+
+	if raw == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "no spendable quote cash")
+	}
+
+	cash, err := decimal.NewFromString(raw.String())
+
+	if err != nil || cash.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "quote cash unusable")
+	}
+
+	if pair.QtyMin == nil || pair.CostMin == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "instrument limits missing")
+	}
+
+	lane := price.entryCash(cash)
+	budget := lane.Mul(decimal.NewFromFloat(system.Cfg.Risk.MaxFraction)).
+		Mul(decimal.NewFromFloat(hint.Conviction()))
+
+	if budget.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "risk budget is zero")
+	}
+
+	var touch *decimal.Decimal
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+
+		touch = book.AskSize()
+	})
+
+	if touch == nil || touch.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "book not ready")
+	}
+
+	divisor := system.Cfg.Risk.TouchDivisor
+
+	if divisor <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "touch divisor invalid")
+	}
+
+	cap := touch.Div(decimal.NewFromFloat(divisor))
+	sized, err := price.formatQty(symbol, cap)
+
+	if err != nil || sized == nil || sized.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "touch cap below size step")
+	}
+
+	if enforceMins {
+		minQty, err := price.venueMinQty(symbol, pair)
+
+		if err != nil {
+			return nil, err
+		}
+
+		// Below instrument minimum on the /divisor slice: lift to the full
+		// ask touch when that size is legal. Still reject if the top itself
+		// is dust — never walk deeper asks to manufacture a fill.
+		if sized.Cmp(*minQty) < 0 {
+			full, ferr := price.formatQty(symbol, *touch)
+			if ferr != nil || full == nil || full.Sign() <= 0 || full.Cmp(*minQty) < 0 {
+				return nil, errnie.Err(
+					errnie.UnprocessableContent,
+					"[price] allocate failed",
+					nil,
+				).With("symbol", symbol, "why", "touch slice below venue minimum")
+			}
+			sized = full
+		}
+	}
+
+	for range 8 {
+		filled, gross := price.Walk(symbol, *sized, true)
+
+		if filled == nil || gross == nil || filled.Sign() <= 0 {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "ask walk produced zero size")
+		}
+
+		fee := price.Fee(symbol, gross)
+
+		if fee == nil {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "fee unknown")
+		}
+
+		spend := gross.Add(*fee)
+
+		if spend.Cmp(budget) <= 0 {
+			if !enforceMins ||
+				(filled.Cmp(*pair.QtyMin) >= 0 && gross.Cmp(*pair.CostMin) >= 0) {
+				return filled, nil
+			}
+
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "touch slice below venue minimum")
+		}
+
+		avg := gross.Div(*filled)
+		unitFee := price.Fee(symbol, &avg)
+
+		if unitFee == nil || avg.Sign() <= 0 {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "cannot trim to budget")
+		}
+
+		unit := avg.Add(*unitFee)
+		cut := spend.Sub(budget).Div(unit)
+
+		if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 &&
+			cut.Cmp(*pair.QtyIncrement) < 0 {
+			cut = *pair.QtyIncrement
+		}
+
+		if cut.Sign() <= 0 || filled.Cmp(cut) <= 0 {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "cannot trim to budget")
+		}
+
+		next := filled.Sub(cut)
+		formatted, err := price.formatQty(symbol, next)
+
+		if err != nil || formatted == nil || formatted.Sign() <= 0 || formatted.Cmp(*filled) >= 0 {
+			return nil, errnie.Err(
+				errnie.UnprocessableContent,
+				"[price] allocate failed",
+				nil,
+			).With("symbol", symbol, "why", "cannot trim to budget")
+		}
+
+		sized = formatted
+	}
+
+	return nil, errnie.Err(
+		errnie.UnprocessableContent,
+		"[price] allocate failed",
+		nil,
+	).With("symbol", symbol, "why", "cannot trim to budget")
+}
+
+/*
+entryCash is the quote base Allocate may budget against: (1−ReserveFraction)×cash
+so a keep-back always stays unspent. Cash freed by exits is visible on the next
+call.
+*/
+func (price *Price) entryCash(cash decimal.Decimal) decimal.Decimal {
+	frac := system.Cfg.Risk.ReserveFraction
+	if frac <= 0 {
+		return cash
+	}
+	if frac >= 1 {
+		return decimal.Zero
+	}
+
+	return cash.Mul(decimal.NewFromFloat(1 - frac))
+}
+
+/*
+OpenDragPct is the fee-net close-now loss (%) of buying one touch/÷N clip and
+immediately selling it — spread + fees as positive drag. False when the book
+cannot size the probe.
+*/
+func (price *Price) OpenDragPct(symbol string) (float64, bool) {
+	symbol = price.normalizer.Name(symbol)
+
+	var touch *decimal.Decimal
+	price.Books.Book(symbol, func(book *market.Book) {
+		if !book.Tradable() {
+			return
+		}
+		touch = book.AskSize()
+	})
+
+	if touch == nil || touch.Sign() <= 0 {
+		return 0, false
+	}
+
+	divisor := system.Cfg.Risk.TouchDivisor
+	if divisor <= 0 {
+		return 0, false
+	}
+
+	cap := touch.Div(decimal.NewFromFloat(divisor))
+	sized, err := price.formatQty(symbol, cap)
+	if err != nil || sized == nil || sized.Sign() <= 0 {
+		return 0, false
+	}
+
+	bought, buyGross := price.Walk(symbol, *sized, true)
+	if bought == nil || buyGross == nil || bought.Sign() <= 0 || buyGross.Sign() <= 0 {
+		return 0, false
+	}
+
+	buyFee := price.Fee(symbol, buyGross)
+	if buyFee == nil {
+		return 0, false
+	}
+
+	sold, sellGross := price.Walk(symbol, *bought, false)
+	if sold == nil || sellGross == nil || sold.Sign() <= 0 {
+		return 0, false
+	}
+
+	sellFee := price.Fee(symbol, sellGross)
+	if sellFee == nil {
+		return 0, false
+	}
+
+	cost := buyGross.Add(*buyFee)
+	proceeds := sellGross.Sub(*sellFee)
+	pnl := proceeds.Sub(cost)
+	drag := pnl.Neg().Div(cost).Mul(decimalHundred).InexactFloat64()
+	if drag < 0 {
+		drag = 0
+	}
+	return drag, true
+}
+
+/*
+EntryOpenDragOK is true when close-now round-trip drag is under MaxEntryOpenDragPct.
+*/
+func (price *Price) EntryOpenDragOK(symbol string) bool {
+	cap := system.Cfg.Risk.MaxEntryOpenDragPct
+	if cap <= 0 {
+		return true
+	}
+
+	drag, ok := price.OpenDragPct(symbol)
+	return ok && drag <= cap
+}
+
+/*
+formatQty snaps qty onto the venue size grid. Nil normalizer keeps qty as-is.
+*/
+func (price *Price) formatQty(symbol string, qty decimal.Decimal) (*decimal.Decimal, error) {
+	if price.normalizer == nil {
+		out := qty
+		return &out, nil
+	}
+
+	raw, err := sdkdecimal.NewFromString(qty.String())
+
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
-	sized, err := price.normalizer.FormatSize(symbol, raw)
+	formatted, err := price.normalizer.FormatSize(symbol, raw)
+
+	if err != nil || formatted == nil {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] format qty failed",
+			err,
+		).With("symbol", symbol)
+	}
+
+	parsed, err := decimal.NewFromString(formatted.String())
+
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(err)
 	}
 
-	return toSymm(sized), nil
+	return &parsed, nil
+}
+
+/*
+venueMinQty is the smallest venue-legal size: at least QtyMin, and large enough
+that an ask walk clears CostMin. Walks ask levels until both mins clear — no
+linear Level-1 price extrapolation (steep books overshoot CostMin badly).
+*/
+func (price *Price) venueMinQty(
+	symbol string, pair kraken.InstrumentPair,
+) (*decimal.Decimal, error) {
+	symbol = price.normalizer.Name(symbol)
+
+	var raw decimal.Decimal
+	met := false
+
+	price.Books.Book(symbol, func(book *market.Book) {
+		if book == nil {
+			return
+		}
+
+		var got, cost decimal.Decimal
+
+		for level := book.BestAsk(); level != nil; level = level.Higher {
+			if !level.Live() || level.Price == nil || level.Quantity == nil {
+				continue
+			}
+
+			needQty := got.Cmp(*pair.QtyMin) < 0
+			needCost := cost.Cmp(*pair.CostMin) < 0
+
+			if !needQty && !needCost {
+				break
+			}
+
+			want := decimal.Zero
+
+			if needQty {
+				want = pair.QtyMin.Sub(got)
+			}
+
+			if needCost && level.Price.Sign() > 0 {
+				byCost := pair.CostMin.Sub(cost).Div(*level.Price)
+
+				if byCost.Cmp(want) > 0 {
+					want = byCost
+				}
+			}
+
+			if want.Sign() <= 0 {
+				want = *level.Quantity
+			}
+
+			take := decimal.Min(*level.Quantity, want)
+			got = got.Add(take)
+			cost = cost.Add(level.Price.Mul(take))
+		}
+
+		if got.Cmp(*pair.QtyMin) >= 0 && cost.Cmp(*pair.CostMin) >= 0 {
+			raw = got
+			met = true
+		}
+	})
+
+	if !met || raw.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "ask walk cannot clear venue mins")
+	}
+
+	if pair.QtyIncrement != nil && pair.QtyIncrement.Sign() > 0 {
+		raw = raw.Div(*pair.QtyIncrement).Ceil().Mul(*pair.QtyIncrement)
+	}
+
+	formatted, err := price.formatQty(symbol, raw)
+
+	if err != nil || formatted == nil || formatted.Sign() <= 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "venue minimum below size step")
+	}
+
+	if formatted.Cmp(*pair.QtyMin) < 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "venue minimum below size step")
+	}
+
+	filled, gross := price.Walk(symbol, *formatted, true)
+
+	if filled == nil || gross == nil ||
+		filled.Cmp(*pair.QtyMin) < 0 || gross.Cmp(*pair.CostMin) < 0 {
+		return nil, errnie.Err(
+			errnie.UnprocessableContent,
+			"[price] allocate failed",
+			nil,
+		).With("symbol", symbol, "why", "size below venue minimum")
+	}
+
+	return formatted, nil
+}
+
+func (price *Price) loadFees() bool {
+	symbols := price.Instrument.Symbols()
+
+	if len(symbols) == 0 {
+		price.Error(errnie.Err(
+			errnie.Internal, "trade volume fees need a non-empty symbol list", nil,
+		))
+		return false
+	}
+
+	raw, err := price.public.Post(
+		system.Cfg.WebSocket.Endpoints.TradeVolume,
+		kraken.NewTradeVolumeRequest(symbols),
+	)
+
+	if err != nil {
+		price.Error(errnie.Err(errnie.IO, "failed to get trade volume fees", err))
+		return false
+	}
+
+	volume, err := kraken.ParseTradeVolume(raw)
+
+	if err != nil {
+		price.Error(err)
+		return false
+	}
+
+	ok := false
+
+	for pair, fee := range volume.Fees {
+		if fee.Fee == nil {
+			continue
+		}
+
+		symbol := price.normalizer.Name(pair)
+
+		if !price.Instrument.Has(symbol) {
+			continue
+		}
+
+		price.Instrument.takerFees.Store(symbol, fee.Fee)
+		ok = true
+	}
+
+	if !ok {
+		price.Error(errnie.Err(
+			errnie.UnprocessableContent, "trade volume returned no usable taker fees", nil,
+		))
+	}
+
+	return ok
 }

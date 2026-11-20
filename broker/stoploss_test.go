@@ -1,288 +1,468 @@
 package broker
 
 import (
-	"math"
 	"testing"
 
+	"github.com/bytedance/sonic"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/system"
 )
 
-func TestStoplossAbsoluteHardFloor(t *testing.T) {
-	Convey("A mark at or below MaxLossPct triggers without ever clearing profit", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+func TestNewStoploss(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When NewStoploss is called with initial pnl and arm", func() {
+			sl := NewStoploss(0.5)
 
-		stop := NewStoploss(-1.6)
-		So(stop.MaxLossPct, ShouldEqual, -2.5)
-		So(stop.ProfitTargetPct, ShouldEqual, 2.5)
-		So(stop.FloorPnLPct, ShouldEqual, -2.5)
-
-		feedStoploss(stop, []float64{-1.8, -2.1, -2.5})
-		So(stop.Triggered(), ShouldBeTrue)
-		So(stop.State, ShouldEqual, StoplossTriggered)
-		So(stop.PeakPnLPct, ShouldBeLessThan, stop.ProfitTargetPct)
-		assertInvariant(stop)
+			Convey("State is healthy with the given arm threshold", func() {
+				So(sl.State, ShouldEqual, StoplossHealthy)
+				So(sl.Regime, ShouldEqual, RegimeSmooth)
+				So(sl.InitialPnLPct, ShouldEqual, 0.5)
+				So(sl.CurrentPnLPct, ShouldEqual, 0.5)
+				So(sl.PeakPnLPct, ShouldEqual, 0.5)
+				So(sl.ArmPnlPct, ShouldEqual, system.Cfg.Risk.StoplossArmPnLPct)
+				So(sl.Confirms, ShouldEqual, 0)
+				So(sl.MaxWindow, ShouldEqual, 20)
+				So(sl.MaxSwings, ShouldEqual, 12)
+				So(sl.RallyStart, ShouldEqual, 0.5)
+				So(sl.PullbackLow, ShouldEqual, 0.5)
+				So(len(sl.Deltas), ShouldEqual, 0)
+				So(sl.TypicalPullback, ShouldEqual, 0.02)
+				So(sl.TriggerReason, ShouldEqual, "")
+				So(sl.ExplosiveActive, ShouldBeFalse)
+			})
+		})
 	})
 }
 
-func TestStoplossGreenBelowProfitStaysAlive(t *testing.T) {
-	Convey("Marks that stay under ProfitTargetPct and above the floor do not trigger", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+func TestStoplossUpdate(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When peak stays below the arm threshold", func() {
+			sl := NewStoploss(0.5)
+			sl.Update(0.6, 0)
+			sl.Update(0.8, 0)
+			sl.Update(0.4, 0)
 
-		stop := NewStoploss(-1.6)
-		path := []float64{-1.4, -1.0, -0.5, 0.2, 1.0, 1.5, 2.0, 1.2, 0.8, 1.8}
+			Convey("State stays healthy", func() {
+				So(sl.State, ShouldEqual, StoplossHealthy)
+				So(sl.CurrentPnLPct, ShouldEqual, 0.4)
+				So(sl.PeakPnLPct, ShouldEqual, 0.8)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
 
-		fed := feedStoploss(stop, path)
-		So(fed, ShouldEqual, len(path))
-		So(stop.Triggered(), ShouldBeFalse)
-		So(stop.State, ShouldNotEqual, StoplossProtected)
-		So(stop.PeakPnLPct, ShouldBeLessThan, stop.ProfitTargetPct)
-		assertInvariant(stop)
-	})
-}
+		Convey("When an underwater position gaps above arm", func() {
+			sl := NewStoploss(-5.0)
+			sl.Update(-5.0, 0)
+			sl.Update(2.0, 0)
 
-func TestStoplossProfitProtectionFloor(t *testing.T) {
-	Convey("Clearing ProfitTargetPct locks a non-negative floor; falling through it triggers", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+			Convey("State arms on peak without triggering", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.PeakPnLPct, ShouldEqual, 2.0)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
 
-		stop := NewStoploss(-1.6)
-		feedStoploss(stop, []float64{-1.0, 1.0, 2.5})
-		So(stop.Triggered(), ShouldBeFalse)
-		So(stop.State, ShouldEqual, StoplossProtected)
-		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, 0.0)
+		Convey("When friction does not move the arm line", func() {
+			sl := NewStoploss(1.2)
+			sl.Update(1.2, 1.0)
 
-		feedStoploss(stop, []float64{-0.1})
-		So(stop.Triggered(), ShouldBeTrue)
-		assertInvariant(stop)
-	})
-}
+			Convey("Arming follows ArmPnlPct only", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
 
-func TestStoplossTightensOnDownWidensOnUp(t *testing.T) {
-	Convey("A down-move lifts Floor above MaxLoss; a following up-move lowers it again", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+		Convey("When crawl chops inside learned breathing room", func() {
+			sl := NewStoploss(1.0)
+			steps := []float64{1.02, 1.03, 1.04, 1.01, 1.05, 1.06, 1.03, 1.07}
 
-		stop := NewStoploss(-1.6)
-		feedStoploss(stop, []float64{-2.0})
-		So(stop.Triggered(), ShouldBeFalse)
+			for _, pnl := range steps {
+				sl.Update(pnl, 0)
+			}
 
-		tight := stop.FloorPnLPct
-		So(tight, ShouldBeGreaterThan, stop.MaxLossPct)
-		// Tightening cannot jump through the mark that caused it.
-		So(tight, ShouldBeLessThan, -2.0)
+			Convey("Familiar giveback stays armed", func() {
+				So(sl.Triggered(), ShouldBeFalse)
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.PeakPnLPct, ShouldEqual, 1.07)
+			})
+		})
 
-		feedStoploss(stop, []float64{-1.2})
-		So(stop.Triggered(), ShouldBeFalse)
-		So(stop.FloorPnLPct, ShouldBeLessThan, tight)
-		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, stop.MaxLossPct)
-		assertInvariant(stop)
-	})
-}
+		Convey("When pnl climbs above arm", func() {
+			sl := NewStoploss(0.5)
 
-/*
-pnlTape generates a deterministic PnL% path. chaos in [0,1] scales noise;
-drift steers the mean; step is the base move size.
-*/
-type pnlTape struct {
-	seed  uint64
-	pnl   float64
-	chaos float64
-	drift float64
-	step  float64
-}
+			for i := range 5 {
+				sl.Update(1.0+float64(i)*0.3, 0)
+			}
 
-func newPnlTape(seed uint64, entry, chaos, drift, step float64) *pnlTape {
-	return &pnlTape{
-		seed:  seed,
-		pnl:   entry,
-		chaos: math.Max(0, math.Min(1, chaos)),
-		drift: drift,
-		step:  step,
-	}
-}
+			Convey("State is armed and peak tracks the climb", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.PeakPnLPct, ShouldEqual, 2.2)
+				So(sl.CurrentPnLPct, ShouldEqual, 2.2)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
 
-func (tape *pnlTape) next() float64 {
-	u := tape.unit()
-	tape.pnl += tape.drift + tape.step*tape.chaos*(2*u-1)
-	return tape.pnl
-}
+		Convey("When state is already triggered", func() {
+			sl := NewStoploss(3.0)
+			sl.State = StoplossTriggered
+			sl.CurrentPnLPct = 2.0
+			sl.PeakPnLPct = 4.0
 
-func (tape *pnlTape) take(n int) []float64 {
-	out := make([]float64, 0, n)
-	for range n {
-		out = append(out, tape.next())
-	}
-	return out
-}
+			sl.Update(1.5, 0)
+			sl.Update(-47.0, 0)
 
-func (tape *pnlTape) setRegime(chaos, drift, step float64) {
-	tape.chaos = math.Max(0, math.Min(1, chaos))
-	tape.drift = drift
-	tape.step = step
-}
+			Convey("Update is a no-op while Triggered", func() {
+				So(sl.State, ShouldEqual, StoplossTriggered)
+				So(sl.CurrentPnLPct, ShouldEqual, 2.0)
+				So(sl.PeakPnLPct, ShouldEqual, 4.0)
+				So(sl.Triggered(), ShouldBeTrue)
+			})
+		})
 
-func (tape *pnlTape) unit() float64 {
-	x := tape.seed
-	if x == 0 {
-		x = 0x9e3779b97f4a7c15
-	}
-	x ^= x >> 12
-	x ^= x << 25
-	x ^= x >> 27
-	tape.seed = x
-	return float64(x) / float64(^uint64(0))
-}
+		Convey("When armed crawl breaks the trailing floor with negative progress", func() {
+			sl := NewStoploss(2.0)
+			for _, pnl := range []float64{2.0, 2.5, 3.0, 2.7, 3.2, 2.4, 2.0, 1.5} {
+				sl.Update(pnl, 0)
+			}
+			if !sl.Triggered() {
+				sl.Update(1.2, 0)
+				sl.Update(1.0, 0)
+			}
 
-/*
-feedStoploss pushes every mark through Update. After Triggered, Update is a
-no-op; we still walk the full path so regime-length claims are honest.
-*/
-func feedStoploss(stop *Stoploss, path []float64) int {
-	for i, pnl := range path {
-		stop.Update(pnl)
-		assertInvariant(stop)
-		_ = i
-	}
-	return len(path)
-}
+			Convey("Peak is remembered while armed or tripped", func() {
+				So(sl.State, ShouldBeIn, StoplossArmed, StoplossTriggered)
+				So(sl.PeakPnLPct, ShouldBeGreaterThanOrEqualTo, 3.0)
+			})
+		})
 
-/*
-assertInvariant is the live rail check after every Update:
-  - floor never below MaxLossPct
-  - if triggered, mark is at or below floor
-  - if not triggered, mark is strictly above floor
-*/
-func assertInvariant(stop *Stoploss) {
-	So(math.IsNaN(stop.FloorPnLPct), ShouldBeFalse)
-	So(math.IsInf(stop.FloorPnLPct, 0), ShouldBeFalse)
-	So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, stop.MaxLossPct)
-	So(stop.PeakPnLPct, ShouldBeGreaterThanOrEqualTo, stop.InitialPnLPct)
+		Convey("When an explosive runner collapses under the profit floor", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(1.0, 0)
+			sl.Update(2.6, 0)
+			sl.CommitPending()
+			sl.Update(0.15, 0)
 
-	if stop.Triggered() {
-		So(stop.State, ShouldEqual, StoplossTriggered)
-		So(stop.CurrentPnLPct, ShouldBeLessThanOrEqualTo, stop.FloorPnLPct+1e-9)
-		return
-	}
+			Convey("It refuses to trip below PolicyExitMinProfitPct", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				So(sl.Triggered(), ShouldBeFalse)
+				So(sl.WantsExit(), ShouldBeFalse)
+			})
+		})
 
-	So(stop.CurrentPnLPct, ShouldBeGreaterThan, stop.FloorPnLPct)
+		Convey("When an explosive runner collapses but stays above the profit floor", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(1.0, 0)
+			sl.Update(2.6, 0)
+			sl.CommitPending()
+			sl.Update(0.6, 0)
 
-	if stop.State == StoplossProtected {
-		So(stop.PeakPnLPct, ShouldBeGreaterThanOrEqualTo, stop.ProfitTargetPct)
-		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, 0)
-	}
-}
-
-func pathMin(path []float64) float64 {
-	min := path[0]
-	for _, pnl := range path[1:] {
-		if pnl < min {
-			min = pnl
-		}
-	}
-	return min
-}
-
-func TestStoplossTapeChaosLevels(t *testing.T) {
-	Convey("Long tapes at rising chaos: rails hold; breach of MaxLoss must trigger", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
-		entry := -1.6
-		maxLoss := -system.Cfg.Risk.MaxAllowedLossPct
-
-		cases := []struct {
-			name  string
-			chaos float64
-			drift float64
-			step  float64
-		}{
-			{name: "calm grind up", chaos: 0.05, drift: 0.004, step: 0.02},
-			{name: "mild chop", chaos: 0.25, drift: 0.001, step: 0.05},
-			{name: "noisy mean-revert", chaos: 0.55, drift: 0, step: 0.08},
-			{name: "violent", chaos: 0.90, drift: -0.002, step: 0.12},
-		}
-
-		seeds := []uint64{0xC0FFEE, 0xDEADBEEF, 0xA11CE, 0xBADC0DE}
-
-		for _, tc := range cases {
-			Convey(tc.name, func() {
-				for _, seed := range seeds {
-					tape := newPnlTape(seed+uint64(len(tc.name)), entry, tc.chaos, tc.drift, tc.step)
-					path := tape.take(400)
-
-					stop := NewStoploss(entry)
-					fed := feedStoploss(stop, path)
-					So(fed, ShouldEqual, len(path))
-
-					if pathMin(path) <= maxLoss {
-						So(stop.Triggered(), ShouldBeTrue)
-					}
+			Convey("Crash tick may trip only while fee-net PnL stays profitable", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				if sl.Triggered() {
+					So(sl.CurrentPnLPct, ShouldBeGreaterThanOrEqualTo, exitProfitFloor())
+					So(sl.TriggerReason, ShouldEqual, "explosive_floor_break")
 				}
 			})
-		}
+		})
+
+		Convey("When current falls below the arm line after Tranche 1", func() {
+			sl := NewStoploss(2.0)
+			sl.Update(2.0, 0)
+			sl.CommitPending()
+			sl.Update(0.5, 0)
+
+			Convey("State stays Armed without a full trip", func() {
+				So(sl.TranchesExited, ShouldBeGreaterThanOrEqualTo, 1)
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
+
+		Convey("When price re-enters above the arm line after disarm", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(2.0, 0)
+			// Slip clearly under Arm so AbortPending+Disarm fire (0.5 == Arm
+			// does not disarm under the < Arm-eps check).
+			sl.Update(0.2, 0)
+			So(sl.State, ShouldEqual, StoplossHealthy)
+			sl.Update(2.0, 0)
+
+			Convey("Stoploss re-arms", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
+
+		Convey("When an underwater chop finally arms", func() {
+			sl := NewStoploss(-1.5)
+			for _, pnl := range []float64{
+				-1.55, -1.50, -1.60, -1.45, -1.70, -1.40, -1.65, -1.35,
+			} {
+				sl.Update(pnl, 0)
+			}
+			underwaterPB := sl.TypicalPullback
+			sl.Update(1.0, 0)
+
+			Convey("onArm reseeds pullback room above underwater chop scale", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.TypicalPullback, ShouldBeGreaterThanOrEqualTo, minArmedPullbackFloor)
+				So(sl.TypicalPullback, ShouldBeGreaterThan, underwaterPB)
+				So(len(sl.Pullbacks), ShouldEqual, 0)
+				So(len(sl.Pushes), ShouldEqual, 0)
+			})
+		})
+
+		Convey("When first profit peak is still inside the sharp-break margin", func() {
+			sl := NewStoploss(-1.5)
+			sl.Update(-1.5, 0)
+			// Arm at policy floor; peak must stay under Arm+sharpBreakPeakMargin.
+			sl.Update(sl.ArmPnlPct, 0)
+			sl.AbortPending()
+			peak := sl.ArmPnlPct + sharpBreakPeakMargin - 0.05
+			sl.Update(peak, 0)
+			sl.EmaDelta = -0.05
+			floor := sl.TrailingFloor
+			sl.Update(floor-0.05, 0)
+
+			Convey("trail_sharp_break is withheld; position stays armed or waits confirms", func() {
+				So(sl.TriggerReason, ShouldNotEqual, "trail_sharp_break")
+				So(sl.PeakPnLPct, ShouldBeLessThan, sl.ArmPnlPct+sharpBreakPeakMargin)
+			})
+		})
+
+		Convey("When a multi-tick climb never prints a single 0.50% delta", func() {
+			sl := NewStoploss(0.2)
+			for _, pnl := range []float64{
+				0.25, 0.30, 0.35, 0.40, 0.45, 0.55, 0.70, 0.85, 1.05, 1.25,
+			} {
+				sl.Update(pnl, 0)
+			}
+
+			Convey("Cumulative climb ignites the explosive runner path", func() {
+				So(sl.ExplosiveActive, ShouldBeTrue)
+				So(sl.Regime, ShouldEqual, RegimeExplosive)
+				So(sl.PeakPushDelta, ShouldBeGreaterThanOrEqualTo, 0.50)
+			})
+		})
 	})
 }
 
-func TestStoplossTapeMustStopOnCrash(t *testing.T) {
-	Convey("A gradual crash triggers against the active floor before or at MaxLoss", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+func TestTrip(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When trip is called", func() {
+			sl := NewStoploss(2.0)
+			sl.State = StoplossArmed
+			sl.trip("trail_confirm")
 
-		stop := NewStoploss(-1.6)
-		path := []float64{-1.7, -2.0, -2.4, -2.5, -5.0, -10.0}
-		fed := feedStoploss(stop, path)
-
-		So(fed, ShouldEqual, len(path))
-		So(stop.Triggered(), ShouldBeTrue)
-		So(stop.CurrentPnLPct, ShouldBeLessThanOrEqualTo, stop.FloorPnLPct+1e-9)
-		So(stop.FloorPnLPct, ShouldBeGreaterThanOrEqualTo, stop.MaxLossPct)
+			Convey("State and TriggerReason stick with a full-remainder claim", func() {
+				So(sl.State, ShouldEqual, StoplossTriggered)
+				So(sl.TriggerReason, ShouldEqual, "trail_confirm")
+				So(sl.Triggered(), ShouldBeTrue)
+				So(sl.PendingExitPct, ShouldEqual, 1)
+				So(sl.PendingTranches, ShouldEqual, totalTranches)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeTrue)
+			})
+		})
 	})
 }
 
-func TestStoplossTapeGapPastHardFloor(t *testing.T) {
-	Convey("A sudden gap past MaxLossPct triggers at or below MaxLoss", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
+func TestAbortPending(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When a trip is vetoed before fill", func() {
+			sl := NewStoploss(2.0)
+			sl.State = StoplossArmed
+			sl.trip("trail_confirm")
+			sl.AbortPending()
 
-		stop := NewStoploss(-1.6)
-		path := []float64{-2.6, -5.0, -10.0}
-		fed := feedStoploss(stop, path)
+			Convey("Triggered clears and WantsExit stops without banking", func() {
+				So(sl.State, ShouldEqual, StoplossArmed)
+				So(sl.PendingExitPct, ShouldEqual, 0)
+				So(sl.PendingTranches, ShouldEqual, 0)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeFalse)
+				So(sl.Triggered(), ShouldBeFalse)
+			})
+		})
 
-		So(fed, ShouldEqual, len(path))
-		So(stop.Triggered(), ShouldBeTrue)
-		So(stop.CurrentPnLPct, ShouldBeLessThanOrEqualTo, stop.MaxLossPct)
+		Convey("When Tranche 1 is vetoed before fill", func() {
+			sl := NewStoploss(0.5)
+			sl.Update(1.0, 0)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.TranchesExited, ShouldEqual, 0)
+			sl.AbortPending()
+
+			Convey("Claim rolls back so the next arm tick can re-emit Tranche 1", func() {
+				So(sl.PendingTranches, ShouldEqual, 0)
+				So(sl.PendingExitPct, ShouldEqual, 0)
+				So(sl.TranchesExited, ShouldEqual, 0)
+				So(sl.WantsExit(), ShouldBeFalse)
+
+				sl.Update(1.0, 0)
+				So(sl.PendingTranches, ShouldEqual, 1)
+				So(sl.TriggerReason, ShouldEqual, "tranche_1_arm")
+			})
+		})
 	})
 }
 
-func TestStoplossTapeRegimeCycle(t *testing.T) {
-	Convey("Full calm→dump→squeeze→chop→settle path is fed mark-by-mark with live invariants", t, func() {
-		system.Cfg.Risk.MaxAllowedLossPct = 2.5
-		entry := -1.6
-		maxLoss := -system.Cfg.Risk.MaxAllowedLossPct
+func TestTrancheLadder(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When PnL climbs Arm then Arm+step (50% early banks)", func() {
+			sl := NewStoploss(0.5)
+			sl.BasisQty = 100
+			sl.Update(1.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 0)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.PendingExitPct, ShouldEqual, 0.25)
+			So(sl.NextTargetPct, ShouldEqual, sl.ArmPnlPct+sl.trancheStep())
+			So(sl.Triggered(), ShouldBeFalse)
+			So(sl.WantsExit(), ShouldBeTrue)
 
-		tape := newPnlTape(0xA11CE, entry, 0.1, 0.003, 0.03)
-		regimes := []struct {
-			name  string
-			chaos float64
-			drift float64
-			step  float64
-			n     int
-		}{
-			{name: "calm", chaos: 0.08, drift: 0.005, step: 0.025, n: 120},
-			{name: "dump", chaos: 0.35, drift: -0.008, step: 0.06, n: 100},
-			{name: "squeeze", chaos: 0.20, drift: 0.010, step: 0.04, n: 120},
-			{name: "chop", chaos: 0.70, drift: 0, step: 0.10, n: 150},
-			{name: "settle", chaos: 0.15, drift: 0.004, step: 0.03, n: 100},
-		}
+			sl.CommitPending()
+			So(sl.TranchesExited, ShouldEqual, 1)
+			So(sl.PendingTranches, ShouldEqual, 0)
 
-		path := make([]float64, 0, 590)
-		for _, regime := range regimes {
-			tape.setRegime(regime.chaos, regime.drift, regime.step)
-			path = append(path, tape.take(regime.n)...)
-		}
-		So(len(path), ShouldEqual, 590)
+			sl.Update(2.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 1)
+			So(sl.PendingTranches, ShouldEqual, 1)
+			So(sl.PendingExitPct, ShouldEqual, 0.25)
+			So(sl.Triggered(), ShouldBeFalse)
 
-		stop := NewStoploss(entry)
-		fed := feedStoploss(stop, path)
-		So(fed, ShouldEqual, 590)
+			sl.CommitPending()
+			So(sl.TranchesExited, ShouldEqual, 2)
 
-		if pathMin(path) <= maxLoss {
-			So(stop.Triggered(), ShouldBeTrue)
-		}
+			sl.Update(3.0, 0)
+			So(sl.TranchesExited, ShouldEqual, 2)
+			So(sl.PendingTranches, ShouldEqual, 0)
+			So(sl.PendingExitPct, ShouldEqual, 0)
+			So(sl.Triggered(), ShouldBeFalse)
+		})
 	})
+}
+
+func TestTriggered(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When state is not triggered", func() {
+			So(NewStoploss(0.5).Triggered(), ShouldBeFalse)
+		})
+
+		Convey("When state is triggered", func() {
+			sl := NewStoploss(2.0)
+			sl.State = StoplossTriggered
+			So(sl.Triggered(), ShouldBeTrue)
+		})
+	})
+}
+
+func TestAnalyzeMemory(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When deltas are empty", func() {
+			sl := NewStoploss(1.0)
+			avg, down, net, chaos, flip := sl.analyzeMemory()
+
+			Convey("All readings are zero", func() {
+				So(avg, ShouldEqual, 0)
+				So(down, ShouldEqual, 0)
+				So(net, ShouldEqual, 0)
+				So(chaos, ShouldEqual, 0)
+				So(flip, ShouldEqual, 0)
+			})
+		})
+
+		Convey("When deltas progress cleanly", func() {
+			sl := NewStoploss(1.0)
+			sl.Deltas = []float64{0.1, 0.2, 0.1}
+			avg, down, net, chaos, flip := sl.analyzeMemory()
+
+			Convey("Net progress and avg step match the window", func() {
+				So(net, ShouldEqual, 0.4)
+				So(avg, ShouldEqual, 0.4/3)
+				So(down, ShouldEqual, 0.4/3)
+				So(chaos, ShouldBeGreaterThan, 0)
+				So(flip, ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestStoplossMarshal(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When a lived-in stoploss is marshaled for S3", func() {
+			sl := NewStoploss(1.0)
+			sl.Update(1.5, 0)
+			sl.Update(2.0, 0)
+			sl.Update(1.8, 0)
+			sl.trip("trail_confirm")
+
+			body, err := sonic.Marshal(sl)
+			So(err, ShouldBeNil)
+
+			var got Stoploss
+			So(sonic.Unmarshal(body, &got), ShouldBeNil)
+
+			Convey("Exported lifecycle fields survive the round trip", func() {
+				So(got.State, ShouldEqual, StoplossTriggered)
+				So(got.TriggerReason, ShouldEqual, "trail_confirm")
+				So(got.PeakPnLPct, ShouldEqual, 2.0)
+				So(got.CurrentPnLPct, ShouldEqual, 1.8)
+				So(got.ArmPnlPct, ShouldEqual, system.Cfg.Risk.StoplossArmPnLPct)
+				So(got.MaxWindow, ShouldEqual, 20)
+				So(got.MaxSwings, ShouldEqual, 12)
+				// onArm reseeds RallyStart to the arm-time mark (first Update above arm).
+				So(got.RallyStart, ShouldEqual, 1.5)
+				So(len(got.Deltas), ShouldBeGreaterThan, 0)
+			})
+		})
+	})
+}
+
+func TestTrancheStepProfitOnlyPacing(t *testing.T) {
+	Convey("Setup", t, func() {
+		sl := NewStoploss(0.5)
+		sl.TypicalPush = 2.0
+		sl.ArmPnlPct = 1.0
+		floor := exitProfitFloor()
+
+		Convey("When below the profit floor, excitation and OFI do not shrink the step", func() {
+			sl.CurrentPnLPct = floor - 0.01
+			sl.Excitation = 0.9
+			sl.FlowOFI = -1.0
+			So(sl.trancheStep(), ShouldEqual, 2.0)
+		})
+
+		Convey("When green with high excitation, step tightens but stays at or above the floor", func() {
+			sl.CurrentPnLPct = floor + 1
+			sl.Excitation = 1.0
+			sl.FlowOFI = 0
+			step := sl.trancheStep()
+			So(step, ShouldBeLessThan, 2.0)
+			So(step, ShouldBeGreaterThanOrEqualTo, floor)
+		})
+
+		Convey("When green with bid OFI fleeing, step tightens but stays at or above the floor", func() {
+			sl.CurrentPnLPct = floor + 1
+			sl.Excitation = 0
+			sl.FlowOFI = -1.0
+			step := sl.trancheStep()
+			So(step, ShouldBeLessThan, 2.0)
+			So(step, ShouldBeGreaterThanOrEqualTo, floor)
+		})
+	})
+}
+
+func BenchmarkNewStoploss(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = NewStoploss(0.5)
+	}
+}
+
+func BenchmarkStoplossUpdate(b *testing.B) {
+	sl := NewStoploss(0.0)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for b.Loop() {
+		sl.Update(1.5, 0)
+	}
 }

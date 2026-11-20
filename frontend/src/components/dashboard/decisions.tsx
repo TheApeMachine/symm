@@ -4,8 +4,8 @@ import { signals } from "#/collections/app";
 import {
 	type Book,
 	bookAtom,
-	decisionBook,
 	decisionStoreKey,
+	isBook,
 } from "#/collections/book";
 import type { Decision, Region } from "#/collections/envelope";
 import {
@@ -22,6 +22,8 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
+import { kernelRowAt } from "#/lib/kernel-row";
+import { REGIONS } from "#/components/learning/regions";
 import { formatBlockedReason } from "#/lib/trigger-labels";
 import { cn } from "#/lib/utils";
 
@@ -47,27 +49,64 @@ const decisionReason = (decision: Decision): string => {
 	return `${gate}${reason}${path}${tier}`;
 };
 
+const regionKeyId = (key: number): string =>
+	`R${String(key).padStart(2, "0")}`;
+
+/*
+Mirrors strategy.Model.oracleAllows: any lit veto fails; need at least one approve.
+Hub merges decisions across ticks, so a stale oracle-skip can sit on the board
+after regions have already flipped to all-approve (green lamps).
+*/
+const regionsOracleAllows = (rows: Region[] | undefined): boolean => {
+	if (!rows?.length) return false;
+
+	let approved = false;
+
+	for (const row of rows) {
+		if (row == null || typeof row.key !== "number") continue;
+
+		const brightness =
+			typeof row.brightness === "number" && Number.isFinite(row.brightness)
+				? row.brightness
+				: 0;
+		if (brightness <= 0) continue;
+
+		const role = REGIONS[regionKeyId(row.key)]?.role;
+		if (role === "oracle_veto") return false;
+		if (role === "oracle_approve") approved = true;
+	}
+
+	return approved;
+};
+
 const decisionsFromLive = (
 	live: Record<string, Decision>,
 	book: Book,
+	regions: Record<string, Region[]>,
 ): DecisionRow[] => {
 	const rows: DecisionRow[] = [];
 
 	for (const decision of Object.values(live)) {
 		if (!decision?.symbol || !decision.action) continue;
-		if (decisionBook(decision) !== book) continue;
+		if (!isBook(decision.tier) || decision.tier !== book) continue;
 
-		const tier = decisionBook(decision);
+		if (
+			decision.gate === "oracle" &&
+			(decision.action === "skip" || decision.action === "blocked") &&
+			regionsOracleAllows(kernelRowAt(regions, decision.symbol))
+		) {
+			continue;
+		}
 
 		rows.push({
 			id: decisionStoreKey(decision),
 			symbol: decision.symbol,
 			action: decision.action,
 			confidence: decision.confidence ?? 0,
-			reason: decisionReason({ ...decision, tier }),
+			reason: decisionReason(decision),
 			gate: decision.gate,
 			path: decision.path,
-			tier,
+			tier: decision.tier,
 		});
 	}
 
@@ -84,27 +123,33 @@ const decisionsFromLive = (
 	});
 };
 
-const brightnessAt = (rows: Region[] | undefined, key: number): number => {
-	if (!rows) return 0;
+const regionAt = (
+	rows: Region[] | undefined,
+	key: number,
+): Region | undefined => {
+	if (!rows) return undefined;
 
 	for (const row of rows) {
-		if (row?.key === key) {
-			return typeof row.brightness === "number" &&
-				Number.isFinite(row.brightness)
-				? row.brightness
-				: 0;
-		}
+		if (row?.key === key) return row;
 	}
 
-	return 0;
+	return undefined;
 };
 
+const brightnessOf = (row: Region | undefined): number => {
+	if (!row) return 0;
+	return typeof row.brightness === "number" && Number.isFinite(row.brightness)
+		? row.brightness
+		: 0;
+};
+
+/** Region keys from a path — accepts R06 or R06.R00-style segments. */
 const pathKeys = (path: string | undefined): Set<number> => {
 	const out = new Set<number>();
 	if (!path) return out;
 
 	for (const part of path.split("/")) {
-		const match = /^R(\d{2})$/.exec(part.trim());
+		const match = /^R(\d{2})/.exec(part.trim());
 		if (!match) continue;
 		out.add(Number(match[1]));
 	}
@@ -122,12 +167,12 @@ const gateSide = (
 		return override;
 	}
 
-	const veto = brightnessAt(rows, gate.veto);
-	const approve = brightnessAt(rows, gate.approve);
+	const veto = brightnessOf(regionAt(rows, gate.veto));
+	const approve = brightnessOf(regionAt(rows, gate.approve));
 
-	if (veto > 0 || approve > 0) {
-		return veto >= approve ? "veto" : "approve";
-	}
+	// Match model.oracleAllows per gate: any lit veto wins over a brighter approve.
+	if (veto > 0) return "veto";
+	if (approve > 0) return "approve";
 
 	if (lit.has(gate.veto)) return "veto";
 	if (lit.has(gate.approve)) return "approve";
@@ -145,8 +190,7 @@ const GateLamps = ({
 	regions: Record<string, Region[]>;
 	overrides: Record<string, OracleOverride>;
 }) => {
-	const rows =
-		regions[symbol] ?? regions[symbol.replace(/\//g, "-")] ?? undefined;
+	const rows = kernelRowAt(regions, symbol);
 	const lit = pathKeys(path);
 
 	return (
@@ -186,13 +230,43 @@ const GateLamps = ({
 	);
 };
 
+const decisionIdleMessage = (
+	live: Record<string, Decision>,
+	book: Book,
+): string => {
+	const keys = Object.keys(live);
+	if (keys.length === 0) {
+		return "waiting for backend decision frames";
+	}
+
+	const onBook = keys.filter((key) => {
+		const row = live[key];
+		return row?.symbol && isBook(row.tier) && row.tier === book;
+	}).length;
+
+	if (onBook > 0) {
+		return "decisions on wire but filtered — reload";
+	}
+
+	const missingTier = keys.some((key) => !isBook(live[key]?.tier));
+	if (missingTier) {
+		return `${keys.length} hub row(s) missing tier on wire`;
+	}
+
+	return `${keys.length} hub row(s), none on ${book} tier — switch tab`;
+};
+
 export const Decisions = () => {
 	const book = useSelector(bookAtom, (state) => state);
 	const live = useSelector(signals.decisions, (state) => state);
 	const regions = useSelector(signals.regions, (state) => state);
 	const overrides = useSelector(gateLabStore, (state) => state.overrides);
 	const decisions = useMemo(
-		() => decisionsFromLive(live, book),
+		() => decisionsFromLive(live, book, regions),
+		[live, book, regions],
+	);
+	const idleMessage = useMemo(
+		() => decisionIdleMessage(live, book),
 		[live, book],
 	);
 
@@ -223,7 +297,7 @@ export const Decisions = () => {
 			<List className="min-h-0 flex-1 gap-1 overflow-auto p-2">
 				{decisions.length === 0 ? (
 					<List.Item className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 px-2.5 py-1.5 font-mono text-[11px] text-(--f4)">
-						waiting for backend decision frames
+						{idleMessage}
 					</List.Item>
 				) : (
 					decisions.map((dec) => (

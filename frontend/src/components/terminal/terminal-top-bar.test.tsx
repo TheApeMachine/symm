@@ -1,12 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { atoms, signals } from "#/collections/app";
+import { atoms } from "#/collections/app";
 import { TerminalTopBar } from "./terminal-top-bar";
 
 describe("TerminalTopBar", () => {
 	beforeEach(() => {
-		atoms.tickCount.set(0);
-		signals.training.setState(() => ({}));
+		atoms.tick.set(null);
 	});
 
 	it("renders the tick readout", () => {
@@ -18,7 +17,7 @@ describe("TerminalTopBar", () => {
 	});
 
 	it("renders updated tick count", () => {
-		atoms.tickCount.set(45678);
+		atoms.tick.set({ epoch: 0, n: 45678 });
 		const html = renderToStaticMarkup(<TerminalTopBar />);
 		expect(html).toContain("45,678");
 	});

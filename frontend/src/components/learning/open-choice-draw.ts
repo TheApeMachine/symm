@@ -1,3 +1,19 @@
+import type { Book } from "#/collections/book";
+import {
+	type Position,
+	STOPLOSS_ARMED,
+	STOPLOSS_TRIGGERED,
+	type Stoploss,
+} from "#/collections/types";
+import { isClosed, onTier, pnlPct } from "#/components/book-readout";
+import { asFinite, moneyText } from "#/lib/format";
+import {
+	confirmsNeeded,
+	givebackFloor,
+	stopArmed,
+	stopProximity,
+	stopRoom,
+} from "#/lib/stop-telemetry";
 import {
 	AUTO_COLOR,
 	EAutoRange,
@@ -14,36 +30,57 @@ import {
 	NumericAxis,
 	SciChartJSDarkTheme,
 	SciChartSurface,
+	Thickness,
 	XyDataSeries,
 	XyyDataSeries,
 	ZoomExtentsModifier,
 	ZoomPanModifier,
+	type TSciChart,
 } from "scichart";
-import type { Book } from "#/collections/book";
-import type { Position } from "#/collections/types";
-import {
-	closeNowReturnPct,
-	onBook,
-	positionReadout,
-} from "#/components/book-readout";
-import { normalizeStoploss } from "#/lib/stoploss";
 import { GridLayoutModifier } from "./open-choice-grid-layout";
 
-/** SciChart fifo capacity — the DataSeries is the trail store. */
+/** SciChart fifo capacity — the DataSeries is the trail. */
 export const CHOICE_TRAIL_LENGTH = 90;
 
 const ZERO_LINE_ID = "pnl-zero";
-const tipId = (lotId: string) => `tip:${lotId}`;
+const tipId = (positionId: string) => `tip:${positionId}`;
 
 const STROKES = [
-	"#7eb6ff",
-	"#f0b429",
-	"#5eead4",
-	"#c4b5fd",
-	"#e07a7a",
-	"#86efac",
-	"#f9a8d4",
+	"#79D2C6",
+	"#FF7DFD",
+	"#5B88FF",
+	"#D1765F",
+	"#F5F77F",
+	"#F8CFF7",
+	"#6CA261",
+	"#F1B470",
+	"#B3A0D4",
+	"#80F078",
+	"#B4F7EC",
+	"#FF8AA8",
+	"#B86ED8",
+	"#6498C2",
+	"#73CA6D",
+	"#B3A98B",
+	"#73BFFC",
+	"#F7D9B1",
+	"#E6AAFB",
+	"#D1BCC6",
+	"#DC6DA0",
+	"#CEDB76",
+	"#A18B96",
+	"#C88BFF",
+	"#A9DAF8",
 ];
+
+const shuffle = <T>(items: readonly T[]): T[] => {
+	const out = [...items];
+	for (let i = out.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[out[i], out[j]] = [out[j], out[i]];
+	}
+	return out;
+};
 
 let wasmReady = false;
 
@@ -68,14 +105,6 @@ const theme = () => {
 	return t;
 };
 
-const strokeFor = (id: string) => {
-	let hash = 0;
-	for (let i = 0; i < id.length; i++) {
-		hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-	}
-	return STROKES[hash % STROKES.length];
-};
-
 const withAlpha = (hex: string, alpha: number) => {
 	if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
 	const r = Number.parseInt(hex.slice(1, 3), 16);
@@ -84,82 +113,78 @@ const withAlpha = (hex: string, alpha: number) => {
 	return `rgba(${r},${g},${b},${alpha})`;
 };
 
-const moneyText = (value: number) => {
-	const abs = Math.abs(value);
-	const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
-	return value >= 0 ? `$+${abs.toFixed(digits)}` : `$-${abs.toFixed(digits)}`;
-};
+/*
+chartHeld is what open-choice paints. Hello only snapshots READY rows, so a
+ForceExit Hello drops the id from the store and push() clears series/legend.
+*/
+export const chartHeld = (pos: Position, book: Book) =>
+	onTier(pos, book) && !isClosed(pos);
 
-const asFinite = (raw: unknown): number | undefined => {
-	if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-	if (typeof raw === "string" && raw !== "") {
-		const n = Number(raw);
-		return Number.isFinite(n) ? n : undefined;
-	}
-	return undefined;
-};
-
-/** Open lots on the selected book. */
-export const chartHeld = (pos: Position, book: Book) => {
-	const row = pos as unknown as Record<string, unknown>;
-	if (!onBook(row, book)) return false;
-	return !positionReadout(row).closed;
-};
-
-/** Live Y for one append — scalars only; SciChart fifo keeps the trail. */
 const markY = (pos: Position): number | undefined =>
-	closeNowReturnPct(pos as unknown as Record<string, unknown>) ??
-	asFinite(pos.pnl_pct);
+	pnlPct(pos) ?? asFinite(pos.pnl_pct) ?? undefined;
 
-const markFloor = (pos: Position): number | undefined => {
-	const stop = normalizeStoploss(pos.stoploss);
-	if (stop?.has_floor !== true) return undefined;
-	return asFinite(stop.floor_pnl);
+const tierOf = (pos: { tier_key?: string }) =>
+	typeof pos.tier_key === "string" && pos.tier_key !== ""
+		? pos.tier_key
+		: "paper";
+
+/** Crest corridor top/bottom while armed — peak ↔ trailing giveback floor. */
+const stopCrest = (stop: Stoploss): { high: number; low: number } => {
+	const high = stop.PeakPnLPct;
+	const low = givebackFloor(stop);
+	return high >= low ? { high, low } : { high: low, low: high };
 };
 
-/** Skip duplicate store publishes that did not move this lot's mark. */
-const markStamp = (pos: Position): string => {
-	const stop = normalizeStoploss(pos.stoploss);
-
-	return [
-		pos.pnl_pct,
-		pos.pnl,
-		pos.mark,
-		stop?.floor_pnl,
-		stop?.proximity,
-		stop?.room_pct,
-	].join("|");
+/** Fill heat 0..1 from exhaust + confirm progress toward exit. */
+const stopHeat = (stop: Stoploss) => {
+	if (stop.State === STOPLOSS_TRIGGERED) return 1;
+	const confirms =
+		Math.max(0, stop.Confirms ?? 0) / Math.max(1, confirmsNeeded(stop));
+	const exhaust = Math.max(0, Math.min(1, stop.ExhaustScore ?? 0));
+	return Math.max(0, Math.min(1, confirms * 0.55 + exhaust * 0.45));
 };
 
-type LotBind = {
+const tipText = (net: number | null) => (net !== null ? moneyText(net) : "");
+
+type Series = {
 	line: FastLineRenderableSeries;
 	data: XyDataSeries;
-	band?: FastBandRenderableSeries;
-	bandData?: XyyDataSeries;
-	stamp: string;
+	range?: FastBandRenderableSeries;
+	rangeData?: XyyDataSeries;
+	stop?: FastBandRenderableSeries;
+	stopData?: XyyDataSeries;
+	hi: number;
+	lo: number;
+	tier: string;
+	stroke: string;
+	tip?: NativeTextAnnotation;
 };
 
 export type OpenChoiceLegendItem = {
 	id: string;
 	name: string;
+	tier: string;
 	stroke: string;
 	pnlMoney?: number;
 	pnlPct?: number;
+	grossMoney?: number;
+	feeMoney?: number;
+	entry?: number;
+	mark?: number;
 	stopRoomPct?: number;
 	stopProximity?: number;
 };
 
 export type OpenChoiceChartApi = {
+	wasmContext: TSciChart;
 	sciChartSurface: SciChartSurface;
 	setIsGridLayoutMode: (value: boolean) => void;
-	/** Append new marks from a positions store snapshot into SciChart series. */
-	sync: (
-		state: Record<string, Position>,
-		book: Book,
-	) => OpenChoiceLegendItem[];
+	setBook: (book: Book) => void;
+	/** Full signals.positions snapshot — drop closed/other-book, append held marks. */
+	push: (positions: Record<string, Position>) => OpenChoiceLegendItem[];
 };
 
-/** Store subscription → append into fifo DataSeries. Series are the trail. */
+/** Full positions snapshot → one shared X step, append per open series. */
 export const drawOpenChoiceChart = async (
 	rootElement: string | HTMLDivElement,
 ): Promise<OpenChoiceChartApi> => {
@@ -172,17 +197,14 @@ export const drawOpenChoiceChart = async (
 
 	sciChartSurface.xAxes.add(
 		new NumericAxis(wasmContext, {
-			drawMinorGridLines: false,
-			labelPrecision: 0,
 			autoRange: EAutoRange.Always,
 		}),
 	);
+
 	sciChartSurface.yAxes.add(
 		new NumericAxis(wasmContext, {
 			axisAlignment: EAxisAlignment.Left,
-			growBy: new NumberRange(0.08, 0.08),
-			labelPrecision: 1,
-			drawMinorGridLines: false,
+			growBy: new NumberRange(0.05, 0.05),
 			autoRange: EAutoRange.Always,
 		}),
 	);
@@ -202,6 +224,7 @@ export const drawOpenChoiceChart = async (
 	);
 
 	const glm = new GridLayoutModifier();
+
 	sciChartSurface.chartModifiers.add(
 		new ZoomExtentsModifier({ modifierGroup: "open-choice" }),
 		new MouseWheelZoomModifier({ modifierGroup: "open-choice" }),
@@ -209,43 +232,74 @@ export const drawOpenChoiceChart = async (
 		glm,
 	);
 
-	const lots = new Map<string, LotBind>();
-	let nextX = 0;
+	const series = new Map<string, Series>();
+	const legend = new Map<string, OpenChoiceLegendItem>();
+	const strokes = new Map<string, string>();
+	const palette = shuffle(STROKES);
+	let book: Book = "real";
+	let step = 0;
 
 	const setIsGridLayoutMode = (value: boolean) => {
 		glm.isGrid = value;
 	};
 
-	const dropLot = (id: string) => {
-		const bind = lots.get(id);
-		if (!bind) return;
-
-		sciChartSurface.renderableSeries.remove(bind.line);
-		bind.line.delete();
-		if (bind.band) {
-			sciChartSurface.renderableSeries.remove(bind.band);
-			bind.band.delete();
-		}
-
-		const tip = sciChartSurface.annotations
-			.asArray()
-			.find((a) => a.id === tipId(id));
-		if (tip) sciChartSurface.annotations.remove(tip);
-
-		lots.delete(id);
+	const strokeFor = (id: string) => {
+		const hit = strokes.get(id);
+		if (hit) return hit;
+		const used = new Set(strokes.values());
+		const stroke =
+			palette.find((c) => !used.has(c)) ??
+			palette[strokes.size % palette.length];
+		strokes.set(id, stroke);
+		return stroke;
 	};
 
-	const ensureLot = (id: string, stroke: string): LotBind => {
-		const prior = lots.get(id);
-		if (prior) return prior;
+	const drop = (id: string) => {
+		const s = series.get(id);
+		if (s) {
+			sciChartSurface.renderableSeries.remove(s.line);
+			s.line.delete();
+			if (s.range) {
+				sciChartSurface.renderableSeries.remove(s.range);
+				s.range.delete();
+			}
+			if (s.stop) {
+				sciChartSurface.renderableSeries.remove(s.stop);
+				s.stop.delete();
+			}
+			if (s.tip) sciChartSurface.annotations.remove(s.tip);
+			series.delete(id);
+		}
+		legend.delete(id);
+		strokes.delete(id);
+	};
+
+	const setBook = (next: Book) => {
+		if (next === book) return;
+		book = next;
+		for (const id of [...series.keys()]) drop(id);
+	};
+
+	const ensure = (
+		id: string,
+		stroke: string,
+		tier: string,
+		y: number,
+	): Series => {
+		const prior = series.get(id);
+		if (prior) {
+			prior.tier = tier;
+			prior.stroke = stroke;
+			return prior;
+		}
 
 		const data = new XyDataSeries(wasmContext, {
 			fifoCapacity: CHOICE_TRAIL_LENGTH,
 			dataSeriesName: id,
-			dataIsSortedInX: true,
-			dataEvenlySpacedInX: true,
-			containsNaN: true,
+			containsNaN: false,
+			isSorted: true,
 		});
+
 		const line = new FastLineRenderableSeries(wasmContext, {
 			dataSeries: data,
 			stroke: stroke || AUTO_COLOR,
@@ -253,153 +307,182 @@ export const drawOpenChoiceChart = async (
 		});
 		sciChartSurface.renderableSeries.add(line);
 
-		const bind: LotBind = { line, data, stamp: "" };
-		lots.set(id, bind);
-		return bind;
+		const s: Series = { line, data, hi: y, lo: y, tier, stroke };
+		series.set(id, s);
+		return s;
 	};
 
-	const ensureBand = (bind: LotBind, id: string, stroke: string) => {
-		if (bind.band && bind.bandData) return;
+	const ensureRange = (s: Series, id: string) => {
+		if (s.range && s.rangeData) return;
+		const rangeData = new XyyDataSeries(wasmContext, {
+			fifoCapacity: CHOICE_TRAIL_LENGTH,
+			dataSeriesName: `${id}::range-band`,
+		});
+		const range = new FastBandRenderableSeries(wasmContext, {
+			dataSeries: rangeData,
+			stroke: "#00000000",
+			strokeY1: "#00000000",
+			strokeThickness: 1,
+			fill: withAlpha(s.stroke, 0.06),
+			fillY1: withAlpha(s.stroke, 0.06),
+		});
+		sciChartSurface.renderableSeries.insert(0, range);
+		s.range = range;
+		s.rangeData = rangeData;
+	};
 
-		const bandData = new XyyDataSeries(wasmContext, {
+	const ensureStop = (s: Series, id: string) => {
+		if (s.stop && s.stopData) return;
+		const stopData = new XyyDataSeries(wasmContext, {
 			fifoCapacity: CHOICE_TRAIL_LENGTH,
 			dataSeriesName: `${id}::stop-band`,
-			dataIsSortedInX: true,
-			dataEvenlySpacedInX: true,
-			containsNaN: true,
 		});
-		const band = new FastBandRenderableSeries(wasmContext, {
-			dataSeries: bandData,
-			stroke: "#00000000",
-			strokeY1: withAlpha(stroke, 0.5),
+		const stop = new FastBandRenderableSeries(wasmContext, {
+			dataSeries: stopData,
+			stroke: withAlpha(s.stroke, 0.55),
+			strokeY1: withAlpha("#e8a33d", 0.7),
 			strokeThickness: 1,
-			fill: withAlpha(stroke, 0.08),
-			fillY1: withAlpha(stroke, 0.08),
+			strokeY1DashArray: [4, 3],
+			fill: withAlpha(s.stroke, 0.1),
+			fillY1: withAlpha("#e8a33d", 0.12),
 		});
-		sciChartSurface.renderableSeries.insert(0, band);
-		bind.band = band;
-		bind.bandData = bandData;
+		// Above the range envelope, under the mark line.
+		sciChartSurface.renderableSeries.insert(s.range ? 1 : 0, stop);
+		s.stop = stop;
+		s.stopData = stopData;
 	};
 
-	const syncTip = (pos: Position, stroke: string, x: number, y: number) => {
-		const id = tipId(pos.id);
-		const pnl = asFinite(pos.pnl);
-		const stop = normalizeStoploss(pos.stoploss);
-		const room = stop?.room_pct;
-		const proximity = stop?.proximity ?? 0;
-		const hint =
-			proximity >= 1
-				? "STOP"
-				: typeof room === "number"
-					? `${Math.abs(room) >= 10 ? room.toFixed(0) : room.toFixed(1)}pp`
-					: "";
-		const text =
-			pnl !== undefined
-				? hint
-					? `${moneyText(pnl)}  ${hint}`
-					: moneyText(pnl)
-				: hint;
+	const paintStop = (s: Series, stop: Stoploss) => {
+		if (!s.stop) return;
+		const heat = stopHeat(stop);
+		const triggered = stop.State === STOPLOSS_TRIGGERED;
+		const fillA = triggered ? 0.28 : 0.1 + heat * 0.22;
+		const crestA = triggered ? 0.35 : 0.12 + heat * 0.25;
+		s.stop.fill = withAlpha(s.stroke, fillA);
+		s.stop.fillY1 = withAlpha(triggered ? "#e07a7a" : "#e8a33d", crestA);
+		s.stop.stroke = withAlpha(s.stroke, triggered ? 0.85 : 0.45 + heat * 0.4);
+		s.stop.strokeY1 = withAlpha(
+			triggered ? "#e07a7a" : "#e8a33d",
+			triggered ? 0.95 : 0.55 + heat * 0.4,
+		);
+		s.stop.strokeThickness = triggered ? 2 : 1;
+	};
 
-		const prior = sciChartSurface.annotations
-			.asArray()
-			.find((a) => a.id === id) as NativeTextAnnotation | undefined;
-
-		if (prior) {
-			prior.x1 = x;
-			prior.y1 = y;
-			prior.text = text;
-			prior.textColor = stroke;
+	const tipAt = (
+		s: Series,
+		id: string,
+		x: number,
+		y: number,
+		net: number | null,
+		stop: Stoploss | undefined,
+	) => {
+		const text = tipText(net);
+		if (s.tip) {
+			s.tip.x1 = x;
+			s.tip.y1 = y;
+			s.tip.text = text;
+			s.tip.textColor =
+				stop?.State === STOPLOSS_TRIGGERED
+					? "#e07a7a"
+					: stop?.State === STOPLOSS_ARMED
+						? "#e8a33d"
+						: s.stroke;
 			return;
 		}
-
-		sciChartSurface.annotations.add(
-			new NativeTextAnnotation({
-				id,
-				x1: x,
-				y1: y,
-				text,
-				fontSize: 12,
-				fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-				textColor: stroke,
-				horizontalAnchorPoint: EHorizontalAnchorPoint.Right,
-				verticalAnchorPoint: EVerticalAnchorPoint.Bottom,
-			}),
-		);
+		s.tip = new NativeTextAnnotation({
+			id: tipId(id),
+			x1: x,
+			y1: y,
+			text,
+			fontSize: 11,
+			fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+			textColor: s.stroke,
+			padding: Thickness.fromString("0 0 6 0"),
+			horizontalAnchorPoint: EHorizontalAnchorPoint.Right,
+			verticalAnchorPoint: EVerticalAnchorPoint.Bottom,
+		});
+		sciChartSurface.annotations.add(s.tip);
 	};
 
-	const sync = (
-		state: Record<string, Position>,
-		book: Book,
+	const push = (
+		positions: Record<string, Position>,
 	): OpenChoiceLegendItem[] => {
-		const live = new Set<string>();
-		const legend: OpenChoiceLegendItem[] = [];
-		const rows: {
-			pos: Position;
-			bind: LotBind;
-			stroke: string;
-			y: number;
-			floor?: number;
-		}[] = [];
-		let stepped = false;
+		const held = new Set<string>();
 
-		for (const pos of Object.values(state)) {
-			if (!chartHeld(pos, book)) continue;
+		for (const pos of Object.values(positions)) {
+			if (pos && chartHeld(pos, book)) held.add(pos.id);
+		}
 
-			const id = pos.id;
-			live.add(id);
+		for (const id of new Set([...series.keys(), ...legend.keys()])) {
+			if (!held.has(id)) drop(id);
+		}
+
+		const x = step++;
+
+		for (const pos of Object.values(positions)) {
+			if (!pos || !held.has(pos.id)) continue;
 
 			const y = markY(pos);
 			if (y === undefined) continue;
 
-			const stamp = markStamp(pos);
+			const id = pos.id;
 			const stroke = strokeFor(id);
-			const bind = ensureLot(id, stroke);
-			const floor = markFloor(pos);
+			const s = ensure(id, stroke, tierOf(pos), y);
+			const stop = pos.stoploss;
 
-			if (floor !== undefined) ensureBand(bind, id, stroke);
+			s.hi = Math.max(s.hi, y);
+			s.lo = Math.min(s.lo, y);
 
-			if (stamp !== bind.stamp) {
-				stepped = true;
-				bind.stamp = stamp;
+			s.data.append(x, y);
+
+			ensureRange(s, id);
+			s.rangeData?.append(x, s.hi, s.lo);
+
+			if (stop && stopArmed(stop)) {
+				ensureStop(s, id);
+				const crest = stopCrest(stop);
+				s.stopData?.append(x, crest.high, crest.low);
+				paintStop(s, stop);
+			} else if (s.stopData) {
+				s.stopData.append(x, y, y);
+				if (s.stop) {
+					s.stop.fill = "#00000000";
+					s.stop.fillY1 = "#00000000";
+					s.stop.stroke = "#00000000";
+					s.stop.strokeY1 = "#00000000";
+				}
 			}
 
-			rows.push({ pos, bind, stroke, y, floor });
+			const feeIn = asFinite(pos.fee_in);
+			const feeOut = asFinite(pos.fee_out);
+			tipAt(s, id, x, y, asFinite(pos.pnl), stop);
 
-			const stop = normalizeStoploss(pos.stoploss);
-
-			legend.push({
+			legend.set(id, {
 				id,
 				name: pos.symbol,
+				tier: tierOf(pos),
 				stroke,
-				pnlMoney: asFinite(pos.pnl),
-				pnlPct: asFinite(pos.pnl_pct),
-				stopRoomPct: stop?.room_pct,
-				stopProximity: stop?.proximity,
+				pnlMoney: asFinite(pos.pnl) ?? undefined,
+				pnlPct: asFinite(pos.pnl_pct) ?? undefined,
+				grossMoney: asFinite(pos.gross_pnl) ?? undefined,
+				feeMoney:
+					feeIn !== null && feeOut !== null ? feeIn + feeOut : undefined,
+				entry: asFinite(pos.entry) ?? undefined,
+				mark: asFinite(pos.mark) ?? undefined,
+				stopRoomPct: stop ? stopRoom(stop) : undefined,
+				stopProximity: stop ? stopProximity(stop) : undefined,
 			});
 		}
 
-		if (stepped && rows.length > 0) {
-			const x = nextX++;
-			for (const { pos, bind, stroke, y, floor } of rows) {
-				bind.data.append(x, y);
-				if (floor !== undefined && bind.bandData) {
-					bind.bandData.append(x, y, floor);
-				} else if (bind.bandData) {
-					bind.bandData.append(x, y, y);
-				}
-				syncTip(pos, stroke, x, y);
-			}
-		}
-
-		for (const id of [...lots.keys()]) {
-			if (!live.has(id)) dropLot(id);
-		}
-
-		legend.sort(
-			(a, b) => Math.abs(b.pnlPct ?? 0) - Math.abs(a.pnlPct ?? 0),
-		);
-		return legend;
+		sciChartSurface.invalidateElement();
+		return [...legend.values()].sort((a, b) => a.name.localeCompare(b.name));
 	};
 
-	return { sciChartSurface, setIsGridLayoutMode, sync };
+	return {
+		wasmContext,
+		sciChartSurface,
+		setIsGridLayoutMode,
+		setBook,
+		push,
+	};
 };

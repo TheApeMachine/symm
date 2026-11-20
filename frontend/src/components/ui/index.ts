@@ -25,11 +25,6 @@ export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
 export { Chip, type ChipProps, chipVariants } from "./chip";
 export { Component, type ComponentProps } from "./component";
-export {
-	DistanceBar,
-	type DistanceBarProps,
-	type DistanceMarker,
-} from "./distance-bar";
 export { Divider, type DividerProps, dividerVariants } from "./divider";
 export {
 	formatValue,
@@ -42,14 +37,6 @@ export {
 } from "./dom";
 export { DOT_SIZE_FOR, Dot, type DotProps, dotVariants } from "./dot";
 export { AnimatePresence, Flex, flexVariants } from "./flex";
-export { Funnel, type FunnelProps, type FunnelStage } from "./funnel";
-export {
-	Gauge,
-	type GaugeMark,
-	type GaugeProps,
-	type GaugeTone,
-	toneColor,
-} from "./gauge";
 export {
 	type GapType,
 	Grid,
@@ -107,12 +94,6 @@ export {
 } from "./overlay";
 export type { JSONPrimitive, JSONSerializable, Paint } from "./paint";
 export { Panel, type PanelProps, panelVariants } from "./panel";
-export {
-	RadialHistory,
-	type RadialHistoryProps,
-	sectorHue,
-} from "./radial-history";
-export { Readout, type ReadoutProps } from "./readout";
 export { Scanlines, type ScanlinesProps, scanlinesVariants } from "./scanlines";
 export {
 	Section,
@@ -121,7 +102,6 @@ export {
 	sectionHeaderVariants,
 	sectionVariants,
 } from "./section";
-export { SeriesChart, type SeriesChartProps } from "./series-chart";
 export {
 	computeSparklinePath,
 	computeSparklinePaths,
@@ -131,8 +111,6 @@ export {
 	scaleSparklineValues,
 	setSparkline,
 } from "./sparkline";
-export { Spinner, type SpinnerProps } from "./spinner";
-export { Stat, type StatProps, statVariants } from "./stat";
 export {
 	type TabProps,
 	Tabs,
@@ -140,9 +118,7 @@ export {
 	tabsVariants,
 	tabVariants,
 } from "./tabs";
-export { TokenRibbon, type TokenRibbonProps } from "./token-ribbon";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
-export { Trail, type TrailProps } from "./trail";
 export {
 	SIZE_ORDER,
 	type Size,

@@ -2,48 +2,66 @@ package strategy
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/strategy/deskgate"
 	"github.com/theapemachine/symm/strategy/tokenizer"
-	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Training turns each tick's observe metrics into per-symbol region vectors and
+path cuts on the envelope — Model consumes Paths/Regions but does not own grammar.
+*/
 type Training struct {
 	*runtime.System
 	price      *broker.Price
 	desk       *broker.Desk
+	deskGate   *deskgate.Gate
 	grid       *store.Grid
 	client     *store.Client
 	catalog    *tokenizer.GrammarCatalog
 	sequencers *sync.Map
 }
 
+/*
+NewTraining restores per-symbol sequencers from object storage at boot so path
+cuts survive restarts before the first grid tick mutates grammar.
+*/
 func NewTraining(
 	ctx context.Context,
 	price *broker.Price,
 	desk *broker.Desk,
+	client *store.Client,
+	deskGate *deskgate.Gate,
 ) *Training {
 	training := &Training{
 		System:     runtime.NewSystem(ctx, "training", price),
 		price:      price,
 		desk:       desk,
+		deskGate:   deskGate,
 		grid:       store.NewGrid(ctx),
-		client:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		catalog:    &tokenizer.GrammarCatalog{},
+		client:     client,
+		catalog:    tokenizer.NewGrammarCatalog(),
 		sequencers: &sync.Map{},
 	}
 
-	training.catalog.RestoreCatalog(ctx, training.client, training.restoreSequencer)
+	training.catalog.RestoreCatalog(
+		ctx, training.client, training.restoreSequencer,
+	)
 
 	return training
 }
 
+/*
+Step fans Observe per symbol with desk/book gates wired in, then writes Regions
+and Paths — downstream Model never calls the grid directly on the hot path.
+*/
 func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	if envelope == nil {
 		return nil
@@ -59,26 +77,45 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, sources := symbol, sources
-		wg.Add(1)
+		wg.Go(func() {
+			if training.deskGate == nil {
+				training.Error(errnie.Err(
+					errnie.Validation,
+					"[training] deskGate is required",
+					nil,
+				))
 
-		task := func() {
-			defer wg.Done()
+				return
+			}
 
-			regions, err := training.grid.Observe(symbol, sources)
+			pump := envelope.Pumpdump[symbol]
+
+			deskFeatures := training.deskGate.Features(training.price, symbol, pump)
+			if deskFeatures != nil {
+				sources["desk"] = deskFeatures
+			}
+
+			volumeOK, dayOK, spreadOK, bookOK, peakOK :=
+				training.deskGate.OracleFrom(deskFeatures)
+
+			peakKnown := deskFeatures != nil && deskFeatures["peak_frac"] >= 0
+
+			regions, err := training.grid.Observe(
+				symbol,
+				sources,
+				training.desk.Has(symbol),
+				volumeOK,
+				dayOK,
+				spreadOK,
+				bookOK,
+				peakOK,
+				peakKnown,
+			)
 
 			if err != nil {
 				training.Error(err)
 				return
 			}
-
-			training.lightBroker(symbol, regions)
-
-			open := false
-			if position := training.desk.Position(symbol); position != nil {
-				open = position.ClosedAt == nil
-			}
-
-			training.grid.Emit(regions, open)
 
 			cut := training.stepCut(symbol, regions)
 
@@ -86,27 +123,18 @@ func (training *Training) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			envelope.Regions[symbol] = regions
 			envelope.Paths[symbol] = cut
 			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
 
-	focus := types.Focus()
-	if regions, ok := envelope.Regions[focus]; ok {
-		ui.Focus("regions", focus, regions)
-	}
-
-	if path, ok := envelope.Paths[focus]; ok {
-		ui.Focus("paths", focus, path)
-	}
-
 	return envelope
 }
 
+/*
+Sequencer keeps one grammar stream per symbol so BTC path learning does not
+cross-contaminate ETH regime sequences on the same envelope tick.
+*/
 func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	if symbol == "" {
 		return tokenizer.NewSequencer()
@@ -116,6 +144,10 @@ func (training *Training) Sequencer(symbol string) *tokenizer.Sequencer {
 	return loaded.(*tokenizer.Sequencer)
 }
 
+/*
+restoreSequencer is the GrammarCatalog callback — replays persisted root/rules/MDL
+without running Sequitur discovery so boot matches last shutdown cut.
+*/
 func (training *Training) restoreSequencer(symbol string, state tokenizer.SequencerState) {
 	if symbol == "" {
 		return
@@ -126,115 +158,120 @@ func (training *Training) restoreSequencer(symbol string, state tokenizer.Sequen
 	training.sequencers.Store(symbol, seq)
 }
 
-func (training *Training) persistSequencer(symbol string, seq *tokenizer.Sequencer) {
-	if symbol == "" || seq == nil {
-		return
-	}
-
-	if err := training.catalog.Persist(
-		training.Context(), training.client, symbol, seq.State(),
-	); err != nil {
-		errnie.Error(err)
-	}
-}
-
+/*
+ResetSequencer clears grammar after a model resetPath — persists immediately so
+a crash after reset does not resurrect the old sentence on next boot.
+*/
 func (training *Training) ResetSequencer(symbol string) {
-	if symbol == "" {
-		return
-	}
-
 	loaded, ok := training.sequencers.Load(symbol)
+
 	if !ok {
 		return
 	}
 
 	seq := loaded.(*tokenizer.Sequencer)
 	seq.Reset()
-	training.persistSequencer(symbol, seq)
+
+	if err := training.catalog.Persist(
+		training.Context(), training.client, symbol, seq.State(),
+	); err != nil {
+		training.Error(err)
+	}
 }
 
-// lightBroker paints volume / day / spread / book oracle sides before Emit.
-func (training *Training) lightBroker(symbol string, regions []*runtime.Region) {
-	if len(regions) < store.RegionCount {
-		return
-	}
+/*
+stepCut feeds Sequencer.Step from the phase net (detector + support − opposition).
+Opposition keys R02/R05/R08 are not path tokens. When they dominate (or action is
+dark), Peek the live cut at brightness 0 — returning an empty Tokens wiped Len
+and made MinPathLength seal every quiet tick after a single regime append.
+*/
+func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
+	seq := training.Sequencer(symbol)
 
-	price := training.price
-	risk := system.Cfg.Risk
+	var detector, support, opposition *runtime.Region
 
-	training.shine(regions, 9, 10, price.VolumeUSD(symbol) >= risk.MinMoverVolumeUSD)
-	training.shine(regions, 11, 12, price.ChangePct(symbol) >= risk.MinMoverChangePct)
+	for _, region := range regions {
+		if region == nil || region.Key > 8 {
+			continue
+		}
 
-	// MaxEntrySpreadPct <= 0 disables the spread oracle (lab zero = no limit).
-	spreadOK := risk.MaxEntrySpreadPct <= 0
-	if !spreadOK {
-		if spread, ok := price.SpreadPct(symbol); ok && spread != nil {
-			spreadOK = spread.InexactFloat64() <= risk.MaxEntrySpreadPct
+		switch store.Catalog.ByKey(region.Key).Side {
+		case "detector":
+			detector = region
+		case "support":
+			support = region
+		case "opposition":
+			opposition = region
 		}
 	}
 
-	training.shine(regions, 13, 14, spreadOK)
-	training.shine(regions, 15, 16, price.BookIntact(symbol))
-}
+	bright := func(region *runtime.Region) float64 {
+		if region == nil {
+			return 0
+		}
 
-func (training *Training) shine(regions []*runtime.Region, veto, approve uint8, ok bool) {
-	if ok {
-		store.Shine(regions[approve])
-		zeroRegion(regions[veto])
-		return
+		return region.Brightness
 	}
 
-	store.Shine(regions[veto])
-	zeroRegion(regions[approve])
-}
-
-func zeroRegion(region *runtime.Region) {
-	if region == nil {
-		return
-	}
-
-	region.Brightness = 0
-	region.Deformation = 0
-	region.Counts = 0
-}
-
-func (training *Training) stepCut(symbol string, regions []*runtime.Region) *runtime.Tokens {
-	token, brightness := store.PathToken(regions)
-
-	if token == "" {
-		cut := runtime.Tokens{}
+	if bright(detector)+bright(support)-bright(opposition) <= 0 {
+		cut := seq.Peek(0)
 		return &cut
 	}
 
-	seq := training.Sequencer(symbol)
-	cut := seq.Step(token, brightness)
-	training.persistSequencer(symbol, seq)
+	action := detector
+
+	if bright(support) > bright(action) {
+		action = support
+	}
+
+	if action == nil || action.Brightness <= 0 {
+		cut := seq.Peek(0)
+		return &cut
+	}
+
+	cut, mutated := seq.Step(fmt.Sprintf("R%02d", action.Key), action.Brightness)
+
+	if mutated {
+		// Persist synchronously: WriteAtPrefix only enqueues, and a goroutine
+		// per mutation could let an older snapshot land after a newer one or
+		// after Flush.
+		if err := training.catalog.Persist(
+			training.Context(), training.client, symbol, seq.State(),
+		); err != nil {
+			training.Error(err)
+		}
+	}
 
 	return &cut
 }
 
-// Board is the Emit region set. Tradable means approve winners only — no veto.
-type Board []*runtime.Region
+/*
+Flush persists every sequencer so a shutdown does not lose grammar state.
+*/
+func (training *Training) Flush() error {
+	var errs error
 
-func (board Board) Tradable() bool {
-	approved := false
+	training.sequencers.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
 
-	for _, region := range board {
-		if region == nil || region.Brightness <= 0 {
-			continue
+		if !ok || symbol == "" {
+			return true
 		}
 
-		key := int(region.Key)
-		if key < 9 || key > 22 {
-			continue
+		seq, ok := value.(*tokenizer.Sequencer)
+
+		if !ok || seq == nil {
+			return true
 		}
 
-		if key&1 == 1 {
-			return false
+		if err := training.catalog.Persist(
+			training.Context(), training.client, symbol, seq.State(),
+		); err != nil {
+			errs = errors.Join(errs, err)
 		}
 
-		approved = true
-	}
+		return true
+	})
 
-	return approved
+	return errs
 }

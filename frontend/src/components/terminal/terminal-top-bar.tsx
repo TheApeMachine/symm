@@ -15,6 +15,7 @@ import { Key } from "#/components/ui/key";
 import { Tabs } from "#/components/ui/tabs";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
+import { syncOpenPositionCount } from "#/lib/open-position-count";
 
 const SymmLogo = () => (
 	<svg
@@ -37,7 +38,7 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const ticks = useSelector(atoms.tickCount, (state) => state);
+	const ticks = useSelector(atoms.tick, (state) => state?.n ?? 0);
 
 	return (
 		<Flex.Column className="items-end gap-px">
@@ -63,10 +64,34 @@ const Rule = () => (
 
 export const TerminalTopBar = () => {
 	const online = useSelector(atoms.online, (state) => state);
+	const engine = useSelector(atoms.engine, (state) => state);
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
 	const book = useSelector(bookAtom, (state) => state);
 	const { openPalette, openSymbolPalette } = terminalStore.actions;
-	const choose = (next: Book) => () => bookAtom.set(next);
+	const choose = (next: Book) => () => {
+		bookAtom.set(next);
+		syncOpenPositionCount(next);
+	};
+
+	const hubUp = online === "ONLINE";
+	const statusLabel =
+		online === "CONNECTING"
+			? "CONNECTING"
+			: online === "OFFLINE"
+				? "OFFLINE"
+				: engine === "error"
+					? "ERROR"
+					: "ONLINE";
+	const statusVariant =
+		online === "CONNECTING"
+			? "info"
+			: online === "OFFLINE" || engine === "error"
+				? "error"
+				: engine === "ready" && hubUp
+					? "success"
+					: "warning";
+	const statusPulse =
+		online === "CONNECTING" || (hubUp && engine === "booting");
 
 	return (
 		<Toolbar size="lg" className="relative z-5">
@@ -81,17 +106,11 @@ export const TerminalTopBar = () => {
 
 			<Toolbar.Group>
 				<Badge
-					label={online}
-					variant={
-						online === "ONLINE"
-							? "success"
-							: online === "CONNECTING"
-								? "info"
-								: "error"
-					}
+					label={statusLabel}
+					variant={statusVariant}
 					dot
-					pulse={online === "CONNECTING"}
-					title={online}
+					pulse={statusPulse}
+					title={`hub ${online} · engine ${engine}`}
 				/>
 			</Toolbar.Group>
 

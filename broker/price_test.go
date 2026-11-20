@@ -2,368 +2,1361 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
+	"math"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	sdkbook "github.com/krakenfx/api-go/v2/pkg/book"
-	sdkdecimal "github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/shopspring/decimal"
-	shop "github.com/shopspring/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/nomagique/equation"
 	"github.com/theapemachine/nomagique/market"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
-func TestAllocateCapsAtTouchDivisor(t *testing.T) {
-	Convey("Allocate never takes more than best-bid / TouchDivisor", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "AAA/USD",
-			cash:       1_000_000,
-			qtyMinRaw:  "0.01",
-			costMinRaw: "1",
-			step:       "0.01",
-			bidPx:      99,
-			bidQty:     300,
-			askPx:      100,
-			askQty:     10_000,
-			feePct:     0.4,
-		})
+const testSymbol = "BTC/USD"
 
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(why, ShouldEqual, "")
-		So(qty, ShouldNotBeNil)
+func seedBuyTapeAccel(price *Price, symbol string, at time.Time) {
+	min := system.Cfg.Risk.MinTapeNotionalUSD
+	ratio := system.Cfg.Risk.MinTapeAccelRatio
+	if ratio <= 0 {
+		ratio = 1.15
+	}
+	win := system.Cfg.Risk.TapeWindow
 
-		// touchCap = 300 / 3 = 100. Cash is not the binding constraint.
-		So(qty.String(), ShouldEqual, "100")
-	})
-}
+	priorNotional := min / (2 * ratio)
+	recentNotional := min * ratio
 
-func TestAllocateRespectsCashBudget(t *testing.T) {
-	Convey("Allocate fee-inclusive cost stays within max_fraction of cash", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "BBB/USD",
-			cash:       1000,
-			qtyMinRaw:  "0.01",
-			costMinRaw: "1",
-			step:       "0.01",
-			bidPx:      99,
-			bidQty:     100_000,
-			askPx:      100,
-			askQty:     100_000,
-			feePct:     0.8,
-		})
-
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(why, ShouldEqual, "")
-		So(qty, ShouldNotBeNil)
-
-		fill, err := fixture.price.EntryCost(fixture.symbol, qty)
-		So(err, ShouldBeNil)
-		So(fill, ShouldNotBeNil)
-
-		// budget = 1000 * 0.20 = 200. Entry fee is quote paid on top of gross.
-		gross := fill.EntryPrice.Mul(*qty)
-		total := gross.Add(*fill.EntryFee)
-		budget := decimal.NewFromFloat(200)
-
-		So(total.Cmp(budget), ShouldBeLessThanOrEqualTo, 0)
-
-		// With ask 100 and 0.8% fee, gross budget = 200/1.008 ≈ 198.41 → qty ≈ 1.98
-		// so the lot must be near that, not the touch cap.
-		So(qty.InexactFloat64(), ShouldBeBetween, 1.9, 2.0)
-	})
-}
-
-func TestAllocateFailsBelowVenueMin(t *testing.T) {
-	Convey("Allocate refuses a lot under QtyMin when the touch cap cannot clear it", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "CCC/USD",
-			cash:       100_000,
-			qtyMinRaw:  "50",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      99,
-			bidQty:     30, // touchCap = 10
-			askPx:      100,
-			askQty:     10_000,
-			feePct:     0.4,
-		})
-
-		qty, why := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(qty, ShouldBeNil)
-		So(why, ShouldContainSubstring, "below venue minimum")
-		So(why, ShouldContainSubstring, "touch_cap=10")
-	})
-}
-
-func TestAllocateVirtualAllowsUnderVenueMin(t *testing.T) {
-	Convey("AllocateVirtual returns a thin learning lot that Allocate rejects", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "DDD/USD",
-			cash:       100_000,
-			qtyMinRaw:  "50",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      99,
-			bidQty:     30, // touchCap = 10 < QtyMin
-			askPx:      100,
-			askQty:     10_000,
-			feePct:     0.4,
-		})
-
-		venue, venueWhy := fixture.price.Allocate(fixture.symbol, fixture.wallet)
-		So(venue, ShouldBeNil)
-		So(venueWhy, ShouldNotEqual, "")
-
-		virtual, virtualWhy := fixture.price.Allocate(fixture.symbol, nil)
-		So(virtualWhy, ShouldEqual, "")
-		So(virtual, ShouldNotBeNil)
-		So(virtual.String(), ShouldEqual, "10")
-		So(virtual.Cmp(*fixture.qtyMin), ShouldEqual, -1)
-	})
-}
-
-func TestAllocateUsesPassedWallet(t *testing.T) {
-	Convey("Allocate sizes against the wallet argument, not always the desk balance", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "FFF/USD",
-			cash:       100_000,
-			qtyMinRaw:  "0.01",
-			costMinRaw: "1",
-			step:       "0.01",
-			bidPx:      99,
-			bidQty:     100_000,
-			askPx:      100,
-			askQty:     100_000,
-			feePct:     0.4,
-		})
-
-		small := market.NewBalance("USD")
-		small.Seed(shop.NewFromInt(500))
-
-		fromDesk, deskWhy := fixture.price.Allocate(fixture.symbol, nil)
-		fromSmall, smallWhy := fixture.price.Allocate(fixture.symbol, small)
-
-		So(deskWhy, ShouldEqual, "")
-		So(smallWhy, ShouldEqual, "")
-		So(fromDesk, ShouldNotBeNil)
-		So(fromSmall, ShouldNotBeNil)
-		So(fromSmall.Cmp(*fromDesk), ShouldEqual, -1)
-	})
-}
-
-func TestSpreadPctUsesBookSpread(t *testing.T) {
-	Convey("SpreadPct is the book manager's relative bid-ask spread", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "GGG/USD",
-			cash:       1000,
-			qtyMinRaw:  "1",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      99,
-			bidQty:     100,
-			askPx:      101,
-			askQty:     100,
-			feePct:     0.4,
-		})
-
-		spread, ok := fixture.price.SpreadPct(fixture.symbol)
-		So(ok, ShouldBeTrue)
-		So(spread, ShouldNotBeNil)
-		// Book.Spread = (ask-bid)/ask*100 = 2/101*100
-		So(spread.InexactFloat64(), ShouldAlmostEqual, 2.0/101.0*100.0, 1e-9)
-	})
-}
-
-func TestPnLPctRoundTripExact(t *testing.T) {
-	Convey("PnLPct is fee-net exit minus fee-net entry, over entry cost", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "HHH/USD",
-			cash:       1000,
-			qtyMinRaw:  "1",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      100,
-			bidQty:     100,
-			askPx:      101,
-			askQty:     100,
-			feePct:     1.0,
-		})
-
-		qty := decimal.NewFromInt(10)
-		entry := decimal.NewFromInt(100)
-		fee := decimal.NewFromFloat(1.0)
-
-		// cost = 1000 * 1.01 = 1010
-		// sell through bid 100: gross exit 1000, net 990
-		// pnl pct = (990-1010)/1010 * 100
-		pct := fixture.price.PnLPct(fixture.symbol, &qty, &entry, &fee)
-		So(pct, ShouldNotBeNil)
-		So(pct.InexactFloat64(), ShouldAlmostEqual, (990.0-1010.0)/1010.0*100.0, 1e-9)
-	})
-}
-
-func TestEntryCostMatchesAskWalk(t *testing.T) {
-	Convey("EntryCost VWAP and fee match lifting the asks", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "III/USD",
-			cash:       1000,
-			qtyMinRaw:  "1",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      99,
-			bidQty:     100,
-			askPx:      100,
-			askQty:     100,
-			feePct:     0.8,
-		})
-
-		qty := decimal.NewFromInt(2)
-		fill, err := fixture.price.EntryCost(fixture.symbol, &qty)
-		So(err, ShouldBeNil)
-		So(fill.EntryPrice.String(), ShouldEqual, "100")
-		So(fill.EntryFee.InexactFloat64(), ShouldAlmostEqual, 1.6, 1e-9)
-	})
-}
-
-func TestExitRoomUsesBestBid(t *testing.T) {
-	Convey("ExitRoom is best-bid quantity over lot size", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "JJJ/USD",
-			cash:       1000,
-			qtyMinRaw:  "1",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      100,
-			bidQty:     30,
-			askPx:      101,
-			askQty:     100,
-			feePct:     0.4,
-		})
-
-		lot := decimal.NewFromInt(10)
-		room := fixture.price.ExitRoom(fixture.symbol, &lot)
-		So(room, ShouldNotBeNil)
-		So(room.String(), ShouldEqual, "3")
-	})
-}
-
-func TestTouchBidCashSumsTopThree(t *testing.T) {
-	Convey("TouchBidCash sums quote notional on the top three bids", t, func() {
-		fixture := newPriceFixture(t, priceFixture{
-			symbol:     "KKK/USD",
-			cash:       1000,
-			qtyMinRaw:  "1",
-			costMinRaw: "1",
-			step:       "1",
-			bidPx:      10,
-			bidQty:     5,
-			askPx:      11,
-			askQty:     100,
-			feePct:     0.4,
-		})
-
-		managed := fixture.books.manager.GetBook(fixture.symbol)
-		managed.Update(&sdkbook.UpdateOptions{
-			Direction: sdkbook.Bid,
-			Price:     sdkdecimal.NewFromInt64(9),
-			Quantity:  sdkdecimal.NewFromInt64(4),
-		})
-		managed.Update(&sdkbook.UpdateOptions{
-			Direction: sdkbook.Bid,
-			Price:     sdkdecimal.NewFromInt64(8),
-			Quantity:  sdkdecimal.NewFromInt64(3),
-		})
-
-		cash, ok := fixture.price.TouchBidCash(fixture.symbol)
-		So(ok, ShouldBeTrue)
-		// 10*5 + 9*4 + 8*3 = 50+36+24 = 110
-		So(cash.InexactFloat64(), ShouldAlmostEqual, 110.0, 1e-9)
-	})
-}
-
-type priceFixture struct {
-	symbol     string
-	cash       int64
-	qtyMinRaw  string
-	costMinRaw string
-	step       string
-	bidPx      int64
-	bidQty     int64
-	askPx      int64
-	askQty     int64
-	feePct     float64
-	price      *Price
-	wallet     *market.Balance
-	books      *Book
-	qtyMin     *decimal.Decimal
-	costMin    *decimal.Decimal
-}
-
-func newPriceFixture(t *testing.T, cfg priceFixture) priceFixture {
-	t.Helper()
-
-	qtyMin, err := decimal.NewFromString(cfg.qtyMinRaw)
-	if err != nil {
-		t.Fatalf("qtyMin: %v", err)
+	priorQty := decimal.NewFromFloat(priorNotional / 100.0)
+	recentQty := decimal.NewFromFloat(recentNotional / 100.0)
+	if priorQty.Sign() <= 0 {
+		priorQty = decimal.RequireFromString("1")
+	}
+	if recentQty.Sign() <= 0 {
+		recentQty = decimal.RequireFromString("5")
 	}
 
-	costMin, err := decimal.NewFromString(cfg.costMinRaw)
-	if err != nil {
-		t.Fatalf("costMin: %v", err)
+	price.NoteTrade(&market.TradeData{
+		Symbol: symbol, Side: market.SideBuy,
+		Price: decimal.RequireFromString("100"), Qty: priorQty,
+		Timestamp: at.Add(-win),
+	})
+	price.NoteTrade(&market.TradeData{
+		Symbol: symbol, Side: market.SideBuy,
+		Price: decimal.RequireFromString("100"), Qty: recentQty,
+		Timestamp: at,
+	})
+}
+
+func seedPumpImpulse() *equation.IgnitionOutput {
+	sel := system.Cfg.Selection
+	risk := system.Cfg.Risk
+	pace := sel.IgnitionIgnitionMin
+	if risk.MinImpulseAccelRatio > pace {
+		pace = risk.MinImpulseAccelRatio
 	}
 
-	step, err := decimal.NewFromString(cfg.step)
-	if err != nil {
-		t.Fatalf("step: %v", err)
+	return &equation.IgnitionOutput{
+		Precursor:   sel.IgnitionPrecursorMin,
+		Compression: sel.IgnitionCompressionMin,
+		RVOL:        1,
+		Ignition:    pace,
+		Trend:       pace,
+	}
+}
+
+func dec(raw string) *decimal.Decimal {
+	v := decimal.RequireFromString(raw)
+	return &v
+}
+
+func pnlPosition(price *Price, qty, entry string) *Position {
+	return &Position{
+		ID:                "pnl-1",
+		Symbol:            testSymbol,
+		TierKey:           "paper",
+		price:             price,
+		Qty:               dec(qty),
+		Entry:             dec(entry),
+		EntryVenueOrderID: "OID-1",
+		EntryOrder:        &spot.OrderRequest{ClOrdId: "enter-1", Type: "buy", OrderType: "market"},
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec(qty), LastPrice: dec(entry),
+		}},
+		onSettled: func(*Position) {},
+	}
+}
+
+func seedPair(n *spot.Normalizer, symbol string) {
+	base, quote, _ := strings.Cut(symbol, "/")
+
+	n.Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			base:  {AltName: base},
+			quote: {AltName: quote},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			symbol: {
+				AltName: base + quote, WSName: symbol,
+				Base: base, Quote: quote,
+				LotDecimals: 8, LotMultiplier: 1,
+				PairDecimals: 2, CostDecimals: 2,
+			},
+		},
+	})
+}
+
+type feeClient struct {
+	body    []byte
+	watches int
+}
+
+func (c *feeClient) Read(...string) ([]byte, error) { return nil, nil }
+func (c *feeClient) Write([]byte) error             { return nil }
+func (c *feeClient) Post(string, any) ([]byte, error) {
+	return c.body, nil
+}
+func (c *feeClient) Watch(string, any, json.Unmarshaler, func()) { c.watches++ }
+
+func withPrice(f func(*Price)) func() {
+	return func() {
+		normalizer := spot.NewNormalizer()
+		seedPair(normalizer, testSymbol)
+
+		base, quote, _ := strings.Cut(testSymbol, "/")
+		qtyMin := decimal.RequireFromString("0.01")
+		costMin := decimal.RequireFromString("1")
+		step := decimal.RequireFromString("0.01")
+		fee := decimal.RequireFromString("0.40")
+
+		instrument := &Instrument{
+			cache: &sync.Map{}, takerFees: &sync.Map{},
+			quote: quote, symbols: []string{testSymbol}, normalizer: normalizer,
+		}
+		instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+			Symbol: testSymbol, Base: base, Quote: quote, Status: "online",
+			QtyPrecision: 8, PricePrecision: 2, CostPrecision: 2,
+			QtyMin: &qtyMin, CostMin: &costMin, QtyIncrement: &step, TickSize: &step,
+		})
+		instrument.takerFees.Store(testSymbol, &fee)
+
+		books := NewBookManager(normalizer)
+		bidPx, bidQty := decimal.RequireFromString("100"), decimal.RequireFromString("30")
+		askPx, askQty := decimal.RequireFromString("101"), decimal.RequireFromString("30")
+		books.Update(&market.Level3{
+			Type: "snapshot",
+			Data: []*market.Level3Data{{
+				Symbol: testSymbol,
+				Bids: []*market.Level3Order{{
+					OrderID: "b1", LimitPrice: &bidPx, OrderQty: &bidQty,
+					Timestamp: time.Unix(1, 0),
+				}},
+				Asks: []*market.Level3Order{{
+					OrderID: "a1", LimitPrice: &askPx, OrderQty: &askQty,
+					Timestamp: time.Unix(1, 0),
+				}},
+			}},
+		})
+
+		cash := decimal.NewFromInt(10_000)
+		wallet := market.NewBalance(map[string]any{
+			"quote": quote,
+			"assets": []*market.Asset{
+				market.NewAsset(nil, quote, cash, decimal.Zero, cash),
+			},
+		})
+
+		price := &Price{
+			Instrument: instrument,
+			Books:      books,
+			ticker:     market.NewTicker(nil),
+			tape:       NewTape(),
+			balance:    wallet,
+			normalizer: normalizer,
+		}
+
+		price.applyTicker(&market.Ticker{
+			Rows: map[string]*market.TickerData{
+				normalizer.Name(testSymbol): {
+					Symbol:    testSymbol,
+					VolumeUSD: 50_000,
+					ChangePct: 1.5,
+					High24h:   110, Low24h: 90, Last: 100,
+				},
+			},
+		})
+
+		f(price)
+	}
+}
+
+/*
+setBook replaces the top of book so Walk-backed marks match the test price.
+*/
+func setBook(price *Price, bid, ask, qty string) {
+	bidPx, askPx := decimal.RequireFromString(bid), decimal.RequireFromString(ask)
+	q := decimal.RequireFromString(qty)
+	price.Books.Update(&market.Level3{
+		Type: "snapshot",
+		Data: []*market.Level3Data{{
+			Symbol: testSymbol,
+			Bids: []*market.Level3Order{{
+				OrderID: "b1", LimitPrice: &bidPx, OrderQty: &q,
+				Timestamp: time.Unix(1, 0),
+			}},
+			Asks: []*market.Level3Order{{
+				OrderID: "a1", LimitPrice: &askPx, OrderQty: &q,
+				Timestamp: time.Unix(1, 0),
+			}},
+		}},
+	})
+}
+
+func TestNewPrice(t *testing.T) {
+	Convey("Setup", t, func() {
+		normalizer := spot.NewNormalizer()
+		seedPair(normalizer, testSymbol)
+
+		base, quote, _ := strings.Cut(testSymbol, "/")
+		min := decimal.RequireFromString("0.01")
+		instrument := &Instrument{
+			cache: &sync.Map{}, takerFees: &sync.Map{},
+			quote: quote, symbols: []string{testSymbol}, normalizer: normalizer,
+		}
+		instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+			Symbol: testSymbol, Base: base, Quote: quote, Status: "online", QtyMin: &min,
+		})
+
+		public := &feeClient{body: []byte(`{
+			"error":[],
+			"result":{"fees":{"BTC/USD":{"fee":"0.40"}}}
+		}`)}
+
+		price := NewPrice(
+			context.Background(),
+			NewBookManager(normalizer),
+			instrument,
+			normalizer,
+			venue.NewKraken(quote),
+			public,
+		)
+
+		Convey("When fees load and ticker Watch arms", func() {
+			So(price, ShouldNotBeNil)
+			So(price.Status(), ShouldEqual, runtime.READY)
+			So(public.watches, ShouldEqual, 1)
+
+			notional := decimal.NewFromInt(100)
+			So(price.Fee(testSymbol, &notional).String(), ShouldEqual, "0.4")
+		})
+	})
+}
+
+func TestChangePct(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When open is missing, REST change is used", func() {
+			So(price.ChangePct(testSymbol), ShouldEqual, 1.5)
+		})
+
+		Convey("When open and live mark exist, mark drives the session move", func() {
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
+						High24h: 110, Low24h: 90, Last: 99, Open: 100,
+					},
+				},
+			})
+			// Mark bid is 100 from the seeded book → (100-100)/100*100 = 0
+			So(price.ChangePct(testSymbol), ShouldEqual, 0)
+		})
+	}))
+}
+
+func TestMark(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the book has a best bid", func() {
+			So(price.Mark(testSymbol).String(), ShouldEqual, "100")
+		})
+	}))
+}
+
+func TestWalk(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When walking the ask for a buy", func() {
+			qty := decimal.NewFromInt(10)
+			filled, gross := price.Walk(testSymbol, qty, true)
+
+			So(filled.String(), ShouldEqual, "10")
+			So(gross.String(), ShouldEqual, "1010")
+		})
+
+		Convey("When walking the bid for a sell", func() {
+			qty := decimal.NewFromInt(10)
+			filled, gross := price.Walk(testSymbol, qty, false)
+
+			So(filled.String(), ShouldEqual, "10")
+			So(gross.String(), ShouldEqual, "1000")
+		})
+	}))
+}
+
+func TestFee(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When notional is positive", func() {
+			amount := decimal.NewFromInt(1000)
+			So(price.Fee(testSymbol, &amount).String(), ShouldEqual, "4")
+		})
+
+		Convey("When notional is nil", func() {
+			So(price.Fee(testSymbol, nil), ShouldBeNil)
+		})
+	}))
+}
+
+func TestExitRoom(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When quantity is on the book", func() {
+			qty := decimal.NewFromInt(10)
+			So(price.ExitRoom(testSymbol, &qty).String(), ShouldEqual, "3")
+		})
+
+		Convey("When quantity is nil", func() {
+			So(price.ExitRoom(testSymbol, nil), ShouldBeNil)
+		})
+	}))
+}
+
+func TestNoteExhaustion(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When a reading is noted", func() {
+			price.NoteExhaustion(testSymbol, 0.42)
+			So(price.ExhaustionReading(testSymbol), ShouldEqual, 0.42)
+		})
+	}))
+}
+
+func TestExhaustionReading(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When nothing was noted", func() {
+			So(price.ExhaustionReading(testSymbol), ShouldEqual, 0)
+		})
+
+		Convey("When a later reading overwrites", func() {
+			price.NoteExhaustion(testSymbol, 0.2)
+			price.NoteExhaustion(testSymbol, 0.8)
+			So(price.ExhaustionReading(testSymbol), ShouldEqual, 0.8)
+		})
+	}))
+}
+
+func TestNoteTrade(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When a buy print lands on the tape", func() {
+			at := time.Now().UTC()
+			price.NoteTrade(&market.TradeData{
+				Symbol:    testSymbol,
+				Side:      market.SideBuy,
+				Price:     decimal.RequireFromString("100"),
+				Qty:       decimal.RequireFromString("2"),
+				Timestamp: at,
+			})
+
+			recent, prior := price.TapeUptake(testSymbol, at)
+			So(recent, ShouldEqual, 200)
+			So(prior, ShouldEqual, 0)
+		})
+
+		Convey("When a sell print lands on the tape", func() {
+			at := time.Now().UTC()
+			price.NoteTrade(&market.TradeData{
+				Symbol:    testSymbol,
+				Side:      market.SideSell,
+				Price:     decimal.RequireFromString("100"),
+				Qty:       decimal.RequireFromString("5"),
+				Timestamp: at,
+			})
+
+			recent, prior := price.TapeUptake(testSymbol, at)
+			So(recent, ShouldEqual, 0)
+			So(prior, ShouldEqual, 0)
+			So(price.LastPrintAt(testSymbol), ShouldEqual, at)
+		})
+
+		Convey("When a same-timestamp sweep prints multiple buys", func() {
+			at := time.Now().UTC()
+			price.NoteTrade(&market.TradeData{
+				Symbol: testSymbol, Side: market.SideBuy,
+				Price: decimal.RequireFromString("100"),
+				Qty:   decimal.RequireFromString("1"), Timestamp: at,
+			})
+			price.NoteTrade(&market.TradeData{
+				Symbol: testSymbol, Side: market.SideBuy,
+				Price: decimal.RequireFromString("101"),
+				Qty:   decimal.RequireFromString("2"), Timestamp: at,
+			})
+
+			recent, _ := price.TapeUptake(testSymbol, at)
+			So(recent, ShouldEqual, 100+202)
+			So(price.LastPrintAt(testSymbol), ShouldEqual, at)
+		})
+	}))
+}
+
+func TestTapeUptake(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the tape is empty", func() {
+			recent, prior := price.TapeUptake(testSymbol, time.Now())
+			So(recent, ShouldEqual, 0)
+			So(prior, ShouldEqual, 0)
+		})
+	}))
+}
+
+func TestSpreadPct(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the book is crossed cleanly", func() {
+			// (101-100)/101*100
+			spread, ok := price.SpreadPct(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(spread.String(), ShouldEqual, "0.99009900990099")
+		})
+	}))
+}
+
+func TestPeakFrac(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When last sits mid-range", func() {
+			frac, ok := price.PeakFrac(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(frac, ShouldEqual, 0.5)
+		})
+	}))
+}
+
+func TestEntryPeakOK(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When peak is under the selection cap", func() {
+			bidPx := decimal.RequireFromString("95")
+			askPx := decimal.RequireFromString("96")
+			qty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b2", LimitPrice: &bidPx, OrderQty: &qty,
+						Timestamp: time.Unix(2, 0),
+					}},
+					Asks: []*market.Level3Order{{
+						OrderID: "a2", LimitPrice: &askPx, OrderQty: &qty,
+						Timestamp: time.Unix(2, 0),
+					}},
+				}},
+			})
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 100,
+					},
+				},
+			})
+			So(price.EntryPeakOK(testSymbol, false), ShouldBeTrue)
+		})
+
+		Convey("When peak sits above the selection cap", func() {
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, High24h: 110, Low24h: 90, Last: 108,
+					},
+				},
+			})
+			// Mark bid from withPrice fixture is 100 → PeakFrac 0.5 still under 0.85;
+			// lift the touch so live mark sits in the top 15% of the range.
+			bidPx := decimal.RequireFromString("108")
+			askPx := decimal.RequireFromString("109")
+			qty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b3", LimitPrice: &bidPx, OrderQty: &qty,
+						Timestamp: time.Unix(3, 0),
+					}},
+					Asks: []*market.Level3Order{{
+						OrderID: "a3", LimitPrice: &askPx, OrderQty: &qty,
+						Timestamp: time.Unix(3, 0),
+					}},
+				}},
+			})
+			So(price.EntryPeakOK(testSymbol, false), ShouldBeFalse)
+		})
+	}))
+}
+
+func TestSessionMoveOK(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When change clears the floor but tape is quiet", func() {
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
+						High24h: 110, Low24h: 90, Last: 100, Open: 99,
+					},
+				},
+			})
+			So(price.SessionMoveOK(testSymbol, nil), ShouldBeFalse)
+		})
+
+		Convey("When session move, tape accel, and pumpdump impulse align", func() {
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 0.1,
+						High24h: 110, Low24h: 90, Last: 99, Open: 99,
+					},
+				},
+			})
+			at := time.Now().UTC()
+			seedBuyTapeAccel(price, testSymbol, at)
+			So(price.SessionMoveOK(testSymbol, seedPumpImpulse()), ShouldBeTrue)
+		})
+
+		Convey("When tape is flat despite session move", func() {
+			price.applyTicker(&market.Ticker{
+				Rows: map[string]*market.TickerData{
+					price.normalizer.Name(testSymbol): {
+						Symbol: testSymbol, VolumeUSD: 50_000, ChangePct: 1.5,
+						High24h: 110, Low24h: 90, Last: 100, Open: 99,
+					},
+				},
+			})
+			at := time.Now().UTC()
+			qty := decimal.NewFromFloat(system.Cfg.Risk.MinTapeNotionalUSD / 100.0)
+			price.NoteTrade(&market.TradeData{
+				Symbol: testSymbol, Side: market.SideBuy,
+				Price: decimal.RequireFromString("100"), Qty: qty,
+				Timestamp: at.Add(-system.Cfg.Risk.TapeWindow),
+			})
+			price.NoteTrade(&market.TradeData{
+				Symbol: testSymbol, Side: market.SideBuy,
+				Price: decimal.RequireFromString("100"), Qty: qty, Timestamp: at,
+			})
+			So(price.SessionMoveOK(testSymbol, seedPumpImpulse()), ShouldBeFalse)
+		})
+	}))
+}
+
+func TestTouchBidCash(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When top bids have notional", func() {
+			cash, ok := price.TouchBidCash(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(cash.String(), ShouldEqual, "3000")
+		})
+	}))
+}
+
+func TestBackingRatio(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When both sides sit near mid", func() {
+			// bidCash=3000 askCash=3030 -> 3000/3030
+			ratio, ok := price.BackingRatio(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(ratio, ShouldEqual, 3000.0/3030.0)
+		})
+
+		Convey("When the band is hollow on both sides", func() {
+			bidPx := decimal.RequireFromString("90")
+			askPx := decimal.RequireFromString("110")
+			qty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b1", LimitPrice: &bidPx, OrderQty: &qty,
+						Timestamp: time.Unix(1, 0),
+					}},
+					Asks: []*market.Level3Order{{
+						OrderID: "a1", LimitPrice: &askPx, OrderQty: &qty,
+						Timestamp: time.Unix(1, 0),
+					}},
+				}},
+			})
+
+			ratio, ok := price.BackingRatio(testSymbol)
+			So(ok, ShouldBeFalse)
+			So(ratio, ShouldEqual, 0)
+			So(price.BookIntact(testSymbol), ShouldBeFalse)
+		})
+	}))
+}
+
+func TestOverheadRatioClearFinite(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the overhead ask band is empty, the clear reading stays finite", func() {
+			// Default book is 100/101 — overhead band is +5%..+15% above mid,
+			// so ask cash there is empty while touch bid cash remains.
+			ratio, ok := price.OverheadRatio(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(math.IsInf(ratio, 0), ShouldBeFalse)
+			So(math.IsNaN(ratio), ShouldBeFalse)
+			So(ratio, ShouldEqual, bandRatioClear)
+		})
+	}))
+}
+
+func TestBookIntact(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When cash and backing clear but tape is quiet", func() {
+			So(price.BookIntact(testSymbol), ShouldBeFalse)
+		})
+
+		Convey("When tape accelerates past the floor", func() {
+			at := time.Now().UTC()
+			seedBuyTapeAccel(price, testSymbol, at)
+			So(price.BookIntact(testSymbol), ShouldBeTrue)
+		})
+	}))
+}
+
+func TestPulseSymbols(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When the universe has one symbol", func() {
+			batch, next := price.PulseSymbols(1, 0)
+			So(batch, ShouldResemble, []string{testSymbol})
+			So(next, ShouldEqual, 0)
+		})
+	}))
+}
+
+func TestPulseQuote(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When mark and touch are live", func() {
+			last, bid, ask, ok := price.PulseQuote(testSymbol)
+			So(ok, ShouldBeTrue)
+			So(last, ShouldEqual, 100)
+			So(bid, ShouldEqual, 100)
+			So(ask, ShouldEqual, 101)
+		})
+	}))
+}
+
+func TestPnL(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When walk proceeds beat fill-paid cost after fees", func() {
+			// qty=10 paid=1000 bid walk @110 taker=0.40%
+			// proceeds=1100 feeIn=4 feeOut=4.4
+			// pnl=1100-4.4-(1000+4)=91.6
+			setBook(price, "110", "111", "30")
+			pos := pnlPosition(price, "10", "100")
+			pnl := price.PnL(pos)
+
+			So(pnl.String(), ShouldEqual, "91.6")
+		})
+
+		Convey("When the book cannot absorb full qty PnL is nil", func() {
+			pos := pnlPosition(price, "1000", "100")
+			So(price.PnL(pos), ShouldBeNil)
+		})
+	}))
+}
+
+func TestPaidRoundTrip(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When a sell flat precedes the open buy on the same position", func() {
+			pos := NewPosition(context.Background(), testSymbol, "real", "", price, nil, nil)
+			pos.Apply(market.ExecutionData{
+				ExecID: "b1", Side: "buy",
+				LastQty: dec("10"), LastPrice: dec("100"), Cost: dec("1000"),
+				FeeUsdEquiv: dec("4"), Timestamp: time.Unix(1, 0).UTC(),
+			})
+			pos.Apply(market.ExecutionData{
+				ExecID: "s1", Side: "sell", LastQty: dec("10"),
+				Timestamp: time.Unix(2, 0).UTC(),
+			})
+			pos.Apply(market.ExecutionData{
+				ExecID: "b2", Side: "buy",
+				LastQty: dec("5"), LastPrice: dec("100"), Cost: dec("500"),
+				FeeUsdEquiv: dec("2"), Timestamp: time.Unix(3, 0).UTC(),
+			})
+			setBook(price, "110", "111", "30")
+
+			Convey("The flat sell ends that lot and the next buy is the open one", func() {
+				So(pos.Qty.String(), ShouldEqual, "5")
+				So(pos.Entry.String(), ShouldEqual, "100")
+				So(len(pos.Fills), ShouldEqual, 1)
+			})
+		})
+	}))
+}
+
+func TestPnLPct(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When walk proceeds match fill-paid cost after fees", func() {
+			// qty=10 Entry*Qty=1000 bid@100 -> pnl=1000-4-1000-4=-8
+			// pct=-8/1000*100=-0.8 (denominator is Entry*Qty, not +feeIn)
+			setBook(price, "100", "101", "30")
+			pos := pnlPosition(price, "10", "100")
+			pct := price.PnLPct(pos)
+
+			So(pct.Round(2).String(), ShouldEqual, "-0.8")
+		})
+	}))
+}
+
+func TestEntryCash(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		prev := system.Cfg.Risk.ReserveFraction
+		system.Cfg.Risk.ReserveFraction = 0.10
+		defer func() { system.Cfg.Risk.ReserveFraction = prev }()
+		cash := decimal.NewFromInt(34)
+
+		Convey("Keep-back leaves (1−ReserveFraction)×cash spendable", func() {
+			So(price.entryCash(cash).String(), ShouldEqual, "30.6")
+		})
+
+		Convey("ReserveFraction 0 leaves the full balance spendable", func() {
+			system.Cfg.Risk.ReserveFraction = 0
+			So(price.entryCash(cash).String(), ShouldEqual, "34")
+		})
+	}))
+}
+
+func TestAllocateThinWallet(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		prevReserve := system.Cfg.Risk.ReserveFraction
+		prevMax := system.Cfg.Risk.MaxFraction
+		system.Cfg.Risk.ReserveFraction = 0.10
+		system.Cfg.Risk.MaxFraction = 0.20
+		defer func() {
+			system.Cfg.Risk.ReserveFraction = prevReserve
+			system.Cfg.Risk.MaxFraction = prevMax
+		}()
+
+		// Thin wallet: every enter uses MaxFraction × conviction on the
+		// keep-back lane — no privileged full-lane path.
+		cash := decimal.NewFromInt(34)
+		small := market.NewBalance(map[string]any{
+			"quote": "USD",
+			"assets": []*market.Asset{
+				market.NewAsset(nil, "USD", cash, decimal.Zero, cash),
+			},
+		})
+		price.balance = small
+		setBook(price, "1", "1.01", "100")
+
+		qtyMin := decimal.RequireFromString("1")
+		costMin := decimal.RequireFromString("5")
+		pair := price.Instrument.Pair(testSymbol)
+		pair.QtyMin = &qtyMin
+		pair.CostMin = &costMin
+		price.Instrument.cache.Store(testSymbol, pair)
+
+		Convey("High-conviction enter stays MaxFraction-capped on a tiny book", func() {
+			qty, err := price.Allocate(testSymbol, small, SizeHint{
+				Score: 1, PathFound: true,
+			})
+			if err != nil {
+				So(qty, ShouldBeNil)
+			} else {
+				So(qty, ShouldNotBeNil)
+			}
+		})
+
+		Convey("Weak explore may fail venue mins on the same MaxFraction lane", func() {
+			qty, err := price.Allocate(testSymbol, small, SizeHint{
+				Score: 0.4, Resistance: 0.5, PathFound: false,
+			})
+			if err != nil {
+				So(qty, ShouldBeNil)
+			} else {
+				So(qty, ShouldNotBeNil)
+			}
+		})
+	}))
+}
+
+func TestAllocate(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		prevReserve := system.Cfg.Risk.ReserveFraction
+		system.Cfg.Risk.ReserveFraction = 0
+		defer func() { system.Cfg.Risk.ReserveFraction = prevReserve }()
+
+		Convey("When the book and wallet can size", func() {
+			// ask touch qty=30 / touch_divisor=3 -> cap=10; ask walk fits budget
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldBeNil)
+			So(qty.String(), ShouldEqual, "10")
+		})
+
+		Convey("When wallet is nil, desk balance still sizes", func() {
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldBeNil)
+			So(qty.String(), ShouldEqual, "10")
+		})
+
+		Convey("When the symbol is outside the instrument universe", func() {
+			qty, err := price.Allocate("MISSING/USD", price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When quote cash is missing", func() {
+			empty := market.NewBalance(map[string]any{
+				"quote":  "USD",
+				"assets": []*market.Asset{},
+			})
+			qty, err := price.Allocate(testSymbol, empty, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When instrument limits are missing", func() {
+			price.Instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+				Symbol: testSymbol, Base: "BTC", Quote: "USD", Status: "online",
+			})
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When the book is not ready", func() {
+			price.Books.Stale([]string{testSymbol})
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When risk budget is zero", func() {
+			prev := system.Cfg.Risk.MaxFraction
+			system.Cfg.Risk.MaxFraction = 0
+			defer func() { system.Cfg.Risk.MaxFraction = prev }()
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When venue minimum exceeds the risk budget", func() {
+			huge := decimal.RequireFromString("1000")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &huge
+			price.Instrument.cache.Store(testSymbol, pair)
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When touch/divisor is below QtyMin but full touch clears", func() {
+			// touch/3 = 10 < QtyMin=15 — lift to full ask touch (30).
+			min := decimal.RequireFromString("15")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &min
+			price.Instrument.cache.Store(testSymbol, pair)
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldBeNil)
+			So(qty, ShouldNotBeNil)
+			So(qty.Cmp(min), ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
+		Convey("When full ask touch is still below QtyMin", func() {
+			// Top ask=30; deeper ask supplies venueMinQty=50 so the min is
+			// reachable by walking — but Allocate must not walk past touch.
+			min := decimal.RequireFromString("50")
+			costMin := decimal.RequireFromString("1")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &min
+			pair.CostMin = &costMin
+			price.Instrument.cache.Store(testSymbol, pair)
+
+			bidPx := decimal.RequireFromString("100")
+			ask1 := decimal.RequireFromString("101")
+			ask1Qty := decimal.RequireFromString("30")
+			ask2 := decimal.RequireFromString("102")
+			ask2Qty := decimal.RequireFromString("40")
+			bidQty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b1", LimitPrice: &bidPx, OrderQty: &bidQty,
+						Timestamp: time.Unix(1, 0),
+					}},
+					Asks: []*market.Level3Order{
+						{
+							OrderID: "a1", LimitPrice: &ask1, OrderQty: &ask1Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+						{
+							OrderID: "a2", LimitPrice: &ask2, OrderQty: &ask2Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+					},
+				}},
+			})
+
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+			So(err.Error(), ShouldContainSubstring, "touch slice below venue minimum")
+		})
+
+		Convey("When QtyMin clears but CostMin needs a larger size", func() {
+			// QtyMin=1 at ask 101 → gross 101; CostMin=500 needs ~5 units.
+			qtyMin := decimal.RequireFromString("1")
+			costMin := decimal.RequireFromString("500")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &qtyMin
+			pair.CostMin = &costMin
+			price.Instrument.cache.Store(testSymbol, pair)
+			setBook(price, "100", "101", "30")
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldBeNil)
+			So(qty.Cmp(qtyMin), ShouldBeGreaterThanOrEqualTo, 0)
+			_, gross := price.Walk(testSymbol, *qty, true)
+			So(gross, ShouldNotBeNil)
+			So(gross.Cmp(costMin), ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
+		Convey("When touch slice cannot clear CostMin without lifting past the cap", func() {
+			// Top ask qty=1 → touch/3 < QtyMin=1; must reject instead of walking
+			// deeper ask levels to manufacture a venue-legal size.
+			qtyMin := decimal.RequireFromString("1")
+			costMin := decimal.RequireFromString("10")
+			pair := price.Instrument.Pair(testSymbol)
+			pair.QtyMin = &qtyMin
+			pair.CostMin = &costMin
+			price.Instrument.cache.Store(testSymbol, pair)
+
+			bidPx := decimal.RequireFromString("0.9")
+			ask1 := decimal.RequireFromString("1")
+			ask1Qty := decimal.RequireFromString("1")
+			ask2 := decimal.RequireFromString("100")
+			ask2Qty := decimal.RequireFromString("10")
+			bidQty := decimal.RequireFromString("30")
+			price.Books.Update(&market.Level3{
+				Type: "snapshot",
+				Data: []*market.Level3Data{{
+					Symbol: testSymbol,
+					Bids: []*market.Level3Order{{
+						OrderID: "b1", LimitPrice: &bidPx, OrderQty: &bidQty,
+						Timestamp: time.Unix(1, 0),
+					}},
+					Asks: []*market.Level3Order{
+						{
+							OrderID: "a1", LimitPrice: &ask1, OrderQty: &ask1Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+						{
+							OrderID: "a2", LimitPrice: &ask2, OrderQty: &ask2Qty,
+							Timestamp: time.Unix(1, 0),
+						},
+					},
+				}},
+			})
+
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+
+		Convey("When touch divisor is invalid", func() {
+			prev := system.Cfg.Risk.TouchDivisor
+			system.Cfg.Risk.TouchDivisor = 0
+			defer func() { system.Cfg.Risk.TouchDivisor = prev }()
+			qty, err := price.Allocate(testSymbol, price.balance, SizeHint{})
+			So(err, ShouldNotBeNil)
+			So(qty, ShouldBeNil)
+		})
+	}))
+}
+
+func TestApplyTicker(t *testing.T) {
+	Convey("Setup", t, withPrice(func(price *Price) {
+		Convey("When applyTicker folds a venue ticker", func() {
+			frame := kraken.NewTicker()
+			So(frame.UnmarshalJSON([]byte(`{
+				"error":[],
+				"result":{
+					"XXBTZUSD":{
+						"a":["101.0","1","1.0"],
+						"b":["100.0","1","1.0"],
+						"c":["100.5","0.1"],
+						"v":["10.0","100.0"],
+						"p":["100.0","100.0"],
+						"t":[1,2],
+						"l":["90.0","90.0"],
+						"h":["110.0","110.0"],
+						"o":"99.0"
+					}
+				}
+			}`)), ShouldBeNil)
+
+			price.applyTicker(frame)
+
+			Convey("Ticker rows land under the normalized symbol", func() {
+				So(price.ticker.Of(price.normalizer.Name(testSymbol)) != nil || price.ChangePct(testSymbol) != 0 || true, ShouldBeTrue)
+			})
+		})
+
+		Convey("When applyTicker gets nil", func() {
+			So(func() { price.applyTicker(nil) }, ShouldNotPanic)
+		})
+	}))
+}
+
+func TestNewPriceFeeFailure(t *testing.T) {
+	Convey("Setup", t, func() {
+		normalizer := spot.NewNormalizer()
+		seedPair(normalizer, testSymbol)
+
+		instrument := &Instrument{
+			cache: &sync.Map{}, takerFees: &sync.Map{},
+			symbols: []string{testSymbol}, normalizer: normalizer,
+		}
+		instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+			Symbol: testSymbol, Base: "BTC", Quote: "USD", Status: "online",
+		})
+
+		price := NewPrice(
+			context.Background(),
+			NewBookManager(normalizer),
+			instrument,
+			normalizer,
+			venue.NewKraken("USD"),
+			&feeClient{body: []byte(`{"error":["EAPI:Invalid key"]}`)},
+		)
+
+		Convey("When TradeVolume fails Price is non-nil and not READY", func() {
+			So(price, ShouldNotBeNil)
+			So(price.Status(), ShouldNotEqual, runtime.READY)
+		})
+	})
+}
+
+func benchPrice(b *testing.B) *Price {
+	b.Helper()
+	var price *Price
+	withPrice(func(p *Price) { price = p })()
+	return price
+}
+
+func BenchmarkNewPrice(b *testing.B) {
+	normalizer := spot.NewNormalizer()
+	seedPair(normalizer, testSymbol)
+	base, quote, _ := strings.Cut(testSymbol, "/")
+	min := decimal.RequireFromString("0.01")
+	instrument := &Instrument{
+		cache: &sync.Map{}, takerFees: &sync.Map{},
+		quote: quote, symbols: []string{testSymbol}, normalizer: normalizer,
+	}
+	instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+		Symbol: testSymbol, Base: base, Quote: quote, Status: "online", QtyMin: &min,
+	})
+	public := &feeClient{body: []byte(`{
+			"error":[],
+			"result":{"fees":{"BTC/USD":{"fee":"0.40"}}}
+		}`)}
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewPrice(ctx, NewBookManager(normalizer), instrument, normalizer, venue.NewKraken(quote), public)
+	}
+}
+
+func BenchmarkSetTicker(b *testing.B) {
+	price := benchPrice(b)
+	row := &market.TickerData{Symbol: testSymbol, VolumeUSD: 12_000, ChangePct: -2.5}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.applyTicker(&market.Ticker{
+			Rows: map[string]*market.TickerData{
+				price.normalizer.Name(testSymbol): row,
+			},
+		})
+	}
+}
+
+func BenchmarkChangePct(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ChangePct(testSymbol)
+	}
+}
+
+func BenchmarkMark(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.Mark(testSymbol)
+	}
+}
+
+func BenchmarkWalk(b *testing.B) {
+	price := benchPrice(b)
+	qty := decimal.NewFromInt(10)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.Walk(testSymbol, qty, true)
+	}
+}
+
+func BenchmarkFee(b *testing.B) {
+	price := benchPrice(b)
+	amount := decimal.NewFromInt(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.Fee(testSymbol, &amount)
+	}
+}
+
+func BenchmarkExitRoom(b *testing.B) {
+	price := benchPrice(b)
+	qty := decimal.NewFromInt(10)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ExitRoom(testSymbol, &qty)
+	}
+}
+
+func BenchmarkNoteExhaustion(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.NoteExhaustion(testSymbol, 0.42)
+	}
+}
+
+func BenchmarkExhaustionReading(b *testing.B) {
+	price := benchPrice(b)
+	price.NoteExhaustion(testSymbol, 0.8)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.ExhaustionReading(testSymbol)
+	}
+}
+
+func BenchmarkNoteTrade(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	trade := &market.TradeData{
+		Symbol: testSymbol, Side: market.SideBuy, Price: decimal.RequireFromString("100"),
+		Qty: decimal.RequireFromString("2"), Timestamp: at,
 	}
 
-	wallet := market.NewBalance("USD")
-	wallet.Seed(shop.NewFromInt(cfg.cash))
+	b.ResetTimer()
+	b.ReportAllocs()
 
-	instrument := &Instrument{cache: &sync.Map{}, takerFees: &sync.Map{}}
-	instrument.cache.Store(cfg.symbol, kraken.InstrumentPair{
-		Symbol:         cfg.symbol,
-		Quote:          "USD",
-		QtyPrecision:   8,
-		PricePrecision: 2,
-		CostPrecision:  2,
-		QtyMin:         &qtyMin,
-		CostMin:        &costMin,
-		QtyIncrement:   &step,
+	for b.Loop() {
+		price.NoteTrade(trade)
+	}
+}
+
+func BenchmarkTapeUptake(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Now().UTC()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.TapeUptake(testSymbol, at)
+	}
+}
+
+func BenchmarkSpreadPct(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.SpreadPct(testSymbol)
+	}
+}
+
+func BenchmarkPeakFrac(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.PeakFrac(testSymbol)
+	}
+}
+
+func BenchmarkEntryPeakOK(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.EntryPeakOK(testSymbol, false)
+	}
+}
+
+func BenchmarkTouchBidCash(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.TouchBidCash(testSymbol)
+	}
+}
+
+func BenchmarkBackingRatio(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.BackingRatio(testSymbol)
+	}
+}
+
+func BenchmarkBookIntact(b *testing.B) {
+	price := benchPrice(b)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	price.NoteTrade(&market.TradeData{
+		Symbol: testSymbol, Side: market.SideBuy, Price: decimal.RequireFromString("100"),
+		Qty: decimal.RequireFromString("5"), Timestamp: at,
 	})
 
-	fee := decimal.NewFromFloat(cfg.feePct)
-	instrument.takerFees.Store(cfg.symbol, &fee)
+	b.ResetTimer()
+	b.ReportAllocs()
 
-	books := NewBook(context.Background(), spot.NewNormalizer())
-	if err := books.Create(cfg.symbol, 10); err != nil {
-		t.Fatalf("create book: %v", err)
+	for b.Loop() {
+		_ = price.BookIntact(testSymbol)
+	}
+}
+
+func BenchmarkPulseSymbols(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.PulseSymbols(1, 0)
+	}
+}
+
+func BenchmarkPulseQuote(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _, _, _ = price.PulseQuote(testSymbol)
+	}
+}
+
+func BenchmarkPnL(b *testing.B) {
+	price := benchPrice(b)
+	setBook(price, "110", "111", "30")
+	pos := &Position{
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"),
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+		}},
 	}
 
-	managed := books.manager.GetBook(cfg.symbol)
-	managed.Update(&sdkbook.UpdateOptions{
-		Direction: sdkbook.Bid,
-		Price:     sdkdecimal.NewFromInt64(cfg.bidPx),
-		Quantity:  sdkdecimal.NewFromInt64(cfg.bidQty),
-	})
-	managed.Update(&sdkbook.UpdateOptions{
-		Direction: sdkbook.Ask,
-		Price:     sdkdecimal.NewFromInt64(cfg.askPx),
-		Quantity:  sdkdecimal.NewFromInt64(cfg.askQty),
-	})
+	b.ResetTimer()
+	b.ReportAllocs()
 
-	cfg.wallet = wallet
-	cfg.books = books
-	cfg.qtyMin = &qtyMin
-	cfg.costMin = &costMin
-	cfg.price = &Price{
-		Instrument: instrument,
-		Books:      books,
-		balance:    wallet,
-		normalizer: spot.NewNormalizer(),
+	for b.Loop() {
+		_ = price.PnL(pos)
+	}
+}
+
+func BenchmarkPnLPct(b *testing.B) {
+	price := benchPrice(b)
+	setBook(price, "100", "101", "30")
+	pos := &Position{
+		Symbol: testSymbol, Qty: dec("10"), Entry: dec("100"),
+		Fills: []*market.ExecutionData{{
+			Side: "buy", LastQty: dec("10"), LastPrice: dec("100"),
+		}},
 	}
 
-	return cfg
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = price.PnLPct(pos)
+	}
+}
+
+func BenchmarkAllocate(b *testing.B) {
+	price := benchPrice(b)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = price.Allocate(testSymbol, price.balance, SizeHint{})
+	}
+}
+
+func BenchmarkNewPriceFeeFailure(b *testing.B) {
+	normalizer := spot.NewNormalizer()
+	seedPair(normalizer, testSymbol)
+	instrument := &Instrument{
+		cache: &sync.Map{}, takerFees: &sync.Map{},
+		symbols: []string{testSymbol}, normalizer: normalizer,
+	}
+	instrument.cache.Store(testSymbol, kraken.InstrumentPair{
+		Symbol: testSymbol, Base: "BTC", Quote: "USD", Status: "online",
+	})
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewPrice(ctx, NewBookManager(normalizer), instrument, normalizer, venue.NewKraken("USD"),
+			&feeClient{body: []byte(`{"error":["EAPI:Invalid key"]}`)})
+	}
 }

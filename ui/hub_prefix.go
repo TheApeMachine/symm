@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
@@ -47,31 +48,52 @@ type closedEntry struct {
 }
 
 /*
-read fills one closed lot from a stored JSON object.
-Missing epoch, tick, and timestamp stay zero.
+read fills one closed position from a stored JSON object.
+Canonical objects are {epoch,tick,timestamp,position:{…}}. Legacy bare
+*Position JSON (id/symbol/tier_key at the top level) is still accepted.
+Missing epoch, tick, and timestamp stay zero. book is filled from tier_key
+when the store row only carried the broker field.
 */
 func (entry *closedEntry) read(raw []byte) bool {
-	if entry == nil || len(raw) == 0 {
+	if len(raw) == 0 {
 		return false
 	}
 
 	row, err := data.AttributeOk[map[string]any](raw, "position")
 
 	if err != nil || len(row) == 0 {
-		return false
+		var top map[string]any
+		if uerr := sonic.Unmarshal(raw, &top); uerr != nil || len(top) == 0 {
+			return false
+		}
+		if _, wrapped := top["position"]; wrapped {
+			return false
+		}
+		id, _ := top["id"].(string)
+		if id == "" {
+			return false
+		}
+		row = top
+		entry.Epoch = 0
+		entry.Tick = 0
+		entry.Timestamp = 0
+	} else {
+		id, _ := row["id"].(string)
+		if id == "" {
+			return false
+		}
+		entry.Epoch = data.Attribute[uint64](raw, "epoch")
+		entry.Tick = data.Attribute[uint64](raw, "tick")
+		entry.Timestamp = data.Attribute[uint64](raw, "timestamp")
 	}
 
-	id, _ := row["id"].(string)
-
-	if id == "" {
-		return false
+	if book, _ := row["book"].(string); book == "" {
+		if tk, ok := row["tier_key"].(string); ok && tk != "" {
+			row["book"] = tk
+		}
 	}
 
-	entry.Epoch = data.Attribute[uint64](raw, "epoch")
-	entry.Tick = data.Attribute[uint64](raw, "tick")
-	entry.Timestamp = data.Attribute[uint64](raw, "timestamp")
 	entry.Row = row
-
 	return true
 }
 
@@ -79,10 +101,11 @@ func (entry *closedEntry) read(raw []byte) bool {
 ListPrefix lists object keys under prefix and writes one or more JSON
 envelopes that stay under the websocket max message size.
 
-model/paths → {"paths":{scope,epoch,thresholds}}
+model/paths → {"pathbook":{scope,epoch,thresholds}}
 paper|real|virtual/closed → {"closed":{scope,entries}}
 
-Path leaves are PathBook JSON. Closed lots are JSON with a position object.
+Path leaves are PathBook JSON. Closed positions are JSON with a position object.
+Live sequencer Tokens still publish under "paths" — a different key.
 */
 func (hub *Hub) ListPrefix(prefix string) {
 	if hub.store == nil || prefix == "" {
@@ -118,9 +141,8 @@ func closedHistoryPrefix(prefix string) bool {
 func (hub *Hub) writePathsListing(prefix string, budget int) {
 	thresholds := make(map[string]float64, 256)
 
-	for key := range hub.store.ListKeys(prefix) {
-		raw := hub.store.Fetch(hub.ctx, key)
-		book := decodePathBook(raw)
+	for _, item := range hub.downloadPrefix(prefix) {
+		book := decodePathBook(item.raw)
 
 		if book == nil {
 			continue
@@ -130,7 +152,7 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 			continue
 		}
 
-		thresholds[policyPathKey(key, book.Action)] = book.Resistance
+		thresholds[policyPathKey(item.key, book.Action)] = book.Resistance
 	}
 
 	if len(thresholds) == 0 {
@@ -139,7 +161,7 @@ func (hub *Hub) writePathsListing(prefix string, budget int) {
 
 	for _, chunk := range chunkThresholds(thresholds, budget) {
 		hub.WriteJSON(map[string]any{
-			"paths": pathsListing{
+			"pathbook": pathsListing{
 				Scope:      "model/paths",
 				Thresholds: chunk,
 			},
@@ -165,13 +187,76 @@ func decodePathBook(raw []byte) *pathBook {
 	return &book
 }
 
+type prefixObject struct {
+	key string
+	raw []byte
+}
+
+/*
+downloadPrefix lists keys then fetches bodies through a bounded worker pool so
+inspecting model/paths/ or closed/ cannot open thousands of S3 GETs at once.
+*/
+func (hub *Hub) downloadPrefix(prefix string) []prefixObject {
+	keys := make([]string, 0, 256)
+
+	for key := range hub.store.ListKeys(prefix) {
+		keys = append(keys, key)
+	}
+
+	out := make([]prefixObject, len(keys))
+	workers := 32
+	if workers > len(keys) {
+		workers = len(keys)
+	}
+	if workers <= 0 {
+		return nil
+	}
+
+	jobs := make(chan int, workers)
+	var wg sync.WaitGroup
+
+	for range workers {
+		wg.Go(func() {
+			for i := range jobs {
+				key := keys[i]
+				raw, err := hub.store.Download(hub.ctx, key)
+				if err != nil {
+					errnie.Error(errnie.Err(
+						errnie.IO, "[hub] error downloading prefix object", err,
+					))
+					continue
+				}
+				out[i] = prefixObject{key: key, raw: raw}
+			}
+		})
+	}
+
+	for i := range keys {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+
+	kept := make([]prefixObject, 0, len(out))
+
+	for _, item := range out {
+		if item.key == "" || len(item.raw) == 0 {
+			continue
+		}
+
+		kept = append(kept, item)
+	}
+
+	return kept
+}
+
 func (hub *Hub) writeClosedListing(prefix string, budget int) {
 	entries := make([]closedEntry, 0, 64)
 
-	for key := range hub.store.ListKeys(prefix) {
+	for _, item := range hub.downloadPrefix(prefix) {
 		var entry closedEntry
 
-		if !entry.read(hub.store.Fetch(hub.ctx, key)) {
+		if !entry.read(item.raw) {
 			continue
 		}
 
@@ -206,29 +291,27 @@ func closedListingScope(prefix string) string {
 }
 
 func listFrameBudget() int {
-	maxBytes := 4 << 20
-
-	if system.Cfg != nil && system.Cfg.UI != nil && system.Cfg.UI.WebSocket != nil {
-		if configured := system.Cfg.UI.WebSocket.MaxMessageBytes; configured > 0 {
-			maxBytes = configured
-		}
-	}
-
-	return maxBytes * 9 / 10
+	return system.Cfg.UI.WebSocket.MaxMessageBytes * 9 / 10
 }
 
 /*
-policyPathKey normalizes an S3 object key to the trie key the dashboard
-expects (…/enter.bin|hold.bin|exit.bin).
+policyPathKey is the pathbook trie id the Cognitive viz expects:
+model/paths/<tokens>/<enter|hold|exit>.bin. Storage leaves are flat
+model/paths/<tokens>.bin with Action inside the PathBook JSON — rewrite so
+terminal nodes paint ENTER/HOLD/EXIT instead of the last region token.
 */
 func policyPathKey(storageKey, action string) string {
-	if strings.HasSuffix(storageKey, ".bin") {
+	switch {
+	case strings.HasSuffix(storageKey, "/enter.bin"),
+		strings.HasSuffix(storageKey, "/hold.bin"),
+		strings.HasSuffix(storageKey, "/exit.bin"):
 		return storageKey
 	}
 
 	switch action {
 	case "enter", "hold", "exit":
-		return storageKey + "/" + action + ".bin"
+		base := strings.TrimSuffix(storageKey, ".bin")
+		return base + "/" + action + ".bin"
 	default:
 		return storageKey
 	}
@@ -292,7 +375,7 @@ func chunkClosedEntries(entries []closedEntry, budget int) [][]closedEntry {
 	}
 
 	for i, entry := range entries {
-		raw, err := sonic.Marshal(entry)
+		raw, err := Sonic.Marshal(entry)
 		cost := 64
 
 		if err == nil {
@@ -305,7 +388,7 @@ func chunkClosedEntries(entries []closedEntry, budget int) [][]closedEntry {
 
 		if cost > budget {
 			errnie.Warn(fmt.Sprintf(
-				"[hub] skipping oversized closed lot (%d bytes > budget %d)",
+				"[hub] skipping oversized closed position (%d bytes > budget %d)",
 				cost, budget,
 			))
 			start = i + 1

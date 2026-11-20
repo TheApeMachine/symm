@@ -1,0 +1,359 @@
+package kraken
+
+import (
+	"encoding/json"
+	"strings"
+	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/shopspring/decimal"
+	"github.com/theapemachine/nomagique/market"
+)
+
+/*
+Execution is the private executions websocket feed broker.Position consumes;
+paper synthesizes the same channel shape from CLI history and fill events.
+*/
+type Execution struct {
+	Channel  string          `json:"channel"`
+	Type     string          `json:"type"`
+	Data     []ExecutionData `json:"data"`
+	Sequence int             `json:"sequence"`
+}
+
+/*
+ExecutionData is one fill or order lifecycle row on the executions channel.
+*/
+type ExecutionData struct {
+	OrderID       string           `json:"order_id"`
+	ClientOrderID string           `json:"cl_ord_id"`
+	OrderUserref  int              `json:"order_userref"`
+	ExecID        string           `json:"exec_id"`
+	ExecType      string           `json:"exec_type"`
+	TradeID       int              `json:"trade_id"`
+	Symbol        string           `json:"symbol"`
+	Side          string           `json:"side"`
+	LastQty       *decimal.Decimal `json:"last_qty"`
+	LastPrice     *decimal.Decimal `json:"last_price"`
+	LiquidityInd  string           `json:"liquidity_ind"`
+	Cost          *decimal.Decimal `json:"cost"`
+	OrderType     string           `json:"order_type"`
+	Timestamp     time.Time        `json:"timestamp"`
+	OrderStatus   string           `json:"order_status"`
+	CumQty        *decimal.Decimal `json:"cum_qty"`
+	CumCost       *decimal.Decimal `json:"cum_cost"`
+	AvgPrice      *decimal.Decimal `json:"avg_price"`
+	FeeUsdEquiv   *decimal.Decimal `json:"fee_usd_equiv"`
+	Fees          []ExecutionFee   `json:"fees"`
+}
+
+/*
+ExecutionFee is venue fee breakdown on a single execution row.
+*/
+type ExecutionFee struct {
+	Asset string  `json:"asset"`
+	Qty   float64 `json:"qty"`
+}
+
+/*
+NewExecution prepares an empty executions frame. Subscribe defaults live on
+NewExecutionSubscription (snap_orders on; snap_trades off — Ledger owns history).
+*/
+func NewExecution() *Execution {
+	return &Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data:    make([]ExecutionData, 0),
+	}
+}
+
+/*
+NewExecutionFromMap builds a wire Execution from a paper CLI model.
+*/
+func NewExecutionFromMap(model map[string]any) json.Marshaler {
+	var execType string
+	var orderStatus string
+
+	if et, ok := model["exec_type"].(string); ok {
+		execType = et
+	}
+
+	if os, ok := model["order_status"].(string); ok {
+		orderStatus = os
+	}
+
+	if status, ok := model["status"].(string); ok && orderStatus == "" {
+		orderStatus = status
+	}
+
+	if action, ok := model["action"].(string); ok {
+		if action == "limit_order_placed" {
+			if execType == "" {
+				execType = "new"
+			}
+			if orderStatus == "" {
+				orderStatus = "open"
+			}
+		}
+
+		if action == "order_cancelled" {
+			if execType == "" {
+				execType = "canceled"
+			}
+			if orderStatus == "" {
+				orderStatus = "canceled"
+			}
+		}
+
+		if action == "market_order_filled" {
+			if execType == "" {
+				execType = "trade"
+			}
+			if orderStatus == "" {
+				orderStatus = "filled"
+			}
+		}
+	}
+
+	orderID, _ := model["order_id"].(string)
+	clientOrderID, _ := model["cl_ord_id"].(string)
+	execID, _ := model["trade_id"].(string)
+
+	if execID == "" {
+		execID, _ = model["id"].(string)
+	}
+
+	pair, _ := model["pair"].(string)
+	side, _ := model["side"].(string)
+	volume := decimal.Zero
+	price := decimal.Zero
+	cost := decimal.Zero
+	fee := decimal.Zero
+
+	if value, ok := model["volume"].(float64); ok {
+		volume = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["price"].(float64); ok {
+		price = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["cost"].(float64); ok {
+		cost = decimal.NewFromFloat(value)
+	}
+
+	if value, ok := model["fee"].(float64); ok {
+		fee = decimal.NewFromFloat(value)
+	}
+
+	var timestamp time.Time
+
+	if timeRaw, ok := model["time"].(string); ok && timeRaw != "" {
+		if parsed, err := time.Parse(time.RFC3339, timeRaw); err == nil {
+			timestamp = parsed
+		}
+
+		if timestamp.IsZero() {
+			if parsed, err := time.Parse(time.RFC3339Nano, timeRaw); err == nil {
+				timestamp = parsed
+			}
+		}
+	}
+
+	if timestamp.IsZero() {
+		if sec, ok := model["timestamp"].(float64); ok && sec > 0 {
+			timestamp = time.Unix(int64(sec), int64((sec-float64(int64(sec)))*1e9))
+		}
+	}
+
+	return &Execution{
+		Channel: "executions",
+		Type:    "update",
+		Data: []ExecutionData{{
+			OrderID:       orderID,
+			ClientOrderID: clientOrderID,
+			ExecID:        execID,
+			ExecType:      execType,
+			Symbol:        pair,
+			Side:          strings.ToLower(side),
+			LastQty:       &volume,
+			LastPrice:     &price,
+			Cost:          &cost,
+			OrderStatus:   orderStatus,
+			CumQty:        &volume,
+			CumCost:       &cost,
+			AvgPrice:      &price,
+			FeeUsdEquiv:   &fee,
+			Timestamp:     timestamp,
+		}},
+	}
+}
+
+/*
+Request is the private subscribe envelope for executions without a ws token.
+*/
+func (execution *Execution) Request() map[string]any {
+	return NewExecutionSubscription("")
+}
+
+/*
+NewExecutionSubscription builds the private ws subscribe frame; token is required
+on live Kraken after Open and on every reconnect within TokenReuse.
+*/
+func NewExecutionSubscription(token string) map[string]any {
+	params := map[string]any{
+		"channel":     "executions",
+		"snap_orders": true,
+		// Ledger Restore already folded TradesHistory into per-cycle positions.
+		// Replaying trades here would dump prior-cycle sells onto today's open.
+		"snap_trades": false,
+	}
+
+	if token != "" {
+		params["token"] = token
+	}
+
+	return map[string]any{
+		"method": "subscribe",
+		"params": params,
+	}
+}
+
+/*
+MarshalJSON aliases Execution for the wire.
+*/
+func (execution *Execution) MarshalJSON() ([]byte, error) {
+	type alias Execution
+	return sonic.Marshal((*alias)(execution))
+}
+
+/*
+UnmarshalJSON normalizes Data.
+*/
+func (execution *Execution) UnmarshalJSON(data []byte) error {
+	type alias Execution
+	var decoded alias
+
+	if err := sonic.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*execution = Execution(decoded)
+
+	if execution.Data == nil {
+		execution.Data = make([]ExecutionData, 0)
+	}
+
+
+	return nil
+}
+
+/*
+ToMarket projects fills into nomagique Execution for broker.Position folding.
+*/
+func (execution *Execution) ToMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Execution)
+
+	if !ok || book == nil || execution == nil {
+		return other
+	}
+
+	rows := make([]*market.ExecutionData, 0, len(execution.Data))
+
+	for _, row := range execution.Data {
+		rows = append(rows, &market.ExecutionData{
+			OrderID:       row.OrderID,
+			ClientOrderID: row.ClientOrderID,
+			OrderUserref:  row.OrderUserref,
+			ExecID:        row.ExecID,
+			ExecType:      row.ExecType,
+			TradeID:       row.TradeID,
+			Symbol:        row.Symbol,
+			Side:          row.Side,
+			LastQty:       row.LastQty,
+			LastPrice:     row.LastPrice,
+			LiquidityInd:  row.LiquidityInd,
+			Cost:          row.Cost,
+			OrderType:     row.OrderType,
+			Timestamp:     row.Timestamp,
+			OrderStatus:   row.OrderStatus,
+			CumQty:        row.CumQty,
+			CumCost:       row.CumCost,
+			AvgPrice:      row.AvgPrice,
+			FeeUsdEquiv:   row.FeeUsdEquiv,
+		})
+	}
+
+	return market.NewExecution(map[string]any{
+		"channel": execution.Channel,
+		"type":    execution.Type,
+		"data":    rows,
+	}).ToMarket(book)
+}
+
+/*
+FromMarket copies nomagique execution rows back for paper/cache round-trips.
+*/
+func (execution *Execution) FromMarket(other market.MarketType) market.MarketType {
+	book, ok := other.(*market.Execution)
+
+	if !ok || book == nil || execution == nil {
+		return execution
+	}
+
+	execution.Channel = book.Channel
+	execution.Type = book.Type
+	execution.Sequence = book.Sequence
+	execution.Data = execution.Data[:0]
+
+	for _, row := range book.Data {
+		if row == nil {
+			continue
+		}
+
+		execution.Data = append(execution.Data, ExecutionData{
+			OrderID:       row.OrderID,
+			ClientOrderID: row.ClientOrderID,
+			OrderUserref:  row.OrderUserref,
+			ExecID:        row.ExecID,
+			ExecType:      row.ExecType,
+			TradeID:       row.TradeID,
+			Symbol:        row.Symbol,
+			Side:          row.Side,
+			LastQty:       row.LastQty,
+			LastPrice:     row.LastPrice,
+			LiquidityInd:  row.LiquidityInd,
+			Cost:          row.Cost,
+			OrderType:     row.OrderType,
+			Timestamp:     row.Timestamp,
+			OrderStatus:   row.OrderStatus,
+			CumQty:        row.CumQty,
+			CumCost:       row.CumCost,
+			AvgPrice:      row.AvgPrice,
+			FeeUsdEquiv:   row.FeeUsdEquiv,
+		})
+	}
+
+	return execution
+}
+
+/*
+Tradable reports a fill the desk can fold into a position.
+*/
+func (execution *Execution) Tradable() bool {
+	if execution == nil {
+		return false
+	}
+
+	for _, row := range execution.Data {
+		if row.LastQty == nil || row.LastQty.Sign() <= 0 {
+			continue
+		}
+
+		if row.ExecType == "" || row.ExecType == "trade" {
+			return true
+		}
+	}
+
+	return false
+}

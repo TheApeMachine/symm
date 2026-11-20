@@ -27,7 +27,7 @@ export const LongtailPaperPanel = () => {
 			<Section.Body className="gap-3 p-3">
 				{!latest ? (
 					<Typography.Span className="text-(--muted)">
-						Collecting samples from desk lots, confidence, and model/paths…
+						Collecting samples from desk positions, confidence, and model/paths…
 					</Typography.Span>
 				) : (
 					<Flex.Row gap={4} wrap="wrap">
@@ -39,7 +39,7 @@ export const LongtailPaperPanel = () => {
 						</Flex.Column>
 						<Flex.Column gap={1}>
 							<Typography.Span className="text-(--muted) text-xs">
-								Closed lots
+								Closed positions
 							</Typography.Span>
 							<Typography.Span>{tier?.stats.closed ?? "—"}</Typography.Span>
 						</Flex.Column>

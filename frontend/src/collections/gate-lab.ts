@@ -38,7 +38,7 @@ export const ORACLE_GATES: OracleGate[] = [
 		label: "Book integrity",
 		veto: 15,
 		approve: 16,
-		hint: "Can the book carry a lot? Cash, backing, tape liveness, open drag. Veto = thin/fake; approve = firm.",
+		hint: "Can the book carry a position? Cash, backing, tape uptake, open drag. Veto = thin, fake, or fading; approve = firm.",
 	},
 	{
 		id: "brd",
@@ -61,30 +61,44 @@ export const ORACLE_GATES: OracleGate[] = [
 		approve: 22,
 		hint: "Can we exit without blowing impact? Veto = thin/vacuum; approve = depth can carry the size.",
 	},
+	{
+		id: "pk",
+		label: "24h peak",
+		veto: 23,
+		approve: 24,
+		hint: "Is last still under the top of the 24h range? Veto = chasing the high; approve = room left in the day range.",
+	},
 ];
 
 export type RiskDraft = {
+	max_fraction: number;
+	touch_divisor: number;
+	reserve_fraction: number;
 	min_mover_volume_usd: number;
 	min_mover_change_pct: number;
 	max_entry_spread_pct: number;
+	max_entry_peak_frac: number;
 	min_touch_bid_cash: number;
 	min_backing_ratio: number;
-	min_tape_trades: number;
+	min_tape_notional_usd: number;
 	max_entry_open_drag_pct: number;
 };
 
 export const RISK_DEFAULTS: RiskDraft = {
+	max_fraction: 0.2,
+	touch_divisor: 3,
+	reserve_fraction: 0.25,
 	min_mover_volume_usd: 100_000,
 	min_mover_change_pct: 0.5,
 	max_entry_spread_pct: 2.0,
+	max_entry_peak_frac: 0.9,
 	min_touch_bid_cash: 100,
 	min_backing_ratio: 0.6,
-	min_tape_trades: 8,
+	min_tape_notional_usd: 100,
 	max_entry_open_drag_pct: 2.0,
 };
 
 export type ResonanceDraft = {
-	bypass: boolean;
 	min_task_relative_precision: number;
 	min_surprise: number;
 	min_supported_horizon: number;
@@ -92,7 +106,6 @@ export type ResonanceDraft = {
 };
 
 export const RESONANCE_DEFAULTS: ResonanceDraft = {
-	bypass: false,
 	min_task_relative_precision: 0.5,
 	min_surprise: 0.5,
 	min_supported_horizon: 2,
@@ -156,13 +169,6 @@ export const setResonanceField = <K extends keyof ResonanceDraft>(
 	gateLabStore.setState((prev) => ({
 		...prev,
 		resonance: { ...prev.resonance, [key]: value },
-	}));
-};
-
-export const toggleResonanceBypass = () => {
-	gateLabStore.setState((prev) => ({
-		...prev,
-		resonance: { ...prev.resonance, bypass: !prev.resonance.bypass },
 	}));
 };
 

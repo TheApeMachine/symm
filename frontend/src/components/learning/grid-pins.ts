@@ -1,22 +1,21 @@
 import type { ImpulseNode } from "./types";
 
-/** Mirrors nomagique/store/grid_pins.go and SIGNALS.md (23 regions). */
-export const REGION_COUNT = 23;
+/** Mirrors nomagique/store/grid_pins.go and SIGNALS.md (25 regions). */
+export const REGION_COUNT = 25;
 
 export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 	cvd: {
 		drive: [0],
 		net_fraction: [0],
-		balance: [1],
+		balance: [2],
 		starvation: [2],
 		absorption: [3],
-		net: [3],
 		value: [0],
 	},
 	pumpdump: {
 		compression: [0, 18],
 		precursor: [0],
-		rvol: [2],
+		rvol: [0],
 		exhaustion: [3, 8, 17],
 		ignition: [6],
 		trend: [5],
@@ -42,7 +41,8 @@ export const REGION_METRIC_PINS: Record<string, Record<string, number[]>> = {
 		strength: [1],
 	},
 	depthflow: {
-		loaded_score: [2, 5, 7],
+		loaded_score: [5, 7],
+		ask_loaded_score: [2],
 		thin_score: [4, 8, 18, 21],
 		spoof_score: [4],
 		hypothesis_separation: [6],
@@ -122,9 +122,9 @@ export const sympathyAnchor = (
 		};
 	}
 
-	const slot = Math.min(Math.max(regionKey - 9, 0), 13);
+	const slot = Math.min(Math.max(regionKey - 9, 0), 15);
 	return {
-		x: width * (0.08 + (slot / 13) * 0.84),
+		x: width * (0.08 + (slot / 15) * 0.84),
 		y: height * 0.82,
 	};
 };

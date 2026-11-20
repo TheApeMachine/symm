@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { atoms } from "#/collections/app";
+import { atoms, signals } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "#/lib/utils";
 
@@ -29,9 +29,12 @@ const Reading = ({
 );
 
 export const Pulse = () => {
-	const tick = useSelector(atoms.tickCount, (state) => state);
+	const tick = useSelector(atoms.tick, (state) => state?.n ?? 0);
 	const phase = useSelector(atoms.phase, (state) => state);
-	const candidates = useSelector(atoms.candidates, (state) => state);
+	const decisionCount = useSelector(
+		signals.decisions,
+		(state) => Object.keys(state ?? {}).length,
+	);
 	const signalCount = useSelector(atoms.signalSources, (state) => state.length);
 	const openCount = useSelector(atoms.positionCount, (state) => state);
 
@@ -44,9 +47,9 @@ export const Pulse = () => {
 			<Reading which="tick" value={tick ? String(tick) : "—"} />
 			<Reading label="phase" which="phase" accent value={phase} />
 			<Reading
-				label="cand"
-				which="cand"
-				value={candidates ? String(candidates) : "—"}
+				label="decisions"
+				which="decisions"
+				value={decisionCount > 0 ? String(decisionCount) : "—"}
 			/>
 			<Reading label="sigs" which="sigs" value={String(signalCount)} />
 			<Reading label="open" which="open" value={String(openCount)} />

@@ -3,73 +3,131 @@ package pumpdump
 import (
 	"context"
 	"sync"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Pumpdump disruptor stage — outcomes land on envelope.Pumpdump and
+Map() feeds logic/resonance Features (compression, exhaustion) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books *broker.Book
+	price *broker.Price
 	algo  *equation.Ignition
 }
 
-func NewSignal(ctx context.Context, books *broker.Book) *Signal {
+/*
+NewSignal binds L3 touch state on each trade tick — Pumpdump labels are book-native,
+not printable from public tape alone.
+*/
+func NewSignal(ctx context.Context, books *broker.Book, price *broker.Price) *Signal {
 	return &Signal{
 		System: runtime.NewSystem(ctx, "pumpdump"),
 		books:  books,
+		price:  price,
 		algo:   equation.NewIgnition(128),
 	}
 }
 
+/*
+Step scores each symbol's prints in arrival order on the volume clock.
+Heartbeats are not prints and do not advance the clock.
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
+	measure := func(symbol string, at time.Time, last, bid, ask, vol float64, side market.Side) {
+		if symbol == "" || vol <= 0 {
+			return
+		}
 
-		task := func() {
-			defer wg.Done()
+		buyVol, sellVol := 0.0, 0.0
+		switch side {
+		case market.SideBuy:
+			buyVol = vol
+		case market.SideSell:
+			sellVol = vol
+		}
 
-			signal.books.Book(data.Symbol, func(book *book.Book) {
-				price, _ := data.Price.Float64()
-				qty, _ := data.Qty.Float64()
+		output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
+			At:         at,
+			Symbol:     symbol,
+			Last:       last,
+			Volume:     vol,
+			BuyVolume:  buyVol,
+			SellVolume: sellVol,
+			Ask:        ask,
+			Bid:        bid,
+		})
 
-				output, ready, _, err := signal.algo.Measure(equation.IgnitionInput{
-					At:     data.Timestamp,
-					Symbol: data.Symbol,
-					Last:   price,
-					Volume: qty,
-					Ask:    book.BestAsk().Price.Float64(),
-					Bid:    book.BestBid().Price.Float64(),
+		if err != nil {
+			// Transient tick validation (crossed book, etc.) must not park the
+			// signal System in ERROR for the rest of the process.
+			errnie.Error(err)
+			return
+		}
+
+		if !ready {
+			return
+		}
+
+		if signal.price != nil {
+			signal.price.NoteExhaustion(symbol, output.Exhaustion)
+		}
+
+		mu.Lock()
+		envelope.Pumpdump[symbol] = &output
+		mu.Unlock()
+	}
+
+	batches := envelope.Trade.Batches()
+
+	for _, batch := range batches {
+		wg.Go(func() {
+			for _, data := range batch {
+				var (
+					bid, ask float64
+					ok       bool
+				)
+
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					bestBid := book.BestBid()
+					bestAsk := book.BestAsk()
+
+					if bestBid == nil || bestAsk == nil ||
+						bestBid.Price == nil || bestAsk.Price == nil {
+						return
+					}
+
+					bid = bestBid.Price.InexactFloat64()
+					ask = bestAsk.Price.InexactFloat64()
+					ok = true
 				})
 
-				if err != nil {
-					signal.Error(err)
-					return
+				if !ok {
+					continue
 				}
 
-				if !ready {
-					return
-				}
-
-				mu.Lock()
-				envelope.Pumpdump[data.Symbol] = &output
-				mu.Unlock()
-			})
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+				measure(
+					data.Symbol, data.Timestamp,
+					data.Price.InexactFloat64(), bid, ask,
+					data.Qty.InexactFloat64(),
+					data.Side,
+				)
+			}
+		})
 	}
 
 	wg.Wait()

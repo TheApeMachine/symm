@@ -6,17 +6,24 @@ import (
 
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the LeadLag disruptor stage — outcomes land on envelope.LeadLag and
+Map() feeds logic/resonance Features (decoupled_score, sync_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	sample  *algorithm.LagSample
 	process *algorithm.Lag
 }
 
+/*
+NewSignal is tape-only — LeadLag builds cross-symbol or print statistics without
+a book callback on the hot path.
+*/
 func NewSignal(ctx context.Context) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "leadlag"),
@@ -26,8 +33,8 @@ func NewSignal(ctx context.Context) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; per-symbol state is keyed
-by the entry's symbol and each ready outcome lands on the envelope.
+Step tracks cross-symbol lag on each print — contagion oracle needs decoupled and
+sync scores even when the process marks a row ineligible this tick.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -35,56 +42,48 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
+	for _, batch := range envelope.Trade.Batches() {
+		wg.Go(func() {
+			for _, data := range batch {
+				if data.Price.IsZero() {
+					continue
+				}
 
-		task := func() {
-			defer wg.Done()
+				price, _ := data.Price.Float64()
 
-			if data.Price.IsZero() {
-				return
+				if price <= 0 {
+					continue
+				}
+
+				input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
+					Symbol: data.Symbol,
+					Price:  price,
+					At:     data.Timestamp,
+				})
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ok {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				// Publish ineligible/zero readings too — resonance holds until every
+				// Map() label has been seen (decoupled_score / sync_score).
+				mu.Lock()
+				envelope.LeadLag[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			price, _ := data.Price.Float64()
-
-			if price <= 0 {
-				return
-			}
-
-			input, ok, err := signal.sample.Measure(algorithm.LagSampleInput{
-				Symbol: data.Symbol,
-				Price:  price,
-				At:     data.Timestamp,
-			})
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !ok {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if !outcome.Eligible {
-				return
-			}
-
-			mu.Lock()
-			envelope.LeadLag[data.Symbol] = &outcome
-			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

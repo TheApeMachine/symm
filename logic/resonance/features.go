@@ -29,6 +29,11 @@ var Features = []Feature{
 	{"liquidity", "depth_score"},
 }
 
+/*
+storyFeatureCount, oracleFirst, and oraclePairs partition the forward curve —
+story nets use the first nine features; oracle approve/veto pairs follow in
+ForwardStoryNets without re-listing Features order at every call site.
+*/
 const (
 	storyFeatureCount = 9
 	oracleFirst       = 9
@@ -36,36 +41,37 @@ const (
 )
 
 /*
-ForwardStoryNets folds the task head into Enter/Hold/Exit nets plus board /
-contagion / capacity approve lifts and veto risk.
+ForwardStoryNets is the Model story contract — enter/hold/exit nets sum opposing
+features from resonance.Features, then oracle approve/veto pairs adjust nets so
+grid brightness becomes tradability without hardcoding observe rules in strategy.
+
+Oracle pairs (board / contagion / capacity) are ordered (pressure, support):
+approve sides lift enter; capacity support also lifts hold; pressure sides lift exit.
 */
-func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet, risk float64, ok bool) {
+func ForwardStoryNets(curve []float64) (enterNet, holdNet, exitNet float64, ok bool) {
 	if len(curve) < storyFeatureCount {
-		return 0, 0, 0, 0, false
+		return 0, 0, 0, false
 	}
 
 	enterNet = curve[0] + curve[1] - curve[2]
 	exitNet = curve[3] + curve[4] - curve[5]
 	holdNet = curve[6] + curve[7] - curve[8]
 
-	if len(curve) < len(Features) {
-		return enterNet, holdNet, exitNet, 0, true
+	need := oracleFirst + 2*oraclePairs
+	if len(curve) < need {
+		return enterNet, holdNet, exitNet, true
 	}
 
 	for pair := range oraclePairs {
-		veto := curve[oracleFirst+2*pair]
-		approve := curve[oracleFirst+2*pair+1]
+		pressure := curve[oracleFirst+2*pair]
+		support := curve[oracleFirst+2*pair+1]
+		enterNet += support
+		exitNet += pressure
 
-		enterNet += approve
-
-		if pair == 0 {
-			holdNet += approve
-		}
-
-		if veto > risk {
-			risk = veto
+		if pair == oraclePairs-1 {
+			holdNet += support
 		}
 	}
 
-	return enterNet, holdNet, exitNet, risk, true
+	return enterNet, holdNet, exitNet, true
 }

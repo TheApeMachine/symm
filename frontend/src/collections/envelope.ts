@@ -162,6 +162,14 @@ export type BookQualityOutput = {
 
 export type Resonance = Record<string, Record<string, number>>;
 
+export type PathToken = {
+	symbols?: string[];
+	brightness?: number;
+};
+
+/** Per-symbol sequencer cut on the live envelope (`envelope.Paths`). */
+export type Tokens = PathToken[];
+
 export type Paths = Record<string, Tokens>;
 
 export type Region = {
@@ -170,12 +178,4 @@ export type Region = {
 	deformation: number;
 	brightness: number;
 	counts: number;
-};
-
-export type Tokens = Record<string, Token>;
-
-export type Token = {
-	symbol: string;
-	price: number;
-	quantity: number;
 };

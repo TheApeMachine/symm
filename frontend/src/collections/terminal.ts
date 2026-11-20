@@ -3,6 +3,7 @@ import { DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 
 export type TerminalSurface =
 	| "dashboard"
+	| "diagnostics"
 	| "learning"
 	| "longtail"
 	| "xray"

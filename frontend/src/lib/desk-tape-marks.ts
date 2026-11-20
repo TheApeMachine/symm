@@ -1,6 +1,6 @@
 /*
-Tape ticks on a closed desk lot index workspace/tick/aggregate/<epoch>/<tick>.
-A is the entry tick, B entry, C exit (no separate precursor mark on the lot).
+Tape ticks on a closed desk position index workspace/tick/aggregate/<epoch>/<tick>.
+A is the entry tick, B entry, C exit (no separate precursor mark on the position).
 */
 export const tickUint = (value: unknown): number | null => {
 	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -14,9 +14,9 @@ export const tickUint = (value: unknown): number | null => {
 	return null;
 };
 
-export const policyEpochFromRow = (
-	row: Record<string, unknown>,
-): string | undefined => {
+export const policyEpochFromRow = (row: {
+	policy_epoch?: number | string | null;
+}): string | undefined => {
 	const epoch = row.policy_epoch;
 	if (epoch === undefined || epoch === null || epoch === "") {
 		return undefined;
@@ -25,9 +25,10 @@ export const policyEpochFromRow = (
 	return String(epoch);
 };
 
-export const tapeMarksFromDeskRow = (
-	row: Record<string, unknown>,
-): { a: number; b: number; c: number } | null => {
+export const tapeMarksFromDeskRow = (row: {
+	entry_tick?: number | string | null;
+	exit_tick?: number | string | null;
+}): { a: number; b: number; c: number } | null => {
 	const entry = tickUint(row.entry_tick);
 	const exit = tickUint(row.exit_tick);
 	if (entry === null || exit === null || exit < entry) {

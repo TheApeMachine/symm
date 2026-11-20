@@ -47,7 +47,6 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "tests",
         "advisor",
         "tools",
-        "logic",
         "fluid-3d",
         "influence",
         "hindsight",
@@ -59,7 +58,6 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
     {
         "routeTree.gen.ts",
         "vite.config.ts",
-        "_test.go",
         ".test.ts",
         ".test.tsx",
         ".bench.ts",
@@ -119,9 +117,6 @@ def collect_relative_paths(root: Path) -> list[str]:
                 continue
 
             if file_name.endswith(".d.ts"):
-                continue
-
-            if file_name.endswith("_test.go"):
                 continue
 
             absolute_file = Path(dir_path) / file_name

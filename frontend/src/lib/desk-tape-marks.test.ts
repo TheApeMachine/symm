@@ -28,13 +28,14 @@ describe("tapeMarksFromDeskRow", () => {
 describe("lifecycleFromDeskClosed", () => {
 	it("carries tape marks and policy epoch from the desk JSON", () => {
 		const life = lifecycleFromDeskClosed({
-			id: "lot-1",
+			id: "position-1",
 			symbol: "DOS/USD",
-			book: "virtual",
+			tier_key: "virtual",
 			policy_epoch: 1792169333015760400,
 			entry_tick: 36340,
 			exit_tick: 36349,
 			entry_path: "R01/R05",
+			exit_path: "",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
 			pnl: -0.046,
@@ -52,9 +53,11 @@ describe("lifecycleFromDeskClosed", () => {
 
 	it("promotes a closed row immediately without a shadow wait", () => {
 		const closed = {
-			id: "lot-2",
+			id: "position-2",
 			symbol: "ETH/USD",
-			book: "virtual",
+			tier_key: "virtual",
+			entry_path: "",
+			exit_path: "",
 			opened_at: "2026-10-23T20:04:08Z",
 			closed_at: "2026-10-23T20:05:28Z",
 			pnl_pct: 0.4,

@@ -100,6 +100,7 @@ const SOURCE_METRICS: Record<string, string[]> = {
 	],
 	depthflow: [
 		"loaded_score",
+		"ask_loaded_score",
 		"thin_score",
 		"spoof_score",
 		"hypothesis_separation",

@@ -8,24 +8,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	gorilla "github.com/gorilla/websocket"
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
-func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
-	var dials atomic.Int32
+func persistentWSServer(tb testing.TB) (wsURL string, cleanup func()) {
+	tb.Helper()
 	upgrader := gorilla.Upgrader{}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,59 +25,7 @@ func TestWebsocketSoftDownDoesNotErrorFlood(t *testing.T) {
 		if err != nil {
 			return
 		}
-		dials.Add(1)
-		// Close immediately to simulate 1006 / peer reset.
-		_ = conn.Close()
-	}))
-	defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx := t.Context()
-
-	client := NewWebsocketClient(ctx)
-	client.backoff = 10 * time.Millisecond
-
-	if err := client.Open(wsURL); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	// First read should soft-fail without leaving System in ERROR.
-	_, err := client.Read()
-	if err == nil {
-		t.Fatal("expected read error after peer close")
-	}
-	if client.Status() == runtime.ERROR {
-		t.Fatalf("disconnect must not System.ERROR, got %v", client.Status())
-	}
-
-	// ensureReady should redial (second dial) without ERROR spam path.
-	client.backoff = 10 * time.Millisecond
-	_ = client.ensureReady()
-
-	if dials.Load() < 2 {
-		t.Fatalf("expected reconnect dial, got %d", dials.Load())
-	}
-	if client.Status() == runtime.ERROR {
-		t.Fatalf("reconnect must not leave ERROR status")
-	}
-}
-
-func TestWebsocketOnReconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
-
-	upgrader := gorilla.Upgrader{}
-	var hooks atomic.Int32
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
 		go func() {
 			for {
 				if _, _, err := conn.ReadMessage(); err != nil {
@@ -94,202 +34,297 @@ func TestWebsocketOnReconnectHook(t *testing.T) {
 			}
 		}()
 	}))
-	defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx := t.Context()
+	return "ws" + strings.TrimPrefix(server.URL, "http"), server.Close
+}
 
-	client := NewWebsocketClient(ctx)
-	client.OnReconnect(func() error {
-		hooks.Add(1)
-		return nil
+func TestNewWebsocketClient(t *testing.T) {
+	Convey("Setup", t, func() {
+		const url = "wss://ws.kraken.com/v2"
+
+		Convey("When NewWebsocketClient is called", func() {
+			client := NewWebsocketClient(t.Context(), url)
+
+			Convey("the client starts in INIT with url and pinger", func() {
+				So(client.Name(), ShouldEqual, "network.websocket")
+				So(client.Status(), ShouldEqual, runtime.INIT)
+				So(client.url, ShouldEqual, url)
+				So(client.pinger, ShouldNotBeNil)
+			})
+		})
 	})
-
-	if err := client.Open(wsURL); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if hooks.Load() != 1 {
-		t.Fatalf("open should run reconnect hook once, got %d", hooks.Load())
-	}
-
-	_ = client.softDown(context.Canceled)
-	client.backoff = 5 * time.Millisecond
-	if err := client.ensureReady(); err != nil {
-		t.Fatalf("ensureReady: %v", err)
-	}
-	if hooks.Load() != 2 {
-		t.Fatalf("redial should run hook again, got %d", hooks.Load())
-	}
 }
 
-func TestWebsocketOnReconnectHookFailureRedials(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
+func TestOpen(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
 
-	upgrader := gorilla.Upgrader{}
+		client := NewWebsocketClient(t.Context(), wsURL)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		go func() {
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
-				}
-			}
-		}()
-	}))
-	defer server.Close()
+		Convey("When Open dials a live server", func() {
+			So(client.Open(), ShouldBeNil)
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx := t.Context()
-
-	client := NewWebsocketClient(ctx)
-
-	if err := client.Open(wsURL); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	resubscribe := errors.New("resubscribe rejected")
-	var hooks atomic.Int32
-	client.OnReconnect(func() error {
-		if hooks.Add(1) == 1 {
-			return resubscribe
-		}
-
-		return nil
+			Convey("conn is live", func() {
+				So(client.conn, ShouldNotBeNil)
+				So(client.Close(), ShouldBeNil)
+			})
+		})
 	})
+}
 
-	_ = client.softDown(context.Canceled)
-	client.backoff = 5 * time.Millisecond
+func TestWrite(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
 
-	err := client.ensureReady()
-	if err == nil || !errors.Is(err, resubscribe) {
-		t.Fatalf("ensureReady must return the hook failure, got %v", err)
-	}
-	if client.Context().Err() != nil {
-		t.Fatalf("a failed reconnect hook must not close the client")
-	}
-	if client.Status() != runtime.WAITING {
-		t.Fatalf("a failed reconnect hook must leave the client waiting to redial, got %v", client.Status())
-	}
-	if client.hookBackoff < time.Second {
-		t.Fatalf("a failed reconnect hook must back off before redialing, got %v", client.hookBackoff)
-	}
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+		client.Transition(runtime.READY)
+		defer client.Close()
 
-	if err := client.ensureReady(); err != nil {
-		t.Fatalf("the next attempt must redial and resubscribe, got %v", err)
-	}
-	if hooks.Load() != 2 || client.Status() != runtime.READY {
-		t.Fatalf("expected a second, successful hook on READY, got %d hooks, %v", hooks.Load(), client.Status())
-	}
-	if client.hookBackoff != 0 {
-		t.Fatalf("a successful hook must clear its backoff, got %v", client.hookBackoff)
+		const writers = 32
+		var started sync.WaitGroup
+		var done sync.WaitGroup
+		started.Add(writers)
+		done.Add(writers)
+		gate := make(chan struct{})
+
+		Convey("When many goroutines Write concurrently", func() {
+			var writeErrs []error
+			var errsMu sync.Mutex
+
+			for i := 0; i < writers; i++ {
+				go func(n int) {
+					defer done.Done()
+					started.Done()
+					<-gate
+
+					if err := client.Write(fmt.Appendf(nil, `{"n":%d}`, n)); err != nil {
+						errsMu.Lock()
+						writeErrs = append(writeErrs, err)
+						errsMu.Unlock()
+					}
+				}(i)
+			}
+
+			started.Wait()
+			close(gate)
+			done.Wait()
+
+			Convey("every write succeeds", func() {
+				So(len(writeErrs), ShouldEqual, 0)
+			})
+		})
+	})
+}
+
+func TestReadBeforeOpen(t *testing.T) {
+	Convey("Setup", t, func() {
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+		defer cancel()
+
+		client := NewWebsocketClient(ctx, "wss://invalid.example/ws")
+		start := time.Now()
+		_, err := client.Read()
+		elapsed := time.Since(start)
+
+		Convey("Read waits instead of busy-spinning before dial", func() {
+			So(elapsed, ShouldBeGreaterThan, 80*time.Millisecond)
+			So(err, ShouldNotBeNil)
+		})
+	})
+}
+
+func TestReadReturnsErrorOnDisconnect(t *testing.T) {
+	Convey("Setup", t, func() {
+		upgrader := gorilla.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+
+			_ = conn.WriteMessage(gorilla.TextMessage, []byte(`{"ok":true}`))
+			_ = conn.Close()
+		}))
+		defer server.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+		defer client.Close()
+
+		Convey("When the peer closes after one frame", func() {
+			_, err := client.Read()
+			So(err, ShouldBeNil)
+
+			_, err = client.Read()
+			So(err, ShouldNotBeNil)
+			So(Recoverable(err), ShouldBeTrue)
+			// Failed conn must be cleared before return — Tier.Run retries
+			// Read immediately; a second ReadMessage would panic.
+			So(client.conn, ShouldBeNil)
+
+			Convey("Immediate retry Read waits instead of panicking", func() {
+				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+				defer cancel()
+				fast := NewWebsocketClient(ctx, wsURL)
+				fast.conn = nil
+				fast.Transition(runtime.ERROR)
+				_, err := fast.Read()
+				So(err, ShouldNotBeNil)
+			})
+		})
+	})
+}
+
+func TestReadAfterFailedConnDoesNotPanic(t *testing.T) {
+	Convey("Setup", t, func() {
+		upgrader := gorilla.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}))
+		defer server.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+
+		Convey("When Read fails then retries like Tier.Run", func() {
+			_, err := client.Read()
+			So(err, ShouldNotBeNil)
+			So(client.conn, ShouldBeNil)
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_, _ = client.Read()
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(200 * time.Millisecond):
+				// Blocked in !ready sleep — not panicking on the dead conn.
+			}
+			_ = client.Close()
+		})
+	})
+}
+
+func TestOpenCallbackWrite(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
+
+		client := NewWebsocketClient(t.Context(), wsURL)
+		client.Callback(func() error {
+			return client.Write([]byte(`{"event":"ping"}`))
+		})
+
+		Convey("When Open runs a callback that writes", func() {
+			So(client.Open(), ShouldBeNil)
+			So(client.Status(), ShouldEqual, runtime.READY)
+		})
+	})
+}
+
+func TestOpenCallbackFailure(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
+
+		client := NewWebsocketClient(t.Context(), wsURL)
+		client.Callback(func() error {
+			return errors.New("hook failed")
+		})
+
+		Convey("When Open callbacks fail", func() {
+			So(client.Open(), ShouldNotBeNil)
+
+			Convey("the client is not left READY with a live conn", func() {
+				So(client.Status(), ShouldNotEqual, runtime.READY)
+				So(client.conn, ShouldBeNil)
+			})
+		})
+	})
+}
+
+func TestClose(t *testing.T) {
+	Convey("Setup", t, func() {
+		wsURL, cleanup := persistentWSServer(t)
+		defer cleanup()
+
+		client := NewWebsocketClient(t.Context(), wsURL)
+		So(client.Open(), ShouldBeNil)
+
+		Convey("When Close is called", func() {
+			So(client.Close(), ShouldBeNil)
+
+			Convey("system is closed", func() {
+				So(client.Status(), ShouldNotEqual, runtime.READY)
+			})
+		})
+	})
+}
+
+func BenchmarkNewWebsocketClient(b *testing.B) {
+	ctx := context.Background()
+	const url = "wss://ws.kraken.com/v2"
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = NewWebsocketClient(ctx, url)
 	}
 }
 
-func TestWebsocketOnDisconnectHook(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
-	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
-	}
+func BenchmarkOpen(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
 
-	upgrader := gorilla.Upgrader{}
+	b.ReportAllocs()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		go func() {
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
-				}
-			}
-		}()
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	ctx := t.Context()
-
-	client := NewWebsocketClient(ctx)
-	var drops atomic.Int32
-	client.OnDisconnect(func() { drops.Add(1) })
-
-	if err := client.Open(wsURL); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	_ = client.softDown(context.Canceled)
-	if drops.Load() != 1 {
-		t.Fatalf("a live drop must run the disconnect hook once, got %d", drops.Load())
-	}
-
-	_ = client.softDown(context.Canceled)
-	if drops.Load() != 1 {
-		t.Fatalf("a drop with no live connection must not re-run the hook, got %d", drops.Load())
+	for b.Loop() {
+		client := NewWebsocketClient(ctx, wsURL)
+		_ = client.Open()
+		_ = client.Close()
 	}
 }
 
-func TestWebsocketWriteSerializesConcurrentWriters(t *testing.T) {
-	if system.Cfg == nil {
-		system.Cfg = &system.Config{WebSocket: system.NewWebSocket()}
+func BenchmarkWrite(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
+	client := NewWebsocketClient(ctx, wsURL)
+	_ = client.Open()
+	client.Transition(runtime.READY)
+	defer client.Close()
+	payload := []byte(`{"method":"ping"}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = client.Write(payload)
 	}
-	if system.Cfg.WebSocket == nil {
-		system.Cfg.WebSocket = system.NewWebSocket()
+}
+
+func BenchmarkClose(b *testing.B) {
+	wsURL, cleanup := persistentWSServer(b)
+	defer cleanup()
+	ctx := context.Background()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		client := NewWebsocketClient(ctx, wsURL)
+		_ = client.Open()
+		_ = client.Close()
 	}
-
-	upgrader := gorilla.Upgrader{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		go func() {
-			for {
-				if _, _, err := conn.ReadMessage(); err != nil {
-					return
-				}
-			}
-		}()
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	client := NewWebsocketClient(t.Context())
-	if err := client.Open(wsURL); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	const writers = 32
-	var started sync.WaitGroup
-	var done sync.WaitGroup
-	started.Add(writers)
-	done.Add(writers)
-	gate := make(chan struct{})
-
-	for i := 0; i < writers; i++ {
-		go func(n int) {
-			defer done.Done()
-			started.Done()
-			<-gate
-			if err := client.Write(fmt.Appendf(nil, `{"n":%d}`, n)); err != nil {
-				t.Errorf("write %d: %v", n, err)
-			}
-		}(i)
-	}
-
-	started.Wait()
-	close(gate)
-	done.Wait()
 }

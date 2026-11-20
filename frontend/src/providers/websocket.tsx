@@ -1,241 +1,271 @@
-import { useEffect } from "react";
 import { atoms, signals } from "#/collections/app";
-import {
-	decisionBook,
-	decisionStoreKey,
-	isBook,
-} from "#/collections/book";
-import { ingestConfidence } from "#/collections/confidence";
-import type { Decision } from "#/collections/envelope";
 import {
 	ensureLongtailRecorder,
 	requestLongtailSources,
 	resetLongtailSourcesRequest,
 } from "#/collections/longtail";
-import type { Balance, Position } from "#/collections/types";
-import {
-	applyClosedEnvelope,
-	applyPathsEnvelope,
-} from "#/hub/apply-s3-compact";
-import { syncEngineTelemetry } from "#/lib/engine-telemetry";
 import { hubWsUrl } from "#/lib/hub";
-import { bindHubWorker, sendFocus, sendRoute } from "#/lib/hub-socket";
-import {
-	requestClosedPositionHistory,
-	resetClosedHistoryRequest,
-} from "#/lib/lifecycle";
+import type { Position } from "#/collections/types";
+import { resetClosedHistoryRequest } from "#/lib/lifecycle";
+import { batch } from "@tanstack/store";
+import { useEffect } from "react";
 
-export { sendCommand, sendRoute } from "#/lib/hub-socket";
+type HubStatus = "ONLINE" | "OFFLINE" | "CONNECTING";
 
-const asPosition = (raw: unknown): Position | null => {
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-		return null;
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10_000;
+
+let socket: WebSocket | null = null;
+let connectUrl = "";
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+let socketGeneration = 0;
+let onEnvelope: ((payload: Record<string, unknown>) => void) | null = null;
+let onStatus: ((status: HubStatus) => void) | null = null;
+let onError: ((error: string) => void) | null = null;
+
+let currentRoute = "dashboard";
+let pendingCommands: Record<string, unknown>[] = [];
+
+const queueCommand = (command: Record<string, unknown>) => {
+	if (command.type === "hindsight") {
+		pendingCommands = pendingCommands.filter(
+			(item) => item.type !== "hindsight",
+		);
 	}
 
-	const row = raw as Position;
-	if (typeof row.id !== "string" || row.id === "") {
-		return null;
-	}
-
-	if (isBook(row.book)) {
-		return row;
-	}
-
-	return row;
+	pendingCommands.push(command);
 };
 
-/*
-positionsFromWire accepts either a lot map keyed by id or a bare array from
-tier Hello, and keeps each lot under its id so virtual/paper/real can coexist.
-*/
-const positionsFromWire = (value: unknown): Record<string, Position> => {
-	const lots: Record<string, Position> = {};
-
-	const put = (raw: unknown) => {
-		const position = asPosition(raw);
-		if (!position) return;
-		lots[position.id] = position;
-	};
-
-	if (Array.isArray(value)) {
-		for (const row of value) {
-			put(row);
-		}
-		return lots;
+const flushCommands = () => {
+	if (socket === null || socket.readyState !== WebSocket.OPEN) {
+		return;
 	}
 
-	if (value && typeof value === "object") {
-		for (const row of Object.values(value as Record<string, unknown>)) {
-			put(row);
-		}
+	for (const command of pendingCommands) {
+		socket.send(JSON.stringify(command));
 	}
 
-	return lots;
+	pendingCommands = [];
 };
 
-const decisionsFromWire = (
-	value: unknown,
-): Record<string, Decision> => {
-	const next: Record<string, Decision> = {};
+const teardownSocket = () => {
+	socketGeneration += 1;
 
-	if (!value || typeof value !== "object" || Array.isArray(value)) {
-		return next;
+	if (
+		socket !== null &&
+		(socket.readyState === WebSocket.OPEN ||
+			socket.readyState === WebSocket.CONNECTING)
+	) {
+		socket.close();
 	}
 
-	for (const raw of Object.values(value as Record<string, unknown>)) {
-		if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-
-		const decision = raw as Decision;
-		if (!decision.symbol || !decision.action) continue;
-
-		const book = decisionBook(decision);
-		next[decisionStoreKey(decision)] = {
-			...decision,
-			tier: book,
-		};
-	}
-
-	return next;
+	socket = null;
 };
 
-const ingestEnvelope = (payload: Record<string, unknown>) => {
-	const mode =
-		typeof payload.positions_mode === "string"
-			? payload.positions_mode
-			: undefined;
+const scheduleReconnect = () => {
+	if (reconnectTimer !== null || onEnvelope === null) {
+		return;
+	}
 
-	for (const [key, value] of Object.entries(payload)) {
-		if (key === "positions_mode") {
-			continue;
+	const delay = Math.min(
+		RECONNECT_BASE_MS * 2 ** reconnectAttempts,
+		RECONNECT_MAX_MS,
+	);
+
+	reconnectTimer = setTimeout(() => {
+		reconnectTimer = null;
+		reconnectAttempts += 1;
+		openSocket(connectUrl);
+	}, delay);
+};
+
+const openSocket = (url: string) => {
+	if (url === "" || onEnvelope === null) {
+		return;
+	}
+
+	teardownSocket();
+
+	connectUrl = url;
+	const generation = socketGeneration;
+	onStatus?.("CONNECTING");
+	socket = new WebSocket(url);
+
+	socket.addEventListener("open", () => {
+		if (generation !== socketGeneration) {
+			return;
 		}
 
-		if (key === "balance") {
-			atoms.balance.set(value as Balance);
-			continue;
+		reconnectAttempts = 0;
+		onStatus?.("ONLINE");
+		if (currentRoute) {
+			sendRoute(currentRoute);
+		}
+		flushCommands();
+	});
+
+	socket.addEventListener("close", () => {
+		if (generation !== socketGeneration) {
+			return;
 		}
 
-		if (key === "balances" && value && typeof value === "object") {
-			const next = value as {
-				virtual?: Balance;
-				paper?: Balance;
-				real?: Balance;
-			};
-			atoms.balances.set({
-				...atoms.balances.get(),
-				...next,
-			});
-			continue;
+		onStatus?.("OFFLINE");
+		scheduleReconnect();
+	});
+
+	socket.addEventListener("error", (event) => {
+		if (generation !== socketGeneration) {
+			return;
 		}
 
-		if (key === "confidence") {
-			ingestConfidence(value);
-			continue;
+		onError?.(String(event));
+	});
+
+	socket.addEventListener("message", (event) => {
+		if (typeof event.data !== "string" || event.data.length === 0) {
+			return;
 		}
 
-		if (key === "paths") {
-			applyPathsEnvelope(value);
-			continue;
+		try {
+			onEnvelope?.(JSON.parse(event.data) as Record<string, unknown>);
+		} catch (err) {
+			console.error("WS envelope parse failed:", err);
+			onError?.(String(err));
 		}
+	});
+};
 
-		if (key === "closed") {
-			applyClosedEnvelope(value);
-			continue;
-		}
+const connectHub = (
+	url: string,
+	handlers: {
+		onEnvelope: (payload: Record<string, unknown>) => void;
+		onStatus: (status: HubStatus) => void;
+		onError?: (error: string) => void;
+	},
+) => {
+	onEnvelope = handlers.onEnvelope;
+	onStatus = handlers.onStatus;
+	onError = handlers.onError ?? null;
+	openSocket(url);
+};
 
-		const store = signals[key];
-		if (!store) continue;
+const disconnectHub = () => {
+	if (reconnectTimer !== null) {
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	}
 
-		if (key === "tick") {
-			const light = value as { n?: number } | null;
-			store.setState(() => value);
-			if (typeof light?.n === "number" && light.n > 0) {
-				atoms.tickCount.set(light.n);
+	reconnectAttempts = 0;
+	pendingCommands = [];
+	onEnvelope = null;
+	onStatus = null;
+	onError = null;
+	teardownSocket();
+};
+
+export const sendRoute = (route: string) => {
+	currentRoute = route;
+	if (
+		socket !== null &&
+		socket.readyState === WebSocket.OPEN &&
+		typeof route === "string"
+	) {
+		socket.send(JSON.stringify({ type: "route", route }));
+	}
+};
+
+export const sendFocus = (symbol: string) => {
+	if (
+		socket !== null &&
+		socket.readyState === WebSocket.OPEN &&
+		typeof symbol === "string"
+	) {
+		socket.send(JSON.stringify({ type: "focus", symbol }));
+	}
+};
+
+export const sendCommand = (command: Record<string, unknown>) => {
+	if (onEnvelope === null) {
+		throw new Error(
+			`hub socket is not running: ${JSON.stringify(command)} not sent`,
+		);
+	}
+
+	if (!command) {
+		throw new Error("hub command is empty");
+	}
+
+	if (socket !== null && socket.readyState === WebSocket.OPEN) {
+		socket.send(JSON.stringify(command));
+		return;
+	}
+
+	queueCommand(command);
+};
+
+/** Best-effort hub command; false when the socket is not up. */
+export const trySendCommand = (command: Record<string, unknown>): boolean => {
+	try {
+		sendCommand(command);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+const applyEnvelope = (payload: Record<string, unknown>) => {
+	batch(() => {
+		for (const key of Object.keys(payload)) {
+			const value = payload[key];
+
+			const atom = atoms[key];
+			
+			if (atom) {
+				atom.set(value);
+				continue;
 			}
-			continue;
-		}
 
-		if (key === "decisions") {
-			const lots = decisionsFromWire(value);
-			store.setState((prev) => ({ ...prev, ...lots }));
-			continue;
-		}
+			const store = signals[key];
 
-		if (key === "positions") {
-			const lots = positionsFromWire(value);
-			if (mode === "snapshot") {
-				store.setState(() => lots);
-			} else {
-				store.setState((prev) => ({ ...prev, ...lots }));
+			if (!store) {
+				continue;
 			}
-			continue;
-		}
 
-		if (value && typeof value === "object" && !Array.isArray(value)) {
-			store.setState((prev) => ({
+			if (key === "positions" && payload.positions_snapshot === true) {
+				store.setState(() => value as Record<string, Position>);
+				continue;
+			}
+
+			store.setState((prev: Record<string, unknown> | null) => ({
 				...prev,
 				...(value as Record<string, unknown>),
 			}));
-			continue;
 		}
-
-		store.setState(() => value);
-	}
+	});
 };
 
 export const WsFeed = () => {
 	useEffect(() => {
 		ensureLongtailRecorder();
 
-		const url = `${hubWsUrl()}/ws`;
-		const worker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
-			type: "module",
-		});
+		connectHub(`${hubWsUrl()}/ws`, {
+			onEnvelope: applyEnvelope,
+			onStatus: (status) => {
+				atoms.online.set(status);
 
-		worker.addEventListener("message", (event: MessageEvent) => {
-			const data = event.data;
-			if (!data) return;
-
-			if (data.type === "ENVELOPE") {
-				ingestEnvelope(data.payload as Record<string, unknown>);
-				syncEngineTelemetry();
-				return;
-			}
-
-			if (data.type === "COMMAND_FAILED") {
-				console.error("hub command not sent:", data.command, data.error);
-				return;
-			}
-
-			if (data.type === "STATUS") {
-				if (data.status === "OFFLINE") {
-					atoms.online.set("OFFLINE");
-				}
-
-				if (data.status === "ONLINE") {
-					atoms.online.set("ONLINE");
+				if (status === "ONLINE") {
 					resetClosedHistoryRequest();
 					resetLongtailSourcesRequest();
-					requestClosedPositionHistory();
 					requestLongtailSources();
 				}
-
-				if (data.status === "CONNECTING") {
-					atoms.online.set("CONNECTING");
-				}
-
-				return;
-			}
-
-			if (data.type === "ERROR") {
-				console.error("WS error:", data.error);
-				return;
-			}
+			},
+			onError: (error) => {
+				console.error("WS error:", error);
+			},
 		});
 
-		bindHubWorker(worker);
-
 		sendRoute(atoms.route.get());
-		worker.postMessage({ type: "CONNECT", url });
 
 		const unsubscribeFocus = atoms.focus.subscribe((symbol: string) => {
 			sendFocus(symbol);
@@ -248,9 +278,7 @@ export const WsFeed = () => {
 		return () => {
 			unsubscribeFocus.unsubscribe();
 			unsubscribeRoute.unsubscribe();
-			worker.postMessage({ type: "DISCONNECT" });
-			worker.terminate();
-			bindHubWorker(null);
+			disconnectHub();
 		};
 	}, []);
 

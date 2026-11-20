@@ -1,15 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
 import { atoms, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
-	kernelSparkPaths,
 	kernelStatusMeta,
 	kernelStatusVariant,
 	metricLabel,
-	type SignalHealthStatus,
 	sourceHeadline,
 	sourceMetrics,
 } from "#/components/terminal/kernel-meta";
@@ -19,168 +16,66 @@ import { meterPercent } from "#/components/ui/dom";
 import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
-import { scaleSparklineValues } from "#/components/ui/sparkline";
+import { Sparkline } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
-import { Value } from "#/types/value";
-
-const isResonance = (source: string) => source === "resonance";
-
-const asMetrics = (frame: unknown): Record<string, number> => {
-	if (!frame) return {};
-	if (frame instanceof Value) return frame.metrics();
-	if (typeof frame !== "object") return {};
-
-	const out: Record<string, number> = {};
-	for (const [key, raw] of Object.entries(frame as Record<string, unknown>)) {
-		if (typeof raw === "number" && Number.isFinite(raw)) {
-			out[key] = raw;
-			continue;
-		}
-
-		if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-			for (const [inner, nested] of Object.entries(
-				raw as Record<string, unknown>,
-			)) {
-				if (typeof nested === "number" && Number.isFinite(nested)) {
-					out[inner] = nested;
-				}
-			}
-		}
-	}
-	return out;
-};
-
-const signalAt = (source: string, symbol: string): unknown => {
-	const store = signals[source];
-	if (!store) return undefined;
-	return store.state[symbol] ?? store.state[symbol.replace(/\//g, "-")];
-};
-
-/*
-readings collects the accumulated values for one kernel directly from its store.
-*/
-const readingsFromValues = (frame: unknown, source?: string) => {
-	const points: number[] = [];
-	if (!frame) return points;
-
-	const metrics = asMetrics(frame);
-	const headline = source ? sourceHeadline(source) : null;
-	const keys = Object.keys(metrics);
-
-	const pick = (key: string): number | null => {
-		const chosen = Number(metrics[key]);
-		return Number.isFinite(chosen) ? chosen : null;
-	};
-
-	const val =
-		(headline && keys.includes(headline) ? pick(headline) : null) ??
-		(keys.length ? pick(keys[0] ?? "") : null);
-
-	if (val !== null) points.push(val);
-	return points;
-};
-
-const formatMetricValue = (val: number | null): string => {
-	if (val === null) return "—";
-	if (val === 0) return "0.0000";
-	const abs = Math.abs(val);
-	if (abs < 0.0001) {
-		return val.toExponential(2);
-	}
-	return val.toFixed(4);
-};
-
-const metricValues = (
-	row: unknown,
-	names: string[],
-): Record<string, { raw: number; snm: number } | null> => {
-	const out: Record<string, { raw: number; snm: number } | null> = {};
-	for (const name of names) out[name] = null;
-	if (!row) return out;
-	const metrics = asMetrics(row);
-	for (const name of names) {
-		const value = metrics[name];
-		if (typeof value !== "number" || !Number.isFinite(value)) continue;
-		out[name] = { raw: value, snm: value };
-	}
-
-	return out;
-};
+import { asFinite } from "#/lib/format";
 
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
-	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const focus = useSelector(atoms.focus, (state) => state);
 	const { closeInspect, selectSource } = terminalStore.actions;
 
-	const active = source !== null && source !== "";
-	const resonance = active && isResonance(source);
+	const resonance = source === "resonance";
+	const store =
+		source && signals[source] ? signals[source] : signals.resonance;
+	const headline = source ? sourceHeadline(source) : null;
 
-	const frame = useSelector(signals.resonance, (state) => {
-		if (!resonance) return undefined;
-		return state[focusSymbol] ?? state[focusSymbol.replace(/\//g, "-")];
-	});
-	const signalReading =
-		!resonance && source ? (signalAt(source, focusSymbol) ?? null) : null;
-	const kernelFrame = resonance ? (frame ?? null) : signalReading;
+	const row = useSelector(store, (state) =>
+		source ? state?.[focus] : undefined,
+	);
 
-	const [signalHistory, setSignalHistory] = useState<number[]>([]);
-
-	useEffect(() => {
-		if (!active || resonance || !source) {
-			setSignalHistory([]);
-			return;
-		}
-		const sample = readingsFromValues(signalReading, source);
-		const next = sample.at(-1);
-		if (next === undefined) return;
-		setSignalHistory((previous) => [...previous, next].slice(-50));
-	}, [active, resonance, source, signalReading]);
-
-	if (!active) {
+	if (!source) {
 		return null;
 	}
 
+	const record =
+		row && typeof row === "object" && !Array.isArray(row)
+			? (row as Record<string, unknown>)
+			: null;
+
+	let sample: number | null = null;
+	if (record) {
+		if (!resonance && headline) {
+			sample = asFinite(record[headline]);
+		} else {
+			for (const value of Object.values(record)) {
+				sample = asFinite(value);
+				if (sample !== null) break;
+			}
+		}
+	}
+
 	const copy = kernelCopy(source, "");
-	const livePoints = readingsFromValues(kernelFrame, source);
-	const points = resonance
-		? livePoints
-		: signalHistory.length > 0
-			? signalHistory
-			: livePoints;
-	const latestPoint = points.length > 0 ? points[points.length - 1] : null;
-	const status: SignalHealthStatus =
-		latestPoint === null ? "waiting" : "measured";
+	const live = sample !== null;
+	const status = live ? "measured" : "waiting";
 	const badge = kernelStatusMeta(status);
 
-	const relativePoints = resonance ? points : scaleSparklineValues(points);
-	const paths = kernelSparkPaths(relativePoints, status);
-	const level = meterPercent(latestPoint);
+	const metricNames = resonance ? [] : sourceMetrics(source);
+	const metricReadouts = metricNames.map((name) => ({
+		name,
+		raw: record ? asFinite(record[name]) : null,
+	}));
 
-	const metrics = resonance ? [] : sourceMetrics(source);
-	const metricReadouts = metrics.map((name) => {
-		let raw: number | null = null;
-		let snm = 0;
-
-		const value = kernelFrame ? metricValues(kernelFrame, [name])[name] : null;
-
-		if (value) {
-			raw = value.raw;
-			snm = value.snm;
-		}
-
-		return { name, raw, snm };
-	});
-
-	const headline = resonance
+	const headlineLabel = resonance
 		? "predictive confidence"
-		: (sourceHeadline(source) ?? "");
+		: (headline ?? "");
 
 	const valueLabel = resonance
-		? `${((latestPoint ?? 0) * 100).toFixed(0)}%`
-		: latestPoint === null
-			? "—"
-			: latestPoint.toFixed(2);
+		? `${((sample ?? 0) * 100).toFixed(0)}%`
+		: sample !== null
+			? sample.toFixed(2)
+			: "—";
 
 	const openInSignalInsight = () => {
 		selectSource(source);
@@ -218,70 +113,42 @@ export const KernelInspector = () => {
 				</Typography.Paragraph>
 
 				<Flex.Column gap={1}>
-					<Flex.Row align="baseline" justify="between" className="gap-2">
-						<Typography.Label size="xxs" tone="f4">
-							Signal history
-						</Typography.Label>
-						<Typography.Mono size="xxs" tone="f4">
-							{points.length === 0
-								? "no readings yet"
-								: `${points.length} ${points.length === 1 ? "reading" : "readings"}`}
-						</Typography.Mono>
-					</Flex.Row>
-					<svg
-						viewBox="0 0 150 30"
-						preserveAspectRatio="none"
+					<Typography.Label size="xxs" tone="f4">
+						Latest reading
+					</Typography.Label>
+					<Sparkline
+						points={sample !== null ? [sample] : []}
+						active={live}
+						title={`${copy.name} reading`}
 						className="block h-13 w-full rounded-[3px] border border-(--line) bg-(--sunken)"
-					>
-						<title>{`${copy.name} signal history`}</title>
-						<polyline points={paths.area} fill={paths.fill} stroke="none" />
-						<polyline
-							points={paths.spark}
-							fill="none"
-							stroke={paths.line}
-							strokeWidth="1.5"
-							vectorEffect="non-scaling-stroke"
-						/>
-					</svg>
-				</Flex.Column>
-
-				<Flex.Column gap={2}>
-					<Meter
-						percent={level}
-						label={resonance ? "Confidence" : "Level"}
-						value={valueLabel}
-						variant={status === "measured" ? "warning" : "disabled"}
-						size="s"
-						animated
-					/>
-					<Meter
-						percent={points.length === 0 ? 0 : (points.length / 50) * 100}
-						label="History"
-						value={`${points.length} / 50`}
-						variant={points.length === 0 ? "disabled" : "warning"}
-						size="s"
-						animated
 					/>
 				</Flex.Column>
 
-				{metrics.length === 0 ? null : (
+				<Meter
+					percent={meterPercent(sample)}
+					label={resonance ? "Confidence" : "Level"}
+					value={valueLabel}
+					variant={live ? "warning" : "disabled"}
+					size="s"
+					animated
+				/>
+
+				{metricNames.length === 0 ? null : (
 					<Flex.Column gap={2}>
-						<Flex.Row align="baseline" justify="between" className="gap-2">
-							<Typography.Label size="xxs" tone="f4">
-								Signal metrics
-							</Typography.Label>
-							<Typography.Mono size="xxs" tone="f4">
-								{metricReadouts.filter((m) => m.raw !== null).length} /{" "}
-								{metrics.length} read
-							</Typography.Mono>
-						</Flex.Row>
+						<Typography.Label size="xxs" tone="f4">
+							Signal metrics
+						</Typography.Label>
 						<div className="grid grid-cols-2 gap-x-3 gap-y-2">
 							{metricReadouts.map((metric) => (
 								<Meter
 									key={metric.name}
-									percent={metric.raw === null ? 0 : meterPercent(metric.snm)}
+									percent={
+										metric.raw === null ? 0 : meterPercent(metric.raw)
+									}
 									label={metricLabel(metric.name)}
-									value={formatMetricValue(metric.raw)}
+									value={
+										metric.raw === null ? "—" : metric.raw.toFixed(4)
+									}
 									variant={metric.raw === null ? "disabled" : "warning"}
 									size="xs"
 									animated
@@ -295,13 +162,13 @@ export const KernelInspector = () => {
 			<Modal.Footer>
 				<Flex.Column className="min-w-0 gap-px">
 					<Typography.Mono size="xxs" tone="f4" className="truncate">
-						{focusSymbol}
-						{headline === "" ? "" : ` · ${headline}`}
+						{focus}
+						{headlineLabel === "" ? "" : ` · ${headlineLabel}`}
 					</Typography.Mono>
 					<Typography.Mono size="xxs" tone="f4">
-						{latestPoint === null
-							? "awaiting first reading"
-							: `latest ${resonance ? "confidence" : (sourceHeadline(source) ?? "reading")} ${latestPoint.toFixed(resonance ? 3 : 4)}`}
+						{sample !== null
+							? `latest ${resonance ? "confidence" : (headline ?? "reading")} ${sample.toFixed(resonance ? 3 : 4)}`
+							: "awaiting first reading"}
 					</Typography.Mono>
 				</Flex.Column>
 				<Button

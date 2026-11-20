@@ -4,17 +4,20 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Morphology disruptor stage — outcomes land on envelope.Morphology and
+Map() feeds logic/resonance Features (ask_vacuum) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -22,6 +25,10 @@ type Signal struct {
 	process *equation.Morphology
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Morphology labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "morphology"),
@@ -31,71 +38,75 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	}
 }
 
+/*
+Step fans one trade frame in parallel — metrics aggregate later, but each symbol
+needs fresh readings here or featureScorer never marks that Feature as seen.
+*/
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
+	for _, batch := range envelope.Trade.Batches() {
+		wg.Go(func() {
+			for _, data := range batch {
+				var (
+					bids     []flow.BookLevel
+					asks     []flow.BookLevel
+					haveBook bool
+				)
 
-		task := func() {
-			defer wg.Done()
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					bids = make([]flow.BookLevel, 0, len(book.Bids.Levels))
+					for _, level := range book.Bids.Levels {
+						bids = append(bids, flow.BookLevel{
+							Price:    level.Price.InexactFloat64(),
+							Quantity: level.Quantity.InexactFloat64(),
+						})
+					}
 
-			var (
-				input equation.MorphologyInput
-				ready bool
-				err   error
-			)
+					asks = make([]flow.BookLevel, 0, len(book.Asks.Levels))
+					for _, level := range book.Asks.Levels {
+						asks = append(asks, flow.BookLevel{
+							Price:    level.Price.InexactFloat64(),
+							Quantity: level.Quantity.InexactFloat64(),
+						})
+					}
 
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
-				for _, level := range book.Bids.Levels {
-					bids = append(bids, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
-					})
+					haveBook = true
+				})
+
+				if !haveBook {
+					continue
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
-				for _, level := range book.Asks.Levels {
-					asks = append(asks, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
-					})
-				}
-
-				input, ready, err = signal.sample.MeasureBook(flow.BookInput{
+				input, ready, err := signal.sample.MeasureBook(flow.BookInput{
 					Symbol: data.Symbol,
 					Bids:   bids,
 					Asks:   asks,
 				})
-			})
 
-			if err != nil {
-				signal.Error(err)
-				return
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				mu.Lock()
+				envelope.Morphology[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			mu.Lock()
-			envelope.Morphology[data.Symbol] = &outcome
-			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()

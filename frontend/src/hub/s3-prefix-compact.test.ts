@@ -26,7 +26,7 @@ describe("s3-prefix-compact", () => {
 		expect(compact.epoch).toBe("7");
 	});
 
-	it("reads closed lots from a closed envelope", () => {
+	it("reads closed positions from a closed envelope", () => {
 		const compact = closedListingFromEnvelope({
 			scope: "virtual/closed",
 			entries: [
@@ -54,7 +54,7 @@ describe("s3-prefix-compact", () => {
 
 		expect(compact.entries).toHaveLength(1);
 		expect(compact.entries[0]?.row.id).toBe("hist-compact");
-		expect(compact.entries[0]?.row.book).toBe("virtual");
+		expect(compact.entries[0]?.row.tier_key).toBe("virtual");
 		expect(compact.entries[0]?.stamp.tick).toBe(5n);
 	});
 
@@ -66,13 +66,13 @@ describe("s3-prefix-compact", () => {
 					epoch: 2,
 					tick: 3,
 					timestamp: 4,
-					row: { id: "paper-lot", symbol: "ETH/USD" },
+					row: { id: "paper-position", symbol: "ETH/USD" },
 				},
 			],
 		});
 
 		expect(compact?.kind).toBe("closed");
 		expect(compact?.scope).toBe("paper/closed");
-		expect(compact?.entries[0]?.row.id).toBe("paper-lot");
+		expect(compact?.entries[0]?.row.id).toBe("paper-position");
 	});
 });

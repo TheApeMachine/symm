@@ -32,7 +32,7 @@ export const PaperPerformance = () => {
 	const name = bookLabel(book).toLowerCase();
 	const title =
 		stats.closed > 0 || (lifecycle.closed ?? 0) > 0
-			? `${name} settled lots · win rate ${ratePercent(stats.win_rate)} · mean edge ${ratePercent(stats.edge)}`
+			? `${name} settled positions · win rate ${ratePercent(stats.win_rate)} · mean edge ${ratePercent(stats.edge)}`
 			: `no settled ${name} round trips yet`;
 
 	return (

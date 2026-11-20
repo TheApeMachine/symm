@@ -51,12 +51,27 @@ describe("Balance", () => {
 		expect(virtual).not.toContain("1000.00");
 
 		bookAtom.set("real");
+		// Hub already pushed balances.real — show it even before confidence.
+		const primed = renderToStaticMarkup(<Balance />);
+		expect(primed).toContain("200.00");
+		expect(primed).toContain("Live cash");
+		expect(primed).not.toContain("1000.00");
+
+		atoms.balances.set({
+			virtual: reading(50, 0, 50),
+			paper: reading(1000, -25.5, 974.5),
+		});
 		const offline = renderToStaticMarkup(<Balance />);
 		expect(offline).toContain("Live cash (off)");
 		expect(offline).toContain("—");
 		expect(offline).not.toContain("200.00");
 		expect(offline).not.toContain("1000.00");
 
+		atoms.balances.set({
+			virtual: reading(50, 0, 50),
+			paper: reading(1000, -25.5, 974.5),
+			real: reading(200, 0, 200),
+		});
 		confidenceAtom.set({
 			...confidenceAtom.get(),
 			real_ceiling: true,

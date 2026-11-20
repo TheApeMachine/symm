@@ -1,14 +1,15 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { signals as appSignals } from "#/collections/app";
-import type { DynamicStoploss } from "#/collections/types";
-import { positionReadout } from "#/components/book-readout";
+import type { Position, Stoploss } from "#/collections/types";
+import { isClosed } from "#/components/book-readout";
 import { positionRows } from "#/components/learning/open-positions";
 import {
 	lifecycleFromDeskClosed,
 	lifecycleFromDeskOpen,
 } from "#/lib/desk-closed-lifecycle";
-import { trySendCommand } from "#/lib/hub-socket";
+import { stampMs } from "#/lib/format";
 import { syncOpenPositionCount } from "#/lib/open-position-count";
+import { trySendCommand } from "#/providers/websocket";
 
 /*
 Paper round trips as the dashboard run lives them, streamed over the hub as
@@ -54,7 +55,7 @@ export type LifeOutcome = {
 	realized?: number | null;
 	/** Mark-to-market return at settle (fraction). The realized-vs-mark gap is the seam audit. */
 	mark?: number | null;
-	/** Repress events the lot held (tape timebase). */
+	/** Repress events the position held (tape timebase). */
 	bars_held?: number | null;
 	/** Empirical winning horizon in bars. */
 	max_lifetime_bars?: number | null;
@@ -62,7 +63,7 @@ export type LifeOutcome = {
 
 /*
 LearnedExitPolicy is the Causal-MCTS stopping boundary the desk has tuned for
-this symbol, copied onto the lot at entry (broker/exitpolicy.go teachPolicy).
+this symbol, copied onto the position at entry (broker/exitpolicy.go teachPolicy).
 A zero or absent value means the desk has not learned that boundary yet — the
 stop falls back to the friction floor. The UI must distinguish "unlearned" from
 "zero", so each field is a nullable percent, not a defaulted 0.
@@ -78,25 +79,25 @@ export type LearnedExitPolicy = {
 	worst?: number | null;
 };
 
-/** Live DynamicStoploss snapshot copied onto lifecycle rows from desk lots. */
-export type LiveStopState = DynamicStoploss;
+/** Live Stoploss snapshot copied onto lifecycle rows from desk positions. */
+export type LiveStopState = Stoploss;
 
 export type Lifecycle = {
 	id: string;
 	symbol: string;
 	status: string;
 	policy_epoch?: string;
-	/** Grammar path the desk opened the lot on (path discovery ledger). */
+	/** Grammar path the desk opened the position on (path discovery ledger). */
 	path?: string;
 	opened_at: string;
 	closed_at?: string | null;
 	events: LifeEvent[] | null;
 	mark?: LifeMark | null;
-	/** Live DynamicStoploss snapshot from the desk lot. */
+	/** Live Stoploss snapshot from the desk position. */
 	stop_state?: LiveStopState | null;
 	/** Learned exit policy for this symbol (Causal MCTS), copied on at entry. */
 	policy?: LearnedExitPolicy | null;
-	/** Peak mark-to-market return (percent) the lot has reached. */
+	/** Peak mark-to-market return (percent) the position has reached. */
 	peak_pct?: number | null;
 	/** Fee-net realized return captured at exit (fraction). */
 	realized_pct?: number | null;
@@ -108,12 +109,12 @@ export type Lifecycle = {
 	exit_trigger?: string | null;
 	/** Exit mark at official close, percent. */
 	official_exit_pct?: number | null;
-	/** Bid marks sampled while the lot was open (for hold charts). */
+	/** Bid marks sampled while the position was open (for hold charts). */
 	marks?: LifeMark[];
 	outcome?: LifeOutcome | null;
-	book?: string;
+	tier_key?: string;
 	path_found?: boolean;
-	/** Set when this row was copied from a desk lot snapshot. */
+	/** Set when this row was copied from a desk position snapshot. */
 	desk?: boolean;
 	/** Set when this closed row was restored from S3 history. */
 	history?: boolean;
@@ -193,10 +194,15 @@ const summarize = (all: Lifecycle[]): LifecycleReport => {
 let snapshot: Snapshot = { report: summarize([]) };
 
 const publish = () => {
-	// Newest round trip first.
-	const all = [...lives.values()].sort((a, b) =>
-		b.opened_at.localeCompare(a.opened_at),
-	);
+	// Newest close first for settled trips; open positions by opened_at.
+	const all = [...lives.values()].sort((a, b) => {
+		const byClose =
+			stampMs(b.closed_at || b.opened_at) - stampMs(a.closed_at || a.opened_at);
+		if (byClose !== 0) return byClose;
+		const byOpen = stampMs(b.opened_at) - stampMs(a.opened_at);
+		if (byOpen !== 0) return byOpen;
+		return a.id.localeCompare(b.id);
+	});
 	snapshot = { report: summarize(all) };
 	syncOpenPositionCount();
 	for (const listener of listeners) listener();
@@ -335,15 +341,13 @@ export const ingestPositionFrame = (frame: unknown) => {
 };
 
 /*
-ingestDeskClosedLots mirrors the desk snapshot. A lot is open when it is in
+ingestDeskClosedPositions mirrors the desk snapshot. A position is open when it is in
 that snapshot without a close, and closed when Exit put a close on it. Desk
 rows that are no longer open are removed. A close already recorded stays.
 */
-export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
+export const ingestDeskClosedPositions = (rows: Position[]) => {
 	const openIds = new Set(
-		rows
-			.filter((row) => row.id && !positionReadout(row).closed)
-			.map((row) => String(row.id)),
+		rows.filter((row) => row.id && !isClosed(row)).map((row) => row.id),
 	);
 
 	let changed = false;
@@ -360,9 +364,7 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 	}
 
 	for (const row of rows) {
-		const life =
-			lifecycleFromDeskClosed(row as Record<string, unknown>) ??
-			lifecycleFromDeskOpen(row as Record<string, unknown>);
+		const life = lifecycleFromDeskClosed(row) ?? lifecycleFromDeskOpen(row);
 		if (!life) {
 			continue;
 		}
@@ -415,42 +417,38 @@ export const ingestDeskClosedLots = (rows: Record<string, unknown>[]) => {
 };
 
 export const ingestDeskSnapshot = () => {
-	ingestDeskClosedLots(positionRows(appSignals.positions.state));
+	ingestDeskClosedPositions(positionRows(appSignals.positions.state));
 };
 
-const deskRowFromClosedLife = (
-	life: Lifecycle,
-): Record<string, unknown> | null => {
+const deskRowFromClosedLife = (life: Lifecycle): Position | null => {
 	if (life.status !== "closed" || !life.outcome) {
 		return null;
 	}
 
 	const outcome = life.outcome;
-	const book = life.book ?? "paper";
 	return {
 		id: life.id,
 		symbol: life.symbol,
-		book,
+		tier_key: life.tier_key ?? "paper",
+		entry_path: life.path ?? "",
+		exit_path: "",
 		opened_at: life.opened_at,
 		closed_at: life.closed_at,
-		pnl: outcome.pnl,
+		pnl: outcome.money ?? undefined,
 		pnl_pct: outcome.pnl_pct,
-		hold_ns: outcome.hold_ns,
-		outcome_triggers: outcome.triggers,
-		exit_trigger: life.exit_trigger ?? null,
+		outcome_triggers: outcome.triggers ?? undefined,
+		exit_trigger: life.exit_trigger ?? undefined,
 	};
 };
 
 /*
-deskRowsForStats is the positions snapshot plus closed desk lots the lifecycle
+deskRowsForStats is the positions snapshot plus closed desk positions the lifecycle
 store still holds after Train drops them from the hub frame. Edge and win rate
 must use this, not positionRows alone.
 */
-export const deskRowsForStats = (): Record<string, unknown>[] => {
+export const deskRowsForStats = (): Position[] => {
 	const rows = positionRows(appSignals.positions.state);
-	const seen = new Set(
-		rows.filter((row) => row.id).map((row) => String(row.id)),
-	);
+	const seen = new Set(rows.map((row) => row.id));
 
 	for (const life of lives.values()) {
 		if (!life.desk || life.status !== "closed" || !life.outcome) {
@@ -481,7 +479,7 @@ export const resetLifecycles = () => {
 
 export type ClosedHistoryEntry = {
 	stamp: HistoryStamp;
-	row: Record<string, unknown>;
+	row: Position;
 };
 
 const historyFrameIsNewerStamp = (
@@ -495,7 +493,7 @@ const historyFrameIsNewerStamp = (
 
 const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 	const row = entry.row;
-	if (!row || typeof row.id !== "string" || row.id === "") {
+	if (!row?.id) {
 		return false;
 	}
 
@@ -546,7 +544,7 @@ const ingestHistoryClosedEntry = (entry: ClosedHistoryEntry): boolean => {
 };
 
 /*
-ingestHistoryClosedBatch folds many stored closed lots with one publish.
+ingestHistoryClosedBatch folds many stored closed positions with one publish.
 Hub ListPrefix sends JSON {"closed":{entries}} envelopes.
 */
 export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
@@ -566,7 +564,7 @@ export const ingestHistoryClosedBatch = (entries: ClosedHistoryEntry[]) => {
 let closedHistoryRequested = false;
 
 /*
-requestClosedPositionHistory asks the hub to list every closed lot in S3
+requestClosedPositionHistory asks the hub to list every closed position in S3
 across virtual, paper, and real. ListPrefix returns one frame per book prefix.
 */
 export const requestClosedPositionHistory = () => {
@@ -591,8 +589,8 @@ const subscribe = (listener: () => void) => {
 };
 
 /*
-ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's lot
-frames on a timer, so the Position Life-Cycle tab shows open lots and
+ensureDeskLifecycleFeed keeps the lifecycle store fed from the desk's position
+frames on a timer, so the Position Life-Cycle tab shows open positions and
 settled closes even when no rich frame stream replayed them. The longtail
 recorder ingests the same rows; one interval is enough for both.
 */
@@ -603,7 +601,7 @@ export const ensureDeskLifecycleFeed = () => {
 	lifecycleFeedStarted = true;
 
 	const tick = () => {
-		ingestDeskClosedLots(positionRows(appSignals.positions.state));
+		ingestDeskClosedPositions(positionRows(appSignals.positions.state));
 	};
 
 	tick();
@@ -616,7 +614,6 @@ export const useLifecycles = (): Snapshot => {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		ensureDeskLifecycleFeed();
-		requestClosedPositionHistory();
 	}, []);
 
 	return useSyncExternalStore(
@@ -627,14 +624,14 @@ export const useLifecycles = (): Snapshot => {
 };
 
 /*
-selectBook keeps one book. A life with no book is a paper trade.
+selectBook keeps one book. A life with no tier_key is a paper trade.
 */
 export const selectBook = (
 	report: LifecycleReport,
 	book: "paper" | "virtual" | "real",
 ): LifecycleReport =>
 	summarize(
-		report.lifecycles.filter((life) => (life.book ?? "paper") === book),
+		report.lifecycles.filter((life) => (life.tier_key ?? "paper") === book),
 	);
 
 /* NOT_AVAILABLE is what a real-exchange figure reads under paper trading. */

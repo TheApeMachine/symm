@@ -1,5 +1,9 @@
+import { useSelector } from "@tanstack/react-store";
 import { lazy, Suspense, useCallback, useRef, useState } from "react";
+import { type Book, bookAtom, isBook } from "#/collections/book";
+import { moneyText, pctText } from "#/lib/format";
 import { cn } from "#/lib/utils";
+import { trySendCommand } from "#/providers/websocket";
 import type {
 	OpenChoiceChartApi,
 	OpenChoiceLegendItem,
@@ -7,8 +11,8 @@ import type {
 
 /*
 SciChart's ESM is broken under Node SSR. Lazy-load so the route module can
-evaluate without pulling scichart-react in. The surface owns the store
-subscription — React only hosts chrome (layout toggle + legend).
+evaluate without pulling scichart-react in. Hub marks push into series;
+React only hosts chrome (layout toggle + legend).
 */
 const OpenChoiceSciChart = lazy(() =>
 	import("./open-choice-scichart").then((module) => ({
@@ -16,26 +20,14 @@ const OpenChoiceSciChart = lazy(() =>
 	})),
 );
 
-const pctText = (value: number) => {
-	const digits = Math.abs(value) >= 10 ? 0 : 1;
-	const sign = value > 0 ? "+" : "";
-	return `${sign}${value.toFixed(digits)}%`;
-};
-
-const moneyText = (value: number) => {
-	const abs = Math.abs(value);
-	const digits = abs >= 100 ? 0 : abs >= 10 ? 1 : 2;
-	return value >= 0 ? `$+${abs.toFixed(digits)}` : `$-${abs.toFixed(digits)}`;
-};
-
-const roomText = (room: number) => {
-	const digits = Math.abs(room) >= 10 ? 0 : 1;
-	return `${room.toFixed(digits)}pp`;
-};
+const exitBook = (item: OpenChoiceLegendItem, selected: Book): Book =>
+	isBook(item.tier) ? item.tier : selected;
 
 export const OpenChoiceChart = () => {
+	const book = useSelector(bookAtom, (state) => state);
 	const [isGrid, setIsGrid] = useState(false);
 	const [legend, setLegend] = useState<OpenChoiceLegendItem[]>([]);
+	const [exiting, setExiting] = useState<Record<string, boolean>>({});
 	const legendKey = useRef("");
 	const apiRef = useRef<OpenChoiceChartApi | null>(null);
 
@@ -43,17 +35,44 @@ export const OpenChoiceChart = () => {
 		const key = items
 			.map(
 				(item) =>
-					`${item.id}:${item.pnlMoney ?? ""}:${item.pnlPct ?? ""}:${item.stopRoomPct ?? ""}:${item.stopProximity ?? ""}`,
+					`${item.id}:${item.pnlMoney ?? ""}:${item.grossMoney ?? ""}:${item.pnlPct ?? ""}:${item.stopRoomPct ?? ""}:${item.stopProximity ?? ""}`,
 			)
 			.join("|");
 		if (key === legendKey.current) return;
 		legendKey.current = key;
 		setLegend(items);
+		setExiting((prev) => {
+			const next: Record<string, boolean> = {};
+			for (const item of items) {
+				if (prev[item.id]) next[item.id] = true;
+			}
+			return next;
+		});
 	}, []);
 
 	const setLayout = (grid: boolean) => {
 		apiRef.current?.setIsGridLayoutMode(grid);
 		setIsGrid(grid);
+	};
+
+	const exitPosition = (item: OpenChoiceLegendItem) => {
+		if (exiting[item.id]) return;
+
+		setExiting((prev) => ({ ...prev, [item.id]: true }));
+		const ok = trySendCommand({
+			type: "exit",
+			id: item.id,
+			symbol: item.name,
+			book: exitBook(item, book),
+		});
+
+		if (!ok) {
+			setExiting((prev) => {
+				const next = { ...prev };
+				delete next[item.id];
+				return next;
+			});
+		}
 	};
 
 	return (
@@ -64,7 +83,7 @@ export const OpenChoiceChart = () => {
 						Open choices
 					</div>
 					<div className="text-[10px] text-(--f4)">
-						Store → SciChart fifo series per open lot. Toggle grid per lot.
+						Mark path + armed stop crest (peak↔floor). Toggle grid per position.
 					</div>
 				</div>
 				<fieldset className="m-0 flex items-center gap-0.5 rounded border border-(--line) bg-(--sunken) p-0.5">
@@ -109,43 +128,81 @@ export const OpenChoiceChart = () => {
 						onLegend={onLegend}
 						onReady={(api) => {
 							apiRef.current = api;
+							api.setIsGridLayoutMode(isGrid);
 						}}
 					/>
 				</Suspense>
 			</div>
 			{legend.length > 0 ? (
-				<div className="flex max-h-24 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
-					{legend.map((item) => (
-						<span key={item.id} className="inline-flex items-center gap-1">
+				<div className="flex max-h-28 shrink-0 flex-wrap gap-x-3 gap-y-1 overflow-auto border-t border-(--line) px-3 py-1.5 text-[10px] text-(--f3)">
+					{legend.map((item) => {
+						const title = [
+							item.entry !== undefined && item.mark !== undefined
+								? `entry ${item.entry} → bid ${item.mark}`
+								: null,
+							item.grossMoney !== undefined
+								? `gross ${moneyText(item.grossMoney)}`
+								: null,
+							item.feeMoney !== undefined
+								? `fees ${moneyText(-item.feeMoney)}`
+								: null,
+							item.pnlMoney !== undefined
+								? `net ${moneyText(item.pnlMoney)}`
+								: null,
+							item.stopRoomPct !== undefined
+								? `room ${item.stopRoomPct.toFixed(1)}pp`
+								: null,
+						]
+							.filter(Boolean)
+							.join(" · ");
+
+						return (
 							<span
-								className="inline-block h-1.5 w-3 rounded-sm"
-								style={{ background: item.stroke }}
-							/>
-							{item.name}
-							<span className="tabular-nums text-(--f2)">
-								{item.pnlMoney !== undefined
-									? moneyText(item.pnlMoney)
-									: "…"}
-							</span>
-							<span className="tabular-nums text-(--f4)">
-								{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
-							</span>
-							{item.stopRoomPct !== undefined ? (
+								key={item.id}
+								title={title}
+								className="inline-flex items-center gap-1"
+							>
 								<span
+									className="inline-block h-1.5 w-3 rounded-sm"
+									style={{ background: item.stroke }}
+								/>
+								{item.name}
+								<span className="tabular-nums text-(--f4)">
+									{item.grossMoney !== undefined
+										? `g${moneyText(item.grossMoney)}`
+										: ""}
+								</span>
+								<span className="tabular-nums text-(--f2)">
+									{item.pnlMoney !== undefined
+										? moneyText(item.pnlMoney)
+										: "…"}
+								</span>
+								<span className="tabular-nums text-(--f4)">
+									{item.pnlPct === undefined ? "" : pctText(item.pnlPct)}
+								</span>
+								{item.stopRoomPct !== undefined ? (
+									<span className="tabular-nums text-(--f4)">
+										r{item.stopRoomPct.toFixed(1)}
+									</span>
+								) : null}
+								<button
+									type="button"
+									aria-label={`Exit ${item.name}`}
+									title={`Manually exit ${item.name}`}
+									disabled={Boolean(exiting[item.id])}
+									onClick={() => exitPosition(item)}
 									className={cn(
-										"tabular-nums",
-										(item.stopProximity ?? 0) >= 0.7
-											? "text-(--warn)"
-											: "text-(--f4)",
+										"ml-0.5 rounded border border-(--line) px-1 py-px text-[9px] uppercase tracking-wide transition-colors",
+										exiting[item.id]
+											? "cursor-wait text-(--f4)"
+											: "cursor-pointer text-(--f3) hover:border-(--down) hover:text-(--down)",
 									)}
 								>
-									{(item.stopProximity ?? 0) >= 1
-										? "stop"
-										: `${roomText(item.stopRoomPct)} to stop`}
-								</span>
-							) : null}
-						</span>
-					))}
+									{exiting[item.id] ? "…" : "exit"}
+								</button>
+							</span>
+						);
+					})}
 				</div>
 			) : null}
 		</section>

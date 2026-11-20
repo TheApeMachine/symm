@@ -2,157 +2,632 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"iter"
+	"maps"
+	"sync"
+	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/shopspring/decimal"
+	"github.com/bytedance/sonic"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
-	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/venue"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 /*
-Desk fans work across the virtual, paper, and real tiers.
+tradeQueueFrames caps trade latency: full ring drops oldest prints so pumpTrade
+never blocks the public reader; L3 instead blocks because gaps corrupt books.
+*/
+const tradeQueueFrames = 256
+
+/*
+helloMinInterval coalesces mark-driven Hello to roughly one positions_snapshot
+per display frame (60Hz). Level3/trade floods still collapse; open/close still
+call Hello() immediately via onBook.
+*/
+const helloMinInterval = time.Second / 60
+
+/*
+Desk fans work across the armed tiers. Live-only (market.model real) builds
+the real book alone; paper mode keeps virtual + paper + disarmed real.
 */
 type Desk struct {
 	*runtime.System
-	price *Price
-	tiers map[TierType]*Tier
+	price     *Price
+	public    network.Client
+	venue     market.Venue
+	tiers     map[TierType]*Tier
+	live      bool
+	onTrade   func(*market.Trade)
+	level3Ch chan *market.Level3
+	tradeCh  chan *market.Trade
+
+	helloMu      sync.Mutex
+	helloLast    time.Time
+	helloPending bool
+
+	// updateMu serializes pumpLevel3 and pumpTrade mark paths so the same
+	// position cannot be Update'd on both rings at once.
+	updateMu sync.Mutex
 }
 
+/*
+NewDesk picks tier wiring from market.model so callers do not duplicate the
+live-only vs virtual+paper+disarmed-real matrix at every boot site. It also
+seeds price.balance so paper tiers size from the same ledger Enter spends.
+*/
 func NewDesk(
 	ctx context.Context,
-	transports map[string]Transport,
+	transports map[string]network.Client,
 	price *Price,
+	client *store.Client,
 ) *Desk {
-	desk := &Desk{
-		System: runtime.NewSystem(ctx, "desk"),
-		price:  price,
-		tiers:  make(map[TierType]*Tier, 3),
-	}
-
-	for _, tt := range []TierType{TierTypeVirtual, TierTypePaper, TierTypeReal} {
-		desk.tiers[tt] = NewTier(ctx, tt, transports[tt.String()], price)
-	}
+	quote := system.Cfg.Market.QuoteCurrency
+	live := system.Cfg.Market.Model == "real"
 
 	if price != nil {
-		price.balance = desk.tiers[TierTypePaper].balance
+		price.balance = market.NewBalance(map[string]any{
+			"quote":  quote,
+			"assets": []*market.Asset{},
+		})
 	}
 
+	var names *spot.Normalizer
+
+	if price != nil {
+		names = price.normalizer
+	}
+
+	host := venue.NewKraken(quote).Use(names)
+	tiers := make(map[TierType]*Tier)
+
+	if live {
+		// Live book: balances come from the exchange; store still receives
+		// position + temporal stoploss history for later stop surgery.
+		real := NewTier(
+			ctx,
+			TierTypeReal,
+			transports["public"],
+			transports["private"],
+			price,
+			venue.NewKraken(quote).Use(names),
+			client,
+		)
+		tiers[TierTypeReal] = real
+	} else {
+		virtual := NewTier(
+			ctx,
+			TierTypeVirtual,
+			transports["public"],
+			transports["virtual"],
+			price,
+			venue.NewKraken(quote).Use(names),
+			client,
+		)
+		paper := NewTier(
+			ctx,
+			TierTypePaper,
+			transports["public"],
+			transports["paper"],
+			price,
+			venue.NewKraken(quote).Use(names),
+			client,
+		)
+		real := NewTier(
+			ctx,
+			TierTypeReal,
+			transports["public"],
+			transports["private"],
+			price,
+			venue.NewKraken(quote).Use(names),
+			client,
+		)
+		tiers[TierTypeVirtual] = virtual
+		tiers[TierTypePaper] = paper
+		tiers[TierTypeReal] = real
+	}
+
+	desk := &Desk{
+		System:   runtime.NewSystem(ctx, "desk"),
+		price:    price,
+		public:   transports["public"],
+		venue:    host,
+		level3Ch: make(chan *market.Level3, system.Cfg.Market.Level3.RingCapacity),
+		tradeCh:  make(chan *market.Trade, tradeQueueFrames),
+		tiers:    tiers,
+		live:     live,
+	}
+
+	for _, tier := range tiers {
+		if tier != nil {
+			tier.onBook = desk.Hello
+		}
+	}
+
+	go desk.pumpLevel3()
+	go desk.pumpTrade()
+
+	desk.publishModes()
 	desk.Transition(runtime.READY)
 	return desk
 }
 
-func (desk *Desk) Hello() {
-	for _, tier := range desk.tiers {
-		tier.Hello()
-	}
-}
-
-func (desk *Desk) Update(trades []kraken.TradeData) {
-	for _, trade := range trades {
-		price, err := decimal.NewFromString(trade.Price.String())
-
-		if err != nil {
-			continue
-		}
-
-		desk.mark(trade.Symbol, &price)
-	}
-}
-
-func (desk *Desk) Refresh(symbols []string) {
-	for _, symbol := range symbols {
-		if symbol == "" {
-			continue
-		}
-
-		desk.price.Books.Book(symbol, func(managed *book.Book) {
-			if managed == nil {
-				return
-			}
-
-			mid := managed.Midpoint()
-			if mid == nil {
-				return
-			}
-
-			price, err := decimal.NewFromString(mid.String())
-			if err != nil {
-				return
-			}
-
-			desk.mark(symbol, &price)
-		})
-	}
-}
-
-func (desk *Desk) mark(symbol string, price *decimal.Decimal) {
-	if symbol == "" || price == nil {
+/*
+enqueueLevel3 applies backpressure instead of dropping deltas. A dropped
+Level3 frame permanently diverges the book until the next snapshot.
+*/
+func (desk *Desk) enqueueLevel3(book *market.Level3) {
+	if book == nil {
 		return
 	}
 
-	update := market.NewUpdate(symbol, price)
-
-	for _, tier := range desk.tiers {
-		tier.Update(update)
+	select {
+	case desk.level3Ch <- book:
+	case <-desk.Context().Done():
 	}
 }
 
-func (desk *Desk) Apply(executions *kraken.Execution) {
+/*
+pumpLevel3 serializes book apply and Refresh so concurrent L3 batches do not
+reorder deltas and leave crossed or checksum-diverged state mid-frame.
+*/
+func (desk *Desk) pumpLevel3() {
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		case book := <-desk.level3Ch:
+			if desk.price != nil && desk.price.Books != nil {
+				desk.price.Books.Update(book)
+			}
+
+			trades := make([]*market.TradeData, 0)
+
+			for _, row := range book.Data {
+				if row != nil && row.Symbol != "" {
+					trades = append(trades, &market.TradeData{
+						Symbol: row.Symbol,
+					})
+				}
+			}
+
+			desk.Update(trades)
+		}
+	}
+}
+
+/*
+enqueueTrade pushes a trade snapshot without blocking. Full ring drops oldest.
+*/
+func (desk *Desk) enqueueTrade(trade *market.Trade) {
+	if trade == nil {
+		return
+	}
+
+	select {
+	case desk.tradeCh <- trade:
+		return
+	default:
+	}
+
+	select {
+	case <-desk.tradeCh:
+	default:
+	}
+
+	select {
+	case desk.tradeCh <- trade:
+	default:
+	}
+}
+
+/*
+pumpTrade keeps tape uptake and strategy ticks off the public Read thread so
+slow marks cannot stall websocket ingress and drop trades.
+*/
+func (desk *Desk) pumpTrade() {
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		case trade := <-desk.tradeCh:
+			desk.Update(trade.Data)
+
+			if desk.onTrade != nil {
+				desk.onTrade(trade)
+			}
+		}
+	}
+}
+
+/*
+OnTrade decouples signals from desk internals — cmd wires the workspace consumer
+without desk importing strategy packages.
+*/
+func (desk *Desk) OnTrade(fn func(*market.Trade)) {
+	desk.onTrade = fn
+}
+
+/*
+Feed decodes one Level3 socket frame into a private book copy and enqueues it.
+Each L3 batch has its own reader; sharing a venue Level3 would race.
+*/
+func (desk *Desk) Feed(buf []byte) {
+	var head struct {
+		Channel string `json:"channel"`
+	}
+
+	if err := sonic.Unmarshal(buf, &head); err != nil || head.Channel != "level3" {
+		return
+	}
+
+	raw := kraken.DecodeLevel3(buf)
+	if raw == nil || len(raw.Data) == 0 {
+		return
+	}
+
+	book := market.NewLevel3()
+	raw.ToMarket(book)
+	desk.enqueueLevel3(book)
+}
+
+/*
+Start opens private sockets (after seedBooks) then launches Run. Boot must not
+OpenPrivate during NewDesk — an unread private WS dies while Level3 seeds.
+*/
+func (desk *Desk) Start() {
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
+		errnie.Error(tier.OpenPrivate())
+	}
+
+	go desk.Run()
+}
+
+/*
+Run multiplexes one public Read into the shared venue decoder; each tier still
+owns its private Read loop for executions and balances.
+*/
+func (desk *Desk) Run() {
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
+		go tier.Run()
+	}
+
+	if desk.public == nil || desk.venue == nil {
+		return
+	}
+
+	for {
+		select {
+		case <-desk.Context().Done():
+			return
+		default:
+		}
+
+		buf, err := desk.public.Read()
+
+		if err != nil {
+			if desk.Context().Err() != nil {
+				return
+			}
+
+			if !network.Recoverable(err) {
+				errnie.Error(errnie.Err(
+					errnie.IO, "[desk] public ingress read failed", err,
+				))
+			}
+
+			continue
+		}
+
+		desk.ingest(desk.venue.Read(buf))
+	}
+}
+
+/*
+ingest applies one decoded public frame. venue.Read only demuxes.
+*/
+func (desk *Desk) ingest(frame market.MarketType) {
+	if frame == nil {
+		return
+	}
+
+	switch typed := frame.(type) {
+	case *kraken.Trade:
+		trade := market.NewTrade("", "", nil)
+		typed.ToMarket(trade)
+		desk.enqueueTrade(trade)
+	}
+}
+
+/*
+Hello is the operator-facing book: balance changes and history sync call it so
+the hub stays consistent without every tier mutating UI directly.
+*/
+func (desk *Desk) Hello() {
+	desk.helloMu.Lock()
+	desk.helloLast = time.Now()
+	desk.helloMu.Unlock()
+
+	desk.publishModes()
+
+	positions := make(map[string]*Position)
+	// UI atoms.balances expects { real|paper|virtual: { cash, unrealized, equity } },
+	// not a flat Reading() merge across tiers.
+	balances := make(map[string]any)
+
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
+		}
+
+		hello := tier.Hello()
+		maps.Copy(positions, hello["positions"].(map[string]*Position))
+		balances[tier.Type.String()] = hello["balances"]
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"positions":          positions,
+		"balances":           balances,
+		"positions_snapshot": true,
+	})
+}
+
+/*
+scheduleHello coalesces mark-path snapshots. Immediate when the last Hello is
+older than helloMinInterval; otherwise one trailing flush after the wait.
+*/
+func (desk *Desk) scheduleHello() {
+	desk.helloMu.Lock()
+
+	if desk.helloPending {
+		desk.helloMu.Unlock()
+		return
+	}
+
+	wait := helloMinInterval - time.Since(desk.helloLast)
+
+	if wait <= 0 {
+		desk.helloMu.Unlock()
+		desk.Hello()
+		return
+	}
+
+	desk.helloPending = true
+	desk.helloMu.Unlock()
+
+	time.AfterFunc(wait, func() {
+		desk.helloMu.Lock()
+		desk.helloPending = false
+		desk.helloMu.Unlock()
+		desk.Hello()
+	})
+}
+
+/*
+publishModes tells the hub which books this process actually runs so the
+mode strip does not hardcode virtual/paper as live.
+*/
+func (desk *Desk) publishModes() {
+	virtual := desk.tiers[TierTypeVirtual] != nil
+	paper := desk.tiers[TierTypePaper] != nil
+	real := desk.tiers[TierTypeReal] != nil
+
+	book := func(active, armed bool) map[string]any {
+		return map[string]any{
+			"active": active,
+			"armed":  armed,
+			"halted": active && !armed,
+		}
+	}
+
+	ui.UI.WriteJSON(map[string]any{
+		"confidence": map[string]any{
+			"virtual":             book(virtual, virtual && !desk.live),
+			"paper":               book(paper, paper && !desk.live),
+			"real":                book(real, desk.live && real),
+			"eligible_resistance": system.Cfg.Learning.PaperEligibleResistance,
+			"real_ceiling":        desk.live && real,
+		},
+	})
+}
+
+/*
+Flush persists every open position (including Closing) before process exit.
+*/
+func (desk *Desk) Flush() error {
+	var errs error
+
+	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
+		for _, position := range tier.positions.Open() {
+			if position == nil {
+				continue
+			}
+
+			if err := tier.positions.Save(position); err != nil {
+				errs = errors.Join(errs, err)
+			}
+		}
+	}
+
+	return errs
+}
+
+/*
+Update records tape flow and marks open positions from the executable bid.
+Level3 and public trades both land here — after the batch is marked,
+scheduleHello coalesces the open-universe positions_snapshot so the dashboard
+is not rebuilt on every book frame. updateMu keeps the two pumps from marking
+the same open row concurrently.
+*/
+func (desk *Desk) Update(trades []*market.TradeData) {
+	desk.updateMu.Lock()
+	defer desk.updateMu.Unlock()
+
+	touched := false
+
+	for _, trade := range trades {
+		if trade == nil {
+			continue
+		}
+
+		desk.price.NoteTrade(trade)
+		symbol := trade.Symbol
+		symbol = desk.price.normalizer.Name(symbol)
+
+		// Flat symbols: NoteTrade is enough — Mark takes book locks and
+		// scheduleHello would rebuild the open universe on every L3 frame.
+		if !desk.Has(symbol) {
+			continue
+		}
+
+		mark := desk.price.Mark(symbol)
+
+		if mark == nil {
+			continue
+		}
+
+		touched = true
+
+		for _, tier := range desk.tiers {
+			if tier == nil || tier.Status() != runtime.READY {
+				continue
+			}
+
+			tier.Update(symbol, mark)
+		}
+	}
+
+	if touched {
+		desk.scheduleHello()
+	}
+}
+
+/*
+OpenCount is how many live positions a tier holds — board capacity uses this.
+*/
+func (desk *Desk) OpenCount(tt TierType) int {
+	tier := desk.tiers[tt]
+
+	if tier == nil || tier.positions == nil {
+		return 0
+	}
+
+	return len(tier.positions.Open())
+}
+
+/*
+Apply must touch every tier because paper and real sockets differ but symbol
+keys collide — one execution frame might belong to any armed lane's submit.
+*/
+func (desk *Desk) Apply(executions *market.Execution) {
 	if executions == nil {
 		return
 	}
 
-	for _, execution := range executions.Data {
-		for _, tier := range desk.tiers {
-			for _, position := range tier.positions.Open(execution.Symbol) {
-				if position != nil {
-					position.Apply(execution)
-				}
-			}
+	for _, tier := range desk.tiers {
+		if tier == nil {
+			continue
 		}
+
+		tier.apply(executions)
 	}
 }
 
+/*
+Enter is the desk entrypoint so strategy does not pick transports or Unlocked
+logic — wrong tier wiring would send real orders without paper proof.
+*/
 func (desk *Desk) Enter(
-	symbol string, path string, tt TierType, pathFound bool,
+	symbol string, path string, tt TierType, pathFound bool, hint SizeHint,
 ) error {
 	tier := desk.tiers[tt]
 
 	if tier == nil {
-		return errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.NotFound,
 			"[desk.Enter] unknown tier",
 			nil,
-		)
+		))
 	}
 
-	tier.Unlocked(desk.tiers[TierTypePaper])
-	return tier.Enter(symbol, path, pathFound)
+	return errnie.Error(tier.Enter(symbol, path, pathFound, hint))
 }
 
-func (desk *Desk) Exit(position *Position, tt TierType) error {
-	if tier := desk.tiers[tt]; tier != nil {
-		return tier.Exit(position)
+/*
+Exit routes policy exits through the tier that holds the cache row so Send uses
+the correct private socket and fill matching stays on that lane's positions.
+*/
+func (desk *Desk) Exit(position *Position, force bool) error {
+	tier := desk.tiers[TierString(position.TierKey)]
+
+	if tier == nil {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"[desk.Exit] unknown tier",
+			nil,
+		))
 	}
 
-	for _, tier := range desk.tiers {
-		if tier.positions.Has(position.Symbol) {
-			return tier.Exit(position)
-		}
-	}
-
-	return errnie.Err(
-		errnie.NotFound,
-		"[desk.Exit] position not found",
-		nil,
-	)
+	return errnie.Error(tier.Exit(position, force))
 }
 
+func (desk *Desk) ProfitableExit(position *Position) bool {
+	if desk == nil || position == nil {
+		return false
+	}
+
+	tier := desk.tiers[TierString(position.TierKey)]
+
+	if tier == nil {
+		return false
+	}
+
+	return tier.ProfitableExit(position)
+}
+
+func (desk *Desk) VetoPendingExit(position *Position) {
+	if desk == nil || position == nil {
+		return
+	}
+
+	tier := desk.tiers[TierString(position.TierKey)]
+
+	if tier == nil {
+		return
+	}
+
+	tier.abortExit(position)
+}
+
+/*
+Has is the fast guard inside mark/Refresh — multi-tier paper+real may share
+symbols but only tiers with open positions need Update work.
+*/
 func (desk *Desk) Has(symbol string) bool {
 	for _, tier := range desk.tiers {
+		if tier == nil || tier.positions == nil {
+			continue
+		}
+
 		if tier.positions.Has(symbol) {
 			return true
 		}
@@ -161,111 +636,65 @@ func (desk *Desk) Has(symbol string) bool {
 	return false
 }
 
-func (desk *Desk) Positions(symbol string) []*Position {
-	out := make([]*Position, 0, 3)
+/*
+Positions exposes filled opens to strategy without Submitted noise from pending
+enters still awaiting venue buy prints.
+*/
+func (desk *Desk) Positions(tt TierType, symbols ...string) iter.Seq[*Position] {
+	return func(yield func(*Position) bool) {
+		tier := desk.tiers[tt]
 
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open(symbol)...)
-	}
+		if tier == nil {
+			return
+		}
 
-	return out
-}
-
-func (desk *Desk) Position(symbol string) *Position {
-	for _, tt := range []TierType{TierTypePaper, TierTypeReal, TierTypeVirtual} {
-		if position := desk.PositionOn(symbol, tt); position != nil {
-			return position
+		for _, position := range tier.positions.Open(symbols...) {
+			if !yield(position) {
+				return
+			}
 		}
 	}
-
-	return nil
 }
 
-func (desk *Desk) PositionOn(symbol string, tt TierType) *Position {
+/*
+Position returns the position by tier and symbol.
+*/
+func (desk *Desk) Position(tt TierType, symbol string) *Position {
 	tier := desk.tiers[tt]
 
 	if tier == nil {
 		return nil
 	}
 
-	for _, position := range tier.positions.Open(symbol) {
-		if position != nil {
-			return position
-		}
-	}
-
-	return nil
-}
-
-func (desk *Desk) OpenPositions() []*Position {
-	out := make([]*Position, 0)
-
-	for _, tier := range desk.tiers {
-		out = append(out, tier.positions.Open()...)
-	}
-
-	return out
-}
-
-func (desk *Desk) Virtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.All()
-}
-
-func (desk *Desk) ClosedVirtuals() []*Position {
-	tier := desk.tiers[TierTypeVirtual]
-
-	if tier == nil {
-		return nil
-	}
-
-	return tier.positions.Closed()
+	return tier.positions.Get(symbol)
 }
 
 /*
-Pending yields stoploss-settled lots waiting for the model to record an exit path.
+Pending holds flat sells until the model records exit_path — Remove ran but
+learning still needs the position handle for attribution before ClearPending.
 */
-func (desk *Desk) Pending() iter.Seq[*Position] {
+func (desk *Desk) Pending(tt TierType) iter.Seq[*Position] {
 	return func(yield func(*Position) bool) {
-		for _, tt := range []TierType{TierTypeVirtual, TierTypePaper, TierTypeReal} {
-			tier := desk.tiers[tt]
-			if tier == nil {
-				continue
-			}
+		tier := desk.tiers[tt]
 
-			for position := range tier.Pending() {
-				if !yield(position) {
-					return
-				}
+		if tier == nil {
+			return
+		}
+
+		for position := range tier.Pending() {
+			if !yield(position) {
+				return
 			}
 		}
 	}
 }
 
-func (desk *Desk) ClearPending(symbol string) {
-	for _, tier := range desk.tiers {
+/*
+ClearPending frees pending map memory and lets the symbol re-enter after the
+model finished writing exit_path into its tables.
+*/
+func (desk *Desk) ClearPending(tt TierType, symbol string) {
+	if tier := desk.tiers[tt]; tier != nil {
 		tier.ClearPending(symbol)
 	}
-}
-
-func (desk *Desk) CanSize(symbol string) bool {
-	if symbol == "" || desk.price == nil {
-		return false
-	}
-
-	qty, _ := desk.price.Allocate(symbol, nil)
-	return qty != nil && qty.Sign() > 0
-}
-
-func (desk *Desk) BookStale(symbol string) bool {
-	if desk.price == nil || desk.price.Books == nil {
-		return true
-	}
-
-	return desk.price.Books.StaleSymbol(symbol)
 }

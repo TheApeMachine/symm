@@ -1,0 +1,651 @@
+package deskgate
+
+import (
+	"context"
+	"math"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/bytedance/sonic"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/nomagique/adaptive"
+	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/store"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/system"
+)
+
+const (
+	stateKey          = "model/parameters/deskgate.bin"
+	cutNeutral        = 0.5
+	trackReadyAt      = 0.5
+	brightnessScale   = 2.0
+)
+
+/*
+Axis is one desk oracle dimension (volume, day, …) with a learned cutoff on a
+unit-normalized feature. Higher means more approve-like unless Higher is false.
+*/
+type Axis struct {
+	Phase  string  `json:"phase"`
+	Higher bool    `json:"higher"`
+	Cut    float64 `json:"cut"`
+	Sample int64   `json:"sample"`
+	track  *adaptive.Standardizer `json:"-"`
+}
+
+/*
+Gate learns enter oracle cuts from develop vs stall outcomes — same resistance
+geometry as path leaves (threshold step) without YAML knob churn.
+*/
+type gateState struct {
+	Version int              `json:"version"`
+	Axes    map[string]*Axis `json:"axes"`
+}
+
+type Gate struct {
+	ctx    context.Context
+	mu     sync.Mutex
+	Axes   map[string]*Axis
+	loaded bool
+	store  *store.Client
+}
+
+/*
+NewGate seeds cuts at neutral brightness and loads persisted state when a store exists.
+*/
+func NewGate(ctx context.Context, client *store.Client) *Gate {
+	gate := &Gate{
+		ctx:   ctx,
+		store: client,
+	}
+	gate.Axes = gate.seedAxes()
+
+	if client != nil {
+		gate.restore()
+	}
+
+	return gate
+}
+
+func (gate *Gate) seedAxes() map[string]*Axis {
+	return map[string]*Axis{
+		"volume": gate.newAxis("volume", true),
+		"day":    gate.newAxis("day", true),
+		"spread": gate.newAxis("spread", true),
+		"book":   gate.newAxis("book", true),
+		"peak":   gate.newAxis("peak", true),
+	}
+}
+
+func (gate *Gate) newAxis(phase string, higher bool) *Axis {
+	return &Axis{
+		Phase:  phase,
+		Higher: higher,
+		Cut:    cutNeutral,
+		track:  adaptive.NewStandardizer(),
+	}
+}
+
+func (gate *Gate) bindTracks() {
+	for _, axis := range gate.Axes {
+		if axis != nil && axis.track == nil {
+			axis.track = adaptive.NewStandardizer()
+		}
+	}
+}
+
+/*
+Features maps desk source labels the grid SNM layer can fan into oracle regions.
+*/
+func (gate *Gate) Features(
+	price *broker.Price,
+	symbol string,
+	pump *equation.IgnitionOutput,
+) map[string]float64 {
+	if price == nil || symbol == "" {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	flow := price.TapeFlow(symbol, now)
+	spread := gate.spreadPct(price, symbol)
+	peakFrac := gate.peakFrac(price, symbol)
+	peakRoom := 0.0
+	if peakFrac >= 0 {
+		peakRoom = 1 - peakFrac
+	}
+	tapeKnown := 0.0
+	if flow.BuyRecent > 0 || flow.BuyPrior > 0 || flow.SellRecent > 0 {
+		tapeKnown = 1
+	}
+
+	hour := float64(now.Hour()) + float64(now.Minute())/60
+	minute := float64(now.Minute())
+	roundClock := 0.0
+	if minute < 2 || minute > 58 || (minute >= 28 && minute <= 32) {
+		roundClock = 1
+	}
+
+	out := map[string]float64{
+		"tape_recent":   gate.tapeRecent(flow),
+		"tape_ratio":    flow.ConditionedRatio,
+		"tape_notional": math.Max(flow.BuyRecent, 0),
+		"tape_known":    tapeKnown,
+		"tape_net":      flow.NetFraction,
+		"tape_flip":     flow.FlipChurn,
+		"rush_buy":      math.Log1p(math.Max(flow.RushBuy, 0)),
+		"rush_sell":     math.Log1p(math.Max(flow.RushSell, 0)),
+		"tape_rhythm":   flow.Rhythm,
+		"session_move":  math.Max(price.ChangePct(symbol), 0),
+		"impulse":       gate.impulseLevel(pump),
+		"vpin":          gate.vpin(pump),
+		"spread_pct":    spread,
+		// Polarity-correct approve metrics for Catalog pinMove (rising = good).
+		"spread_tight": -spread,
+		"touch_cash":   gate.touchCash(price, symbol),
+		"backing":      gate.backingRatio(price, symbol),
+		"overhead":     gate.overheadRatio(price, symbol),
+		"peak_frac":    peakFrac,
+		"peak_room":    peakRoom,
+		"volume_usd":   gate.volumeUSD(price, symbol),
+		"open_drag":    gate.openDrag(price, symbol),
+		"hour_sin":     math.Sin(2 * math.Pi * hour / 24),
+		"hour_cos":     math.Cos(2 * math.Pi * hour / 24),
+		"minute_sin":   math.Sin(2 * math.Pi * minute / 60),
+		"minute_cos":   math.Cos(2 * math.Pi * minute / 60),
+		"round_clock":  roundClock,
+	}
+
+	gate.mu.Lock()
+	gate.bindTracks()
+	for name, axis := range gate.Axes {
+		if axis == nil {
+			continue
+		}
+		raw := gate.rawAxis(name, out, pump)
+		// Measure every scored candidate so the track mean is the universe,
+		// not only entered trades (selection-bias drift after ~3 settles).
+		if raw != 0 && !math.IsNaN(raw) && !math.IsInf(raw, 0) {
+			if _, err := axis.track.Measure(raw); err != nil {
+				errnie.Error(err)
+			}
+		} else if math.IsNaN(raw) || math.IsInf(raw, 0) {
+			raw = 0
+		}
+		out["axis_"+name] = axis.score(raw)
+		out["axis_"+name+"_raw"] = raw
+	}
+	gate.mu.Unlock()
+
+	return out
+}
+
+func (gate *Gate) rawAxis(name string, out map[string]float64, pump *equation.IgnitionOutput) float64 {
+	switch name {
+	case "volume":
+		recent := out["tape_recent"]
+		ratio := out["tape_ratio"]
+		net := out["tape_net"]
+		rush := out["rush_buy"] - out["rush_sell"]
+		base := recent
+		if ratio > 0 {
+			base += math.Log1p(ratio)
+		}
+		return base + net + rush + 0.25*out["round_clock"]
+	case "day":
+		move := out["session_move"]
+		if move <= 0 {
+			return out["impulse"] + 0.15*out["hour_sin"]
+		}
+		if pump != nil && out["impulse"] > 0 {
+			return move + out["impulse"] + 0.15*out["hour_sin"]
+		}
+		return move + 0.15*out["hour_sin"]
+	case "spread":
+		return -out["spread_pct"]
+	case "book":
+		drag := out["open_drag"]
+		if drag < 0 {
+			drag = 0
+		}
+		return out["touch_cash"] + out["backing"] + out["overhead"] +
+			out["tape_ratio"] + out["tape_rhythm"] - drag
+	case "peak":
+		frac := out["peak_frac"]
+		if frac < 0 {
+			return 0
+		}
+		return 1 - frac
+	default:
+		return 0
+	}
+}
+
+func (axis *Axis) score(raw float64) float64 {
+	if axis == nil || axis.track == nil {
+		return 0
+	}
+
+	out, err := axis.track.ZScore(raw)
+	if err != nil || !out.Ready {
+		return 0
+	}
+
+	z := out.Value
+	if !axis.Higher {
+		z = -z
+	}
+
+	return 0.5 + 0.5*math.Tanh(z/brightnessScale)
+}
+
+/*
+Oracle passes each desk lamp using learned cuts on the composite axis_* score.
+*/
+func (gate *Gate) Oracle(
+	price *broker.Price,
+	symbol string,
+	pump *equation.IgnitionOutput,
+) (volume, day, spread, book, peak bool) {
+	return gate.OracleFrom(gate.Features(price, symbol, pump))
+}
+
+/*
+OracleFrom applies learned cuts to a desk feature map — Training computes Features
+once per symbol and passes the same map here and to grid Observe.
+*/
+func (gate *Gate) OracleFrom(feat map[string]float64) (volume, day, spread, book, peak bool) {
+	if feat == nil {
+		return false, false, false, false, false
+	}
+
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+
+	return gate.oraclePass("volume", feat),
+		gate.oraclePass("day", feat),
+		gate.oraclePass("spread", feat),
+		gate.oraclePass("book", feat),
+		gate.oraclePass("peak", feat)
+}
+
+func (gate *Gate) oraclePass(name string, feat map[string]float64) bool {
+	axis := gate.Axes[name]
+	if axis == nil {
+		return false
+	}
+
+	// Risk floors never drop out — a 3-sample Standardizer must not replace
+	// MinMoverVolumeUSD / MaxEntrySpreadPct / … with cuts fit only on entered
+	// trades. Day / peak / volume stay static-only: five learned Higher cuts
+	// ANDed mid-session sealed the universe after the first settles.
+	if !gate.staticPass(name, feat) {
+		return false
+	}
+
+	if name != "spread" && name != "book" {
+		return true
+	}
+
+	if !axis.ready() || axis.Sample <= 0 {
+		return true
+	}
+
+	score := feat["axis_"+name]
+	if score <= 0 {
+		return false
+	}
+
+	if axis.Higher {
+		return score >= axis.Cut
+	}
+
+	return score <= axis.Cut
+}
+
+/*
+staticPass is the cold-oracle path: config risk floors, not learned cuts.
+*/
+func (gate *Gate) staticPass(name string, feat map[string]float64) bool {
+	risk := system.Cfg.Risk
+
+	switch name {
+	case "volume":
+		if feat["volume_usd"] < risk.MinMoverVolumeUSD {
+			return false
+		}
+		// No buy-tape lane yet: 24h volume alone. Dead recent tape (known
+		// lane with notional under the floor) still fails closed.
+		if feat["tape_known"] < 1 {
+			return true
+		}
+		if risk.MinTapeNotionalUSD > 0 &&
+			feat["tape_notional"] < risk.MinTapeNotionalUSD {
+			return false
+		}
+		// Net/flip only when Features stamped them (OracleFrom partial maps
+		// omit keys — zero must not seal every legacy fixture).
+		if _, ok := feat["tape_net"]; ok &&
+			risk.MinNetBuyFraction > 0 &&
+			feat["tape_net"] < risk.MinNetBuyFraction {
+			return false
+		}
+		if _, ok := feat["tape_flip"]; ok &&
+			risk.MaxFlipChurn > 0 &&
+			feat["tape_flip"] > risk.MaxFlipChurn {
+			return false
+		}
+		if risk.MinTapeAccelRatio > 0 {
+			ratio := feat["tape_ratio"]
+			if ratio > 0 && ratio < 1 {
+				return false
+			}
+			if ratio <= 0 {
+				return true
+			}
+		}
+		return true
+	case "day":
+		return feat["session_move"] >= risk.MinMoverChangePct
+	case "spread":
+		if risk.MaxEntrySpreadPct <= 0 {
+			return true
+		}
+
+		spread := feat["spread_pct"]
+		return spread > 0 && spread <= risk.MaxEntrySpreadPct
+	case "book":
+		if feat["touch_cash"] < math.Log1p(risk.MinTouchBidCash) ||
+			feat["backing"] < risk.MinBackingRatio {
+			return false
+		}
+		if risk.MinOverheadRatio > 0 &&
+			feat["overhead"] > 0 &&
+			feat["overhead"] < risk.MinOverheadRatio {
+			return false
+		}
+		if feat["open_drag"] >= 0 && risk.MaxEntryOpenDragPct > 0 &&
+			feat["open_drag"] > risk.MaxEntryOpenDragPct {
+			return false
+		}
+		return true
+	case "peak":
+		if risk.MaxEntryPeakFrac <= 0 || risk.MaxEntryPeakFrac >= 1 {
+			return true
+		}
+
+		frac := feat["peak_frac"]
+		if frac < 0 {
+			return true
+		}
+
+		if frac < risk.MaxEntryPeakFrac {
+			return true
+		}
+
+		accel := risk.MinTapeAccelRatio
+		if accel <= 0 {
+			accel = 1
+		}
+		return feat["tape_ratio"] >= accel
+	default:
+		return false
+	}
+}
+
+func (axis *Axis) ready() bool {
+	return axis != nil &&
+		axis.track != nil &&
+		axis.track.Precision() >= trackReadyAt
+}
+
+/*
+Learn nudges cuts from settle outcomes. developed means the trade proved the
+enter reading (armed stop or fee-net win) — tighten toward those features;
+otherwise push the cut away from borderline passes.
+
+Every Learn also soft-reverts Cut toward cutNeutral so five Higher axes cannot
+monotonically ratchet to ThresholdCeil and seal the universe (entered trades
+always clear Cut, so EMA-toward-score alone only moves up).
+*/
+func (gate *Gate) Learn(features map[string]float64, developed bool) {
+	if len(features) == 0 {
+		return
+	}
+
+	learn := system.Cfg.Learning
+	step := learn.ThresholdStep
+	if step <= 0 {
+		errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[deskgate] learning.threshold_step required",
+			nil,
+		))
+
+		return
+	}
+
+	floor, ceil := learn.ThresholdFloor, learn.ThresholdCeil
+	// Soft mean-reversion fraction of step — keeps directional learning without
+	// a one-way seal once tracks are warm.
+	revert := step * 0.25
+
+	gate.mu.Lock()
+	gate.bindTracks()
+	for name, axis := range gate.Axes {
+		if axis == nil {
+			continue
+		}
+		rawKey := "axis_" + name + "_raw"
+		raw := features[rawKey]
+		if raw == 0 && features["tape_recent"] == 0 {
+			continue
+		}
+
+		axis.Sample++
+
+		// Tracks update in Features (all candidates). Learn only nudges Cut.
+		score := features["axis_"+name]
+		if score == 0 {
+			// Cold tracks score 0 — never drag Cut toward that ghost zero.
+			if !axis.ready() {
+				continue
+			}
+			score = axis.score(raw)
+		}
+
+		if developed {
+			axis.Cut = axis.Cut + step*(score-axis.Cut)
+		} else if axis.Higher {
+			if score >= axis.Cut && score < axis.Cut+2*step {
+				// Borderline loser: raise the bar.
+				axis.Cut = math.Min(ceil, axis.Cut+step)
+			} else if score >= axis.Cut+2*step {
+				// Strong-looking entry that still failed — ease Cut so the
+				// gate does not seal on overfit winner features.
+				axis.Cut = math.Max(floor, axis.Cut-step)
+			}
+		} else if score <= axis.Cut && score > axis.Cut-2*step {
+			axis.Cut = math.Max(floor, axis.Cut-step)
+		} else if score <= axis.Cut-2*step {
+			axis.Cut = math.Min(ceil, axis.Cut+step)
+		}
+
+		axis.Cut += revert * (cutNeutral - axis.Cut)
+		axis.Cut = math.Min(ceil, math.Max(floor, axis.Cut))
+	}
+	gate.mu.Unlock()
+
+	gate.persist()
+}
+
+/*
+Developed is true when the position showed the path deserved real attention.
+*/
+func (gate *Gate) Developed(position *broker.Position) bool {
+	if position == nil {
+		return false
+	}
+
+	arm := system.Cfg.Risk.StoplossArmPnLPct
+	if peak, ok := position.DevelopedPeak(); ok && peak >= arm {
+		return true
+	}
+
+	if pct := position.PnLPctCopy(); pct != nil {
+		return pct.InexactFloat64() >= system.Cfg.Learning.PolicyExitMinProfitPct
+	}
+
+	return false
+}
+
+func (gate *Gate) persist() {
+	if gate.store == nil {
+		return
+	}
+
+	gate.mu.Lock()
+	raw, err := sonic.Marshal(gateState{Version: 1, Axes: gate.Axes})
+	gate.mu.Unlock()
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.IO, "[deskgate] marshal", err))
+		return
+	}
+
+	if _, err := gate.store.WriteSync(stateKey, raw); err != nil {
+		errnie.Error(err)
+	}
+}
+
+func (gate *Gate) restore() {
+	for page := range gate.store.List("model/parameters/") {
+		for _, object := range page.Contents {
+			if object.Key == nil || !strings.HasSuffix(*object.Key, "deskgate.bin") {
+				continue
+			}
+			raw, err := gate.store.Download(gate.ctx, *object.Key)
+			if err != nil || len(raw) == 0 {
+				continue
+			}
+			var loaded gateState
+			if err := sonic.Unmarshal(raw, &loaded); err != nil {
+				errnie.Error(errnie.Err(errnie.IO, "[deskgate] unmarshal", err))
+				return
+			}
+			if loaded.Version < 1 {
+				return
+			}
+
+			gate.mu.Lock()
+			for name, axis := range loaded.Axes {
+				if axis == nil {
+					continue
+				}
+				// Re-center Cut and clear Sample — a prior-session ratchet
+				// ANDed with warm tracks sealed volume/day/… on every symbol.
+				axis.Cut = cutNeutral
+				axis.Sample = 0
+				axis.track = nil
+				gate.Axes[name] = axis
+			}
+			gate.bindTracks()
+			gate.loaded = true
+			gate.mu.Unlock()
+			return
+		}
+	}
+}
+
+func (gate *Gate) tapeRecent(flow broker.TapeReading) float64 {
+	if flow.BuyRecent <= 0 {
+		return 0
+	}
+	return math.Log1p(flow.BuyRecent)
+}
+
+func (gate *Gate) overheadRatio(price *broker.Price, symbol string) float64 {
+	ratio, ok := price.OverheadRatio(symbol)
+	if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0
+	}
+	return ratio
+}
+
+func (gate *Gate) impulseLevel(pump *equation.IgnitionOutput) float64 {
+	if pump == nil {
+		return 0
+	}
+	return gate.log1pFinite(pump.Precursor) +
+		gate.log1pFinite(pump.Ignition) +
+		gate.log1pFinite(pump.Compression) +
+		gate.log1pFinite(pump.RVOL) +
+		gate.log1pFinite(pump.VPIN)
+}
+
+func (gate *Gate) log1pFinite(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return math.Log1p(v)
+}
+
+func (gate *Gate) vpin(pump *equation.IgnitionOutput) float64 {
+	if pump == nil {
+		return 0
+	}
+	if math.IsNaN(pump.VPIN) || math.IsInf(pump.VPIN, 0) {
+		return 0
+	}
+	return pump.VPIN
+}
+
+func (gate *Gate) spreadPct(price *broker.Price, symbol string) float64 {
+	spread, ok := price.SpreadPct(symbol)
+	if !ok || spread == nil {
+		return 0
+	}
+	return spread.InexactFloat64()
+}
+
+func (gate *Gate) touchCash(price *broker.Price, symbol string) float64 {
+	cash, ok := price.TouchBidCash(symbol)
+	if !ok || cash == nil || cash.Sign() <= 0 {
+		return 0
+	}
+	return math.Log1p(cash.InexactFloat64())
+}
+
+func (gate *Gate) backingRatio(price *broker.Price, symbol string) float64 {
+	ratio, ok := price.BackingRatio(symbol)
+	if !ok || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0
+	}
+	return ratio
+}
+
+func (gate *Gate) peakFrac(price *broker.Price, symbol string) float64 {
+	frac, ok := price.PeakFrac(symbol)
+	if !ok {
+		return -1
+	}
+	return frac
+}
+
+func (gate *Gate) volumeUSD(price *broker.Price, symbol string) float64 {
+	if price == nil {
+		return 0
+	}
+
+	return price.VolumeUSD(symbol)
+}
+
+func (gate *Gate) openDrag(price *broker.Price, symbol string) float64 {
+	drag, ok := price.OpenDragPct(symbol)
+	if !ok {
+		return -1
+	}
+	return drag
+}

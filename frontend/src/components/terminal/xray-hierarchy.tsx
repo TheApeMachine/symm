@@ -1,202 +1,143 @@
-import { createRef } from "react";
-
-const symbolScopeAliases = (symbol: string): string[] => {
-	if (!symbol) return [];
-	const aliases = new Set<string>([symbol]);
-	if (symbol.includes("/")) {
-		aliases.add(symbol.replace(/\//g, "-"));
-	} else {
-		const dash = symbol.indexOf("-");
-		if (dash > 0) {
-			aliases.add(`${symbol.slice(0, dash)}/${symbol.slice(dash + 1)}`);
-		}
-	}
-	return [...aliases];
-};
-
+import { useSelector } from "@tanstack/react-store";
+import { useMemo } from "react";
+import { atoms, signals } from "#/collections/app";
 import { heatColor } from "#/components/terminal/canvas";
-import { layerCellsFromState } from "#/components/terminal/xray-layers";
+import {
+	keyedLayerCells,
+	layerCellsFromState,
+} from "#/components/terminal/xray-layers";
 import {
 	carrierScope,
 	resolveXrayCarrier,
 	xrayLayersFromResonance,
 } from "#/components/terminal/xray-view";
-import type { Value } from "#/types/value";
+import { resonanceUniverseRows } from "#/lib/resonance";
+import { symbolScopeAliases } from "#/lib/symbol-scope";
 import { Typography } from "@/components/ui/typography";
 
-const symbolRef = createRef<HTMLSpanElement>();
-const waitingRef = createRef<HTMLDivElement>();
-const rowsRef = createRef<HTMLDivElement>();
-
-/*
-layerErrorTone maps prediction-error magnitude onto terminal semantic colors.
-*/
 const layerErrorTone = (error: number): string => {
-	if (error > 0.55) {
-		return "var(--down)";
-	}
-
-	if (error > 0.3) {
-		return "var(--warn)";
-	}
-
+	if (error > 0.55) return "var(--down)";
+	if (error > 0.3) return "var(--warn)";
 	return "var(--up)";
 };
 
-/*
-paintHierarchyRows syncs resonance layer rows into the host without React diffs.
-*/
-const paintHierarchyRows = (
-	host: HTMLDivElement,
-	waiting: HTMLDivElement,
-	layers: ReturnType<typeof xrayLayersFromResonance>,
-): void => {
-	waiting.style.display = layers.length === 0 ? "" : "none";
-	host.style.display = layers.length === 0 ? "none" : "";
+const HierarchyRow = ({
+	layer,
+}: {
+	layer: ReturnType<typeof xrayLayersFromResonance>[number];
+}) => {
+	const cells = keyedLayerCells(layer.label, layerCellsFromState(layer.state));
+	const errorPct =
+		layer.error_norm !== null
+			? Math.min(100, Math.max(0, layer.error_norm * 100))
+			: 0;
+	const errorColor =
+		layer.error_norm !== null
+			? layerErrorTone(layer.error_norm)
+			: "transparent";
 
-	while (host.childElementCount > layers.length) {
-		host.lastElementChild?.remove();
-	}
-
-	for (const [index, layer] of layers.entries()) {
-		let row = host.children[index] as HTMLDivElement | undefined;
-
-		if (row === undefined) {
-			row = document.createElement("div");
-			row.className = "flex items-center gap-3";
-			row.innerHTML = `
-				<span data-label class="w-23 shrink-0 font-mono text-[10px] text-(--f3)"></span>
-				<div data-cells class="grid flex-1 grid-cols-16 gap-0.5"></div>
-				<div class="w-20 shrink-0">
-					<div class="flex justify-between font-mono text-[9px] text-(--f4)">
-						<span>ε</span>
-						<span data-error></span>
-					</div>
-					<div class="mt-0.75 h-1 overflow-hidden rounded-xs bg-(--line)">
-						<div data-fill class="h-full" style="width:0%"></div>
-					</div>
+	return (
+		<div className="flex items-center gap-3">
+			<span className="w-23 shrink-0 font-mono text-[10px] text-(--f3)">
+				{layer.label}
+			</span>
+			<div className="grid flex-1 grid-cols-16 gap-0.5">
+				{cells.map((cell) => (
+					<div
+						key={cell.key}
+						className="min-w-0 aspect-square rounded-[1px] transition-colors duration-150 ease-out"
+						style={{ background: heatColor((cell.value + 1) / 2) }}
+					/>
+				))}
+			</div>
+			<div className="w-20 shrink-0">
+				<div className="flex justify-between font-mono text-[9px] text-(--f4)">
+					<span>ε</span>
+					<span
+						style={{
+							color: layer.error_norm !== null ? errorColor : undefined,
+						}}
+					>
+						{layer.error_norm !== null ? layer.error_norm.toFixed(3) : "—"}
+					</span>
 				</div>
-			`;
-			host.appendChild(row);
-		}
-
-		const label = row.querySelector<HTMLSpanElement>("[data-label]");
-		const cells = row.querySelector<HTMLDivElement>("[data-cells]");
-		const error = row.querySelector<HTMLSpanElement>("[data-error]");
-		const fill = row.querySelector<HTMLDivElement>("[data-fill]");
-		const values = layerCellsFromState(layer.state);
-
-		if (label !== null) {
-			label.textContent = layer.label;
-		}
-
-		if (error !== null) {
-			error.textContent =
-				layer.error_norm !== null ? layer.error_norm.toFixed(3) : "—";
-			error.style.color =
-				layer.error_norm !== null
-					? layerErrorTone(layer.error_norm)
-					: "inherit";
-		}
-
-		if (fill !== null) {
-			fill.style.width =
-				layer.error_norm !== null
-					? `${Math.min(100, Math.max(0, layer.error_norm * 100))}%`
-					: "0%";
-			fill.style.background =
-				layer.error_norm !== null
-					? layerErrorTone(layer.error_norm)
-					: "transparent";
-		}
-
-		if (cells === null) {
-			continue;
-		}
-
-		while (cells.childElementCount > values.length) {
-			cells.lastElementChild?.remove();
-		}
-
-		for (const [cellIndex, value] of values.entries()) {
-			let cell = cells.children[cellIndex] as HTMLDivElement | undefined;
-
-			if (cell === undefined) {
-				cell = document.createElement("div");
-				cell.className =
-					"min-w-0 aspect-square rounded-[1px] transition-colors duration-150 ease-out";
-				cells.appendChild(cell);
-			}
-
-			cell.style.background = heatColor((value + 1) / 2);
-			cell.style.boxShadow = "";
-		}
-	}
+				<div className="mt-0.75 h-1 overflow-hidden rounded-xs bg-(--line)">
+					<div
+						className="h-full"
+						style={{
+							width: `${errorPct}%`,
+							background: errorColor,
+						}}
+					/>
+				</div>
+			</div>
+		</div>
+	);
 };
 
-/*
-paintXrayHierarchy paints the focused symbol's resonance layers into the
-hierarchy host.
+export const XrayHierarchyPanel = () => {
+	const focusSymbol = useSelector(atoms.focus, (state) => state);
+	const universe = useSelector(signals.resonance, resonanceUniverseRows);
 
-The resonance store supplies one retained carrier per symbol. This painter reads
-that complete bounded snapshot and owns no second cache of backend state.
-*/
-export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
-	const frames = (
-		Array.isArray(value) ? value : value != null ? [value] : []
-	) as Array<Value | Record<string, unknown>>;
+	const { layers, waiting } = useMemo(() => {
+		if (universe.length === 0) {
+			return {
+				layers: [] as ReturnType<typeof xrayLayersFromResonance>,
+				waiting: "waiting for resonance layers",
+			};
+		}
 
-	const focused = resolveXrayCarrier(frames, focusSymbol);
-	const layers = xrayLayersFromResonance(focused);
-	const carrierSymbol = focused ? carrierScope(focused) : "";
+		const carrier = resolveXrayCarrier(universe, focusSymbol);
+		const parsed = xrayLayersFromResonance(carrier);
+		const carrierSymbol = carrier ? carrierScope(carrier) : "";
 
-	if (symbolRef.current !== null) {
-		symbolRef.current.textContent = focusSymbol;
-		symbolRef.current.dataset.symbol = focusSymbol;
-	}
+		if (parsed.length === 0) {
+			return {
+				layers: parsed,
+				waiting: `resonance carrier for ${focusSymbol} has no layer rows yet`,
+			};
+		}
 
-	if (waitingRef.current !== null && rowsRef.current !== null) {
-		if (frames.length === 0) {
-			waitingRef.current.textContent = "waiting for resonance layers";
-		} else if (layers.length === 0) {
-			waitingRef.current.textContent = `resonance carrier for ${focusSymbol} has no layer rows yet`;
-		} else if (
+		if (
 			carrierSymbol !== "" &&
 			carrierSymbol !== focusSymbol &&
 			!symbolScopeAliases(focusSymbol).includes(carrierSymbol)
 		) {
-			waitingRef.current.textContent = `layers from ${carrierSymbol} · focus ${focusSymbol}`;
-		} else {
-			waitingRef.current.textContent = "";
+			return {
+				layers: parsed,
+				waiting: `layers from ${carrierSymbol} · focus ${focusSymbol}`,
+			};
 		}
-		paintHierarchyRows(rowsRef.current, waitingRef.current, layers);
-	}
-};
 
-/*
-XrayHierarchyPanel is the static predictive-coding hierarchy shell. DRAW paints
-via paintXrayHierarchy.
-*/
-export const XrayHierarchyPanel = () => (
-	<div className="shrink-0 px-4.5 py-4">
-		<div className="flex items-baseline justify-between gap-3">
-			<Typography.Display size="lg">
-				Predictive-coding hierarchy
-			</Typography.Display>
-			<span
-				ref={symbolRef}
-				className="shrink-0 cursor-pointer font-mono text-[11px] text-(--f3)"
-			/>
-		</div>
-		<div className="mt-1 font-mono text-[10px] text-(--f4)">
-			latent state · prediction error ε per layer · macro = abstract regime,
-			sensory = raw tape
-		</div>
-		<div className="mt-4">
-			<div ref={waitingRef} className="font-mono text-[10px] text-(--f4)">
-				waiting for resonance layers
+		return { layers: parsed, waiting: "" as string };
+	}, [universe, focusSymbol]);
+
+	return (
+		<div className="shrink-0 px-4.5 py-4">
+			<div className="flex items-baseline justify-between gap-3">
+				<Typography.Display size="lg">
+					Predictive-coding hierarchy
+				</Typography.Display>
+				<span className="shrink-0 font-mono text-[11px] text-(--f3)">
+					{focusSymbol}
+				</span>
 			</div>
-			<div ref={rowsRef} className="flex flex-col gap-2" />
+			<div className="mt-1 font-mono text-[10px] text-(--f4)">
+				latent state · prediction error ε per layer · macro = abstract regime,
+				sensory = raw tape
+			</div>
+			<div className="mt-4">
+				{waiting !== "" ? (
+					<div className="font-mono text-[10px] text-(--f4)">{waiting}</div>
+				) : null}
+				{layers.length > 0 ? (
+					<div className="flex flex-col gap-2">
+						{layers.map((layer) => (
+							<HierarchyRow key={layer.label} layer={layer} />
+						))}
+					</div>
+				) : null}
+			</div>
 		</div>
-	</div>
-);
+	);
+};

@@ -21,6 +21,10 @@ type MDL struct {
 	MinSegmentSymbols int
 }
 
+/*
+NewMDL starts an empty segmenter — MinSegmentSymbols defaults to 2 so MDL ignores
+single-symbol noise before declaring a sentence boundary worth a Sequitur.Sentence.
+*/
 func NewMDL() *MDL {
 	return &MDL{
 		dist:              newSymbolHistogram(),
@@ -57,7 +61,14 @@ func (mdl *MDL) Analyze(symbol string) (cut bool, gain float64) {
 	mdl.offset += k
 	mdl.dist = newSymbolHistogram()
 
-	for _, symID := range mdl.stream[mdl.offset:] {
+	// Drop the committed prefix so Persist does not rewrite unbounded history.
+	if mdl.offset > 0 {
+		remaining := append([]uint32(nil), mdl.stream[mdl.offset:]...)
+		mdl.stream = remaining
+		mdl.offset = 0
+	}
+
+	for _, symID := range mdl.stream {
 		mdl.dist.add(symID)
 	}
 
@@ -66,6 +77,10 @@ func (mdl *MDL) Analyze(symbol string) (cut bool, gain float64) {
 	return true, g
 }
 
+/*
+intern compresses grammar tail strings to uint32 ids so boundary search avoids
+repeated string comparisons in the hot detectBoundary loop.
+*/
 func (mdl *MDL) intern(symbol string) uint32 {
 	id, ok := mdl.vocab[symbol]
 	if ok {
@@ -79,6 +94,10 @@ func (mdl *MDL) intern(symbol string) uint32 {
 	return id
 }
 
+/*
+detectBoundary scans split points for penalized MDL gain — avoids cuts that only
+slice noise without a cheaper two-part code for the symbol stream.
+*/
 func (mdl *MDL) detectBoundary(stream []uint32, dist *symbolHistogram) (bool, int, float64) {
 	n := len(stream)
 	minSeg := max(mdl.MinSegmentSymbols, 2)
@@ -125,6 +144,9 @@ func (mdl *MDL) detectBoundary(stream []uint32, dist *symbolHistogram) (bool, in
 	return maxGain > 0, bestK, maxGain
 }
 
+/*
+LastGain caps reported gain at 1 for brightness-style hooks after a committed cut.
+*/
 func (mdl *MDL) LastGain() float64 {
 	if mdl.lastGain > 1.0 {
 		return 1.0
@@ -133,16 +155,25 @@ func (mdl *MDL) LastGain() float64 {
 	return mdl.lastGain
 }
 
+/*
+symbolHistogram holds multiset counts for MDL coding cost on the active segment.
+*/
 type symbolHistogram struct {
 	counts     map[uint32]int
 	total      int
 	numDistinct int
 }
 
+/*
+newSymbolHistogram allocates empty counts for sliding-window split evaluation.
+*/
 func newSymbolHistogram() *symbolHistogram {
 	return &symbolHistogram{counts: make(map[uint32]int)}
 }
 
+/*
+add increments counts when a symbol enters the segment under test.
+*/
 func (hist *symbolHistogram) add(id uint32) {
 	if hist.counts[id] == 0 {
 		hist.numDistinct++
@@ -152,6 +183,9 @@ func (hist *symbolHistogram) add(id uint32) {
 	hist.total++
 }
 
+/*
+remove slides the split point right during boundary search.
+*/
 func (hist *symbolHistogram) remove(id uint32) {
 	if hist.counts[id] <= 0 {
 		return
@@ -166,6 +200,9 @@ func (hist *symbolHistogram) remove(id uint32) {
 	}
 }
 
+/*
+cost is Shannon code length in nats — lower means the segment compresses better.
+*/
 func (hist *symbolHistogram) cost() float64 {
 	if hist.total == 0 {
 		return 0
@@ -186,6 +223,9 @@ func (hist *symbolHistogram) cost() float64 {
 	return cost
 }
 
+/*
+clone snapshots the right segment while the left grows in the O(n) boundary scan.
+*/
 func (hist *symbolHistogram) clone() *symbolHistogram {
 	out := newSymbolHistogram()
 	out.total = hist.total

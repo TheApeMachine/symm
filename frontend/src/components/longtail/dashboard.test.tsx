@@ -11,7 +11,7 @@ import {
 	emptyStops,
 	type LongtailSample,
 	longtailStore,
-	type OpenLotTelemetry,
+	type OpenPositionTelemetry,
 	type PathBookSnapshot,
 	type PolicySnapshot,
 } from "#/collections/longtail";
@@ -73,7 +73,7 @@ const sample = (
 		policy: Partial<PolicySnapshot>;
 		exits: Partial<Record<"virtual" | "paper" | "real", Partial<ExitMix>>>;
 		stops: Partial<
-			Record<"virtual" | "paper" | "real", Partial<OpenLotTelemetry>>
+			Record<"virtual" | "paper" | "real", Partial<OpenPositionTelemetry>>
 		>;
 	}> = {},
 ): LongtailSample => ({

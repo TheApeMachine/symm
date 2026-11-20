@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"github.com/bytedance/sonic"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/network"
+	"github.com/theapemachine/symm/venue/kraken"
 )
 
 func main() {
-	client := network.NewWebsocketClient(context.Background())
+	client := network.NewWebsocketClient(context.Background(), "wss://ws.kraken.com/v2")
+	if err := client.Open(); err != nil {
+		fmt.Println("Open:", err)
+		return
+	}
 	msg, _ := sonic.Marshal(kraken.NewInstrumentSubscription())
 	client.Write(msg)
 

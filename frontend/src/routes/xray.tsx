@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { atoms, DEFAULT_FOCUS_SYMBOL, signals } from "#/collections/app";
-import type { Resonance } from "#/collections/envelope";
-import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
 import {
 	XrayFactsPanel,
@@ -12,29 +10,19 @@ import {
 	XrayLatentPanel,
 	XrayManifoldPanel,
 } from "#/components/terminal/xray-panels";
-import {
-	getAllRetainedResonance,
-	retainResonanceRow,
-} from "#/components/terminal/xray-view";
 import { Button, Flex, Grid, Typography } from "#/components/ui";
+import { resonanceUniverseRows } from "#/lib/resonance";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(atoms.focus);
 
 	useEffect(() => {
-		const updatePaint = (resonanceState: Record<string, Resonance>) => {
-			for (const [scope, last] of Object.entries(resonanceState)) {
-				if (!last) continue;
-
-				retainResonanceRow(scope, last as unknown as Record<string, unknown>);
-			}
-
-			const universe = getAllRetainedResonance();
-			paintXrayHierarchy(universe, focusSymbol);
+		const updatePaint = () => {
+			const universe = resonanceUniverseRows(signals.resonance.state);
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(signals.resonance.state);
+		updatePaint();
 		const resonanceSub = signals.resonance.subscribe(updatePaint);
 
 		return () => {
@@ -47,35 +35,21 @@ const XrayPaintBridge = () => {
 
 const XrayCarrierBar = () => {
 	const focusSymbol = useSelector(atoms.focus, (state) => state);
-	const [symbols, setSymbols] = useState<string[]>(() => {
-		const initial = new Set<string>(atoms.symbols.get());
-		for (const row of getAllRetainedResonance()) {
-			if (typeof row.scope === "string") initial.add(row.scope);
+	const resonanceKeys = useSelector(signals.resonance, (state) =>
+		Object.keys(state),
+	);
+	const catalog = useSelector(atoms.symbols, (state) => state);
+
+	const symbols = useMemo(() => {
+		const set = new Set<string>(catalog);
+		for (const key of resonanceKeys) {
+			set.add(key);
 		}
-		if (initial.size === 0) initial.add(DEFAULT_FOCUS_SYMBOL);
-		return [...initial];
-	});
-
-	useEffect(() => {
-		const syncSymbols = () => {
-			const current = new Set<string>(atoms.symbols.get());
-			for (const row of getAllRetainedResonance()) {
-				if (typeof row.scope === "string") current.add(row.scope);
-			}
-			if (current.size === 0) current.add(DEFAULT_FOCUS_SYMBOL);
-			const list = [...current];
-			setSymbols((prev) => (prev.join(",") === list.join(",") ? prev : list));
-		};
-
-		syncSymbols();
-		const sub1 = atoms.symbols.subscribe(syncSymbols);
-		const sub2 = signals.resonance.subscribe(syncSymbols);
-
-		return () => {
-			sub1.unsubscribe();
-			sub2.unsubscribe();
-		};
-	}, []);
+		if (set.size === 0) {
+			set.add(DEFAULT_FOCUS_SYMBOL);
+		}
+		return [...set].sort((a, b) => a.localeCompare(b));
+	}, [catalog, resonanceKeys]);
 
 	return (
 		<Flex.Row

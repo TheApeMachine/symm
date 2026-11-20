@@ -23,82 +23,164 @@ func fullSources(shift float64) map[string]map[string]float64 {
 	}
 }
 
-func TestObserveHoldsAcrossPartialTicks(t *testing.T) {
-	Convey("Observe holds partial signal ticks until the feature set is complete", t, func() {
+func TestObserve(t *testing.T) {
+	Convey("Setup", t, func() {
 		scorer := newFeatureScorer()
 
-		input, ready := scorer.Observe(map[string]map[string]float64{
-			"pumpdump": {"compression": 1.1},
+		Convey("When only one source metric arrives", func() {
+			input, ready := scorer.Observe(map[string]map[string]float64{
+				"pumpdump": {"compression": 1.1},
+			})
+
+			Convey("The scorer is not ready", func() {
+				So(ready, ShouldBeFalse)
+				So(input, ShouldBeNil)
+			})
 		})
-		So(ready, ShouldBeFalse)
-		So(input, ShouldBeNil)
 
-		parts := []map[string]map[string]float64{
-			{"pumpdump": {"exhaustion": 0.4}},
-			{"correlation": {"herd_score": 0.8, "peak_score": 0.7}},
-			{"cvd": {"starvation": 0.2}},
-			{"depthflow": {"thin_score": 0.3, "loaded_score": 0.6}},
-			{"morphology": {"ask_vacuum": 0.15}},
-			{"hawkes": {"spectral_radius": 1.1}},
-			{"liquidity": {"scarcity_score": 0.2, "depth_score": 0.9}},
-			{"toxicity": {"vacuum_score": 0.25}},
-			{"sentiment": {"slump_score": 0.1}},
-			{"leadlag": {"sync_score": 0.6, "decoupled_score": 0.05}},
-		}
+		Convey("When partial ticks arrive across sources", func() {
+			_, firstReady := scorer.Observe(map[string]map[string]float64{
+				"pumpdump": {"compression": 1.1},
+			})
+			So(firstReady, ShouldBeFalse)
 
-		for _, part := range parts[:len(parts)-1] {
-			input, ready = scorer.Observe(part)
-			So(ready, ShouldBeFalse)
-			So(input, ShouldBeNil)
-		}
-
-		input, ready = scorer.Observe(parts[len(parts)-1])
-		So(len(input), ShouldEqual, len(Features))
-		_ = ready
-
-		settled := false
-
-		for shift := 0.1; shift < 1.0; shift += 0.1 {
-			input, ready = scorer.Observe(fullSources(shift))
-			if ready {
-				settled = true
-				break
+			parts := []map[string]map[string]float64{
+				{"pumpdump": {"exhaustion": 0.4}},
+				{"correlation": {"herd_score": 0.8, "peak_score": 0.7}},
+				{"cvd": {"starvation": 0.2}},
+				{"depthflow": {"thin_score": 0.3, "loaded_score": 0.6}},
+				{"morphology": {"ask_vacuum": 0.15}},
+				{"hawkes": {"spectral_radius": 1.1}},
+				{"liquidity": {"scarcity_score": 0.2, "depth_score": 0.9}},
+				{"toxicity": {"vacuum_score": 0.25}},
+				{"sentiment": {"slump_score": 0.1}},
+				{"leadlag": {"sync_score": 0.6, "decoupled_score": 0.05}},
 			}
-		}
 
-		So(settled, ShouldBeTrue)
-		So(len(input), ShouldEqual, len(Features))
-	})
-}
+			var input []float64
+			var ready bool
 
-func TestStepNeedsEnvelope(t *testing.T) {
-	Convey("Step rejects a nil envelope", t, func() {
-		solver := NewSolver(t.Context())
-		So(solver.Step(nil), ShouldBeNil)
+			for _, part := range parts[:len(parts)-1] {
+				input, ready = scorer.Observe(part)
+				So(ready, ShouldBeFalse)
+				So(input, ShouldBeNil)
+			}
 
-		envelope := runtime.NewEnvelope(&market.Trade{
-			Data: []*market.TradeData{{Symbol: "PEAQ/USD"}},
+			input, ready = scorer.Observe(parts[len(parts)-1])
+
+			Convey("The final partial completes the feature vector", func() {
+				So(len(input), ShouldEqual, len(Features))
+				_ = ready
+			})
 		})
-		So(solver.Step(envelope), ShouldEqual, envelope)
+
+		Convey("When full source maps shift until ready", func() {
+			settled := false
+			var input []float64
+
+			for shift := 0.1; shift < 1.0; shift += 0.1 {
+				var ready bool
+				input, ready = scorer.Observe(fullSources(shift))
+				if ready {
+					settled = true
+					break
+				}
+			}
+
+			Convey("A complete input vector is produced", func() {
+				So(settled, ShouldBeTrue)
+				So(len(input), ShouldEqual, len(Features))
+			})
+		})
 	})
 }
 
-func TestStepSettlesOnceFeaturesAccumulate(t *testing.T) {
-	Convey("Step writes a resonance reading once held features cover the coder", t, func() {
+func TestStep(t *testing.T) {
+	Convey("Setup", t, func() {
+		solver := NewSolver(t.Context())
+
+		Convey("When Step receives a nil envelope", func() {
+			out := solver.Step(nil)
+
+			Convey("It returns nil", func() {
+				So(out, ShouldBeNil)
+			})
+		})
+
+		Convey("When Step receives a trade envelope before features settle", func() {
+			envelope := runtime.NewEnvelope(&market.Trade{
+				Data: []*market.TradeData{{Symbol: "PEAQ/USD"}},
+			})
+			out := solver.Step(envelope)
+
+			Convey("The same envelope is returned", func() {
+				So(out, ShouldEqual, envelope)
+			})
+		})
+	})
+}
+
+func TestStepSymbol(t *testing.T) {
+	Convey("Setup", t, func() {
 		solver := NewSolver(t.Context())
 		symbol := "ZEC/USD"
-		var reading map[string]float64
 
-		for shift := 0.0; shift < 2.0; shift += 0.15 {
-			reading = solver.stepSymbol(symbol, fullSources(shift))
-			if reading != nil {
-				break
+		Convey("When feature maps shift until stepSymbol settles", func() {
+			var reading map[string]float64
+
+			for shift := 0.0; shift < 2.0; shift += 0.15 {
+				reading = solver.stepSymbol(symbol, fullSources(shift))
+				if reading != nil {
+					break
+				}
 			}
-		}
 
-		So(reading, ShouldNotBeNil)
-		So(reading["surprise"], ShouldNotEqual, 0)
-		_, hasCurve := reading["forward_curve_0"]
-		So(hasCurve, ShouldBeTrue)
+			Convey("A resonance reading includes surprise and a forward curve slot", func() {
+				So(reading, ShouldNotBeNil)
+				So(reading["surprise"], ShouldNotEqual, 0)
+				_, hasCurve := reading["forward_curve_0"]
+				So(hasCurve, ShouldBeTrue)
+				_, hasBaseline := reading["surprise_baseline"]
+				So(hasBaseline, ShouldBeTrue)
+			})
+		})
 	})
+}
+
+func BenchmarkObserve(b *testing.B) {
+	sources := fullSources(0.5)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		scorer := newFeatureScorer()
+		scorer.Observe(sources)
+	}
+}
+
+func BenchmarkStep(b *testing.B) {
+	solver := NewSolver(b.Context())
+	envelope := runtime.NewEnvelope(&market.Trade{
+		Data: []*market.TradeData{{Symbol: "PEAQ/USD"}},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = solver.Step(envelope)
+	}
+}
+
+func BenchmarkStepSymbol(b *testing.B) {
+	solver := NewSolver(b.Context())
+	symbol := "ZEC/USD"
+	sources := fullSources(0.3)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = solver.stepSymbol(symbol, sources)
+	}
 }

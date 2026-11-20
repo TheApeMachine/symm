@@ -1,5 +1,7 @@
 import { createAtom } from "@tanstack/react-store";
 import { type Atom, createStore, type Store } from "@tanstack/store";
+import type { ConfidenceFrame } from "./confidence";
+
 import type {
 	BookflowOutput,
 	BookQualityOutput,
@@ -17,6 +19,8 @@ import type {
 	Resonance,
 	Tokens,
 } from "./envelope";
+import type { PipelineFrame } from "./pipeline";
+import { EMPTY_PIPELINE } from "./pipeline";
 import type { Balance, Position } from "./types";
 
 export const DEFAULT_KERNELS = [
@@ -55,17 +59,49 @@ export const atoms: Record<string, Atom<any>> = {
 	route: createAtom<string>("dashboard"),
 	focusMetric: createAtom<string>(""),
 	online: createAtom<"ONLINE" | "OFFLINE" | "CONNECTING">("OFFLINE"),
+	engine: createAtom<"booting" | "ready" | "error">("booting"),
+	pipeline: createAtom<PipelineFrame>(EMPTY_PIPELINE),
 	symbols: createAtom<string[]>([DEFAULT_FOCUS_SYMBOL]),
 	error: createAtom<Record<string, unknown> | null>(null),
-	tickCount: createAtom<number>(0),
+	tick: createAtom<LightTick | null>(null),
 	balance: createAtom<Balance | null>(null),
 	balances: createAtom<{
 		virtual?: Balance | null;
 		paper?: Balance | null;
 		real?: Balance | null;
 	}>({}),
+	confidence: createAtom<ConfidenceFrame>({
+		virtual: {
+			active: false,
+			armed: false,
+			halted: false,
+			closed: 0,
+			wins: 0,
+			win_rate: null,
+			edge: null,
+		},
+		paper: {
+			active: false,
+			armed: false,
+			halted: false,
+			closed: 0,
+			wins: 0,
+			win_rate: null,
+			edge: null,
+		},
+		real: {
+			active: false,
+			armed: false,
+			halted: false,
+			closed: 0,
+			wins: 0,
+			win_rate: null,
+			edge: null,
+		},
+		eligible_resistance: 0.2,
+		real_ceiling: false,
+	}),
 	phase: createAtom<string>("—"),
-	candidates: createAtom<number>(0),
 	positionCount: createAtom<number>(0),
 	signalSources: createAtom<string[]>(DEFAULT_KERNELS),
 	kernelDetail: createAtom<string>("cvd"),
@@ -86,7 +122,17 @@ export const signals: Record<string, Store<any>> = {
 	resonance: createStore<Record<string, Resonance>>({}),
 	regions: createStore<Record<string, Region[]>>({}),
 	paths: createStore<Record<string, Tokens>>({}),
+	// ListPrefix model/paths book (scope + thresholds) — not live sequencer paths.
+	pathbook: createStore<{
+		scope?: string;
+		epoch?: string;
+		thresholds?: Record<string, number>;
+	}>({}),
+	// ListPrefix closed-position chunks for history.
+	closed: createStore<{
+		scope?: string;
+		entries?: unknown[];
+	}>({}),
 	positions: createStore<Record<string, Position>>({}),
 	decisions: createStore<Record<string, Decision>>({}),
-	tick: createStore<LightTick | null>(null),
 };

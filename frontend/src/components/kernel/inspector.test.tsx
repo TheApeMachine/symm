@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_FOCUS_SYMBOL, signals } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { KernelInspector } from "#/components/kernel/inspector";
-import { Value } from "#/types/value";
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
@@ -17,31 +16,22 @@ const publishKernel = (
 	kernel: string,
 	symbol: string,
 	metrics: Record<string, number>,
-	tick: bigint,
 ) => {
-	const prefix = `workspace/tick/aggregate/0/${tick}`;
-	const keys = Object.keys(metrics);
-	const aggregate = new Value({
-		origin: "workspace",
-		role: "tick",
-		scope: "aggregate",
-		prefix,
-		tick,
-		index: keys.map((key) => `${prefix}/${kernel}/${symbol}/${key}`),
-		layers: keys.map((key) =>
-			new TextEncoder().encode(JSON.stringify([metrics[key]])),
-		),
-	});
+	const store = signals[kernel];
+	if (!store) {
+		throw new Error(`unknown kernel store: ${kernel}`);
+	}
 	act(() => {
-		signals.workspace.setState((prev) => ({ ...prev, aggregate }));
+		store.setState((prev) => ({ ...prev, [symbol]: metrics }));
 	});
 };
 
 describe("KernelInspector", () => {
 	afterEach(() => {
 		cleanup();
-		signals.workspace.setState(() => ({}));
-		signals.resonance.setState(() => ({}));
+		for (const kernel of Object.keys(signals)) {
+			signals[kernel]?.setState(() => ({}));
+		}
 		terminalStore.actions.closeInspect();
 	});
 
@@ -50,39 +40,29 @@ describe("KernelInspector", () => {
 		expect(renderInspector()).toBe("");
 	});
 
-	it("renders the kernel's identity, blurb, history and meters", () => {
-		publishKernel(
-			"hawkes",
-			DEFAULT_FOCUS_SYMBOL,
-			{ branching_spectral_radius: 2.5 },
-			1n,
-		);
+	it("renders the kernel identity and latest reading", () => {
+		publishKernel("hawkes", DEFAULT_FOCUS_SYMBOL, { spectral_radius: 2.5 });
 		terminalStore.actions.inspectSource("hawkes");
 
 		const markup = renderInspector();
 
 		expect(markup).toContain("Hawkes process");
-		expect(markup).toContain("branching η");
-		expect(markup).toContain("Healthy");
 		expect(markup).toContain("Self-exciting point process");
-		expect(markup).toContain("Signal history");
+		expect(markup).toContain("Latest reading");
 		expect(markup).toMatch(/<polyline/);
 		expect(markup).toContain("Open in signal insight");
 	});
 
 	it("renders a meter for every metric the kernel publishes", () => {
-		publishKernel(
-			"toxicity",
-			DEFAULT_FOCUS_SYMBOL,
-			{ "retreat_fraction:bid": 1.25 },
-			1n,
-		);
+		publishKernel("toxicity", DEFAULT_FOCUS_SYMBOL, {
+			support_score: 1.25,
+		});
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
 
 		expect(markup).toContain("Signal metrics");
-		expect(markup).toContain("retreat fraction · bid");
+		expect(markup).toContain("support score");
 		expect(markup).toContain("1.2500");
 
 		terminalStore.actions.inspectSource("resonance");
@@ -91,56 +71,37 @@ describe("KernelInspector", () => {
 		expect(resonanceMarkup).not.toContain("Signal metrics");
 	});
 
-	it("formats sub-basis-point values using scientific notation", () => {
-		publishKernel(
-			"toxicity",
-			DEFAULT_FOCUS_SYMBOL,
-			{ "retreat_fraction:bid": 0.0000117 },
-			1n,
-		);
-		terminalStore.actions.inspectSource("toxicity");
-
-		expect(renderInspector()).toContain("1.17e-5");
-	});
-
-	it("reports a kernel with no readings as standby rather than crashing", () => {
+	it("reports a kernel with no readings as standby", () => {
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();
 
 		expect(markup).toContain("Toxicity");
-		expect(markup).toContain("Standby");
-		expect(markup).toContain("no readings yet");
+		expect(markup).toContain("awaiting first reading");
 	});
 
-	it("repaints the history sparkline when the workspace tick advances", () => {
-		publishKernel(
-			"hawkes",
-			DEFAULT_FOCUS_SYMBOL,
-			{ branching_spectral_radius: 0.2 },
-			1n,
-		);
+	it("updates when the signal store changes", () => {
+		publishKernel("hawkes", DEFAULT_FOCUS_SYMBOL, { spectral_radius: 0.2 });
 		terminalStore.actions.inspectSource("hawkes");
 
 		const view = render(<KernelInspector />);
-		const spark = () =>
-			view.container.querySelector("svg polyline[fill='none']");
-		const before = spark()?.getAttribute("points");
+		const level = () =>
+			view.container.querySelector('[role="progressbar"]')?.textContent;
+
+		expect(level()).toContain("0.20");
 
 		act(() => {
-			publishKernel(
-				"hawkes",
-				DEFAULT_FOCUS_SYMBOL,
-				{ branching_spectral_radius: 0.9 },
-				2n,
-			);
+			publishKernel("hawkes", DEFAULT_FOCUS_SYMBOL, {
+				spectral_radius: 0.9,
+			});
 		});
 
-		const after = spark()?.getAttribute("points");
-		expect(after).not.toBe(before);
+		view.rerender(<KernelInspector />);
+		expect(level()).toContain("0.90");
 	});
 
-	it("opens on resonance, which publishes no headline metric", () => {
+	it("opens on resonance", () => {
+		publishKernel("resonance", DEFAULT_FOCUS_SYMBOL, { confidence: 0.42 });
 		terminalStore.actions.inspectSource("resonance");
 
 		const markup = renderInspector();

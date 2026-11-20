@@ -3,170 +3,376 @@ package broker
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/nomagique/store"
-	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/network"
 )
 
+/*
+Cache splits open vs closed lanes because a position stays under open/ through
+Closing until exit fills land — desk logic and object keys must match that seam.
+*/
 type Cache struct {
 	*runtime.System
-	mu        sync.RWMutex
-	tierKey   string
-	store     *store.Client
-	transport Transport
-	positions map[string]map[string]*Position
+	tierKey string
+	store   *store.Client
+	stops   *StopHistory
+	ledger  *Ledger
+	open    *sync.Map
+	closed  *sync.Map
 }
 
+/*
+NewCache wires the tier position lanes. Venue history / private fills admit positions;
+the cache does not bootstrap ClosedAt from wall clock or store replay.
+*/
 func NewCache(
-	ctx context.Context, tierKey string, transport Transport,
+	ctx context.Context,
+	tierKey string,
+	transport network.Client,
+	price *Price,
+	onSettled func(*Position),
+	client *store.Client,
 ) *Cache {
 	cache := &Cache{
-		System:    runtime.NewSystem(ctx, "cache"),
-		tierKey:   tierKey,
-		store:     store.NewClient(ctx, system.Cfg.Storage.S3.Bucket),
-		transport: transport,
-		positions: make(map[string]map[string]*Position),
+		System:  runtime.NewSystem(ctx, "cache"),
+		tierKey: tierKey,
+		store:   client,
+		stops:   NewStopHistory(tierKey, client),
+		ledger:  NewLedger(tierKey, price, transport, onSettled),
+		open:    &sync.Map{},
+		closed:  &sync.Map{},
 	}
 
-	for _, state := range []string{"open", "closed"} {
-		cache.positions[state] = make(map[string]*Position)
+	// Restore while INIT: Fold binds orders/fills but leaves opens WAITING so
+	// Apply never READY/PnL before Price/Level3 can mark.
+	open, closed := cache.ledger.Restore(ctx)
 
-		for raw := range cache.store.Stream(
-			cache.Context(), fmt.Sprintf("%s/%s", cache.tierKey, state),
-		) {
-			position := cache.Restore(raw)
+	kept := make(map[string]string, len(open))
 
-			if position == nil {
-				continue
-			}
+	for _, position := range open {
+		if position == nil {
+			continue
+		}
+		cache.Add(position.Symbol, position, true)
+		kept[position.Symbol] = position.ID
+		cache.retireStaleOpen(position.Symbol, position.ID)
+	}
 
-			cache.positions[state][position.Symbol] = position
+	for _, position := range closed {
+		if position == nil {
+			continue
+		}
+		cache.archive(position)
+		// Closed on venue while we were down — drop ghost open/ rows for that
+		// symbol so workbench open_* does not keep the prior UUID forever.
+		if _, live := kept[position.Symbol]; !live {
+			cache.retireStaleOpen(position.Symbol, "")
 		}
 	}
+
+	cache.Transition(runtime.WAITING)
 
 	return cache
 }
 
+/*
+retireStaleOpen deletes {tier}/open/{symbol}/ objects that are not keepID.
+Empty keepID clears the whole symbol prefix (no live restore for that pair).
+*/
+func (cache *Cache) retireStaleOpen(symbol, keepID string) {
+	if cache == nil || cache.store == nil || symbol == "" {
+		return
+	}
+
+	prefix := fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol)
+
+	if keepID == "" {
+		if err := cache.store.DeletePrefix(prefix); err != nil {
+			errnie.Error(err)
+		}
+		return
+	}
+
+	if err := cache.store.DeleteOtherKeys(prefix, prefix+keepID); err != nil {
+		errnie.Error(err)
+	}
+}
+
+/*
+archive is the only closed-lane write. The key is the position id, so one
+symbol can keep every flat-to-flat cycle.
+*/
+func (cache *Cache) archive(position *Position) {
+	if cache == nil || position == nil || position.ID == "" {
+		return
+	}
+
+	cache.closed.Store(position.ID, position)
+}
+
+/*
+All merges lanes for hub/Hello: Forward needs every archived id, while desk
+enter/exit only cares about the latest open key per symbol.
+*/
 func (cache *Cache) All(symbols ...string) []*Position {
 	return append(cache.Open(symbols...), cache.Closed(symbols...)...)
 }
 
+/*
+Open is filled live positions only — Qty/Entry set. Unfilled submits are not open.
+*/
 func (cache *Cache) Open(symbols ...string) []*Position {
-	return cache.list("open", symbols...)
+	if len(symbols) == 0 {
+		positions := make([]*Position, 0)
+
+		cache.open.Range(func(_, raw any) bool {
+			positions = append(positions, raw.(*Position))
+			return true
+		})
+
+		return positions
+	}
+
+	positions := make([]*Position, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		raw, ok := cache.open.Load(symbol)
+
+		if !ok {
+			continue
+		}
+
+		positions = append(positions, raw.(*Position))
+	}
+
+	return positions
 }
 
+/*
+Closed feeds Unlocked stats and late fill matching — sells may arrive after Remove.
+*/
 func (cache *Cache) Closed(symbols ...string) []*Position {
-	return cache.list("closed", symbols...)
+	if len(symbols) == 0 {
+		positions := make([]*Position, 0)
+
+		cache.closed.Range(func(_, raw any) bool {
+			positions = append(positions, raw.(*Position))
+			return true
+		})
+
+		return positions
+	}
+
+	positions := make([]*Position, 0)
+
+	cache.closed.Range(func(_, raw any) bool {
+		position := raw.(*Position)
+
+		if slices.Contains(symbols, position.Symbol) {
+			positions = append(positions, position)
+		}
+
+		return true
+	})
+
+	return positions
 }
 
-func (cache *Cache) Restore(raw []byte) *Position {
-	if len(raw) == 0 {
-		return nil
-	}
-
-	position := &Position{}
-
-	if err := sonic.Unmarshal(raw, position); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation, "[broker.Cache.Restore] decode failed", err,
-		))
-
-		return nil
-	}
-
-	if position.Symbol == "" {
-		return nil
-	}
-
-	position.System = runtime.NewSystem(cache.Context(), "position")
-	position.transport = cache.transport
-	position.tierKey = cache.tierKey
-
-	if position.Book == "" {
-		position.Book = cache.tierKey
-	}
-
-	return position
-}
-
+/*
+Has is the enter mutex: one symbol may not get a second position until Remove clears
+the open key (including positions with ClosedAt set but exit fills in flight).
+*/
 func (cache *Cache) Has(symbol string) bool {
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
-
-	_, ok := cache.positions["open"][symbol]
+	// Still under open (including ClosedAt claimed while settle Sends) occupies
+	// the symbol. Remove is the only path into closed.
+	_, ok := cache.open.Load(symbol)
 	return ok
 }
 
+/*
+Get returns the position by symbol.
+*/
+func (cache *Cache) Get(symbol string) *Position {
+	raw, ok := cache.open.Load(symbol)
+
+	if !ok || raw == nil {
+		return nil
+	}
+
+	return raw.(*Position)
+}
+
+/*
+Add is idempotent. The open lane is keyed by symbol and refuses a second live
+position unless the incumbent already claimed ClosedAt during settle. The closed
+lane is keyed by position id.
+*/
 func (cache *Cache) Add(symbol string, position *Position, open bool) bool {
-	if symbol == "" || position == nil {
+	if position == nil {
 		return true
 	}
 
-	state := "closed"
+	if !open {
+		if position.ID == "" {
+			return true
+		}
 
-	if open {
-		state = "open"
+		if _, loaded := cache.closed.Load(position.ID); loaded {
+			return true
+		}
+
+		cache.archive(position)
+		return false
 	}
 
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-
-	if _, loaded := cache.positions[state][symbol]; loaded {
+	if symbol == "" {
 		return true
 	}
 
-	cache.positions[state][symbol] = position
+	if existing, loaded := cache.open.Load(symbol); loaded {
+		pos := existing.(*Position)
+
+		if pos == nil || !pos.IsClosed() {
+			return true
+		}
+	}
+
+	cache.open.Store(symbol, position)
 	return false
 }
 
-func (cache *Cache) Remove(symbol string) bool {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+/*
+Save writes the position store envelope to S3 (epoch/tick/timestamp + nested
+position with book). Hub closed-history and DuckDB open/closed views read that
+shape; bare Position JSON leaves them empty.
 
-	loaded, ok := cache.positions["open"][symbol]
+Positions already under closed/ (or settled and no longer open) update the closed
+object and retire any open/ orphan; exit fills after Remove must not recreate
+an open key with a second mark pass.
+*/
+func (cache *Cache) Save(position *Position) error {
+	position.mu.Lock()
+	body, err := encodePositionDoc(position, cache.tierKey)
+	symbol := position.Symbol
+	id := position.ID
+	closedAt := position.ClosedAt
+
+	var stopBody []byte
+	var stopBeat string
+	if err == nil && position.Stoploss != nil {
+		stopBody, err = sonic.Marshal(position.Stoploss)
+		stopBeat = position.Stoploss.beat()
+	}
+	position.mu.Unlock()
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	key := "open"
+
+	if closedAt != nil {
+		key = "closed"
+	}
+
+	if cache.store == nil {
+		return nil
+	}
+
+	if _, err := cache.store.WriteAtPrefix(fmt.Sprintf(
+		"%s/%s/%s/%s", cache.tierKey, key, symbol, id,
+	), body); err != nil {
+		return errnie.Error(err)
+	}
+
+	cache.stops.Note(symbol, id, stopBeat, stopBody)
+
+	return nil
+}
+
+/*
+Remove is the settle handoff: stoploss fired, flat in Apply — open lane retires
+and object store moves open/ → closed/.
+*/
+func (cache *Cache) Remove(symbol string) bool {
+	raw, ok := cache.open.LoadAndDelete(symbol)
 
 	if !ok {
 		return false
 	}
 
-	delete(cache.positions["open"], symbol)
-	cache.positions["closed"][symbol] = loaded
+	loaded := raw.(*Position)
+	cache.archive(loaded)
+
+	if err := cache.move(loaded); err != nil {
+		errnie.Error(err)
+	}
+
 	return true
 }
 
+/*
+Drop is for rejected enters and failed upserts — it must not touch closed/
+history or the tier would lose PnL stats.
+*/
 func (cache *Cache) Drop(symbol string) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
+	if symbol == "" {
+		return
+	}
 
-	delete(cache.positions["open"], symbol)
-	delete(cache.positions["closed"], symbol)
+	cache.open.Delete(symbol)
+
+	// Only the failed open position — closed history must survive a reject.
+	if cache.store == nil {
+		return
+	}
+
+	if err := cache.store.DeletePrefix(fmt.Sprintf("%s/open/%s/", cache.tierKey, symbol)); err != nil {
+		errnie.Error(err)
+	}
 }
 
-func (cache *Cache) list(state string, symbols ...string) []*Position {
-	positions := make([]*Position, 0)
-
-	cache.mu.RLock()
-	defer cache.mu.RUnlock()
-
-	if len(symbols) == 0 {
-		for _, position := range cache.positions[state] {
-			if position != nil {
-				positions = append(positions, position)
-			}
-		}
-
-		return positions
+/*
+move makes S3 match memory after settle; a crash between write and delete must not
+leave two authoritative copies of the same position id.
+*/
+func (cache *Cache) move(position *Position) error {
+	if position == nil || position.ID == "" || cache.store == nil {
+		return nil
 	}
 
-	for _, symbol := range symbols {
-		if position := cache.positions[state][symbol]; position != nil {
-			positions = append(positions, position)
-		}
+	position.mu.Lock()
+	body, err := encodePositionDoc(position, cache.tierKey)
+	symbol := position.Symbol
+	id := position.ID
+	position.mu.Unlock()
+
+	if err != nil {
+		return errnie.Error(err)
 	}
 
-	return positions
+	closed := fmt.Sprintf("%s/closed/%s/%s", cache.tierKey, symbol, id)
+	open := fmt.Sprintf("%s/open/%s/%s", cache.tierKey, symbol, id)
+
+	// WriteSync before DeletePrefix — async WriteAtPrefix could lose the closed
+	// object if the process dies between enqueue and the open-key delete.
+	if _, err := cache.store.WriteSync(closed, body); err != nil {
+		return err
+	}
+
+	if err := cache.store.DeletePrefix(open); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"[broker.Cache.move] failed to retire open position",
+			err,
+		))
+	}
+
+	return nil
 }

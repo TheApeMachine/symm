@@ -4,17 +4,20 @@ import (
 	"context"
 	"sync"
 
-	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/nomagique/algorithm/book/flow"
 	"github.com/theapemachine/nomagique/algorithm/book/quality"
 	"github.com/theapemachine/nomagique/equation"
+	"github.com/theapemachine/nomagique/market"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
 )
 
+/*
+Signal is the Toxicity disruptor stage — outcomes land on envelope.Toxicity and
+Map() feeds logic/resonance Features (vacuum_score) for Model story gates.
+*/
 type Signal struct {
 	*runtime.System
 	books   *broker.Book
@@ -22,6 +25,10 @@ type Signal struct {
 	process *equation.BookQuality
 }
 
+/*
+NewSignal binds L3 touch state on each trade tick — Toxicity labels are book-native,
+not printable from public tape alone.
+*/
 func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 	return &Signal{
 		System:  runtime.NewSystem(ctx, "toxicity"),
@@ -32,8 +39,8 @@ func NewSignal(ctx context.Context, books *broker.Book) *Signal {
 }
 
 /*
-Step processes every trade entry of the tick's frame; book and trade evidence
-feed BookQuality, and each ready outcome lands on the envelope.
+Step pairs book shape with trade impact — vacuum_score is capacity veto input;
+neutral readings still publish so featureScorer can finish the toxicity labels.
 */
 func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	var (
@@ -41,92 +48,95 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		mu sync.Mutex
 	)
 
-	for _, data := range envelope.Trade.Data {
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
-			if data.Price.IsZero() || data.Qty.IsZero() {
-				return
-			}
-
-			price, _ := data.Price.Float64()
-			qty, _ := data.Qty.Float64()
-
-			if price <= 0 || qty <= 0 {
-				return
-			}
-
-			var (
-				input equation.BookQualityInput
-				ready bool
-				err   error
-			)
-
-			signal.books.Book(data.Symbol, func(book *spotbook.Book) {
-				bids := make([]flow.BookLevel, 0, len(book.Bids.Levels))
-				for _, level := range book.Bids.Levels {
-					bids = append(bids, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
-					})
+	for _, batch := range envelope.Trade.Batches() {
+		wg.Go(func() {
+			for _, data := range batch {
+				if data.Price.IsZero() || data.Qty.IsZero() {
+					continue
 				}
 
-				asks := make([]flow.BookLevel, 0, len(book.Asks.Levels))
-				for _, level := range book.Asks.Levels {
-					asks = append(asks, flow.BookLevel{
-						Price:    level.Price.Float64(),
-						Quantity: level.Quantity.Float64(),
-					})
+				price := data.Price.InexactFloat64()
+				qty := data.Qty.InexactFloat64()
+
+				if price <= 0 || qty <= 0 {
+					continue
 				}
 
-				input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
-					Symbol: data.Symbol,
-					Bids:   bids,
-					Asks:   asks,
+				var (
+					bids      []flow.BookLevel
+					asks      []flow.BookLevel
+					bidOrders []quality.OrderEvent
+					askOrders []quality.OrderEvent
+					haveBook  bool
+				)
+
+				signal.books.Book(data.Symbol, func(book *market.Book) {
+					if book == nil {
+						return
+					}
+
+					bids, bidOrders = resting(book.Bids)
+					asks, askOrders = resting(book.Asks)
+					haveBook = true
 				})
 
-				if err != nil || !ready {
-					return
+				if !haveBook {
+					continue
 				}
 
-				input, ready, _, err = signal.sample.MeasureTrade(flow.TradeInput{
+				if _, _, _, err := signal.sample.MeasureTrade(flow.TradeInput{
 					Symbol:   data.Symbol,
 					Price:    price,
 					Quantity: qty,
 					Side:     flow.TradeSide(data.Side.String()),
 					At:       data.Timestamp,
-				})
-			})
+				}); err != nil {
+					signal.Error(err)
+					continue
+				}
 
-			if err != nil {
-				signal.Error(err)
-				return
+				var (
+					input equation.BookQualityInput
+					ready bool
+					err   error
+				)
+
+				if len(bidOrders)+len(askOrders) > 0 {
+					input, ready, _, err = signal.sample.MeasureLevel3Snapshot(quality.Level3Input{
+						Symbol: data.Symbol,
+						Bids:   bidOrders,
+						Asks:   askOrders,
+					})
+				} else {
+					input, ready, _, err = signal.sample.MeasureBook(flow.BookInput{
+						Symbol: data.Symbol,
+						Bids:   bids,
+						Asks:   asks,
+					})
+				}
+
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				if !ready {
+					continue
+				}
+
+				outcome, err := signal.process.Measure(input)
+				if err != nil {
+					signal.Error(err)
+					continue
+				}
+
+				// Publish neutrals too — resonance holds until every Map() label
+				// has been seen, and Category 0 still carries vacuum_score.
+				mu.Lock()
+				envelope.Toxicity[data.Symbol] = &outcome
+				mu.Unlock()
 			}
-
-			if !ready {
-				return
-			}
-
-			outcome, err := signal.process.Measure(input)
-			if err != nil {
-				signal.Error(err)
-				return
-			}
-
-			if outcome.Category == 0 {
-				return
-			}
-
-			mu.Lock()
-			envelope.Toxicity[data.Symbol] = &outcome
-			mu.Unlock()
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
@@ -137,4 +147,40 @@ func (signal *Signal) Step(envelope *runtime.Envelope) *runtime.Envelope {
 	}
 
 	return envelope
+}
+
+func resting(side *market.BookSide) ([]flow.BookLevel, []quality.OrderEvent) {
+	if side == nil {
+		return nil, nil
+	}
+
+	levels := make([]flow.BookLevel, 0, len(side.Levels))
+	var events []quality.OrderEvent
+
+	for _, level := range side.Levels {
+		if level == nil || level.Price == nil || level.Quantity == nil || level.Price.Sign() <= 0 {
+			continue
+		}
+
+		price := level.Price.InexactFloat64()
+		levels = append(levels, flow.BookLevel{
+			Price:    price,
+			Quantity: level.Quantity.InexactFloat64(),
+		})
+
+		for _, order := range level.Queue() {
+			if order == nil || order.ID == "" || order.Quantity == nil || order.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			events = append(events, quality.OrderEvent{
+				Event:    "modify",
+				OrderID:  order.ID,
+				Price:    price,
+				Quantity: order.Quantity.InexactFloat64(),
+			})
+		}
+	}
+
+	return levels, events
 }

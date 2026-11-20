@@ -6,23 +6,27 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestFeaturesAreSignalMetrics(t *testing.T) {
-	Convey("Features are real envelope signal labels only", t, func() {
-		So(len(Features), ShouldEqual, 15)
-		So(Features[0].Label, ShouldEqual, "compression")
-		So(Features[8].Label, ShouldEqual, "scarcity_score")
-		So(Features[9].Source, ShouldEqual, "sentiment")
-		So(Features[9].Label, ShouldEqual, "slump_score")
-		So(Features[14].Label, ShouldEqual, "depth_score")
+func TestFeatures(t *testing.T) {
+	Convey("Setup", t, func() {
+		Convey("When the static Features table is inspected", func() {
+			Convey("Labels match envelope signal metrics only", func() {
+				So(len(Features), ShouldEqual, 15)
+				So(Features[0].Label, ShouldEqual, "compression")
+				So(Features[8].Label, ShouldEqual, "scarcity_score")
+				So(Features[9].Source, ShouldEqual, "sentiment")
+				So(Features[9].Label, ShouldEqual, "slump_score")
+				So(Features[14].Label, ShouldEqual, "depth_score")
 
-		for _, feature := range Features {
-			So(feature.Source, ShouldNotEqual, "broker")
-		}
+				for _, feature := range Features {
+					So(feature.Source, ShouldNotEqual, "broker")
+				}
+			})
+		})
 	})
 }
 
 func TestForwardStoryNets(t *testing.T) {
-	Convey("ForwardStoryNets folds story + signal oracle pairs", t, func() {
+	Convey("Setup", t, func() {
 		curve := make([]float64, len(Features))
 
 		for i := range curve {
@@ -38,11 +42,47 @@ func TestForwardStoryNets(t *testing.T) {
 
 		curve[9] = 0.4
 
-		enter, hold, exit, risk, ok := ForwardStoryNets(curve)
-		So(ok, ShouldBeTrue)
-		So(enter, ShouldAlmostEqual, 0.9+1.5, 1e-9)
-		So(hold, ShouldAlmostEqual, 0.9+0.5, 1e-9)
-		So(exit, ShouldAlmostEqual, 0.5+0.5-0.5, 1e-9)
-		So(risk, ShouldAlmostEqual, 0.4, 1e-9)
+		Convey("When ForwardStoryNets folds the oracle curve", func() {
+			enter, hold, exit, ok := ForwardStoryNets(curve)
+
+			Convey("Story nets match the folded weights", func() {
+				So(ok, ShouldBeTrue)
+				// story enter 0.9 + peak/sync/depth supports 0.5+0.5+0.5
+				So(enter, ShouldEqual, 0.9+1.5)
+				// story hold 0.9 + capacity depth 0.5
+				So(hold, ShouldEqual, 0.9+0.5)
+				// story exit 0.5 + slump/decoupled/vacuum 0.4+0.05+0.05
+				So(exit, ShouldEqual, 0.5+0.5)
+			})
+		})
 	})
+}
+
+func BenchmarkFeatures(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = len(Features)
+		_ = Features[0].Label
+	}
+}
+
+func BenchmarkForwardStoryNets(b *testing.B) {
+	curve := make([]float64, len(Features))
+	for i := range curve {
+		curve[i] = 0.5
+	}
+	curve[2] = 0.1
+	curve[8] = 0.1
+	for pair := range oraclePairs {
+		curve[oracleFirst+2*pair] = 0.05
+	}
+	curve[9] = 0.4
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		ForwardStoryNets(curve)
+	}
 }

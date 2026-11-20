@@ -5,38 +5,39 @@ export type Balance = {
 };
 
 /*
-Stoploss state as Go's StoplossState iota (broker/stoploss.go). Wire JSON
-ships the numeric enum unless a string label is present.
+Stoploss mirrors broker.Stoploss JSON (PascalCase tags on the Go struct).
+State is StoplossState iota: Healthy=0, Armed=1, Triggered=2.
+Regime is MarketRegime: CRAWL | SMOOTH | EXPLOSIVE | CHAOS.
 */
-export type StoplossStateCode = 0 | 1 | 2 | 3 | 4 | 5;
+export type StoplossState = 0 | 1 | 2;
 
-export type DynamicStoplossState =
-	| "Healthy"
-	| "Protected"
-	| "Critical"
-	| "Dangerous"
-	| "Triggered";
+export const STOPLOSS_HEALTHY = 0;
+export const STOPLOSS_ARMED = 1;
+export const STOPLOSS_TRIGGERED = 2;
 
-/** UI-facing stop telemetry derived from broker.Stoploss JSON. */
-export type DynamicStoploss = {
-	state: DynamicStoplossState;
-	exit_reason?: string;
-	/** Absolute entry drag (percentage points). */
-	friction: number;
-	current_pnl: number;
-	peak_pnl: number;
-	floor_pnl: number;
-	has_floor: boolean;
-	room_pct: number;
-	proximity: number;
-	downside_pressure: number;
-	downside_magnitude_ratio: number;
-	consecutive_down: number;
-	opened_at?: string;
-	last_peak_time?: string;
+export type MarketRegime = "CRAWL" | "SMOOTH" | "EXPLOSIVE" | "CHAOS" | string;
+
+export type Stoploss = {
+	State: StoplossState | number;
+	Regime?: MarketRegime;
+	InitialPnLPct: number;
+	CurrentPnLPct: number;
+	PeakPnLPct: number;
+	ArmPnlPct: number;
+	TrailingFloor?: number;
+	ExhaustScore: number;
+	Confirms: number;
+	TypicalPush?: number;
+	TypicalPullback?: number;
+	CurrentDrop?: number;
+	EmaDelta?: number;
+	TriggerReason?: string;
+	Deltas?: number[];
+	Pushes?: number[];
+	Pullbacks?: number[];
 };
 
-/** Kraken spot OrderRequest as embedded on a desk lot. */
+/** Kraken spot OrderRequest as embedded on a desk position. */
 export type PositionOrder = {
 	cl_ord_id?: string;
 	ordertype?: string;
@@ -45,7 +46,7 @@ export type PositionOrder = {
 	price?: string;
 };
 
-/** One execution fill on a desk lot (kraken.ExecutionData). */
+/** One execution fill on a desk position (kraken.ExecutionData). */
 export type PositionFill = {
 	order_id?: string;
 	cl_ord_id?: string;
@@ -67,10 +68,7 @@ export type PositionFill = {
 };
 
 /*
-Position mirrors broker.Position JSON. Qty / entry price / fees come from
-entry_order, exit_order, and fills — not duplicated scalars on the lot.
-`book` is the desk ledger (virtual|paper|real), set by the broker on the wire
-and stamped from the S3 tier prefix for closed-history listings.
+Position mirrors broker.Position JSON. Decimals arrive as strings.
 */
 export type Position = {
 	id: string;
@@ -89,13 +87,17 @@ export type Position = {
 	entry_order?: PositionOrder | null;
 	exit_order?: PositionOrder | null;
 	fills?: PositionFill[];
+	qty?: string | number;
+	entry?: string | number;
+	sold?: string | number;
 	mark?: string | number;
 	exit_vwap?: string | number;
 	exit_room?: string | number;
+	gross_pnl?: string | number;
+	fee_in?: string | number;
+	fee_out?: string | number;
 	pnl?: string | number;
 	pnl_pct?: string | number;
-	/** Ledger stamp — from S3 scope or unlabeled→paper in onBook. */
-	book?: "paper" | "virtual" | "real" | string;
-	/** Raw broker.Stoploss object — normalize via normalizeStoploss. */
-	stoploss?: Record<string, unknown> | DynamicStoploss;
+	tier_key?: "paper" | "virtual" | "real" | string;
+	stoploss?: Stoploss;
 };

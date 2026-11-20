@@ -8,10 +8,13 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/nomagique/adaptive"
 	"github.com/theapemachine/nomagique/learning"
+	"github.com/theapemachine/nomagique/probability"
 	"github.com/theapemachine/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/ui"
 )
+
+const regimeRankWindow = 64
 
 /*
 Solver runs one predictive-coding manifold per symbol over that symbol's
@@ -32,14 +35,29 @@ type Feature struct {
 }
 
 /*
-symbolState is one symbol's coder, feature moments, and deferred target.
+symbolState is one symbol's coder, feature moments, and the prior-tick forecast
+retained for strict-prequential ObserveTask (z_{t-1}, pred_{t-1} → x_t).
 */
 type symbolState struct {
-	manifold *learning.ResonanceManifold
-	scorer   *featureScorer
-	pending  []float64
+	manifold      *learning.ResonanceManifold
+	scorer        *featureScorer
+	prevLatent    []float64
+	prevPred      []float64
+	surpriseZ     *adaptive.ZScore
+	surpriseRank  *probability.Calibrator
+	precisionRank *probability.Calibrator
 }
 
+func newRegimeCalibrator() *probability.Calibrator {
+	return probability.NewCalibrator(probability.CalibratorConfig{
+		Window: regimeRankWindow,
+	})
+}
+
+/*
+NewSolver builds one manifold lazily per symbol — pace comes from resonance config
+so Model gates and UI surprise share the same learning rate knob.
+*/
 func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		System:  runtime.NewSystem(ctx, "resonance"),
@@ -74,11 +92,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 		}
 
 		symbol, sources := symbol, sources
-		wg.Add(1)
-
-		task := func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			reading := solver.stepSymbol(symbol, sources)
 			if reading == nil {
 				return
@@ -89,11 +103,7 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 			mu.Unlock()
 
 			ui.Focus("resonance", symbol, reading)
-		}
-
-		if system.Q.Submit(task) != nil {
-			task()
-		}
+		})
 	}
 
 	wg.Wait()
@@ -101,8 +111,9 @@ func (solver *Solver) Step(envelope *runtime.Envelope) *runtime.Envelope {
 }
 
 /*
-stepSymbol standardizes a complete observation, settles the manifold, and
-trains the supervised head on the prior epoch once this epoch has arrived.
+stepSymbol standardizes a complete observation, resolves the prior forecast
+against today's features (ObserveTask), then settles without lag-training the
+task head. forward_curve_* is then V·z_t — a genuine next-step forecast.
 */
 func (solver *Solver) stepSymbol(
 	symbol string,
@@ -122,14 +133,25 @@ func (solver *Solver) stepSymbol(
 		return nil
 	}
 
-	target := state.pending
-	hadTarget := len(target) == len(input)
-
-	if !hadTarget {
-		target = nil
+	// Strict prior: the forecast issued on z_{t-1} is scored against x_t before
+	// Settle moves the latent to z_t. Learn(nil) below must not retrain the
+	// task head on lagged x_{t-1} (that was the backcast bug).
+	resolved := false
+	if len(state.prevLatent) > 0 && len(state.prevPred) == len(input) {
+		if err := state.manifold.ObserveTask(
+			state.prevLatent, state.prevPred, input,
+		); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.UnprocessableContent,
+				fmt.Sprintf("resonance: %s observe-task failed", symbol),
+				err,
+			))
+		} else {
+			resolved = true
+		}
 	}
 
-	if _, err := state.manifold.SettleFromBatchOptions(input, target, true, false); err != nil {
+	if _, err := state.manifold.SettleFromBatchOptions(input, nil, true, false); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			fmt.Sprintf("resonance: %s settle failed", symbol),
@@ -139,10 +161,15 @@ func (solver *Solver) stepSymbol(
 		return nil
 	}
 
-	state.pending = append([]float64(nil), input...)
-	return solver.publish(state.manifold, hadTarget)
+	state.prevLatent = append([]float64(nil), state.manifold.LatentState()...)
+	state.prevPred = append([]float64(nil), state.manifold.TaskPrediction()...)
+	return solver.publish(state, resolved)
 }
 
+/*
+state get-or-creates the per-symbol manifold — symbols only pay coder cost once
+they appear on envelope.Metrics, not at process boot for the whole universe.
+*/
 func (solver *Solver) state(symbol string) *symbolState {
 	if held, ok := solver.symbols.Load(symbol); ok {
 		return held.(*symbolState)
@@ -165,8 +192,11 @@ func (solver *Solver) state(symbol string) *symbolState {
 	}
 
 	state := &symbolState{
-		manifold: manifold,
-		scorer:   newFeatureScorer(),
+		manifold:      manifold,
+		scorer:        newFeatureScorer(),
+		surpriseZ:     adaptive.NewZScore(),
+		surpriseRank:  newRegimeCalibrator(),
+		precisionRank: newRegimeCalibrator(),
 	}
 
 	loaded, _ := solver.symbols.LoadOrStore(symbol, state)
@@ -185,6 +215,10 @@ type featureScorer struct {
 	seen          []bool
 }
 
+/*
+newFeatureScorer aligns one Standardizer per Features row — dimensions are not
+comparable raw, so resonance learns on z-scored observations per label.
+*/
 func newFeatureScorer() *featureScorer {
 	scorer := &featureScorer{
 		standardizers: make([]*adaptive.Standardizer, len(Features)),
@@ -213,6 +247,7 @@ func (scorer *featureScorer) Observe(
 	}
 
 	updated := false
+	arrived := make([]bool, len(Features))
 
 	for i, feature := range Features {
 		labels := sources[feature.Source]
@@ -227,6 +262,7 @@ func (scorer *featureScorer) Observe(
 
 		scorer.held[i] = value
 		scorer.seen[i] = true
+		arrived[i] = true
 		updated = true
 	}
 
@@ -244,7 +280,18 @@ func (scorer *featureScorer) Observe(
 	ready := false
 
 	for i, reading := range scorer.held {
-		output, err := scorer.standardizers[i].Measure(reading)
+		// Only absorb Welford updates for features that arrived this tick.
+		// Re-Measuring frozen held values collapses infrequent-signal variance
+		// and spikes surprise when they finally move.
+		var (
+			output adaptive.StandardizerOutput
+			err    error
+		)
+		if arrived[i] {
+			output, err = scorer.standardizers[i].Measure(reading)
+		} else {
+			output, err = scorer.standardizers[i].ZScore(reading)
+		}
 		if err != nil {
 			return nil, false
 		}
@@ -259,6 +306,10 @@ func (scorer *featureScorer) Observe(
 	return input, ready
 }
 
+/*
+coderArch mirrors Resonance.Layers config — widening hidden layers lets the
+manifold encode pairwise feature interactions before projecting task heads.
+*/
 func coderArch(featureDim int) []int {
 	layers := system.Cfg.Resonance.Layers
 	arch := make([]int, layers)
@@ -272,17 +323,38 @@ func coderArch(featureDim int) []int {
 	return arch
 }
 
+/*
+publish flattens manifold wire state into envelope.Resonance keys Model reads —
+forward_curve_* is the supervised head output; supported_horizon gates cold start.
+*/
 func (solver *Solver) publish(
-	manifold *learning.ResonanceManifold,
+	state *symbolState,
 	hadTarget bool,
 ) map[string]float64 {
+	manifold := state.manifold
 	layers, surprise, energy := manifold.WireSnapshot()
 	latent := manifold.LatentState()
 
+	baseline := state.surpriseZ.Center()
+	regime, _ := state.surpriseZ.Measure(surprise)
+
 	reading := map[string]float64{
-		"surprise": surprise,
-		"energy":   energy,
-		"alpha":    solver.pace,
+		"surprise":          surprise,
+		"surprise_baseline": baseline,
+		"energy":            energy,
+		"alpha":             solver.pace,
+	}
+
+	if regime.Ready {
+		reading["surprise_regime_z"] = regime.Value
+		reading["surprise_regime_ready"] = 1
+	} else {
+		reading["surprise_regime_ready"] = 0
+	}
+
+	if rank, err := state.surpriseRank.MeasureElevated(surprise); err == nil && rank.Ready {
+		reading["surprise_rank"] = rank.Value
+		reading["surprise_rank_ready"] = 1
 	}
 
 	if skill, ok := manifold.TaskSkill(); ok {
@@ -294,6 +366,11 @@ func (solver *Solver) publish(
 
 	if precision, ok := manifold.TaskPrecision(); ok {
 		reading["task_relative_precision"] = precision
+
+		if rank, err := state.precisionRank.MeasureElevated(precision); err == nil && rank.Ready {
+			reading["task_precision_rank"] = rank.Value
+			reading["task_precision_rank_ready"] = 1
+		}
 	}
 
 	if temporal, ok := manifold.TemporalError(); ok {
@@ -338,16 +415,28 @@ func (solver *Solver) publish(
 	return reading
 }
 
+/*
+Reset clears manifold state after config or universe changes — without dropping
+per-symbol scorers the held feature vector would train on stale semantics.
+*/
 func (solver *Solver) Reset(resetPrecision bool) {
 	solver.symbols.Range(func(_, held any) bool {
 		state := held.(*symbolState)
 		state.manifold.ResetState(resetPrecision)
 		state.scorer = newFeatureScorer()
-		state.pending = nil
+		state.surpriseZ = adaptive.NewZScore()
+		state.surpriseRank = newRegimeCalibrator()
+		state.precisionRank = newRegimeCalibrator()
+		state.prevLatent = nil
+		state.prevPred = nil
 		return true
 	})
 }
 
+/*
+Close releases symbol manifolds on shutdown so goroutine Step does not retain
+coders after the disruptor ring stops.
+*/
 func (solver *Solver) Close() error {
 	solver.symbols.Clear()
 	return nil

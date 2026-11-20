@@ -127,12 +127,12 @@ a gap into a synthetic zero.
 The return learner, confidence, and horizon each adapt from evidence that belongs
 to their own objective:
 
-| Quantity                 | Derived by                        | Meaning                                                                        |
-|--------------------------|-----------------------------------|--------------------------------------------------------------------------------|
-| **Return-head gain**     | square-root recursive least squares | Latent design covariance determines how much each resolved target can teach. |
-| **Forecast confidence**  | RLS Student-t posterior predictive | Probability that the current resolved return has the point forecast's direction. |
-| **Skill evidence**       | Beta posterior over prequential wins | Probability that prior forecasts beat zero return more than half the time. |
-| **Horizon**              | longest contiguous skill prefix | Forecast only as far as the per-horizon rows whose prequential calls beat the zero-prediction baseline; a single tick before any row has resolved evidence. |
+| Quantity                | Derived by                           | Meaning                                                                                                                                                     |
+|-------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Return-head gain**    | square-root recursive least squares  | Latent design covariance determines how much each resolved target can teach.                                                                                |
+| **Forecast confidence** | RLS Student-t posterior predictive   | Probability that the current resolved return has the point forecast's direction.                                                                            |
+| **Skill evidence**      | Beta posterior over prequential wins | Probability that prior forecasts beat zero return more than half the time.                                                                                  |
+| **Horizon**             | longest contiguous skill prefix      | Forecast only as far as the per-horizon rows whose prequential calls beat the zero-prediction baseline; a single tick before any row has resolved evidence. |
 
 There is no separate warming state. The head predicts from its prior immediately;
 before residual noise is identifiable its direction probability is the symmetric

@@ -9,13 +9,12 @@ import {
 	setResonanceField,
 	setRiskField,
 	toggleGateLab,
-	toggleResonanceBypass,
 } from "#/collections/gate-lab";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Input } from "#/components/ui/input";
 import { Typography } from "#/components/ui/typography";
-import { trySendCommand } from "#/lib/hub-socket";
+import { trySendCommand } from "#/providers/websocket";
 import { cn } from "#/lib/utils";
 
 const RISK_FIELDS: Array<{
@@ -24,6 +23,24 @@ const RISK_FIELDS: Array<{
 	step: string;
 	hint: string;
 }> = [
+	{
+		key: "max_fraction",
+		label: "frac",
+		step: "0.01",
+		hint: "Max fraction of the entry cash base one enter may spend.",
+	},
+	{
+		key: "touch_divisor",
+		label: "touch÷",
+		step: "0.5",
+		hint: "Entry size starts at top-of-book ask ÷ this divisor.",
+	},
+	{
+		key: "reserve_fraction",
+		label: "rsv",
+		step: "0.05",
+		hint: "Caps slow enters at (1−f)×free cash. Short-hold (fast) enters budget against the full balance.",
+	},
 	{
 		key: "min_mover_volume_usd",
 		label: "vol$",
@@ -43,6 +60,12 @@ const RISK_FIELDS: Array<{
 		hint: "Maximum touch spread (%) allowed at entry. Wider than this → Spread veto.",
 	},
 	{
+		key: "max_entry_peak_frac",
+		label: "peak",
+		step: "0.05",
+		hint: "Max last position in the 24h high–low range (0–1). At/above → 24h peak veto. 0.90 = top 10% blocked. ≤0 or ≥1 disables.",
+	},
+	{
 		key: "min_touch_bid_cash",
 		label: "cash",
 		step: "10",
@@ -55,10 +78,10 @@ const RISK_FIELDS: Array<{
 		hint: "How much bid/ask support must sit inside the mid band (0–1). Low backing = fake wall.",
 	},
 	{
-		key: "min_tape_trades",
-		label: "tape",
-		step: "1",
-		hint: "Minimum prints in the tape window. Dead tape fails Book integrity.",
+		key: "min_tape_notional_usd",
+		label: "tape$",
+		step: "10",
+		hint: "Quote dollars in the last tape window must beat the prior window and clear this floor. A fading tape fails Book integrity.",
 	},
 	{
 		key: "max_entry_open_drag_pct",
@@ -69,7 +92,7 @@ const RISK_FIELDS: Array<{
 ];
 
 const RESONANCE_FIELDS: Array<{
-	key: Exclude<keyof ResonanceDraft, "bypass">;
+	key: keyof ResonanceDraft;
 	label: string;
 	step: string;
 	hint: string;
@@ -78,13 +101,13 @@ const RESONANCE_FIELDS: Array<{
 		key: "min_task_relative_precision",
 		label: "prec",
 		step: "0.05",
-		hint: "Minimum task-relative precision. Below this the model skips with the resonance gate.",
+		hint: "Min task precision (absolute or empirical rank when warm).",
 	},
 	{
 		key: "min_surprise",
 		label: "surp",
 		step: "0.05",
-		hint: "Minimum surprise. Low surprise = manifold thinks nothing moved → skip.",
+		hint: "Min adaptive surprise z above per-symbol PC baseline. Flat regime → skip.",
 	},
 	{
 		key: "min_supported_horizon",
@@ -96,7 +119,7 @@ const RESONANCE_FIELDS: Array<{
 		key: "min_enter_z",
 		label: "enterZ",
 		step: "0.05",
-		hint: "Minimum forward-story enter/hold net (z). Below this → story skip. Bypass forces bullish.",
+		hint: "Minimum surprise_regime_z for enter. Preferred over raw surprise once resonance is warm.",
 	},
 ];
 
@@ -193,7 +216,7 @@ export const GateLab = () => {
 						>
 							Apply risk
 						</Button>
-						<Hint text="Push risk floors into the live desk (WS risk). Max ceilings at 0 = unlimited. Oracle force lamps are local-only — use rez:bypass to skip the board." />
+						<Hint text="Push risk floors into the live desk (WS risk). Max ceilings at 0 = unlimited. Oracle force lamps are local-only." />
 					</span>
 					<span className="group relative inline-flex">
 						<Button
@@ -205,7 +228,7 @@ export const GateLab = () => {
 						>
 							Apply rez
 						</Button>
-						<Hint text="Push resonance gate floors / bypass into the live model (WS resonance)." />
+						<Hint text="Push resonance gate floors into the live model (WS resonance). Resonance is never bypassed." />
 					</span>
 				</Flex.Row>
 			</Flex.Row>
@@ -276,29 +299,6 @@ export const GateLab = () => {
 			</Flex.Row>
 
 			<Flex.Row gap={2} wrap="wrap" align="end" className="min-w-0">
-				<span className="group relative inline-flex">
-					<Button
-						variant="bare"
-						size="xxs"
-						onClick={() => {
-							toggleResonanceBypass();
-							applyResonance({
-								...gateLabStore.state.resonance,
-								bypass: !resonance.bypass,
-							});
-						}}
-						data-gate-lab-rez-bypass={resonance.bypass ? "on" : "off"}
-						className={cn(
-							"rounded-xs border px-1.5 py-px font-mono text-[8.5px] uppercase",
-							resonance.bypass
-								? "border-(--up)/50 text-(--up)"
-								: "border-(--line) text-(--f3)",
-						)}
-					>
-						rez:{resonance.bypass ? "bypass" : "gate"}
-					</Button>
-					<Hint text="Bypass auto-applies: skips missing readings, story floors, oracle board, physical desk gates on virtual, and cold-tree resistance — opens virtual explores." />
-				</span>
 				{RESONANCE_FIELDS.map((field) => {
 					const inputId = `gate-lab-rez-${field.key}`;
 
